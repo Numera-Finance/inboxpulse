@@ -1,0 +1,46 @@
+{
+  "name": "@crm/notifications",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas": "./src/schemas/index.ts",
+    "./types": "./src/types/index.ts",
+    "./channels": "./src/channels/index.ts",
+    "./providers": "./src/templates/providers/index.ts",
+    "./repositories": "./src/repositories/index.ts",
+    "./services": "./src/services/index.ts",
+    "./inngest": "./src/inngest/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@crm/database": "workspace:*",
+    "@crm/shared": "workspace:*",
+    "@aws-sdk/client-ses": "^3.700.0",
+    "@react-email/components": "^0.0.31",
+    "@react-email/render": "^1.0.3",
+    "zod": "catalog:",
+    "tsyringe": "catalog:",
+    "inngest": "catalog:",
+    "uuid": "^13.0.0",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "react": "catalog:"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

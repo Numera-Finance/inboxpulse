@@ -356,3 +356,71 @@ userRoutes.get('/export', async (c) => {
     },
   });
 });
+
+// ===========================================================================
+// Notification-related endpoints (for service-to-service calls)
+// ===========================================================================
+
+/**
+ * GET /api/users/:id/permissions - Get user's permissions
+ * Used by notifications service for access control
+ */
+userRoutes.get('/:id/permissions', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ id: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(UserService);
+      const permissions = await service.getUserPermissions(requestHeader.tenantId, params.id);
+      return { permissions };
+    }
+  );
+});
+
+/**
+ * GET /api/users/:id/customers/:customerId/access - Check if user has access to customer
+ * Used by notifications service for data access validation
+ */
+userRoutes.get('/:id/customers/:customerId/access', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ id: z.uuid(), customerId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(UserService);
+      const hasAccess = await service.hasAccessToCustomer(params.id, params.customerId);
+      return { hasAccess };
+    }
+  );
+});
+
+/**
+ * GET /api/users/:id/has-customers - Check if user has any customer assignments
+ * Used by notifications for subscription conditions
+ */
+userRoutes.get('/:id/has-customers', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ id: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(UserService);
+      const hasCustomers = await service.hasAnyCustomers(params.id);
+      return { hasCustomers };
+    }
+  );
+});
+
+/**
+ * GET /api/users/:id/has-manager - Check if user has a manager
+ * Used by notifications for subscription conditions
+ */
+userRoutes.get('/:id/has-manager', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ id: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(UserService);
+      const hasManager = await service.hasManager(params.id);
+      return { hasManager };
+    }
+  );
+});

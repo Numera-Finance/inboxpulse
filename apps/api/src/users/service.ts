@@ -481,6 +481,35 @@ export class UserService {
     return this.userRepository.hasAccessToCustomer(userId, customerId);
   }
 
+  /**
+   * Get user's permissions from their role
+   */
+  async getUserPermissions(tenantId: string, userId: string): Promise<number[]> {
+    const user = await this.userRepository.findById(userId, { tenantId, userId, permissions: [] });
+    if (!user || !user.roleId) {
+      return [];
+    }
+
+    const role = await this.roleRepository.findById(user.roleId);
+    return role?.permissions ?? [];
+  }
+
+  /**
+   * Check if user has any customer assignments
+   */
+  async hasAnyCustomers(userId: string): Promise<boolean> {
+    const assignments = await this.userRepository.getCustomerAssignments(userId);
+    return assignments.length > 0;
+  }
+
+  /**
+   * Check if user has a manager
+   */
+  async hasManager(userId: string): Promise<boolean> {
+    const managers = await this.userRepository.getManagers(userId);
+    return managers.length > 0;
+  }
+
   // ===========================================================================
   // Rebuild (called by Inngest)
   // ===========================================================================

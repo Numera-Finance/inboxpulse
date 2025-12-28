@@ -180,4 +180,52 @@ export class UserClient extends BaseClient {
 
     return response.blob();
   }
+
+  // ===========================================================================
+  // Notification-related methods (for service-to-service calls)
+  // ===========================================================================
+
+  /**
+   * Get user's permissions
+   */
+  async getPermissions(id: string, signal?: AbortSignal): Promise<number[]> {
+    const response = await this.get<ApiResponse<{ permissions: number[] }>>(
+      `/api/users/${id}/permissions`,
+      signal
+    );
+    return response?.data?.permissions || [];
+  }
+
+  /**
+   * Check if user has access to a specific customer
+   */
+  async hasCustomerAccess(id: string, customerId: string, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.get<ApiResponse<{ hasAccess: boolean }>>(
+      `/api/users/${id}/customers/${customerId}/access`,
+      signal
+    );
+    return response?.data?.hasAccess ?? false;
+  }
+
+  /**
+   * Check if user has any customer assignments
+   */
+  async hasAnyCustomers(id: string, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.get<ApiResponse<{ hasCustomers: boolean }>>(
+      `/api/users/${id}/has-customers`,
+      signal
+    );
+    return response?.data?.hasCustomers ?? false;
+  }
+
+  /**
+   * Check if user has a manager
+   */
+  async hasManager(id: string, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.get<ApiResponse<{ hasManager: boolean }>>(
+      `/api/users/${id}/has-manager`,
+      signal
+    );
+    return response?.data?.hasManager ?? false;
+  }
 }

@@ -2,6 +2,7 @@ import { container } from 'tsyringe';
 import { createDatabase, type Database } from '@crm/database';
 // Import schemas from API modules (co-located with their code)
 import { users, userManagers, userCustomers, userAccessibleCustomers, tenants, integrations, emailThreads, emails, emailAnalyses, threadAnalyses, runs, customers, contacts, roles } from '../schemas';
+// Notification schemas removed - notifications is now a standalone app
 // Import better-auth schemas
 import { betterAuthUser, betterAuthSession, betterAuthAccount, betterAuthVerification } from '../auth/better-auth-schema';
 

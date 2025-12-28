@@ -3,13 +3,14 @@
 # Stage 1: Build
 FROM node:22-alpine AS builder
 
-# Install pnpm
-RUN npm install -g pnpm@9.14.2
+# Enable corepack for pnpm (uses version from packageManager in package.json)
+RUN corepack enable
 
 WORKDIR /app
 
-# Copy workspace files
+# Copy workspace files and install pnpm version from packageManager
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json ./
+RUN corepack install
 COPY packages ./packages
 COPY apps/api ./apps/api
 
@@ -26,15 +27,19 @@ RUN pnpm --filter @crm/clients build
 RUN pnpm --filter @crm/api build
 
 # Stage 2: Production
-FROM node:22-alpine
-
-# Install pnpm
-RUN npm install -g pnpm@9.14.2
+FROM oven/bun:1-alpine
 
 WORKDIR /app
 
-# Copy package files
+# Install Node.js for pnpm compatibility
+RUN apk add --no-cache nodejs
+
+# Enable corepack for pnpm
+RUN corepack enable
+
+# Copy package files and install pnpm version from packageManager
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+RUN corepack install
 COPY packages/cloud/google/package.json ./packages/cloud/google/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/database/package.json ./packages/database/
@@ -55,7 +60,7 @@ COPY --from=builder /app/apps/api/dist ./apps/api/dist
 ENV NODE_ENV=production
 
 # Expose port
-EXPOSE 4000
+EXPOSE 4001
 
 # Start application
-CMD ["node", "apps/api/dist/index.js"]
+CMD ["bun", "apps/api/dist/index.js"]

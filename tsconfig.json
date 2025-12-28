@@ -25,7 +25,9 @@
       "@crm/database/*": ["packages/database/src/*"],
       "@crm/shared/*": ["packages/shared/src/*"],
       "@crm/clients/*": ["packages/clients/src/*"],
-      "@crm/gmail/*": ["apps/gmail/src/*"]
+      "@crm/gmail/*": ["apps/gmail/src/*"],
+      "@crm/notifications": ["packages/notifications/src/index.ts"],
+      "@crm/notifications/*": ["packages/notifications/src/*"]
     }
   },
   "exclude": ["node_modules"]

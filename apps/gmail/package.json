@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "bun --watch src/index.ts",
     "build": "tsup src/index.ts --format esm --target node22",
-    "start": "node dist/index.js",
+    "start": "bun dist/index.js",
     "test": "vitest",
     "lint": "tsc --noEmit"
   },
@@ -25,9 +25,9 @@
     "tsyringe": "catalog:"
   },
   "devDependencies": {
+    "@types/bun": "latest",
     "@types/node": "catalog:",
     "tsup": "catalog:",
-    "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

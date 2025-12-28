@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       services:
-        description: 'Services to deploy (comma-separated: api,gmail,web,analysis or "all")'
+        description: 'Services to deploy (comma-separated: api,gmail,web,analysis,notifications or "all")'
         required: false
         default: "all"
 
@@ -30,6 +30,7 @@ jobs:
       gmail: ${{ steps.filter.outputs.gmail }}
       web: ${{ steps.filter.outputs.web }}
       analysis: ${{ steps.filter.outputs.analysis }}
+      notifications: ${{ steps.filter.outputs.notifications }}
       deploy-all: ${{ steps.check.outputs.deploy-all }}
     steps:
       - name: Checkout code
@@ -50,6 +51,8 @@ jobs:
               - 'apps/web/**'
             analysis:
               - 'apps/analysis/**'
+            notifications:
+              - 'apps/notifications/**'
 
       - name: Determine deployment strategy
         id: check
@@ -317,3 +320,66 @@ jobs:
           echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+  deploy-notifications:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.deploy-all == 'true' ||
+      needs.detect-changes.outputs.notifications == 'true' ||
+      needs.detect-changes.outputs.packages == 'true' ||
+      (github.event_name == 'workflow_dispatch' && contains(github.event.inputs.services, 'notifications'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications
+          docker build \
+            -f apps/notifications/Dockerfile \
+            -t ${IMAGE_NAME}:${{ github.sha }} \
+            -t ${IMAGE_NAME}:latest \
+            .
+          docker push ${IMAGE_NAME}:${{ github.sha }}
+          docker push ${IMAGE_NAME}:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy crm-notifications \
+            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }} \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --allow-unauthenticated \
+            --min-instances 0 \
+            --max-instances 10 \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 300 \
+            --update-env-vars NODE_ENV=production,DATABASE_URL=${{ secrets.DATABASE_URL }},SERVICE_API_URL=https://crm-api-505023465535.us-central1.run.app
+
+      - name: Get Cloud Run URL
+        id: get-url
+        run: |
+          URL=$(gcloud run services describe crm-notifications --region ${{ env.REGION }} --format 'value(status.url)')
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "### crm-notifications Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

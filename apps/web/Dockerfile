@@ -3,13 +3,14 @@
 # Stage 1: Build
 FROM node:22-alpine AS builder
 
-# Install pnpm
-RUN npm install -g pnpm@9.14.2
+# Enable corepack for pnpm (uses version from packageManager in package.json)
+RUN corepack enable
 
 WORKDIR /app
 
-# Copy workspace files
+# Copy workspace files and install pnpm version from packageManager
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json ./
+RUN corepack install
 COPY packages ./packages
 COPY apps/web ./apps/web
 
