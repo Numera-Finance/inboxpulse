@@ -4,6 +4,7 @@
 
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
+import { render } from '@react-email/components';
 import {
   NotificationService,
   DeliveryService,
@@ -21,6 +22,12 @@ import {
 import type { RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { getRequestHeader } from '../utils/request-header';
+import {
+  EmailEscalation,
+  DealWon,
+  TaskAssignment,
+  BatchDigest,
+} from '../templates/emails';
 
 const app = new Hono();
 
@@ -397,5 +404,172 @@ app.get('/unsubscribe', async (c) => {
     return c.json({ success: false, error: error.message }, 500);
   }
 });
+
+/**
+ * Preview template - sample data for each template type
+ */
+const sampleTemplateData: Record<string, { component: any; props: Record<string, any> }> = {
+  'email.escalation': {
+    component: EmailEscalation,
+    props: {
+      recipientName: 'John Smith',
+      customerName: 'Acme Corporation',
+      emailSubject: 'Urgent: Service outage affecting production',
+      severity: 'high',
+      reason: 'Customer has been waiting for a response for over 24 hours',
+      waitingHours: 26,
+      viewUrl: 'https://app.example.com/emails/123',
+      approveUrl: 'https://app.example.com/actions/approve?token=abc123',
+      rejectUrl: 'https://app.example.com/actions/reject?token=abc123',
+      unsubscribeUrl: 'https://app.example.com/unsubscribe?nid=123&type=email.escalation',
+    },
+  },
+  'deal.won': {
+    component: DealWon,
+    props: {
+      recipientName: 'Sarah Johnson',
+      dealName: 'Enterprise License - Acme Corp',
+      customerName: 'Acme Corporation',
+      dealValue: '150,000',
+      currency: 'USD',
+      closedBy: 'Mike Wilson',
+      closedDate: new Date().toLocaleDateString(),
+      viewUrl: 'https://app.example.com/deals/456',
+      unsubscribeUrl: 'https://app.example.com/unsubscribe?nid=456&type=deal.won',
+    },
+  },
+  'task.assigned': {
+    component: TaskAssignment,
+    props: {
+      recipientName: 'Alex Chen',
+      taskTitle: 'Follow up with Acme Corp on contract renewal',
+      taskDescription: 'Contact the procurement team to discuss Q1 contract renewal terms.',
+      assignedBy: 'Sarah Johnson',
+      dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+      priority: 'high',
+      viewUrl: 'https://app.example.com/tasks/789',
+      completeUrl: 'https://app.example.com/actions/complete?token=xyz789',
+      unsubscribeUrl: 'https://app.example.com/unsubscribe?nid=789&type=task.assigned',
+    },
+  },
+  'batch.digest': {
+    component: BatchDigest,
+    props: {
+      recipientName: 'Team Member',
+      periodLabel: 'Today',
+      notifications: [
+        {
+          id: '1',
+          type: 'email.escalation',
+          title: 'Email from Acme Corp needs attention',
+          summary: 'High priority - waiting 12 hours',
+          timestamp: '2 hours ago',
+          priority: 'high',
+          viewUrl: 'https://app.example.com/emails/101',
+        },
+        {
+          id: '2',
+          type: 'deal.won',
+          title: 'Deal Won: TechStart Inc',
+          summary: 'USD 45,000 - Closed by Mike',
+          timestamp: '4 hours ago',
+          viewUrl: 'https://app.example.com/deals/102',
+        },
+        {
+          id: '3',
+          type: 'task.assigned',
+          title: 'New Task: Prepare Q4 report',
+          summary: 'Due in 3 days',
+          timestamp: '5 hours ago',
+          priority: 'medium',
+          viewUrl: 'https://app.example.com/tasks/103',
+        },
+      ],
+      totalCount: 7,
+      viewAllUrl: 'https://app.example.com/notifications',
+      unsubscribeUrl: 'https://app.example.com/unsubscribe?type=batch.digest',
+    },
+  },
+};
+
+/**
+ * List available preview templates
+ */
+app.get('/preview', (c) => {
+  const templates = Object.keys(sampleTemplateData).map((id) => ({
+    id,
+    previewUrl: `/api/notifications/preview/${id}`,
+    htmlUrl: `/api/notifications/preview/${id}?format=html`,
+  }));
+
+  return c.json({
+    success: true,
+    data: { templates },
+  });
+});
+
+/**
+ * Preview a notification template
+ * Query params:
+ *   - format: 'json' (default) or 'html'
+ *   - Can override props via query params (e.g., ?recipientName=Jane)
+ */
+app.get('/preview/:templateId', async (c) => {
+  const templateId = c.req.param('templateId');
+  const format = c.req.query('format') || 'json';
+
+  const template = sampleTemplateData[templateId];
+  if (!template) {
+    return c.json({
+      success: false,
+      error: `Template not found: ${templateId}`,
+      availableTemplates: Object.keys(sampleTemplateData),
+    }, 404);
+  }
+
+  try {
+    // Merge sample props with any query param overrides
+    const queryOverrides: Record<string, string> = {};
+    for (const [key, value] of Object.entries(c.req.query())) {
+      if (key !== 'format' && value) {
+        queryOverrides[key] = value;
+      }
+    }
+
+    const props = { ...template.props, ...queryOverrides };
+    const Component = template.component;
+    const html = await render(Component(props));
+
+    if (format === 'html') {
+      return c.html(html);
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        templateId,
+        props,
+        html,
+        subject: getSubjectForTemplate(templateId, props),
+      },
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message, templateId }, 'Failed to render template preview');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * Get subject line for template
+ */
+function getSubjectForTemplate(templateId: string, props: Record<string, any>): string {
+  const subjects: Record<string, string> = {
+    'email.escalation': `${props.severity}: Email from ${props.customerName} needs attention`,
+    'deal.won': `Deal Won: ${props.dealName} - ${props.currency} ${props.dealValue}`,
+    'task.assigned': `New Task: ${props.taskTitle}`,
+    'batch.digest': `Your notification summary for ${props.periodLabel}`,
+  };
+  return subjects[templateId] || templateId;
+}
 
 export default app;
