@@ -82,21 +82,6 @@ export const subscribeRequestSchema = z.object({
 
 export type SubscribeRequest = z.infer<typeof subscribeRequestSchema>;
 
-export const actionRequestSchema = z.object({
-  actionType: z.string().min(1),
-  actionData: z.record(z.string(), z.unknown()).optional(),
-});
-
-export type ActionRequest = z.infer<typeof actionRequestSchema>;
-
-export const batchActionRequestSchema = z.object({
-  actionType: z.string().min(1),
-  notificationIds: z.array(z.string().uuid()).min(1),
-  actionData: z.record(z.string(), z.unknown()).optional(),
-});
-
-export type BatchActionRequest = z.infer<typeof batchActionRequestSchema>;
-
 export const refreshSubscriptionsRequestSchema = z.object({
   userId: z.string().uuid().optional(),
   notificationTypeIds: z.array(z.string().uuid()).optional(),

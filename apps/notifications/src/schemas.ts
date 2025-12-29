@@ -40,8 +40,6 @@ export const {
   userNotificationPreferences,
   notificationBatches,
   notifications,
-  notificationActions,
-  notificationBatchActions,
   userChannelAddresses,
   notificationAuditLog,
   notificationBounceComplaints,
@@ -59,12 +57,6 @@ export type NewNotificationBatch = typeof notificationBatches.$inferInsert;
 
 export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
-
-export type NotificationAction = typeof notificationActions.$inferSelect;
-export type NewNotificationAction = typeof notificationActions.$inferInsert;
-
-export type NotificationBatchAction = typeof notificationBatchActions.$inferSelect;
-export type NewNotificationBatchAction = typeof notificationBatchActions.$inferInsert;
 
 export type UserChannelAddress = typeof userChannelAddresses.$inferSelect;
 export type NewUserChannelAddress = typeof userChannelAddresses.$inferInsert;

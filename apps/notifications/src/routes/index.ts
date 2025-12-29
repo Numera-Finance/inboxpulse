@@ -9,15 +9,12 @@ import {
   NotificationService,
   DeliveryService,
   PreferencesService,
-  ActionService,
   NotificationRepository,
   NotificationTypeRepository,
   sendNotificationRequestSchema,
   createNotificationTypeRequestSchema,
   updateUserPreferencesRequestSchema,
   subscribeRequestSchema,
-  actionRequestSchema,
-  batchActionRequestSchema,
 } from '@crm/notifications';
 import type { RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
@@ -255,102 +252,6 @@ app.post('/notifications/:id/read', async (c) => {
     return c.json({ success: true, data: result });
   } catch (error: any) {
     logger.error({ error: error.message }, 'Failed to mark notification as read');
-    return c.json({ success: false, error: error.message }, 500);
-  }
-});
-
-/**
- * Perform action on notification
- */
-app.post('/notifications/:id/action', async (c) => {
-  const header = getRequestHeader(c);
-  const id = c.req.param('id');
-  const body = await c.req.json();
-
-  const validationResult = actionRequestSchema.safeParse(body);
-  if (!validationResult.success) {
-    logger.error({ errors: validationResult.error.issues }, 'Invalid action request');
-    return c.json({ success: false, error: 'Invalid request', details: validationResult.error.issues }, 400);
-  }
-
-  try {
-    const actionService = container.resolve<ActionService>(ActionService);
-    const result = await actionService.performAction(
-      {
-        notificationId: id,
-        actionType: validationResult.data.actionType,
-        actionData: validationResult.data.actionData,
-      },
-      header
-    );
-
-    return c.json({ success: result.success, data: result });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to perform action');
-    return c.json({ success: false, error: error.message }, 500);
-  }
-});
-
-/**
- * Perform batch action
- */
-app.post('/notifications/batch-action', async (c) => {
-  const header = getRequestHeader(c);
-  const body = await c.req.json();
-
-  const validationResult = batchActionRequestSchema.safeParse(body);
-  if (!validationResult.success) {
-    logger.error({ errors: validationResult.error.issues }, 'Invalid batch action request');
-    return c.json({ success: false, error: 'Invalid request', details: validationResult.error.issues }, 400);
-  }
-
-  try {
-    const actionService = container.resolve<ActionService>(ActionService);
-    const result = await actionService.performBatchAction(validationResult.data, header);
-
-    return c.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to perform batch action');
-    return c.json({ success: false, error: error.message }, 500);
-  }
-});
-
-/**
- * Handle action via token (one-click from email)
- */
-app.get('/actions/:actionType', async (c) => {
-  const token = c.req.query('token');
-
-  if (!token) {
-    return c.json({ success: false, error: 'Token required' }, 400);
-  }
-
-  try {
-    const actionService = container.resolve<ActionService>(ActionService);
-    const result = await actionService.performActionViaToken(token);
-
-    if (!result.success) {
-      return c.json({ success: false, error: result.error }, 400);
-    }
-
-    // Redirect to success page or return JSON based on Accept header
-    const acceptsHtml = c.req.header('Accept')?.includes('text/html');
-    if (acceptsHtml) {
-      return c.html(`
-        <!DOCTYPE html>
-        <html>
-          <head><title>Action Completed</title></head>
-          <body>
-            <h1>Action completed successfully!</h1>
-            <p>You can close this window.</p>
-          </body>
-        </html>
-      `);
-    }
-
-    return c.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to perform action via token');
     return c.json({ success: false, error: error.message }, 500);
   }
 });

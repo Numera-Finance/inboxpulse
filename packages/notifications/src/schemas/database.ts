@@ -221,79 +221,6 @@ export function createNotificationSchemas(
     ]
   );
 
-  const notificationBatchActions = pgTable(
-    'notification_batch_actions',
-    {
-      id: uuid('id')
-        .primaryKey()
-        .$defaultFn(() => uuidv7()),
-      tenantId: uuid('tenant_id')
-        .notNull()
-        .references(() => tenantsId, { onDelete: 'cascade' }),
-      userId: uuid('user_id')
-        .notNull()
-        .references(() => usersId, { onDelete: 'cascade' }),
-      
-      actionType: varchar('action_type', { length: 50 }).notNull(),
-      notificationIds: jsonb('notification_ids').$type<string[]>().notNull(),
-      actionData: jsonb('action_data').default({}),
-      
-      status: varchar('status', { length: 20 }).notNull().default('pending'),
-      processedAt: timestamp('processed_at', { withTimezone: true }),
-      errorMessage: text('error_message'),
-      
-      createdAt: timestamp('created_at', { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      updatedAt: timestamp('updated_at', { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-    },
-    (table: any) => [
-      index('idx_notification_batch_actions_user').on(table.userId),
-      index('idx_notification_batch_actions_status').on(table.status).where(sql`status = 'pending'`),
-    ]
-  );
-
-  const notificationActions = pgTable(
-    'notification_actions',
-    {
-      id: uuid('id')
-        .primaryKey()
-        .$defaultFn(() => uuidv7()),
-      tenantId: uuid('tenant_id')
-        .notNull()
-        .references(() => tenantsId, { onDelete: 'cascade' }),
-      userId: uuid('user_id')
-        .notNull()
-        .references(() => usersId, { onDelete: 'cascade' }),
-      notificationId: uuid('notification_id')
-        .notNull()
-        .references(() => notifications.id, { onDelete: 'cascade' }),
-      
-      actionType: varchar('action_type', { length: 50 }).notNull(),
-      actionData: jsonb('action_data').default({}),
-      batchActionId: uuid('batch_action_id').references(() => notificationBatchActions.id, { onDelete: 'set null' }),
-      
-      status: varchar('status', { length: 20 }).notNull().default('pending'),
-      processedAt: timestamp('processed_at', { withTimezone: true }),
-      errorMessage: text('error_message'),
-      
-      createdAt: timestamp('created_at', { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-      updatedAt: timestamp('updated_at', { withTimezone: true })
-        .notNull()
-        .defaultNow(),
-    },
-    (table: any) => [
-      index('idx_notification_actions_notification').on(table.notificationId),
-      index('idx_notification_actions_user').on(table.userId),
-      index('idx_notification_actions_batch').on(table.batchActionId),
-      index('idx_notification_actions_status').on(table.status).where(sql`status = 'pending'`),
-    ]
-  );
-
   const userChannelAddresses = pgTable(
     'user_channel_addresses',
     {
@@ -404,8 +331,6 @@ export function createNotificationSchemas(
     userNotificationPreferences,
     notificationBatches,
     notifications,
-    notificationActions,
-    notificationBatchActions,
     userChannelAddresses,
     notificationAuditLog,
     notificationBounceComplaints,

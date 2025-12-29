@@ -3,17 +3,57 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./schemas": "./src/schemas/index.ts",
-    "./types": "./src/types/index.ts",
-    "./channels": "./src/channels/index.ts",
-    "./providers": "./src/templates/providers/index.ts",
-    "./repositories": "./src/repositories/index.ts",
-    "./services": "./src/services/index.ts",
-    "./inngest": "./src/inngest/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas/index.d.ts",
+      "import": "./dist/schemas/index.js",
+      "require": "./dist/schemas/index.js",
+      "default": "./dist/schemas/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/types/index.js",
+      "require": "./dist/types/index.js",
+      "default": "./dist/types/index.js"
+    },
+    "./channels": {
+      "types": "./dist/channels/index.d.ts",
+      "import": "./dist/channels/index.js",
+      "require": "./dist/channels/index.js",
+      "default": "./dist/channels/index.js"
+    },
+    "./providers": {
+      "types": "./dist/templates/providers/index.d.ts",
+      "import": "./dist/templates/providers/index.js",
+      "require": "./dist/templates/providers/index.js",
+      "default": "./dist/templates/providers/index.js"
+    },
+    "./repositories": {
+      "types": "./dist/repositories/index.d.ts",
+      "import": "./dist/repositories/index.js",
+      "require": "./dist/repositories/index.js",
+      "default": "./dist/repositories/index.js"
+    },
+    "./services": {
+      "types": "./dist/services/index.d.ts",
+      "import": "./dist/services/index.js",
+      "require": "./dist/services/index.js",
+      "default": "./dist/services/index.js"
+    },
+    "./inngest": {
+      "types": "./dist/inngest/index.d.ts",
+      "import": "./dist/inngest/index.js",
+      "require": "./dist/inngest/index.js",
+      "default": "./dist/inngest/index.js"
+    }
   },
   "scripts": {
     "build": "tsc",

@@ -26,35 +26,16 @@ RUN pnpm --filter @crm/notifications build
 # Build notifications app
 RUN pnpm --filter @crm/notifications-app build
 
+# Deploy the app with all dependencies bundled
+RUN pnpm --filter @crm/notifications-app deploy --prod /deploy
+
 # Stage 2: Production
 FROM oven/bun:1-alpine
 
 WORKDIR /app
 
-# Install Node.js for pnpm compatibility
-RUN apk add --no-cache nodejs
-
-# Enable corepack for pnpm
-RUN corepack enable
-
-# Copy package files and install pnpm version from packageManager
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-RUN corepack install
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/database/package.json ./packages/database/
-COPY packages/clients/package.json ./packages/clients/
-COPY packages/notifications/package.json ./packages/notifications/
-COPY apps/notifications/package.json ./apps/notifications/
-
-# Install production dependencies only (--ignore-scripts avoids patch-package requirement)
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts
-
-# Copy built files from builder
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /app/packages/database/dist ./packages/database/dist
-COPY --from=builder /app/packages/clients/dist ./packages/clients/dist
-COPY --from=builder /app/packages/notifications/dist ./packages/notifications/dist
-COPY --from=builder /app/apps/notifications/dist ./apps/notifications/dist
+# Copy deployed app (includes all dependencies properly bundled)
+COPY --from=builder /deploy ./
 
 # Set environment
 ENV NODE_ENV=production
@@ -63,4 +44,4 @@ ENV NODE_ENV=production
 EXPOSE 4004
 
 # Start application
-CMD ["bun", "apps/notifications/dist/index.js"]
+CMD ["bun", "dist/index.js"]

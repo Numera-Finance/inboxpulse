@@ -8,8 +8,6 @@ import {
   userNotificationPreferences,
   notificationBatches,
   notifications,
-  notificationActions,
-  notificationBatchActions,
   userChannelAddresses,
   notificationAuditLog,
   notificationBounceComplaints,
@@ -22,8 +20,6 @@ import {
   NotificationService,
   DeliveryService,
   PreferencesService,
-  ActionService,
-  ActionTokenService,
   ChannelRegistry,
   EmailChannel,
   SesProvider,
@@ -41,8 +37,6 @@ export function setupContainer() {
     userNotificationPreferences,
     notificationBatches,
     notifications,
-    notificationActions,
-    notificationBatchActions,
     userChannelAddresses,
     notificationAuditLog,
     notificationBounceComplaints,
@@ -68,8 +62,6 @@ export function setupContainer() {
 
   // Register table references for services that need direct access
   container.register('UserNotificationPreferencesTable', { useValue: userNotificationPreferences });
-  container.register('NotificationActionsTable', { useValue: notificationActions });
-  container.register('NotificationBatchActionsTable', { useValue: notificationBatchActions });
 
   // Register user resolver
   container.register('UserResolver', { useClass: CrmUserResolver });
@@ -107,16 +99,8 @@ export function setupContainer() {
     useValue: templateProvider,
   });
 
-  // Register action token service
-  const actionTokenService = new ActionTokenService({
-    secret: process.env.NOTIFICATION_ACTION_SECRET || 'development-secret-min-32-characters!!',
-    defaultExpirySeconds: 7 * 24 * 60 * 60, // 7 days
-  });
-  container.register('ActionTokenService', { useValue: actionTokenService });
-
   // Register core services
   container.register(NotificationService, { useClass: NotificationService });
   container.register(DeliveryService, { useClass: DeliveryService });
   container.register(PreferencesService, { useClass: PreferencesService });
-  container.register(ActionService, { useClass: ActionService });
 }
