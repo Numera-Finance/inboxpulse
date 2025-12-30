@@ -1,6 +1,6 @@
 "use client"
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, CheckCircle2, ExternalLink, Unplug } from "lucide-react"
@@ -8,11 +8,15 @@ import { GMAIL_SCOPE_DESCRIPTIONS } from "@crm/shared"
 import type { Integration } from "@/lib/api"
 import { API_BASE_URL } from "@/lib/api"
 
-// Gmail logo SVG
+// Gmail logo SVG - official Google colors
 function GmailLogo({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z" fill="#EA4335"/>
+      <path fill="#4285f4" d="M2 6.5V18c0 1.1.9 2 2 2h2.5v-8.5L2 8.2V6.5z"/>
+      <path fill="#34a853" d="M17.5 20H20c1.1 0 2-.9 2-2V6.5l-4.5 3.7V20z"/>
+      <path fill="#fbbc04" d="M17.5 4v7.5L22 8.2V5.6c0-2.5-2.8-3.9-4.8-2.4L17.5 4z"/>
+      <path fill="#ea4335" d="M6.5 11.5V4l5.5 4.5L17.5 4v7.5L12 16l-5.5-4.5z"/>
+      <path fill="#c5221f" d="M2 5.6v2.6l4.5 3.3V4l-.3-.2C4.2 1.9 2 3.1 2 5.6z"/>
     </svg>
   )
 }
@@ -22,6 +26,7 @@ interface GmailIntegrationCardProps {
   isLoading: boolean
   isDisconnecting?: boolean
   tenantId: string
+  userId?: string
   onConnect: () => void
   onDisconnect: () => void
 }
@@ -31,6 +36,7 @@ export function GmailIntegrationCard({
   isLoading,
   isDisconnecting = false,
   tenantId,
+  userId,
   onConnect,
   onDisconnect
 }: GmailIntegrationCardProps) {
@@ -41,8 +47,12 @@ export function GmailIntegrationCard({
       console.error('Cannot connect: tenantId is missing')
       return
     }
-    // Redirect to OAuth flow
-    window.location.href = `${API_BASE_URL}/oauth/gmail/authorize?tenantId=${tenantId}`
+    // Redirect to OAuth flow with userId for tracking who connected
+    const params = new URLSearchParams({ tenantId })
+    if (userId) {
+      params.set('userId', userId)
+    }
+    window.location.href = `${API_BASE_URL}/oauth/gmail/authorize?${params.toString()}`
   }
 
   const formatDate = (date: Date | null | undefined) => {
@@ -82,9 +92,6 @@ export function GmailIntegrationCard({
             </div>
             <div>
               <CardTitle className="text-lg">Gmail</CardTitle>
-              <CardDescription>
-                Sync and analyze emails from your Gmail account
-              </CardDescription>
             </div>
           </div>
           {isConnected ? (
@@ -104,6 +111,17 @@ export function GmailIntegrationCard({
           </div>
         ) : isConnected ? (
           <div className="space-y-3">
+            {/* Connected account info */}
+            {integration?.connectedEmail && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="font-medium">{integration.connectedEmail}</span>
+              </div>
+            )}
+            {integration?.createdByUser && (
+              <p className="text-xs text-muted-foreground">
+                Connected by {integration.createdByUser.fullName}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <p className="text-muted-foreground">Last synced</p>

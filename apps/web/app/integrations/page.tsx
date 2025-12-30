@@ -106,6 +106,7 @@ export default function IntegrationsPage() {
             isLoading={isGmailLoading}
             isDisconnecting={disconnectMutation.isPending}
             tenantId={tenantId}
+            userId={user?.id}
             onConnect={handleConnect}
             onDisconnect={handleDisconnect}
           />

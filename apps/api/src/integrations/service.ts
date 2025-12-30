@@ -16,8 +16,9 @@ export class IntegrationService {
     tenantId: string;
     authType: 'oauth' | 'service_account' | 'api_key';
     keys: IntegrationKeys;
+    createdBy?: string;
   }) {
-    const { tenantId, authType, keys } = input;
+    const { tenantId, authType, keys, createdBy } = input;
 
     // Validate that email is set for lookup
     const email = keys.email || keys.impersonatedUserEmail;
@@ -33,13 +34,14 @@ export class IntegrationService {
       const integration = await this.integrationRepo.updateKeysByEmail(tenantId, 'gmail', email, { keys });
       return { integration, updated: true };
     } else {
-      logger.info({ tenantId, email, authType }, 'Creating new Gmail integration');
+      logger.info({ tenantId, email, authType, createdBy }, 'Creating new Gmail integration');
       const integration = await this.integrationRepo.create({
         tenantId,
         source: 'gmail',
         authType,
         keys,
         tokenExpiresAt: keys.expiresAt ? new Date(keys.expiresAt) : undefined,
+        createdBy,
       });
       return { integration, created: true };
     }
@@ -75,6 +77,8 @@ export class IntegrationService {
       lastRunAt: integration.lastRunAt,
       watchSetAt: integration.watchSetAt,
       watchExpiresAt: integration.watchExpiresAt,
+      connectedEmail: integration.connectedEmail,
+      createdByUser: integration.createdByUser,
       createdAt: integration.createdAt,
       updatedAt: integration.updatedAt,
     };

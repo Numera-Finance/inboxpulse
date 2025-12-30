@@ -1,6 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import type { Database } from '@crm/database';
 import { integrations, type IntegrationSource, type IntegrationParameters } from './schema';
+import { users } from '../users/schema';
 import { eq, and, or, isNull, lt, sql } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
@@ -157,8 +158,14 @@ export class IntegrationRepository {
    */
   async getIntegration(tenantId: string, source: IntegrationSource) {
     const result = await this.db
-      .select()
+      .select({
+        integration: integrations,
+        creatorFirstName: users.firstName,
+        creatorLastName: users.lastName,
+        creatorEmail: users.email,
+      })
       .from(integrations)
+      .leftJoin(users, eq(integrations.createdBy, users.id))
       .where(
         and(
           eq(integrations.tenantId, tenantId),
@@ -172,7 +179,20 @@ export class IntegrationRepository {
       return null;
     }
 
-    return this.mapToIntegration(result[0]);
+    const row = result[0];
+    const params = parametersToObject(row.integration.parameters as IntegrationParameters);
+    const connectedEmail = params.email || params.impersonatedUserEmail || params.userEmail;
+
+    return {
+      ...(await this.mapToIntegration(row.integration)),
+      connectedEmail,
+      createdByUser: row.creatorFirstName ? {
+        firstName: row.creatorFirstName,
+        lastName: row.creatorLastName,
+        email: row.creatorEmail,
+        fullName: `${row.creatorFirstName} ${row.creatorLastName}`,
+      } : null,
+    };
   }
 
   /**
@@ -434,19 +454,40 @@ export class IntegrationRepository {
   }
 
   /**
-   * List all integrations for a tenant
+   * List all integrations for a tenant with creator info
    */
   async listByTenant(tenantId: string) {
     const result = await this.db
-      .select()
+      .select({
+        integration: integrations,
+        creatorFirstName: users.firstName,
+        creatorLastName: users.lastName,
+        creatorEmail: users.email,
+      })
       .from(integrations)
+      .leftJoin(users, eq(integrations.createdBy, users.id))
       .where(eq(integrations.tenantId, tenantId));
 
-    return result.map((row) => ({
-      ...row,
-      // Don't decrypt keys in list view for security
-      keys: undefined,
-    }));
+    return result.map((row) => {
+      // Extract connected email from parameters
+      const params = parametersToObject(row.integration.parameters as IntegrationParameters);
+      const connectedEmail = params.email || params.impersonatedUserEmail || params.userEmail;
+
+      return {
+        ...row.integration,
+        // Don't expose encrypted keys in list view
+        keys: undefined,
+        // Add connected email for display
+        connectedEmail,
+        // Add creator info
+        createdByUser: row.creatorFirstName ? {
+          firstName: row.creatorFirstName,
+          lastName: row.creatorLastName,
+          email: row.creatorEmail,
+          fullName: `${row.creatorFirstName} ${row.creatorLastName}`,
+        } : null,
+      };
+    });
   }
 
   /**

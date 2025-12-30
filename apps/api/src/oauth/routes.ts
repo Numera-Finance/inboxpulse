@@ -13,6 +13,7 @@ const app = new Hono();
  */
 const oauthStates = new Map<string, {
   tenantId: string;
+  userId?: string;
   createdAt: Date;
   clientId: string;
   clientSecret: string;
@@ -37,6 +38,7 @@ setInterval(() => {
  */
 app.get('/gmail/authorize', async (c) => {
   const tenantId = c.req.query('tenantId');
+  const userId = c.req.query('userId');
   const clientIdParam = c.req.query('clientId');
   const clientSecretParam = c.req.query('clientSecret');
 
@@ -98,6 +100,7 @@ app.get('/gmail/authorize', async (c) => {
     const state = crypto.randomUUID();
     oauthStates.set(state, {
       tenantId,
+      userId,
       createdAt: new Date(),
       clientId,
       clientSecret
@@ -159,7 +162,7 @@ app.get('/gmail/callback', async (c) => {
     return c.json({ error: 'Invalid or expired authorization request' }, 400);
   }
 
-  const { tenantId, clientId, clientSecret } = stateData;
+  const { tenantId, userId, clientId, clientSecret } = stateData;
   oauthStates.delete(state); // Clean up state
 
   try {
@@ -217,6 +220,7 @@ app.get('/gmail/callback', async (c) => {
         refreshToken: tokens.refresh_token,
         accessToken: tokens.access_token || undefined,
       },
+      createdBy: userId,
     });
 
     logger.info({ tenantId, email }, 'OAuth integration created/updated successfully');

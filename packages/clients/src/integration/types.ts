@@ -19,6 +19,18 @@ export const integrationKeysSchema = z.record(z.string(), z.any());
 export type IntegrationKeys = z.infer<typeof integrationKeysSchema>;
 
 /**
+ * Schema for user who created the integration
+ */
+export const integrationCreatedByUserSchema = z.object({
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  fullName: z.string(),
+}).nullable().optional();
+
+export type IntegrationCreatedByUser = z.infer<typeof integrationCreatedByUserSchema>;
+
+/**
  * Zod schema for Integration response
  * Note: Sensitive fields (credentials, tokens) are not exposed in API responses
  */
@@ -34,6 +46,8 @@ export const integrationSchema = z.object({
   lastRunAt: z.coerce.date().nullable().optional(),
   watchSetAt: z.coerce.date().nullable().optional(), // When Gmail watch was enabled
   watchExpiresAt: z.coerce.date().nullable().optional(), // When Gmail watch expires
+  connectedEmail: z.string().nullable().optional(), // Email address connected (for display)
+  createdByUser: integrationCreatedByUserSchema, // User who connected this integration
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });
