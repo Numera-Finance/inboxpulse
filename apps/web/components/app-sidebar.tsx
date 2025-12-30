@@ -140,15 +140,15 @@ export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
           </nav>
         </ScrollArea>
 
-        <div className="border-t border-border p-3 space-y-2">
+        <div className={cn("border-t border-border space-y-2", collapsed ? "p-2" : "p-3")}>
           {user && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   className={cn(
-                    "w-full h-auto py-2 px-2",
-                    collapsed ? "justify-center" : "justify-start"
+                    "w-full h-auto",
+                    collapsed ? "p-1.5 justify-center" : "py-2 px-2 justify-start"
                   )}
                 >
                   <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
@@ -156,10 +156,10 @@ export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
                       <img
                         src={user.image}
                         alt={user.name || "User"}
-                        className="h-8 w-8 rounded-full"
+                        className="h-8 w-8 rounded-full shrink-0"
                       />
                     ) : (
-                      <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium shrink-0">
+                      <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium shrink-0">
                         {user.email?.[0]?.toUpperCase() || "U"}
                       </div>
                     )}
