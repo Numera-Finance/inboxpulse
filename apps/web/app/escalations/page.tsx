@@ -616,7 +616,7 @@ export default function EscalationsPage() {
               onSelect: handleSelectItem,
               onResolve: handleResolve,
             }}
-            customActions={customActions}
+            toolbarActions={customActions}
           />
         </div>
 

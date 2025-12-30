@@ -4,14 +4,11 @@
 -- DEPENDENCIES: Run after tenants.sql and roles.sql
 -- =============================================================================
 
-DROP TABLE IF EXISTS user_accessible_customers CASCADE;
-DROP TABLE IF EXISTS user_customers CASCADE;
-DROP TABLE IF EXISTS user_managers CASCADE;
-DROP TABLE IF EXISTS users CASCADE;
 
 -- -----------------------------------------------------------------------------
 -- Users - Core user entity (employees/users are same)
 -- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS users CASCADE;
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id),
@@ -53,6 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at);
 -- One user can have multiple managers (matrix organization).
 -- Changes trigger async rebuild of user_accessible_customers.
 -- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS user_managers CASCADE;
 CREATE TABLE IF NOT EXISTS user_managers (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     manager_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -70,6 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_user_managers_user ON user_managers(user_id);
 -- A user can be assigned to many customers (50-100+).
 -- Changes trigger async rebuild of user_accessible_customers.
 -- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS user_customers CASCADE;
 CREATE TABLE IF NOT EXISTS user_customers (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -94,6 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_user_customers_user ON user_customers(user_id);
 --   - Alice can access CompanyX (via managing Bob)
 --   Both rows exist in this table.
 -- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS user_accessible_customers CASCADE;
 CREATE TABLE IF NOT EXISTS user_accessible_customers (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -105,3 +105,24 @@ CREATE TABLE IF NOT EXISTS user_accessible_customers (
 CREATE INDEX IF NOT EXISTS idx_uac_customer ON user_accessible_customers(customer_id);
 CREATE INDEX IF NOT EXISTS idx_uac_user ON user_accessible_customers(user_id);
 
+
+
+
+-- User subordinates denormalized table
+-- Stores the transitive closure of manager -> subordinate relationships
+-- Used for efficient access control (user can see their tasks + subordinates' tasks)
+-- This table is rebuilt when org structure changes (see users.reports_to_id)
+DROP TABLE IF EXISTS user_subordinates CASCADE;
+CREATE TABLE IF NOT EXISTS user_subordinates (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subordinate_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Track when this relationship was computed
+    rebuilt_at TIMESTAMP WITH TIME ZONE NOT NULL,
+
+    PRIMARY KEY (user_id, subordinate_id)
+);
+
+-- Indexes
+CREATE INDEX idx_user_subordinates_user ON user_subordinates(user_id);
+CREATE INDEX idx_user_subordinates_subordinate ON user_subordinates(subordinate_id);

@@ -10,9 +10,12 @@ import {
 } from 'drizzle-orm/pg-core';
 import { v7 as uuidv7 } from 'uuid';
 import { tenants } from '../tenants/schema';
-import { users } from '../users/schema';
+import { users, userSubordinates } from '../users/schema';
 import { customers } from '../customers/schema';
 import { emails } from '../emails/schema';
+
+// Re-export userSubordinates for convenience (defined in users schema)
+export { userSubordinates } from '../users/schema';
 
 /**
  * Task status enum values
@@ -114,31 +117,6 @@ export const taskComments = pgTable(
   ]
 );
 
-/**
- * User Subordinates - Denormalized table for efficient subordinate queries
- *
- * Contains ALL subordinates a user has (direct + transitive).
- * Rebuilt asynchronously when userManagers changes.
- *
- * This enables O(1) access control queries for tasks.
- */
-export const userSubordinates = pgTable(
-  'user_subordinates',
-  {
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    subordinateId: uuid('subordinate_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    rebuiltAt: timestamp('rebuilt_at', { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    index('idx_user_subordinates_user').on(table.userId),
-    index('idx_user_subordinates_subordinate').on(table.subordinateId),
-  ]
-);
-
 // =============================================================================
 // Type Exports
 // =============================================================================
@@ -149,4 +127,5 @@ export type NewTask = typeof tasks.$inferInsert;
 export type TaskComment = typeof taskComments.$inferSelect;
 export type NewTaskComment = typeof taskComments.$inferInsert;
 
-export type UserSubordinate = typeof userSubordinates.$inferSelect;
+// Re-export UserSubordinate type from users schema
+export type { UserSubordinate } from '../users/schema';

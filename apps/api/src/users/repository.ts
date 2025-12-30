@@ -8,6 +8,7 @@ import {
   userManagers,
   userCustomers,
   userAccessibleCustomers,
+  userSubordinates,
   type User,
   type NewUser,
   type UserManager,
@@ -434,10 +435,20 @@ export class UserRepository extends ScopedRepository {
     const start = Date.now();
     const rebuiltAt = new Date();
 
+    let accessibleCustomersCount = 0;
+    let subordinatesCount = 0;
+
     await this.db.transaction(async (tx) => {
       // Delete existing rows for this tenant
       await tx.execute(sql`
         DELETE FROM user_accessible_customers
+        WHERE user_id IN (
+          SELECT id FROM users WHERE tenant_id = ${tenantId}
+        )
+      `);
+
+      await tx.execute(sql`
+        DELETE FROM user_subordinates
         WHERE user_id IN (
           SELECT id FROM users WHERE tenant_id = ${tenantId}
         )
@@ -471,26 +482,61 @@ export class UserRepository extends ScopedRepository {
         FROM hierarchy h
         JOIN user_customers uc ON uc.user_id = h.descendant_id
       `);
+
+      // Rebuild user_subordinates using the same hierarchy logic
+      // This stores which users are subordinates of each user (excluding self)
+      await tx.execute(sql`
+        WITH RECURSIVE hierarchy AS (
+          -- Base case: each active user is their own ancestor
+          SELECT id AS ancestor_id, id AS descendant_id
+          FROM users
+          WHERE tenant_id = ${tenantId}
+            AND row_status = ${RowStatus.ACTIVE}
+
+          UNION ALL
+
+          -- Recursive case: follow manager relationships downward
+          SELECT h.ancestor_id, um.user_id AS descendant_id
+          FROM hierarchy h
+          JOIN user_managers um ON um.manager_id = h.descendant_id
+          JOIN users u ON u.id = um.user_id
+            AND u.tenant_id = ${tenantId}
+            AND u.row_status = ${RowStatus.ACTIVE}
+        )
+        INSERT INTO user_subordinates (user_id, subordinate_id, rebuilt_at)
+        SELECT DISTINCT ancestor_id, descendant_id, ${rebuiltAt}
+        FROM hierarchy
+        WHERE ancestor_id != descendant_id  -- Exclude self
+      `);
     });
 
     // Count the results after rebuild
-    const countResult = await this.db
+    const accessibleCountResult = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(userAccessibleCustomers)
       .innerJoin(users, eq(users.id, userAccessibleCustomers.userId))
       .where(eq(users.tenantId, tenantId));
 
-    const insertedCount = Number(countResult[0]?.count ?? 0);
+    accessibleCustomersCount = Number(accessibleCountResult[0]?.count ?? 0);
+
+    const subordinatesCountResult = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(userSubordinates)
+      .innerJoin(users, eq(users.id, userSubordinates.userId))
+      .where(eq(users.tenantId, tenantId));
+
+    subordinatesCount = Number(subordinatesCountResult[0]?.count ?? 0);
+
     const durationMs = Date.now() - start;
 
     logger.info(
-      { tenantId, insertedCount, durationMs },
-      'Rebuilt accessible customers'
+      { tenantId, accessibleCustomersCount, subordinatesCount, durationMs },
+      'Rebuilt accessible customers and subordinates'
     );
 
     return {
       deletedCount: 0, // Not tracked for simplicity
-      insertedCount,
+      insertedCount: accessibleCustomersCount + subordinatesCount,
       durationMs,
     };
   }

@@ -175,3 +175,32 @@ export type UserCustomer = typeof userCustomers.$inferSelect;
 export type NewUserCustomer = typeof userCustomers.$inferInsert;
 
 export type UserAccessibleCustomer = typeof userAccessibleCustomers.$inferSelect;
+
+/**
+ * User Subordinates - Denormalized table for efficient subordinate queries
+ *
+ * Contains ALL subordinates a user has (direct + transitive).
+ * Rebuilt asynchronously via Inngest when userManagers changes.
+ *
+ * This enables O(1) access control queries for tasks (user can see their own
+ * tasks + tasks assigned to any subordinate).
+ */
+export const userSubordinates = pgTable(
+  'user_subordinates',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    subordinateId: uuid('subordinate_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    rebuiltAt: timestamp('rebuilt_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.subordinateId] }),
+    index('idx_user_subordinates_user').on(table.userId),
+    index('idx_user_subordinates_subordinate').on(table.subordinateId),
+  ]
+);
+
+export type UserSubordinate = typeof userSubordinates.$inferSelect;
