@@ -11,7 +11,7 @@ import {
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, Clock, Mail, AlertTriangle } from "lucide-react"
+import { ArrowUpDown, Clock, Mail, AlertTriangle, TrendingUp, TrendingDown, ThumbsUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Customer } from "@/lib/types"
@@ -83,6 +83,44 @@ export function CustomerTable({ customers, onSelect }: CustomerTableProps) {
       size: 110,
     },
     {
+      accessorKey: "upsellCount",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="p-0 hover:bg-transparent w-full justify-center"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          <TrendingUp className="mr-1 h-3 w-3" />
+          Upsell
+          <ArrowUpDown className="ml-2 h-3 w-3" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const count = row.getValue("upsellCount") as number
+        return <span className={cn("font-medium w-full text-center block", count > 0 && "text-green-500")}>{count}</span>
+      },
+      size: 90,
+    },
+    {
+      accessorKey: "churnCount",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="p-0 hover:bg-transparent w-full justify-center"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          <TrendingDown className="mr-1 h-3 w-3" />
+          Churn
+          <ArrowUpDown className="ml-2 h-3 w-3" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const count = row.getValue("churnCount") as number
+        return <span className={cn("font-medium w-full text-center block", count > 0 && "text-orange-500")}>{count}</span>
+      },
+      size: 90,
+    },
+    {
       accessorKey: "escalations",
       header: ({ column }) => (
         <Button
@@ -99,7 +137,26 @@ export function CustomerTable({ customers, onSelect }: CustomerTableProps) {
         const escalations = row.getValue("escalations") as number
         return <span className={cn("font-medium w-full text-center block", escalations > 0 && "text-red-500")}>{escalations}</span>
       },
-      size: 120,
+      size: 110,
+    },
+    {
+      accessorKey: "positiveCount",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="p-0 hover:bg-transparent w-full justify-center"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          <ThumbsUp className="mr-1 h-3 w-3" />
+          Positive
+          <ArrowUpDown className="ml-2 h-3 w-3" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const count = row.getValue("positiveCount") as number
+        return <span className={cn("font-medium w-full text-center block", count > 0 && "text-blue-500")}>{count}</span>
+      },
+      size: 90,
     },
     {
       accessorKey: "lastContact",

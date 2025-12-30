@@ -103,6 +103,9 @@ export interface Customer {
   totalEmails: number;
   avgTAT: string;
   escalations: number;
+  upsellCount: number; // Number of upsell opportunities detected
+  churnCount: number; // Number of churn signals detected
+  positiveCount: number; // Number of positive sentiment emails
   lastContact: string;
   sentiment: 'Positive' | 'Negative' | 'Neutral';
   sentimentConfidence?: number; // 0-1 confidence score
@@ -149,6 +152,9 @@ export function mapApiCustomerToCustomer(customer: ApiCustomer): Customer {
     totalEmails: customer.emailCount ?? 0,
     avgTAT: '—',
     escalations: customer.escalationCount ?? 0,
+    upsellCount: customer.upsellCount ?? 0,
+    churnCount: customer.churnCount ?? 0,
+    positiveCount: customer.positiveCount ?? 0,
     lastContact: formatRelativeDate(customer.lastContactDate),
     sentiment: capitalizeSentiment(customer.sentiment?.value),
     sentimentConfidence: customer.sentiment?.confidence,

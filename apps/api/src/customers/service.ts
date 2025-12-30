@@ -221,6 +221,45 @@ export class CustomerService {
           escalationCount: escalationCounts[customer.id] || 0,
         }));
       }
+
+      // Fetch upsell counts if requested
+      if (includes.includes('upsellCount')) {
+        const upsellCounts = await this.emailRepository.getUpsellCountsByCustomerIdsScoped(
+          requestHeader,
+          customerIds
+        );
+
+        clientCustomers = clientCustomers.map(customer => ({
+          ...customer,
+          upsellCount: upsellCounts[customer.id] || 0,
+        }));
+      }
+
+      // Fetch churn counts if requested
+      if (includes.includes('churnCount')) {
+        const churnCounts = await this.emailRepository.getChurnCountsByCustomerIdsScoped(
+          requestHeader,
+          customerIds
+        );
+
+        clientCustomers = clientCustomers.map(customer => ({
+          ...customer,
+          churnCount: churnCounts[customer.id] || 0,
+        }));
+      }
+
+      // Fetch positive sentiment counts if requested
+      if (includes.includes('positiveCount')) {
+        const positiveCounts = await this.emailRepository.getPositiveCountsByCustomerIdsScoped(
+          requestHeader,
+          customerIds
+        );
+
+        clientCustomers = clientCustomers.map(customer => ({
+          ...customer,
+          positiveCount: positiveCounts[customer.id] || 0,
+        }));
+      }
     }
 
     return {

@@ -861,6 +861,155 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Get upsell counts by customer IDs (with access control)
+   * Counts emails with UPSELL signal
+   */
+  async getUpsellCountsByCustomerIdsScoped(
+    header: RequestHeader,
+    customerIds: string[]
+  ): Promise<Record<string, number>> {
+    if (customerIds.length === 0) {
+      return {};
+    }
+
+    const accessible = isAdmin(header.permissions)
+      ? customerIds
+      : await this.getAccessibleCustomerIds(header, customerIds);
+
+    if (accessible.length === 0) {
+      return {};
+    }
+
+    const result = await this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        count: sql<number>`count(DISTINCT ${emails.id})::int`,
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(
+        and(
+          eq(emails.tenantId, header.tenantId),
+          inArray(emailParticipants.customerId, accessible),
+          signalContains(Signal.UPSELL)
+        )
+      )
+      .groupBy(emailParticipants.customerId);
+
+    const counts: Record<string, number> = {};
+    for (const customerId of customerIds) {
+      counts[customerId] = 0;
+    }
+    for (const row of result) {
+      if (row.customerId) {
+        counts[row.customerId] = row.count;
+      }
+    }
+
+    return counts;
+  }
+
+  /**
+   * Get churn signal counts by customer IDs (with access control)
+   * Counts emails with any churn signal (LOW, MEDIUM, HIGH, CRITICAL)
+   */
+  async getChurnCountsByCustomerIdsScoped(
+    header: RequestHeader,
+    customerIds: string[]
+  ): Promise<Record<string, number>> {
+    if (customerIds.length === 0) {
+      return {};
+    }
+
+    const accessible = isAdmin(header.permissions)
+      ? customerIds
+      : await this.getAccessibleCustomerIds(header, customerIds);
+
+    if (accessible.length === 0) {
+      return {};
+    }
+
+    const churnSignals = [Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL];
+
+    const result = await this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        count: sql<number>`count(DISTINCT ${emails.id})::int`,
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(
+        and(
+          eq(emails.tenantId, header.tenantId),
+          inArray(emailParticipants.customerId, accessible),
+          signalOverlaps(churnSignals)
+        )
+      )
+      .groupBy(emailParticipants.customerId);
+
+    const counts: Record<string, number> = {};
+    for (const customerId of customerIds) {
+      counts[customerId] = 0;
+    }
+    for (const row of result) {
+      if (row.customerId) {
+        counts[row.customerId] = row.count;
+      }
+    }
+
+    return counts;
+  }
+
+  /**
+   * Get positive sentiment counts by customer IDs (with access control)
+   * Counts emails with SENTIMENT_POSITIVE signal
+   */
+  async getPositiveCountsByCustomerIdsScoped(
+    header: RequestHeader,
+    customerIds: string[]
+  ): Promise<Record<string, number>> {
+    if (customerIds.length === 0) {
+      return {};
+    }
+
+    const accessible = isAdmin(header.permissions)
+      ? customerIds
+      : await this.getAccessibleCustomerIds(header, customerIds);
+
+    if (accessible.length === 0) {
+      return {};
+    }
+
+    const result = await this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        count: sql<number>`count(DISTINCT ${emails.id})::int`,
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(
+        and(
+          eq(emails.tenantId, header.tenantId),
+          inArray(emailParticipants.customerId, accessible),
+          signalContains(Signal.SENTIMENT_POSITIVE)
+        )
+      )
+      .groupBy(emailParticipants.customerId);
+
+    const counts: Record<string, number> = {};
+    for (const customerId of customerIds) {
+      counts[customerId] = 0;
+    }
+    for (const row of result) {
+      if (row.customerId) {
+        counts[row.customerId] = row.count;
+      }
+    }
+
+    return counts;
+  }
+
+  /**
    * Helper: Get accessible customer IDs from provided list
    */
   private async getAccessibleCustomerIds(
