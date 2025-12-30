@@ -32,7 +32,7 @@ import {
 } from "@/components/inbox"
 import type { Customer, ContactDisplay, Email } from "@/lib/types"
 import { predefinedLabels, mapApiContactToContact } from "@/lib/types"
-import { useEmailsByCustomer, useContactsByCustomer, useUsersByCustomer, useAddCustomerToUser, useRemoveCustomerFromUser, userKeys } from "@/lib/hooks"
+import { useEmailsByCustomer, useContactsByCustomer, useUsersByCustomer, useAddCustomerToUser, useRemoveCustomerFromUser, userKeys, useUpdateCustomer, customerKeys } from "@/lib/hooks"
 import { authService } from "@/lib/auth/auth-service"
 import { getCustomerRoleName } from "@crm/shared"
 import { UserAutocomplete } from "@/components/ui/user-autocomplete"
@@ -127,6 +127,9 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   // Mutations for adding/removing team members
   const addCustomerToUser = useAddCustomerToUser()
   const removeCustomerFromUser = useRemoveCustomerFromUser()
+
+  // Mutation for updating customer labels
+  const updateCustomer = useUpdateCustomer()
 
   // Map API contacts to frontend ContactDisplay type (already sorted by API)
   const contacts: ContactDisplay[] = React.useMemo(() => {
@@ -449,9 +452,21 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     setLabels(labels.filter((l) => l !== label))
   }
 
-  const handleSaveLabels = () => {
-    console.log("Saving labels:", labels)
-    setIsEditingLabels(false)
+  const handleSaveLabels = async () => {
+    if (!customer) return
+
+    try {
+      await updateCustomer.mutateAsync({
+        id: customer.id,
+        data: { labels },
+      })
+      // Invalidate customer queries to refresh data
+      queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
+      queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
+      setIsEditingLabels(false)
+    } catch (error) {
+      console.error("Failed to save labels:", error)
+    }
   }
 
   // Team member handlers
@@ -648,8 +663,12 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                       >
                         Cancel
                       </Button>
-                      <Button size="sm" className="h-6 text-xs" onClick={handleSaveLabels}>
-                        <Check className="h-3 w-3 mr-1" />
+                      <Button size="sm" className="h-6 text-xs" onClick={handleSaveLabels} disabled={updateCustomer.isPending}>
+                        {updateCustomer.isPending ? (
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <Check className="h-3 w-3 mr-1" />
+                        )}
                         Save
                       </Button>
                     </>

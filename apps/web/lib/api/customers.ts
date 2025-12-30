@@ -50,3 +50,19 @@ export async function upsertCustomer(
   return getCustomerClient().upsertCustomer(data, signal);
 }
 
+/**
+ * Update customer fields (name, labels, metadata, etc.)
+ */
+export async function updateCustomer(
+  id: string,
+  data: {
+    name?: string;
+    website?: string | null;
+    industry?: string | null;
+    labels?: string[];
+    metadata?: Record<string, any> | null;
+  },
+  signal?: AbortSignal
+): Promise<Customer> {
+  return getCustomerClient().updateCustomer(id, data, signal);
+}

@@ -14,6 +14,7 @@ export const customers = pgTable(
     name: text('name'), // Extracted from emails or manual entry
     website: text('website'),
     industry: varchar('industry', { length: 100 }),
+    labels: jsonb('labels').$type<string[]>().default([]),
 
     // Metadata
     metadata: jsonb('metadata').$type<Record<string, any>>(),

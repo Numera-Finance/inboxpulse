@@ -31,6 +31,7 @@ function toClientCustomerWithDomains(
     name: customer.name,
     website: customer.website,
     industry: customer.industry,
+    labels: customer.labels || [],
     metadata: customer.metadata,
     createdAt: customer.createdAt,
     updatedAt: customer.updatedAt,

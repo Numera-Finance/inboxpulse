@@ -5,8 +5,17 @@ import { CustomerService } from './service';
 import type { ApiResponse, RequestHeader } from '@crm/shared';
 import { createCustomerRequestSchema, type CreateCustomerRequest } from '@crm/clients';
 import { requirePermission } from '../middleware/require-permission';
-import { handleApiRequest, handleGetRequest, handleGetRequestWithParams } from '../utils/api-handler';
+import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { z } from 'zod';
+
+// Schema for updating customer fields
+const updateCustomerSchema = z.object({
+  name: z.string().optional(),
+  website: z.string().url().optional().nullable(),
+  industry: z.string().max(100).optional().nullable(),
+  labels: z.array(z.string()).optional(),
+  metadata: z.record(z.string(), z.any()).optional().nullable(),
+});
 
 export const customerRoutes = new Hono();
 
@@ -91,3 +100,33 @@ customerRoutes.get('/:id', async (c) => {
   );
 });
 
+/**
+ * PATCH /api/customers/:id - Update customer fields (with access control)
+ * Requires CUSTOMER_EDIT permission
+ */
+customerRoutes.patch('/:id', requirePermission(Permission.CUSTOMER_EDIT), async (c) => {
+  return handleApiRequestWithParams(
+    c,
+    z.object({ id: z.uuid() }),
+    updateCustomerSchema,
+    async (requestHeader: RequestHeader, params, updateData) => {
+      const service = container.resolve(CustomerService);
+
+      // Verify customer exists and user has access
+      const existing = await service.getCustomerByIdScoped(requestHeader, params.id);
+      if (!existing) {
+        throw new NotFoundError('Customer', params.id);
+      }
+
+      // Update the customer
+      const updated = await service.updateCustomer(params.id, updateData);
+      if (!updated) {
+        throw new NotFoundError('Customer', params.id);
+      }
+
+      // Return updated customer with domains
+      const customer = await service.getCustomerByIdScoped(requestHeader, params.id);
+      return customer;
+    }
+  );
+});

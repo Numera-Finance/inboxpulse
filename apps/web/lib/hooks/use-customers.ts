@@ -76,3 +76,32 @@ export function useUpsertCustomer() {
   });
 }
 
+/**
+ * Hook to update customer fields (name, labels, metadata, etc.)
+ */
+export function useUpdateCustomer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: {
+        name?: string;
+        website?: string | null;
+        industry?: string | null;
+        labels?: string[];
+        metadata?: Record<string, any> | null;
+      };
+    }) => api.updateCustomer(id, data),
+    onSuccess: (customer) => {
+      // Update the cache for this specific customer
+      queryClient.setQueryData(customerKeys.detail(customer.id), customer);
+      // Invalidate lists to refetch
+      queryClient.invalidateQueries({ queryKey: customerKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: customerKeys.byTenant(customer.tenantId) });
+    },
+  });
+}

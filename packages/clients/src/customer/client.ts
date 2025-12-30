@@ -66,4 +66,27 @@ export class CustomerClient extends BaseClient {
 
     return response.data;
   }
+
+  /**
+   * Update customer fields (name, labels, metadata, etc.)
+   */
+  async updateCustomer(
+    id: string,
+    data: {
+      name?: string;
+      website?: string | null;
+      industry?: string | null;
+      labels?: string[];
+      metadata?: Record<string, any> | null;
+    },
+    signal?: AbortSignal
+  ): Promise<Customer> {
+    const response = await this.patch<ApiResponse<Customer>>(`/api/customers/${id}`, data, signal);
+
+    if (!response?.data) {
+      throw new Error('Invalid API response: missing data');
+    }
+
+    return response.data;
+  }
 }

@@ -23,6 +23,7 @@ export {
   useCustomer,
   useCustomerByDomain,
   useUpsertCustomer,
+  useUpdateCustomer,
   customerKeys,
 } from './use-customers';
 

@@ -31,6 +31,7 @@ export const customerSchema = z.object({
   name: z.string().nullable().optional(),
   website: z.string().nullable().optional(),
   industry: z.string().nullable().optional(),
+  labels: z.array(z.string()).optional(), // Customer labels/tags
   metadata: z.record(z.string(), z.any()).nullable().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),

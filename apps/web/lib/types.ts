@@ -145,7 +145,7 @@ export function mapApiCustomerToCustomer(customer: ApiCustomer): Customer {
     name: customer.name || customer.domains[0] || 'Unknown',
     domains: customer.domains,
     tier: 'Standard', // TODO: Add tier to customer API
-    labels: [],
+    labels: customer.labels || [],
     totalEmails: customer.emailCount ?? 0,
     avgTAT: '—',
     escalations: customer.escalationCount ?? 0,
