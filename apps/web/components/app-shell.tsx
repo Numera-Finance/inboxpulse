@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import { AppSidebar } from "@/components/app-sidebar"
-import { AppHeader } from "@/components/app-header"
 
 const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed"
 
@@ -23,10 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <AppSidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <AppHeader />
-        <main className="flex-1 overflow-auto">{children}</main>
-      </div>
+      <main className="flex-1 overflow-auto">{children}</main>
     </div>
   )
 }
