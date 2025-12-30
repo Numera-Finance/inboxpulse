@@ -3,7 +3,7 @@ import { toStructuredError, sanitizeErrorForClient } from '@crm/shared';
 import { DomainExtractionService } from '../services/domain-extraction';
 import { ContactExtractionService } from '../services/contact-extraction';
 import { SignatureExtractionService } from '../services/signature-extraction';
-import { EmailFilterService, type ClassificationResult } from '../services/email-filter';
+import { EmailFilterService, type ClassificationResult, type EmailCategory } from '../services/email-filter';
 import { AnalysisExecutor } from '../framework/executor';
 import { AnalysisConfigLoader } from '../framework/config-loader';
 import { AIService, type ModelConfig } from '../services/ai-service';
@@ -285,8 +285,8 @@ app.post('/analyze', async (c) => {
       });
 
       // Check if email should be filtered out
-      const categoriesToFilter = filterOptions.filterCategories || ['spam', 'marketing'];
-      if (categoriesToFilter.includes(filterResult.category as any)) {
+      const categoriesToFilter: readonly EmailCategory[] = filterOptions.filterCategories || ['spam', 'marketing'];
+      if (categoriesToFilter.includes(filterResult.category)) {
         logger.info(
           {
             tenantId: validated.tenantId,
