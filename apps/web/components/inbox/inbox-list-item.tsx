@@ -140,11 +140,13 @@ export function InboxListItem({
                   : item.sender.name}
               </span>
               {/* Assigned user (for tasks) */}
-              {item.recipients && item.recipients.length > 0 && item.recipients[0].name && (
+              {config.itemType === 'task' && (
                 <>
                   <span className="text-muted-foreground text-xs">•</span>
                   <span className="text-xs text-muted-foreground truncate">
-                    {item.recipients[0].name}
+                    {item.recipients && item.recipients.length > 0 && item.recipients[0].name?.trim()
+                      ? item.recipients[0].name
+                      : "Unassigned"}
                   </span>
                 </>
               )}

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useSearchParams, useNavigate, useParams } from "react-router-dom"
-import { Inbox, Loader2, Check, RotateCcw, UserPlus, Calendar } from "lucide-react"
+import { Inbox, Loader2, Check, UserPlus, Calendar } from "lucide-react"
 import { format } from "date-fns"
 import { AppShell } from "@/components/app-shell"
 import {
@@ -38,15 +38,14 @@ import {
   useTask,
   useAssignableUsers,
   useMarkTaskDone,
-  useReopenTask,
   useReassignTask,
   useAddTaskComment,
   taskKeys,
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
 import type { Task, TaskSearchRequest } from "@crm/clients"
-import { TaskStatus } from "@crm/clients"
 import { authService } from "@/lib/auth/auth-service"
+import { getTaskClient } from "@/lib/api/clients"
 
 export default function EscalationsPage() {
   const navigate = useNavigate()
@@ -74,7 +73,6 @@ export default function EscalationsPage() {
 
   // Mutations
   const markDone = useMarkTaskDone()
-  const reopen = useReopenTask()
   const reassign = useReassignTask()
   const addComment = useAddTaskComment()
 
@@ -146,21 +144,8 @@ export default function EscalationsPage() {
       pagination: InboxPagination
     ): Promise<InboxPage<InboxItem<Task>>> => {
       const request = buildSearchRequest(filter, pagination)
-
-      // Use fetch directly since we need to await results
-      const response = await fetch("/api/tasks/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(request),
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch tasks")
-      }
-
-      const result = await response.json()
-      const data = result.data as { items: Task[]; total: number }
+      const taskClient = getTaskClient()
+      const data = await taskClient.search(request)
 
       return {
         items: data.items.map(apiTaskToInboxItem),
@@ -176,23 +161,21 @@ export default function EscalationsPage() {
   // Fetch task content callback for InboxView
   const handleFetchContent = React.useCallback(
     async (itemId: string): Promise<InboxItemContent> => {
-      const response = await fetch(`/api/tasks/${itemId}`, {
-        credentials: "include",
-      })
+      const taskClient = getTaskClient()
 
-      if (!response.ok) {
+      // Use already-fetched task data if it matches, otherwise fetch it
+      // This avoids duplicate API calls since useTask already fetched the task
+      const existingTask = selectedTaskData?.id === itemId ? selectedTaskData : null
+
+      // Fetch task (only if needed) and comments
+      const [task, taskComments] = await Promise.all([
+        existingTask ? Promise.resolve(existingTask) : taskClient.getById(itemId),
+        taskClient.getComments(itemId),
+      ])
+
+      if (!task) {
         throw new Error("Failed to fetch task")
       }
-
-      const result = await response.json()
-      const task = result.data as Task
-
-      // Fetch comments
-      const commentsResponse = await fetch(`/api/tasks/${itemId}/comments`, {
-        credentials: "include",
-      })
-      const commentsResult = await commentsResponse.json()
-      const taskComments = commentsResult.data || []
 
       const taskWithComments: TaskWithComments = {
         ...task,
@@ -201,7 +184,7 @@ export default function EscalationsPage() {
 
       return apiTaskToInboxContent(taskWithComments)
     },
-    []
+    [selectedTaskData]
   )
 
   // Handle task selection - navigate to task URL
@@ -223,16 +206,6 @@ export default function EscalationsPage() {
       queryClient.invalidateQueries({ queryKey: taskKeys.detail(itemId) })
     },
     [markDone, queryClient]
-  )
-
-  // Handle reopen
-  const handleReopen = React.useCallback(
-    async (taskId: string) => {
-      await reopen.mutateAsync(taskId)
-      queryClient.invalidateQueries({ queryKey: taskKeys.lists() })
-      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) })
-    },
-    [reopen, queryClient]
   )
 
   // Handle reassign
@@ -305,7 +278,6 @@ export default function EscalationsPage() {
 
   // Get the selected task from URL and convert to InboxItem
   const selectedTask = selectedTaskData || null
-  const isDone = selectedTask?.status === TaskStatus.DONE
   const selectedInboxItem = React.useMemo(() => {
     if (!selectedTask) return null
     return apiTaskToInboxItem(selectedTask)
@@ -331,27 +303,6 @@ export default function EscalationsPage() {
     return user?.name || "Select assignee..."
   }, [assignedFromUrl, assignableUsers])
 
-  // Custom actions for task detail panel
-  const customActions = taskIdFromUrl ? (
-    <div className="flex items-center gap-2">
-      {/* Reopen button (only shown for done tasks) */}
-      {isDone && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleReopen(taskIdFromUrl)}
-          disabled={reopen.isPending}
-        >
-          {reopen.isPending ? (
-            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-          ) : (
-            <RotateCcw className="h-3 w-3 mr-1" />
-          )}
-          Reopen
-        </Button>
-      )}
-    </div>
-  ) : null
 
   // Custom header with filters
   const headerContent = (
@@ -585,7 +536,6 @@ export default function EscalationsPage() {
               onAddComment: handleAddComment,
             }}
             selectedItem={selectedInboxItem}
-            toolbarActions={customActions}
           />
         </div>
 

@@ -560,10 +560,18 @@ export function InboxView({
             onReply: callbacks.onReply,
             onReplyAll: callbacks.onReplyAll,
             onForward: callbacks.onForward,
-            onAssign: callbacks.onAssign,
+            onAssign: callbacks.onAssign ? async (itemId, userId) => {
+              await callbacks.onAssign!(itemId, userId)
+              // Refresh the list to show updated assignment
+              fetchItems(page)
+            } : undefined,
             onUpdateStatus: callbacks.onUpdateStatus,
             onUpdatePriority: callbacks.onUpdatePriority,
-            onResolve: callbacks.onResolve,
+            onResolve: callbacks.onResolve ? async (itemId) => {
+              await callbacks.onResolve!(itemId)
+              // Refresh the list to show updated status
+              fetchItems(page)
+            } : undefined,
             onAddComment: callbacks.onAddComment,
           }}
           config={{ itemType: config.itemType }}

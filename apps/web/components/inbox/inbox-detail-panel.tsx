@@ -367,21 +367,28 @@ export function InboxDetailPanel({
   const [localAssignee, setLocalAssignee] = React.useState<{ id?: string; name: string } | null>(null)
   const [localComments, setLocalComments] = React.useState<InboxComment[] | null>(null)
 
-  // Sync local state from props when item changes
+  // Track item ID for detecting changes
   const itemId = item?.id
+
+  // Reset local state when item ID changes (switching tasks)
+  React.useEffect(() => {
+    setLocalAssignee(null)
+    setLocalComments(null)
+  }, [itemId])
+
+  // Sync assignee from item when it's available
   React.useEffect(() => {
     if (item?.recipients?.[0]) {
       setLocalAssignee({ id: item.recipients[0].id, name: item.recipients[0].name })
-    } else {
-      setLocalAssignee(null)
     }
-  }, [itemId]) // Only reset when item ID changes, not on every prop update
+  }, [item?.recipients])
 
+  // Sync comments from content when it loads
   React.useEffect(() => {
     if (content?.comments) {
       setLocalComments(content.comments)
     }
-  }, [itemId]) // Only reset when item ID changes
+  }, [content?.comments])
 
   // Use local state if available, otherwise fall back to props
   const displayAssignee = localAssignee ?? (item?.recipients?.[0] ? { id: item.recipients[0].id, name: item.recipients[0].name } : null)
@@ -482,8 +489,8 @@ export function InboxDetailPanel({
     )
   }
 
-  // Loading state - only show if we don't have content yet (prevents flash on refetch)
-  if (isLoading && !content) {
+  // Loading state - show if loading and either no content or content is for a different item
+  if (isLoading && (!content || content.id !== item.id)) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
         <div className="text-center">
