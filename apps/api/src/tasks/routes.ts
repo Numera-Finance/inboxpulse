@@ -16,8 +16,8 @@ const taskSearchSchema = z.object({
   sortOrder: z.enum(['asc', 'desc']).optional(),
   limit: z.number().int().positive().max(100).optional(),
   offset: z.number().int().min(0).optional(),
-  dateFrom: z.coerce.date().optional(),
-  dateTo: z.coerce.date().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
 });
 
 // Schema for creating a task

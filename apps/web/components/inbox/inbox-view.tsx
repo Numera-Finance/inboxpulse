@@ -125,8 +125,8 @@ export function InboxView({
         })
 
         setItems(result.items)
-        // Auto-select first item only if no controlled selection and no internal selection
-        if (result.items.length > 0 && controlledSelectedItem === undefined && !internalSelectedItem) {
+        // Auto-select first item if no item is currently selected
+        if (result.items.length > 0 && !controlledSelectedItem && !internalSelectedItem) {
           handleSelectItem(result.items[0])
         }
 
@@ -159,10 +159,10 @@ export function InboxView({
     }
   }
 
-  // Initial fetch
+  // Initial fetch and re-fetch when callbacks/filters change
   React.useEffect(() => {
     fetchItems(1)
-  }, [statusFilter, sentimentFilter]) // Re-fetch when filters change
+  }, [fetchItems]) // Re-fetch when fetchItems changes (includes callbacks, filters, etc.)
 
   // Debounced search
   React.useEffect(() => {

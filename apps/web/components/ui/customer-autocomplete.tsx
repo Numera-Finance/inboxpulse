@@ -26,7 +26,7 @@ export function CustomerAutocomplete({
   excludeIds,
 }: CustomerAutocompleteProps) {
   // Fetch all customers
-  const { data: customersData } = useCustomers({
+  const { data: customersData, isLoading, error } = useCustomers({
     queries: [],
     sortBy: 'name',
     sortOrder: 'asc',
@@ -42,18 +42,25 @@ export function CustomerAutocomplete({
 
   // Transform customers to ComboboxItem format
   const items = React.useMemo((): ComboboxItem[] => {
-    const customerItems = customersData?.items?.map(customer => {
-      const name = customer.name || customer.domains[0] || 'Unknown'
-      const domain = customer.domains[0] || ''
-      return {
-        value: customer.id,
-        label: `${name} (${domain})`,
-        searchText: `${name} ${domain}`,
-        // Store extra data for the onChange callback
-        _name: name,
-        _domain: domain,
-      }
-    }) || []
+    // Ensure we have valid data before processing
+    if (!customersData || !Array.isArray(customersData.items) || customersData.items.length === 0) {
+      return []
+    }
+
+    const customerItems = customersData.items
+      .filter(customer => customer && customer.id) // Filter out invalid customers
+      .map(customer => {
+        const name = customer.name || customer.domains?.[0] || 'Unknown'
+        const domain = customer.domains?.[0] || ''
+        return {
+          value: customer.id,
+          label: `${name} (${domain})`,
+          searchText: `${name} ${domain}`,
+          // Store extra data for the onChange callback
+          _name: name,
+          _domain: domain,
+        }
+      })
 
     // Filter out excluded IDs (but keep the currently selected one)
     const filtered = customerItems.filter(item =>
@@ -87,6 +94,11 @@ export function CustomerAutocomplete({
     }
   }
 
+  // Show error state if query failed
+  const displayEmptyText = error 
+    ? "Failed to load customers. Please try again."
+    : emptyText
+
   return (
     <VirtualizedCombobox
       items={items}
@@ -94,9 +106,10 @@ export function CustomerAutocomplete({
       onChange={handleChange}
       placeholder={placeholder}
       searchPlaceholder={searchPlaceholder}
-      emptyText={emptyText}
-      disabled={disabled}
+      emptyText={displayEmptyText}
+      disabled={disabled || !!error}
       className={className}
+      isLoading={isLoading}
     />
   )
 }

@@ -198,11 +198,19 @@ export class TaskRepository {
     }
 
     if (options.dateFrom) {
-      conditions.push(sql`${tasks.createdAt} >= ${options.dateFrom}`);
+      // Convert Date to ISO string for postgres driver compatibility
+      const dateFromStr = options.dateFrom instanceof Date
+        ? options.dateFrom.toISOString()
+        : options.dateFrom;
+      conditions.push(sql`${tasks.createdAt} >= ${dateFromStr}`);
     }
 
     if (options.dateTo) {
-      conditions.push(sql`${tasks.createdAt} <= ${options.dateTo}`);
+      // Convert Date to ISO string for postgres driver compatibility
+      const dateToStr = options.dateTo instanceof Date
+        ? options.dateTo.toISOString()
+        : options.dateTo;
+      conditions.push(sql`${tasks.createdAt} <= ${dateToStr}`);
     }
 
     const where = and(...conditions);
@@ -367,12 +375,17 @@ export class TaskRepository {
   }
 
   /**
-   * Get users that can be assigned tasks (self + subordinates)
+   * Get users that can be assigned tasks (subordinates only, excluding self)
+   * The current user is shown as "Me" in the frontend dropdown
    */
   async getAssignableUsers(header: RequestHeader): Promise<Array<{ id: string; name: string }>> {
-    // Get self + subordinates
+    // Get subordinates only (exclude self - frontend has "Me" option)
     const subordinateIds = await this.getSubordinates(header.userId);
-    const userIds = [header.userId, ...subordinateIds];
+
+    // If no subordinates, return empty array
+    if (subordinateIds.length === 0) {
+      return [];
+    }
 
     const result = await this.db
       .select({
@@ -383,7 +396,7 @@ export class TaskRepository {
       .where(
         and(
           eq(users.tenantId, header.tenantId),
-          inArray(users.id, userIds)
+          inArray(users.id, subordinateIds)
         )
       );
 

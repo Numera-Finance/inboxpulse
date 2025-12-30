@@ -13,8 +13,8 @@ export interface TaskSearchRequest {
   sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
-  dateFrom?: Date;
-  dateTo?: Date;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export interface TaskSearchResponse {
@@ -48,6 +48,10 @@ export class TaskService {
       : request.status === 'done' ? TaskStatus.DONE
       : undefined;
 
+    // Convert date strings to Date objects for repository
+    const dateFrom = request.dateFrom ? new Date(request.dateFrom) : undefined;
+    const dateTo = request.dateTo ? new Date(request.dateTo) : undefined;
+
     const { items, total } = await this.taskRepository.search(header, {
       status,
       assignedToId: request.assignedToId,
@@ -57,8 +61,8 @@ export class TaskService {
       sortOrder: request.sortOrder,
       limit: request.limit,
       offset: request.offset,
-      dateFrom: request.dateFrom,
-      dateTo: request.dateTo,
+      dateFrom,
+      dateTo,
     });
 
     return {

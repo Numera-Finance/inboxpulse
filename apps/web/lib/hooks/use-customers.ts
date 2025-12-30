@@ -6,7 +6,17 @@ import type { SearchRequest, Customer, CreateCustomerRequest } from '@/lib/api';
 export const customerKeys = {
   all: ['customers'] as const,
   lists: () => [...customerKeys.all, 'list'] as const,
-  list: (filters: SearchRequest) => [...customerKeys.lists(), filters] as const,
+  list: (filters: SearchRequest) => {
+    // Normalize the filters to ensure stable query keys
+    const normalized = {
+      queries: filters.queries || [],
+      sortBy: filters.sortBy || 'name',
+      sortOrder: filters.sortOrder || 'asc',
+      limit: filters.limit || 2000,
+      offset: filters.offset || 0,
+    }
+    return [...customerKeys.lists(), normalized] as const
+  },
   byTenant: (tenantId: string) => [...customerKeys.all, 'tenant', tenantId] as const,
   details: () => [...customerKeys.all, 'detail'] as const,
   detail: (id: string) => [...customerKeys.details(), id] as const,
@@ -21,7 +31,19 @@ export const customerKeys = {
 export function useCustomers(request: SearchRequest) {
   return useQuery({
     queryKey: customerKeys.list(request),
-    queryFn: () => api.searchCustomers(request),
+    queryFn: async () => {
+      const result = await api.searchCustomers(request);
+      // Ensure we always return a valid structure
+      return {
+        ...result,
+        items: Array.isArray(result?.items) ? result.items : [],
+        total: result?.total ?? 0,
+      };
+    },
+    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
+    gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes (formerly cacheTime)
+    retry: 2, // Retry failed requests twice
+    refetchOnWindowFocus: false, // Don't refetch on window focus to avoid race conditions
   });
 }
 

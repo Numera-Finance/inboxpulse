@@ -2,8 +2,7 @@
 
 import * as React from "react"
 import { useSearchParams, useNavigate, useParams } from "react-router-dom"
-import { Inbox, Loader2, Check, UserPlus, Calendar } from "lucide-react"
-import { format } from "date-fns"
+import { Inbox } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import {
   InboxView,
@@ -16,35 +15,19 @@ import {
   type InboxItemContent,
   type TaskWithComments,
 } from "@/components/inbox"
-import { Button } from "@/components/ui/button"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/components/ui/command"
-import { cn } from "@/lib/utils"
-import { Calendar as CalendarComponent } from "@/components/ui/calendar"
-import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
+import { TaskFilters, type TaskFilter } from "@/components/tasks/task-filters"
 import {
   useTask,
   useAssignableUsers,
   useMarkTaskDone,
   useReassignTask,
   useAddTaskComment,
+  useCustomers,
   taskKeys,
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
 import type { Task, TaskSearchRequest } from "@crm/clients"
-import { authService } from "@/lib/auth/auth-service"
+import { useAuth } from "@/src/contexts/AuthContext"
 import { getTaskClient } from "@/lib/api/clients"
 
 export default function EscalationsPage() {
@@ -54,18 +37,53 @@ export default function EscalationsPage() {
   const queryClient = useQueryClient()
 
   // Get current user ID for "Me" filter
-  const currentUserId = authService.getUser()?.userId
+  const { user } = useAuth()
+  const currentUserId = user?.id
 
   // Get filter state from URL search params
-  const statusFromUrl = searchParams.get("status") as "open" | "done" | null
+  // Default to "open" if no status specified
+  const statusFromUrl = searchParams.get("status") as "open" | "done" | "all" | null
+  const effectiveStatus = statusFromUrl || "open"  // Default to "open"
   const assignedFromUrl = searchParams.get("assigned")
   const customerIdFromUrl = searchParams.get("customer")
   const dateFromUrl = searchParams.get("dateFrom")
   const dateToUrl = searchParams.get("dateTo")
 
-  // Local state for assignee filter autocomplete
-  const [assigneeOpen, setAssigneeOpen] = React.useState(false)
-  const [assigneeSearch, setAssigneeSearch] = React.useState("")
+  // Task filter state (synced with URL params)
+  const taskFilters = React.useMemo<TaskFilter>(() => {
+    const filters: TaskFilter = {
+      status: effectiveStatus,  // Default to 'open'
+    }
+    
+    if (assignedFromUrl) {
+      if (assignedFromUrl === "unassigned") {
+        filters.assignedToId = "unassigned"
+      } else if (assignedFromUrl === "me") {
+        filters.assignedToId = "me"
+      } else if (assignedFromUrl === "team") {
+        filters.assignedToId = "my-team"
+      } else {
+        filters.assignedToId = assignedFromUrl
+      }
+    } else {
+      // No assignee filter means "all" - set to "all" for the Select component
+      filters.assignedToId = "all"
+    }
+    
+    if (customerIdFromUrl) {
+      filters.customerId = customerIdFromUrl
+    }
+    
+    if (dateFromUrl) {
+      filters.dateFrom = new Date(dateFromUrl)
+    }
+    
+    if (dateToUrl) {
+      filters.dateTo = new Date(dateToUrl)
+    }
+    
+    return filters
+  }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl])
 
   // Data fetching
   const { data: assignableUsers = [] } = useAssignableUsers()
@@ -90,15 +108,22 @@ export default function EscalationsPage() {
         request.search = filter.query
       }
 
-      // Status filter
-      if (statusFromUrl) {
-        request.status = statusFromUrl
+      // Status filter - default to "open"
+      // Priority: URL param > InboxFilter > default "open"
+      if (effectiveStatus === "all") {
+        // "All" means show all statuses - don't set status filter
+        // Backend will return all when status is undefined
+      } else if (effectiveStatus) {
+        request.status = effectiveStatus
       } else if (filter.status && filter.status !== "all") {
         request.status = filter.status === "resolved" ? "done" : "open"
+      } else {
+        // Default to open if no status specified
+        request.status = "open"
       }
 
       // Assignee filter
-      if (assignedFromUrl) {
+      if (assignedFromUrl && assignedFromUrl !== "all") {
         if (assignedFromUrl === "unassigned") {
           request.assignedToId = "unassigned"
         } else if (assignedFromUrl === "me") {
@@ -111,6 +136,7 @@ export default function EscalationsPage() {
           request.assignedToId = assignedFromUrl
         }
       }
+      // If assignedFromUrl is "all" or undefined, don't set assignedToId (show all)
 
       // Customer filter
       if (customerIdFromUrl) {
@@ -119,22 +145,30 @@ export default function EscalationsPage() {
         request.customerId = filter.customerId
       }
 
-      // Date filters
+      // Date filters - use start/end of day in UTC for inclusive date range
       if (dateFromUrl) {
-        request.dateFrom = new Date(dateFromUrl)
+        const fromDate = new Date(dateFromUrl)
+        fromDate.setUTCHours(0, 0, 0, 0)
+        request.dateFrom = fromDate.toISOString()
       } else if (filter.dateFrom) {
-        request.dateFrom = filter.dateFrom
+        const fromDate = new Date(filter.dateFrom)
+        fromDate.setUTCHours(0, 0, 0, 0)
+        request.dateFrom = fromDate.toISOString()
       }
 
       if (dateToUrl) {
-        request.dateTo = new Date(dateToUrl)
+        const toDate = new Date(dateToUrl)
+        toDate.setUTCHours(23, 59, 59, 999)
+        request.dateTo = toDate.toISOString()
       } else if (filter.dateTo) {
-        request.dateTo = filter.dateTo
+        const toDate = new Date(filter.dateTo)
+        toDate.setUTCHours(23, 59, 59, 999)
+        request.dateTo = toDate.toISOString()
       }
 
       return request
     },
-    [statusFromUrl, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId]
+    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId]
   )
 
   // Fetch tasks callback for InboxView
@@ -227,54 +261,58 @@ export default function EscalationsPage() {
     [addComment, queryClient]
   )
 
-  // Update URL when filter changes
-  const handleAssigneeChange = (value: string) => {
+  // Handle filter changes - sync to URL params
+  const handleFiltersChange = React.useCallback((newFilters: TaskFilter) => {
     setSearchParams((prev) => {
       const params = new URLSearchParams(prev)
-      if (value === "all") {
-        params.delete("assigned")
-      } else {
-        params.set("assigned", value)
-      }
-      return params
-    })
-  }
 
-  const handleCustomerChange = (customerId: string | null) => {
-    setSearchParams((prev) => {
-      const params = new URLSearchParams(prev)
-      if (customerId) {
-        params.set("customer", customerId)
+      // Status - always set the status param to preserve selection
+      if (newFilters.status) {
+        params.set("status", newFilters.status)
+      } else {
+        // Default to 'open' if not specified
+        params.set("status", "open")
+      }
+      
+      // Assignee
+      if (newFilters.assignedToId && newFilters.assignedToId !== 'all') {
+        if (newFilters.assignedToId === 'me') {
+          params.set("assigned", "me")
+        } else if (newFilters.assignedToId === 'my-team') {
+          params.set("assigned", "team")
+        } else if (newFilters.assignedToId === 'unassigned') {
+          params.set("assigned", "unassigned")
+        } else {
+          params.set("assigned", newFilters.assignedToId)
+        }
+      } else {
+        // "all" or undefined means show all - remove param
+        params.delete("assigned")
+      }
+      
+      // Customer
+      if (newFilters.customerId) {
+        params.set("customer", newFilters.customerId)
       } else {
         params.delete("customer")
       }
-      return params
-    })
-  }
-
-  const handleDateFromChange = (date: Date | undefined) => {
-    setSearchParams((prev) => {
-      const params = new URLSearchParams(prev)
-      if (date) {
-        params.set("dateFrom", date.toISOString())
+      
+      // Date range
+      if (newFilters.dateFrom) {
+        params.set("dateFrom", newFilters.dateFrom.toISOString())
       } else {
         params.delete("dateFrom")
       }
-      return params
-    })
-  }
 
-  const handleDateToChange = (date: Date | undefined) => {
-    setSearchParams((prev) => {
-      const params = new URLSearchParams(prev)
-      if (date) {
-        params.set("dateTo", date.toISOString())
+      if (newFilters.dateTo) {
+        params.set("dateTo", newFilters.dateTo.toISOString())
       } else {
         params.delete("dateTo")
       }
+      
       return params
     })
-  }
+  }, [setSearchParams])
 
   // Get the selected task from URL and convert to InboxItem
   const selectedTask = selectedTaskData || null
@@ -283,220 +321,20 @@ export default function EscalationsPage() {
     return apiTaskToInboxItem(selectedTask)
   }, [selectedTask])
 
-  // Filter assignable users by search term (for autocomplete)
-  const filteredAssignableUsers = React.useMemo(() => {
-    if (!assigneeSearch) return assignableUsers
-    const searchLower = assigneeSearch.toLowerCase()
-    return assignableUsers.filter((user) =>
-      user.name.toLowerCase().includes(searchLower)
-    )
-  }, [assignableUsers, assigneeSearch])
-
-  // Get display text for assignee filter
-  const assigneeDisplayText = React.useMemo(() => {
-    if (!assignedFromUrl || assignedFromUrl === "all") return "All Tasks"
-    if (assignedFromUrl === "me") return "My Tasks"
-    if (assignedFromUrl === "team") return "My Team"
-    if (assignedFromUrl === "unassigned") return "Unassigned"
-    // Find user by ID
-    const user = assignableUsers.find((u) => u.id === assignedFromUrl)
-    return user?.name || "Select assignee..."
-  }, [assignedFromUrl, assignableUsers])
-
-
-  // Custom header with filters
-  const headerContent = (
-    <div className="flex items-center gap-4 flex-wrap">
-      {/* Assignee filter */}
-      <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            role="combobox"
-            aria-expanded={assigneeOpen}
-            className="w-[180px] h-8 justify-between"
-          >
-            <UserPlus className="h-3 w-3 mr-2 shrink-0" />
-            <span className="truncate">{assigneeDisplayText}</span>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[220px] p-0" align="start">
-          <Command shouldFilter={false}>
-            <CommandInput
-              placeholder="Search assignees..."
-              value={assigneeSearch}
-              onValueChange={setAssigneeSearch}
-            />
-            <CommandList>
-              <CommandGroup heading="Quick Filters">
-                <CommandItem
-                  value="all"
-                  onSelect={() => {
-                    handleAssigneeChange("all")
-                    setAssigneeOpen(false)
-                    setAssigneeSearch("")
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      (!assignedFromUrl || assignedFromUrl === "all") ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  All Tasks
-                </CommandItem>
-                <CommandItem
-                  value="me"
-                  onSelect={() => {
-                    handleAssigneeChange("me")
-                    setAssigneeOpen(false)
-                    setAssigneeSearch("")
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      assignedFromUrl === "me" ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  My Tasks
-                </CommandItem>
-                <CommandItem
-                  value="team"
-                  onSelect={() => {
-                    handleAssigneeChange("team")
-                    setAssigneeOpen(false)
-                    setAssigneeSearch("")
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      assignedFromUrl === "team" ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  My Team
-                </CommandItem>
-                <CommandItem
-                  value="unassigned"
-                  onSelect={() => {
-                    handleAssigneeChange("unassigned")
-                    setAssigneeOpen(false)
-                    setAssigneeSearch("")
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      assignedFromUrl === "unassigned" ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  Unassigned
-                </CommandItem>
-              </CommandGroup>
-              {filteredAssignableUsers.length > 0 && (
-                <>
-                  <CommandSeparator />
-                  <CommandGroup heading="Team Members">
-                    {filteredAssignableUsers.map((user) => (
-                      <CommandItem
-                        key={user.id}
-                        value={user.id}
-                        onSelect={() => {
-                          handleAssigneeChange(user.id)
-                          setAssigneeOpen(false)
-                          setAssigneeSearch("")
-                        }}
-                      >
-                        <Check
-                          className={cn(
-                            "mr-2 h-4 w-4",
-                            assignedFromUrl === user.id ? "opacity-100" : "opacity-0"
-                          )}
-                        />
-                        {user.name}
-                        {user.id === currentUserId && (
-                          <span className="ml-1 text-muted-foreground">(me)</span>
-                        )}
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </>
-              )}
-              {filteredAssignableUsers.length === 0 && assigneeSearch && (
-                <CommandEmpty>No users found.</CommandEmpty>
-              )}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-
-      {/* Customer filter */}
-      <div className="w-[200px]">
-        <CustomerAutocomplete
-          value={customerIdFromUrl || ""}
-          onChange={handleCustomerChange}
-          placeholder="Filter by customer..."
-          className="h-8"
-        />
-      </div>
-
-      {/* Date from */}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="h-8 gap-1">
-            <Calendar className="h-3 w-3" />
-            {dateFromUrl ? format(new Date(dateFromUrl), "MMM d") : "From"}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <CalendarComponent
-            mode="single"
-            selected={dateFromUrl ? new Date(dateFromUrl) : undefined}
-            onSelect={handleDateFromChange}
-          />
-        </PopoverContent>
-      </Popover>
-
-      {/* Date to */}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="h-8 gap-1">
-            <Calendar className="h-3 w-3" />
-            {dateToUrl ? format(new Date(dateToUrl), "MMM d") : "To"}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <CalendarComponent
-            mode="single"
-            selected={dateToUrl ? new Date(dateToUrl) : undefined}
-            onSelect={handleDateToChange}
-          />
-        </PopoverContent>
-      </Popover>
-
-      {/* Clear filters */}
-      {(assignedFromUrl || customerIdFromUrl || dateFromUrl || dateToUrl) && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8"
-          onClick={() => {
-            setSearchParams((prev) => {
-              const params = new URLSearchParams(prev)
-              params.delete("assigned")
-              params.delete("customer")
-              params.delete("dateFrom")
-              params.delete("dateTo")
-              return params
-            })
-          }}
-        >
-          Clear filters
-        </Button>
-      )}
-    </div>
-  )
+  // Get customer name for display (if needed)
+  const { data: customersData } = useCustomers({
+    queries: [],
+    sortBy: 'name',
+    sortOrder: 'asc',
+    limit: 1000,
+    offset: 0,
+  })
+  
+  const customerName = React.useMemo(() => {
+    if (!customerIdFromUrl) return null
+    const customer = customersData?.items?.find(c => c.id === customerIdFromUrl)
+    return customer?.name || null
+  }, [customerIdFromUrl, customersData])
 
   return (
     <AppShell>
@@ -507,16 +345,24 @@ export default function EscalationsPage() {
             <Inbox className="h-5 w-5 text-primary" />
             <h1 className="text-lg font-semibold">Escalations</h1>
           </div>
-          {headerContent}
+          <TaskFilters
+            filters={taskFilters}
+            onFiltersChange={handleFiltersChange}
+            alwaysVisible={['status', 'assignee', 'customer', 'date']}
+            availableAssignees={assignableUsers}
+            currentUserId={currentUserId}
+            customerName={customerName}
+          />
         </div>
 
         {/* Main Content - InboxView */}
         <div className="flex-1 overflow-hidden">
           <InboxView
+            key={searchParams.toString()}
             config={{
               itemType: "task",
               showSearch: true,
-              showStatusFilter: true,
+              showStatusFilter: false,  // Status filter handled by TaskFilters component
               showCustomer: true,
               statusFilters: [
                 { value: "all", label: "All" },
@@ -534,6 +380,9 @@ export default function EscalationsPage() {
               onResolve: handleResolve,
               onAssign: handleAssign,
               onAddComment: handleAddComment,
+            }}
+            initialFilter={{
+              status: effectiveStatus === 'all' ? 'all' : 'open',
             }}
             selectedItem={selectedInboxItem}
           />

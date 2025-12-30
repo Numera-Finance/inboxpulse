@@ -25,14 +25,14 @@ export async function handleApiRequest<TRequest, TResponse>(
 ): Promise<Response> {
   // Extract RequestHeader
   const requestHeader = getRequestHeader(c);
-  
+
   // Parse and validate request
   const body = await c.req.json();
   const validatedRequest = requestSchema.parse(body);
-  
+
   // Execute handler
   const result = await handler(requestHeader, validatedRequest);
-  
+
   // Return standardized response
   return c.json<ApiResponse<TResponse>>({
     success: true,
