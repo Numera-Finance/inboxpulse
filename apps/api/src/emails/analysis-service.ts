@@ -15,6 +15,7 @@ import { ContactRepository } from '../contacts/repository';
 import { ContactService, type SignatureData } from '../contacts/service';
 import { CustomerRepository } from '../customers/repository';
 import { TaskService } from '../tasks/service';
+import { TenantService } from '../tenants/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply, hasAnalyzableSignatureContent } from './extraction/extractor';
 
@@ -97,7 +98,8 @@ export class EmailAnalysisService {
     private threadAnalysisService: ThreadAnalysisService,
     private userService: UserService,
     private contactService: ContactService,
-    private taskService: TaskService
+    private taskService: TaskService,
+    private tenantService: TenantService
   ) { }
 
   // ===========================================================================
@@ -842,6 +844,26 @@ export class EmailAnalysisService {
       if (!email) {
         logger.warn({ emailId: ctx.emailId }, 'Email not found for task creation');
         return;
+      }
+
+      // Skip task creation for internal emails (sender domain = tenant domain)
+      if (email.fromEmail) {
+        const senderDomain = email.fromEmail.split('@')[1]?.toLowerCase();
+        if (senderDomain) {
+          const tenant = await this.tenantService.findById(ctx.tenantId);
+          if (tenant?.domain && senderDomain === tenant.domain.toLowerCase()) {
+            logger.debug(
+              {
+                emailId: ctx.emailId,
+                senderDomain,
+                tenantDomain: tenant.domain,
+                logType: 'SKIP_TASK_CREATION_INTERNAL_EMAIL'
+              },
+              'Skipping task creation for internal email (sender domain matches tenant domain)'
+            );
+            return;
+          }
+        }
       }
 
       // Find customer ID from email participants
