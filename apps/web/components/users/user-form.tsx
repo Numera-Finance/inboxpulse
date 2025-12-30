@@ -150,8 +150,8 @@ export function UserForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col h-full">
-      <ScrollArea className="flex-1 px-6 py-4">
-        <div className="space-y-4">
+      <ScrollArea className="flex-1">
+        <div className="space-y-4 px-6 py-4 pr-8">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="firstName">First Name</Label>
