@@ -322,6 +322,9 @@ app.post('/analyze', async (c) => {
         },
         'Email passed filter, proceeding with analysis'
       );
+
+      // Store filterResult to return with response (even when not filtered)
+      (c as any).filterResult = filterResult;
     }
 
     // Merge provided config with defaults
@@ -372,11 +375,13 @@ app.post('/analyze', async (c) => {
         },
         'Returning cached analysis results'
       );
-      return c.json<ApiResponse<{ results: typeof cachedResults; cached: true }>>({
+      const filterResult = (c as any).filterResult;
+      return c.json<ApiResponse<{ results: typeof cachedResults; cached: true; filterResult?: ClassificationResult }>>({
         success: true,
         data: {
           results: cachedResults,
           cached: true,
+          filterResult,
         },
       });
     }
@@ -414,11 +419,13 @@ app.post('/analyze', async (c) => {
       'Analysis completed successfully'
     );
 
-    return c.json<ApiResponse<{ results: typeof resultsObject; cached: false }>>({
+    const filterResult = (c as any).filterResult;
+    return c.json<ApiResponse<{ results: typeof resultsObject; cached: false; filterResult?: ClassificationResult }>>({
       success: true,
       data: {
         results: resultsObject,
         cached: false,
+        filterResult,
       },
     });
   } catch (error: unknown) {

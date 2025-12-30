@@ -28,10 +28,27 @@ export interface ContactExtractionResponse {
   error?: any;
 }
 
+export interface ClassificationResult {
+  category: 'spam' | 'marketing' | 'transactional' | 'automated' | 'business';
+  confidence: number;
+  stage: string;
+  reasoning?: string;
+}
+
+export interface FilterOptions {
+  enabled: boolean;
+  skipHuggingFace?: boolean;
+  skipLLM?: boolean;
+  filterCategories?: Array<'spam' | 'marketing' | 'automated' | 'transactional'>;
+}
+
 export interface AnalysisResponse {
   success: boolean;
   data?: {
     results: Record<string, any>;
+    filtered?: boolean;
+    filterResult?: ClassificationResult;
+    cached?: boolean;
   };
   error?: any;
 }
@@ -100,6 +117,7 @@ export class AnalysisClient extends BaseClient {
       threadContext?: string;
       analysisTypes?: AnalysisType[];
       config?: Partial<AnalysisConfig>;
+      filter?: FilterOptions;
     }
   ): Promise<AnalysisResponse['data']> {
     const response = await this.post<AnalysisResponse>(
@@ -110,6 +128,7 @@ export class AnalysisClient extends BaseClient {
         threadContext: options?.threadContext,
         analysisTypes: options?.analysisTypes,
         config: options?.config,
+        filter: options?.filter,
       }
     );
 

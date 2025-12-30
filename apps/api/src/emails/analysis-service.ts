@@ -1,5 +1,5 @@
 import { injectable, inject } from 'tsyringe';
-import { AnalysisClient } from '@crm/clients';
+import { AnalysisClient, type ClassificationResult } from '@crm/clients';
 import type { Database } from '@crm/database';
 import { EmailAnalysisRepository } from './analysis-repository';
 import { EmailRepository } from './repository';
@@ -66,6 +66,7 @@ interface CollectedData {
   domainResult?: { customers?: Array<{ id: string; domains: string[] }> };
   contactResult?: { contacts?: Array<{ id: string; email: string; name?: string; customerId?: string }> };
   analysisResults?: Record<string, any>;
+  classificationResult?: ClassificationResult;
 
   // Data prepared for DB writes
   participantsToCreate?: NewEmailParticipant[];
@@ -183,8 +184,10 @@ export class EmailAnalysisService {
     // This strips quoted content and separates signature for token savings
     this.extractEmailContent(ctx);
 
-    // Step 2e: Run main analyses (external API call)
-    data.analysisResults = await this.callMainAnalyses(ctx);
+    // Step 2e: Run main analyses (external API call) with classification
+    const { results, classificationResult } = await this.callMainAnalyses(ctx);
+    data.analysisResults = results;
+    data.classificationResult = classificationResult;
 
     return data;
   }
@@ -330,8 +333,9 @@ export class EmailAnalysisService {
 
   /**
    * Call main analyses API (sentiment, escalation, signature-extraction)
+   * Also runs email classification via filter (classify but don't skip)
    */
-  private async callMainAnalyses(ctx: AnalysisContext): Promise<Record<string, any>> {
+  private async callMainAnalyses(ctx: AnalysisContext): Promise<{ results: Record<string, any>; classificationResult?: ClassificationResult }> {
     const startTime = Date.now();
 
     // Filter out signature-extraction if no signature available (saves tokens)
@@ -355,16 +359,22 @@ export class EmailAnalysisService {
         hasSignature: !!ctx.email.signature,
         logType: 'MAIN_ANALYSIS_START',
       },
-      'Starting main analysis'
+      'Starting main analysis with classification'
     );
 
     try {
       const response = await this.analysisClient.analyze(ctx.tenantId, ctx.email, {
         threadContext: ctx.threadContext,
         analysisTypes: analysisTypes,
+        // Enable classification but don't filter (empty filterCategories = classify all, skip none)
+        filter: {
+          enabled: true,
+          filterCategories: [],
+        },
       });
 
       const results = response?.results || {};
+      const classificationResult = response?.filterResult;
 
       logger.info(
         {
@@ -372,18 +382,21 @@ export class EmailAnalysisService {
           emailId: ctx.emailId,
           durationMs: Date.now() - startTime,
           analysisTypes: Object.keys(results),
+          classification: classificationResult?.category,
+          classificationConfidence: classificationResult?.confidence,
+          classificationStage: classificationResult?.stage,
           logType: 'MAIN_ANALYSIS_COMPLETE',
         },
         'Main analysis completed'
       );
 
-      return results;
+      return { results, classificationResult };
     } catch (error: any) {
       logger.warn(
         { error: error.message, tenantId: ctx.tenantId, emailId: ctx.emailId },
         'Main analysis failed (non-blocking)'
       );
-      return {};
+      return { results: {} };
     }
   }
 
@@ -442,11 +455,12 @@ export class EmailAnalysisService {
             data.analysisResults
           );
 
-          // Step 4: Update email signals (sentiment, escalation, upsell, churn, etc.)
+          // Step 4: Update email signals (classification, sentiment, escalation, upsell, churn, etc.)
           await this.updateEmailSignalsInTransaction(
             tx,
             ctx.emailId,
-            data.analysisResults
+            data.analysisResults,
+            data.classificationResult
           );
 
           // Step 5: Enrich contacts from signature
@@ -613,9 +627,31 @@ export class EmailAnalysisService {
   private async updateEmailSignalsInTransaction(
     tx: any,
     emailId: string,
-    analysisResults: Record<string, any>
+    analysisResults: Record<string, any>,
+    classificationResult?: ClassificationResult
   ): Promise<void> {
     const signals: number[] = [];
+
+    // Classification
+    if (classificationResult?.category) {
+      switch (classificationResult.category) {
+        case 'spam':
+          signals.push(Signal.CLASSIFICATION_SPAM);
+          break;
+        case 'marketing':
+          signals.push(Signal.CLASSIFICATION_MARKETING);
+          break;
+        case 'transactional':
+          signals.push(Signal.CLASSIFICATION_TRANSACTIONAL);
+          break;
+        case 'automated':
+          signals.push(Signal.CLASSIFICATION_AUTOMATED);
+          break;
+        case 'business':
+          signals.push(Signal.CLASSIFICATION_BUSINESS);
+          break;
+      }
+    }
 
     // Sentiment
     const sentimentResult = analysisResults['sentiment'];
@@ -680,7 +716,7 @@ export class EmailAnalysisService {
     await this.emailRepo.updateSignals(emailId, signals, tx);
 
     logger.info(
-      { emailId, signals, logType: 'EMAIL_SIGNALS_UPDATED' },
+      { emailId, signals, classification: classificationResult?.category, logType: 'EMAIL_SIGNALS_UPDATED' },
       'Updated email signals'
     );
   }

@@ -57,6 +57,16 @@ export class EmailFilterService {
     /\d+%\s*off/i,
     /discount code/i,
     /promo code/i,
+    // Event/webinar marketing
+    /events?\s*(roundup|digest|recap|update)/i,
+    /upcoming\s+(events?|webinars?|sessions?)/i,
+    /don'?t miss/i,
+    /register (now|today|here|to attend)/i,
+    /join us (for|at)/i,
+    /webinar/i,
+    /virtual event/i,
+    /save your (spot|seat)/i,
+    /rsvp/i,
   ];
 
   private static readonly TRANSACTIONAL_PATTERNS = [
