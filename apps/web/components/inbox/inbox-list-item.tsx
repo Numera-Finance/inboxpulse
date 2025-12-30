@@ -4,6 +4,7 @@ import { Star, Paperclip, MessageSquare } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SentimentIndicator } from "@/components/ui/sentiment-indicator"
+import { ClassificationIndicator } from "@/components/ui/classification-indicator"
 import { cn } from "@/lib/utils"
 import type { InboxItem, InboxListItemProps } from "./types"
 
@@ -157,6 +158,10 @@ export function InboxListItem({
             >
               {item.subject}
             </p>
+            {/* Classification indicator (spam/marketing/etc) */}
+            {item.classification && item.classification.value !== 'business' && (
+              <ClassificationIndicator classification={item.classification} size="sm" variant="icon" />
+            )}
             {/* Sentiment indicator */}
             {item.sentiment && (
               <SentimentIndicator sentiment={item.sentiment} size="sm" variant="icon" />

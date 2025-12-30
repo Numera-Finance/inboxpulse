@@ -15,7 +15,9 @@ import type {
   InboxPriority,
   InboxStatus,
   InboxSentiment,
+  InboxClassification,
 } from "./types"
+import { getClassificationFromSignals } from "@crm/shared"
 
 // =============================================================================
 // Email Adapters
@@ -222,6 +224,7 @@ export interface ApiEmailResponse {
   sentiment?: string | null
   sentimentScore?: string | null
   isEscalation?: boolean | null
+  signals?: number[] | null
   analysisStatus?: number | null
   createdAt: string
   updatedAt: string
@@ -237,6 +240,19 @@ function parseSentiment(sentiment?: string | null, score?: string | null): Inbox
   return {
     value,
     confidence: score ? parseFloat(score) : 0.5,
+  }
+}
+
+/**
+ * Parse classification from signals array
+ */
+function parseClassification(signals?: number[] | null): InboxClassification | undefined {
+  if (!signals || signals.length === 0) return undefined
+  const classification = getClassificationFromSignals(signals)
+  if (!classification) return undefined
+  return {
+    value: classification,
+    // Classification confidence is not stored in signals, so we omit it
   }
 }
 
@@ -268,6 +284,7 @@ export const apiEmailToInboxItem: InboxItemAdapter<ApiEmailResponse> = (
     hasAttachments: false, // API doesn't track attachments yet
     labels: email.labels || undefined,
     sentiment: parseSentiment(email.sentiment, email.sentimentScore),
+    classification: parseClassification(email.signals),
     isEscalation: email.isEscalation ?? false,
     originalData: email,
   }
