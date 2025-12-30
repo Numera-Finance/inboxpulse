@@ -495,14 +495,14 @@ export const apiTaskToInboxContent: InboxContentAdapter<TaskWithComments> = (
     body = task.title
   }
 
-  // Add comments section if available
-  if (task.comments && task.comments.length > 0) {
-    body += "\n\n--- Comments ---\n"
-    for (const comment of task.comments) {
-      const commentDate = new Date(comment.createdAt).toLocaleString()
-      body += `\n${comment.userName} (${commentDate}):\n${comment.content}\n`
-    }
-  }
+  // Convert task comments to inbox comments
+  const comments = task.comments?.map((comment) => ({
+    id: comment.id,
+    content: comment.content,
+    userId: comment.userId,
+    userName: comment.userName || "Unknown",
+    createdAt: new Date(comment.createdAt),
+  }))
 
   return {
     id: task.id,
@@ -517,6 +517,7 @@ export const apiTaskToInboxContent: InboxContentAdapter<TaskWithComments> = (
       ? [{ name: task.assignedToName, id: task.assignedToId || undefined }]
       : [],
     timestamp,
+    comments,
     metadata: {
       status: task.status,
       customerId: task.customerId,

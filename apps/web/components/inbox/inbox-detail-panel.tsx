@@ -1,11 +1,11 @@
 "use client"
 
+import * as React from "react"
 import {
   Building2,
   Mail,
   Clock,
   User,
-  Calendar,
   CheckCircle,
   Trash2,
   Star,
@@ -13,15 +13,35 @@ import {
   Paperclip,
   Download,
   Loader2,
+  Pencil,
+  Send,
+  MessageSquare,
+  Check,
 } from "lucide-react"
+import { formatDistanceToNow } from "date-fns"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SentimentIndicator } from "@/components/ui/sentiment-indicator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import { cn } from "@/lib/utils"
-import type { InboxDetailPanelProps, InboxItemContent } from "./types"
+import { useUsers } from "@/lib/hooks"
+import type { InboxDetailPanelProps, InboxItemContent, InboxComment } from "./types"
 
 /**
  * Format timestamp for display
@@ -128,13 +148,119 @@ function sanitizeEmailHtml(html: string): string {
 }
 
 /**
+ * Comments section component
+ */
+function CommentsSection({
+  comments,
+  itemId,
+  onAddComment,
+}: {
+  comments?: InboxComment[]
+  itemId: string
+  onAddComment?: (itemId: string, content: string) => Promise<void>
+}) {
+  const [newComment, setNewComment] = React.useState("")
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+
+  const handleSubmit = async () => {
+    if (!newComment.trim() || !onAddComment) return
+    setIsSubmitting(true)
+    try {
+      await onAddComment(itemId, newComment.trim())
+      setNewComment("")
+    } catch (error) {
+      console.error("Failed to add comment:", error)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      handleSubmit()
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <MessageSquare className="h-4 w-4 text-muted-foreground" />
+        <h3 className="text-sm font-medium">Comments</h3>
+        {comments && comments.length > 0 && (
+          <Badge variant="secondary" className="text-xs">
+            {comments.length}
+          </Badge>
+        )}
+      </div>
+
+      {/* Comments list */}
+      {comments && comments.length > 0 ? (
+        <div className="space-y-3">
+          {comments.map((comment) => (
+            <div
+              key={comment.id}
+              className="bg-muted/50 rounded-lg p-3"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-medium">
+                    {getInitials(comment.userName)}
+                  </div>
+                  <span className="text-sm font-medium">{comment.userName}</span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {formatDistanceToNow(comment.createdAt, { addSuffix: true })}
+                </span>
+              </div>
+              <p className="text-sm text-foreground whitespace-pre-wrap">
+                {comment.content}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">No comments yet</p>
+      )}
+
+      {/* Add comment form */}
+      {onAddComment && (
+        <div className="space-y-2">
+          <Textarea
+            placeholder="Add a comment... (⌘+Enter to submit)"
+            value={newComment}
+            onChange={(e) => setNewComment(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="min-h-[80px] resize-none"
+          />
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={!newComment.trim() || isSubmitting}
+            >
+              {isSubmitting ? (
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <Send className="h-3 w-3 mr-1" />
+              )}
+              Add Comment
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
  * Email message component for thread display
  */
 function MessageContent({ message }: { message: InboxItemContent }) {
   return (
-    <div className="mb-6">
+    <div className="mb-4">
       {/* Message header */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-3">
         <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
           {getInitials(message.from.name)}
         </div>
@@ -165,7 +291,7 @@ function MessageContent({ message }: { message: InboxItemContent }) {
         )}
 
         {/* Body */}
-        <div className="prose prose-sm dark:prose-invert max-w-none">
+        <div className="prose prose-sm dark:prose-invert max-w-none [&_*]:border-0">
           {message.bodyFormat === "html" ? (
             <div
               className="text-sm leading-relaxed"
@@ -228,6 +354,122 @@ export function InboxDetailPanel({
   config,
   customActions,
 }: InboxDetailPanelProps) {
+  const [assigneeOpen, setAssigneeOpen] = React.useState(false)
+  const [assigneeSearch, setAssigneeSearch] = React.useState("")
+  const [isAssigning, setIsAssigning] = React.useState(false)
+  const commentsSectionRef = React.useRef<HTMLDivElement>(null)
+
+  const scrollToComments = () => {
+    commentsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // Local state for optimistic updates
+  const [localAssignee, setLocalAssignee] = React.useState<{ id?: string; name: string } | null>(null)
+  const [localComments, setLocalComments] = React.useState<InboxComment[] | null>(null)
+
+  // Sync local state from props when item changes
+  const itemId = item?.id
+  React.useEffect(() => {
+    if (item?.recipients?.[0]) {
+      setLocalAssignee({ id: item.recipients[0].id, name: item.recipients[0].name })
+    } else {
+      setLocalAssignee(null)
+    }
+  }, [itemId]) // Only reset when item ID changes, not on every prop update
+
+  React.useEffect(() => {
+    if (content?.comments) {
+      setLocalComments(content.comments)
+    }
+  }, [itemId]) // Only reset when item ID changes
+
+  // Use local state if available, otherwise fall back to props
+  const displayAssignee = localAssignee ?? (item?.recipients?.[0] ? { id: item.recipients[0].id, name: item.recipients[0].name } : null)
+  const displayComments = localComments ?? content?.comments
+
+  // Fetch users for assignment dropdown
+  const { data: usersData } = useUsers({
+    queries: [],
+    sortBy: 'firstName',
+    sortOrder: 'asc',
+    limit: 500,
+    offset: 0,
+  })
+
+  // Transform users to simple format and filter by search term
+  const filteredUsers = React.useMemo(() => {
+    const users = usersData?.items || []
+    const transformed = users
+      .filter(u => u.canLogin !== false) // Only users who can login
+      .map(u => ({
+        id: u.id,
+        name: `${u.firstName} ${u.lastName}`,
+      }))
+
+    if (!assigneeSearch) return transformed
+    const searchLower = assigneeSearch.toLowerCase()
+    return transformed.filter((user) =>
+      user.name.toLowerCase().includes(searchLower)
+    )
+  }, [usersData, assigneeSearch])
+
+  const handleAssign = async (userId: string) => {
+    if (!callbacks.onAssign || !item) return
+
+    // Find the user name for optimistic update
+    const user = filteredUsers.find(u => u.id === userId)
+    if (user) {
+      // Optimistically update local state
+      setLocalAssignee({ id: userId, name: user.name })
+    }
+
+    setAssigneeOpen(false)
+    setAssigneeSearch("")
+    setIsAssigning(true)
+
+    try {
+      await callbacks.onAssign(item.id, userId)
+    } catch (error) {
+      console.error("Failed to assign:", error)
+      // Revert optimistic update on error
+      if (item.recipients?.[0]) {
+        setLocalAssignee({ id: item.recipients[0].id, name: item.recipients[0].name })
+      } else {
+        setLocalAssignee(null)
+      }
+    } finally {
+      setIsAssigning(false)
+    }
+  }
+
+  // Handle add comment with optimistic update
+  const handleAddComment = React.useCallback(async (taskId: string, commentContent: string) => {
+    if (!callbacks.onAddComment) return
+
+    // Create optimistic comment
+    const optimisticComment: InboxComment = {
+      id: `temp-${Date.now()}`,
+      content: commentContent,
+      userId: 'current-user',
+      userName: 'You',
+      createdAt: new Date(),
+    }
+
+    // Optimistically add comment - use current displayComments as base if localComments is null
+    setLocalComments(prev => {
+      const currentComments = prev ?? content?.comments ?? []
+      return [...currentComments, optimisticComment]
+    })
+
+    try {
+      await callbacks.onAddComment(taskId, commentContent)
+    } catch (error) {
+      console.error("Failed to add comment:", error)
+      // Revert optimistic update on error
+      setLocalComments(prev => prev?.filter(c => c.id !== optimisticComment.id) || null)
+    }
+  }, [callbacks.onAddComment, content?.comments])
+
   // Empty state
   if (!item) {
     return (
@@ -240,8 +482,8 @@ export function InboxDetailPanel({
     )
   }
 
-  // Loading state
-  if (isLoading) {
+  // Loading state - only show if we don't have content yet (prevents flash on refetch)
+  if (isLoading && !content) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
         <div className="text-center">
@@ -258,7 +500,7 @@ export function InboxDetailPanel({
   return (
     <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+      <div className="flex items-center justify-between px-4 py-1">
         <div className="flex items-center gap-1">
           {callbacks.onArchive && (
             <TooltipProvider>
@@ -321,32 +563,32 @@ export function InboxDetailPanel({
           )}
         </div>
         <div className="flex items-center gap-1">
-          {/* Task-specific: Done button */}
-          {isTask && callbacks.onResolve && (
-            <Button
-              className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
-              onClick={() => callbacks.onResolve?.(item.id)}
-            >
-              <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
-              Done
-            </Button>
-          )}
           {/* Custom actions slot */}
           {customActions}
         </div>
       </div>
 
-      <ScrollArea className="flex-1 h-0 min-h-0">
-        <div className="p-6">
+      <ScrollArea className="flex-1 h-0 min-h-0 border-0 border-t-0">
+        <div className="px-4 pb-4 pt-2">
           {/* Header */}
-          <div className="mb-6">
+          <div className="mb-4">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <h2 className="text-xl font-semibold">{item.subject}</h2>
+              <h2 className="text-xl font-semibold flex-1">{item.subject}</h2>
               {item.sentiment && (
                 <SentimentIndicator sentiment={item.sentiment} size="md" showLabel />
               )}
+              {/* Task-specific: Done button on same line as subject */}
+              {isTask && callbacks.onResolve && item.status !== "resolved" && (
+                <Button
+                  className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
+                  onClick={() => callbacks.onResolve?.(item.id)}
+                >
+                  <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
+                  Done
+                </Button>
+              )}
             </div>
-            {(item.isStarred || item.priority || item.status) && (
+            {(item.isStarred || item.priority || item.status || (isTask && displayComments)) && (
               <div className="flex items-center gap-2 flex-wrap">
                 {item.isStarred && (
                   <Badge className="bg-amber-500/10 text-amber-600 border-0 text-xs">
@@ -367,12 +609,22 @@ export function InboxDetailPanel({
                     {formatStatus(item.status)}
                   </Badge>
                 )}
+                {isTask && displayComments && displayComments.length > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="text-xs cursor-pointer hover:bg-muted"
+                    onClick={scrollToComments}
+                  >
+                    <MessageSquare className="mr-1 h-3 w-3" />
+                    {displayComments.length} {displayComments.length === 1 ? 'Comment' : 'Comments'}
+                  </Badge>
+                )}
               </div>
             )}
 
             {/* Meta info grid - primarily for tasks */}
             {isTask && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg bg-muted/50 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 p-3 rounded-lg bg-muted/50 text-sm mt-3 border-0">
                 {item.customerName && (
                   <div>
                     <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
@@ -382,34 +634,77 @@ export function InboxDetailPanel({
                     <p className="font-medium">{item.customerName}</p>
                   </div>
                 )}
-                {item.recipients && item.recipients.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                      <User className="h-3 w-3" />
-                      Assigned To
-                    </div>
-                    <p className="font-medium">{item.recipients[0].name}</p>
-                  </div>
-                )}
                 <div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                    <Clock className="h-3 w-3" />
-                    Created
+                    <User className="h-3 w-3" />
+                    Assigned To
                   </div>
-                  <p className="font-medium">{formatTimestamp(item.timestamp)}</p>
+                  <div className="flex items-center gap-1">
+                    <p className="font-medium">
+                      {displayAssignee?.name || "Unassigned"}
+                    </p>
+                    {callbacks.onAssign && (
+                      <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5"
+                            disabled={isAssigning}
+                          >
+                            {isAssigning ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[220px] p-0" align="start">
+                          <Command shouldFilter={false}>
+                            <CommandInput
+                              placeholder="Search users..."
+                              value={assigneeSearch}
+                              onValueChange={setAssigneeSearch}
+                            />
+                            <CommandList>
+                              <CommandEmpty>No users found.</CommandEmpty>
+                              <CommandGroup>
+                                {filteredUsers.map((user) => {
+                                  const isSelected = displayAssignee?.id === user.id
+                                  return (
+                                    <CommandItem
+                                      key={user.id}
+                                      value={user.id}
+                                      onSelect={() => handleAssign(user.id)}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          isSelected ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      {user.name}
+                                    </CommandItem>
+                                  )
+                                })}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                    <Calendar className="h-3 w-3" />
-                    Last Update
+                    <Clock className="h-3 w-3" />
+                    Open
                   </div>
-                  <p className="font-medium">{formatTimestamp(item.timestamp)}</p>
+                  <p className="font-medium">{formatDistanceToNow(item.timestamp, { addSuffix: false })}</p>
                 </div>
               </div>
             )}
           </div>
-
-          <Separator className="my-6" />
 
           {/* Content */}
           {content ? (
@@ -418,17 +713,26 @@ export function InboxDetailPanel({
 
               {/* Thread messages */}
               {content.threadMessages && content.threadMessages.length > 0 && (
-                <>
-                  <Separator className="my-6" />
-                  <div className="space-y-6">
-                    {content.threadMessages.map((message, index) => (
-                      <div key={message.id || index}>
-                        {index > 0 && <Separator className="my-6" />}
-                        <MessageContent message={message} />
-                      </div>
-                    ))}
-                  </div>
-                </>
+                <div className="space-y-4 mt-4">
+                  {content.threadMessages.map((message, index) => (
+                    <div key={message.id || index}>
+                      {index > 0 && <Separator className="my-4" />}
+                      <MessageContent message={message} />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Comments section for tasks */}
+              {isTask && (
+                <div ref={commentsSectionRef}>
+                  <Separator className="my-4" />
+                  <CommentsSection
+                    comments={displayComments}
+                    itemId={item.id}
+                    onAddComment={handleAddComment}
+                  />
+                </div>
               )}
             </>
           ) : (

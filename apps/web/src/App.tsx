@@ -67,6 +67,14 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/escalations/:taskId"
+        element={
+          <ProtectedRoute>
+            <EscalationsPage />
+          </ProtectedRoute>
+        }
+      />
       {/* Redirect old integrations route to settings */}
       <Route
         path="/integrations"

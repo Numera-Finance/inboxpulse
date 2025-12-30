@@ -125,8 +125,8 @@ export function InboxView({
         })
 
         setItems(result.items)
-        // Auto-select first item if none selected or on page change
-        if (result.items.length > 0) {
+        // Auto-select first item only if no controlled selection and no internal selection
+        if (result.items.length > 0 && controlledSelectedItem === undefined && !internalSelectedItem) {
           handleSelectItem(result.items[0])
         }
 
@@ -564,6 +564,7 @@ export function InboxView({
             onUpdateStatus: callbacks.onUpdateStatus,
             onUpdatePriority: callbacks.onUpdatePriority,
             onResolve: callbacks.onResolve,
+            onAddComment: callbacks.onAddComment,
           }}
           config={{ itemType: config.itemType }}
         />

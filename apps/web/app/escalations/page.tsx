@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams, useNavigate } from "react-router-dom"
-import { Inbox, Send, Loader2, Check, RotateCcw, UserPlus, Calendar } from "lucide-react"
+import { useSearchParams, useNavigate, useParams } from "react-router-dom"
+import { Inbox, Loader2, Check, RotateCcw, UserPlus, Calendar } from "lucide-react"
 import { format } from "date-fns"
 import { AppShell } from "@/components/app-shell"
 import {
@@ -16,17 +16,7 @@ import {
   type InboxItemContent,
   type TaskWithComments,
 } from "@/components/inbox"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Separator } from "@/components/ui/separator"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   Popover,
   PopoverContent,
@@ -45,9 +35,7 @@ import { cn } from "@/lib/utils"
 import { Calendar as CalendarComponent } from "@/components/ui/calendar"
 import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
 import {
-  useTasks,
   useTask,
-  useTaskComments,
   useAssignableUsers,
   useMarkTaskDone,
   useReopenTask,
@@ -62,22 +50,19 @@ import { authService } from "@/lib/auth/auth-service"
 
 export default function EscalationsPage() {
   const navigate = useNavigate()
+  const { taskId: taskIdFromUrl } = useParams<{ taskId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
 
   // Get current user ID for "Me" filter
   const currentUserId = authService.getUser()?.userId
 
-  // Get state from URL params for bookmarkable routes
-  const taskIdFromUrl = searchParams.get("task")
+  // Get filter state from URL search params
   const statusFromUrl = searchParams.get("status") as "open" | "done" | null
   const assignedFromUrl = searchParams.get("assigned")
   const customerIdFromUrl = searchParams.get("customer")
   const dateFromUrl = searchParams.get("dateFrom")
   const dateToUrl = searchParams.get("dateTo")
-
-  // Local state for comment input
-  const [newComment, setNewComment] = React.useState("")
 
   // Local state for assignee filter autocomplete
   const [assigneeOpen, setAssigneeOpen] = React.useState(false)
@@ -86,7 +71,6 @@ export default function EscalationsPage() {
   // Data fetching
   const { data: assignableUsers = [] } = useAssignableUsers()
   const { data: selectedTaskData } = useTask(taskIdFromUrl || "")
-  const { data: comments = [] } = useTaskComments(taskIdFromUrl || "")
 
   // Mutations
   const markDone = useMarkTaskDone()
@@ -220,16 +204,15 @@ export default function EscalationsPage() {
     []
   )
 
-  // Handle task selection - update URL
+  // Handle task selection - navigate to task URL
   const handleSelectItem = React.useCallback(
     (item: InboxItem<unknown>) => {
-      setSearchParams((prev) => {
-        const params = new URLSearchParams(prev)
-        params.set("task", item.id)
-        return params
-      })
+      // Preserve current search params when navigating
+      const currentParams = searchParams.toString()
+      const queryString = currentParams ? `?${currentParams}` : ""
+      navigate(`/escalations/${item.id}${queryString}`)
     },
-    [setSearchParams]
+    [navigate, searchParams]
   )
 
   // Handle mark done
@@ -253,22 +236,23 @@ export default function EscalationsPage() {
   )
 
   // Handle reassign
-  const handleReassign = React.useCallback(
-    async (taskId: string, userId: string | null) => {
-      await reassign.mutateAsync({ id: taskId, assignedToId: userId })
+  const handleAssign = React.useCallback(
+    async (itemId: string, userId: string) => {
+      await reassign.mutateAsync({ id: itemId, assignedToId: userId })
       queryClient.invalidateQueries({ queryKey: taskKeys.lists() })
-      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) })
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(itemId) })
     },
     [reassign, queryClient]
   )
 
   // Handle add comment
-  const handleAddComment = React.useCallback(async () => {
-    if (!taskIdFromUrl || !newComment.trim()) return
-    await addComment.mutateAsync({ taskId: taskIdFromUrl, content: newComment.trim() })
-    setNewComment("")
-    queryClient.invalidateQueries({ queryKey: taskKeys.comments(taskIdFromUrl) })
-  }, [taskIdFromUrl, newComment, addComment, queryClient])
+  const handleAddComment = React.useCallback(
+    async (itemId: string, content: string) => {
+      await addComment.mutateAsync({ taskId: itemId, content })
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(itemId) })
+    },
+    [addComment, queryClient]
+  )
 
   // Update URL when filter changes
   const handleAssigneeChange = (value: string) => {
@@ -319,9 +303,13 @@ export default function EscalationsPage() {
     })
   }
 
-  // Get the selected task from URL
+  // Get the selected task from URL and convert to InboxItem
   const selectedTask = selectedTaskData || null
   const isDone = selectedTask?.status === TaskStatus.DONE
+  const selectedInboxItem = React.useMemo(() => {
+    if (!selectedTask) return null
+    return apiTaskToInboxItem(selectedTask)
+  }, [selectedTask])
 
   // Filter assignable users by search term (for autocomplete)
   const filteredAssignableUsers = React.useMemo(() => {
@@ -346,28 +334,6 @@ export default function EscalationsPage() {
   // Custom actions for task detail panel
   const customActions = taskIdFromUrl ? (
     <div className="flex items-center gap-2">
-      {/* Reassign dropdown */}
-      <Select
-        value={selectedTask?.assignedToId || "unassigned"}
-        onValueChange={(value) =>
-          handleReassign(taskIdFromUrl, value === "unassigned" ? null : value)
-        }
-        disabled={reassign.isPending}
-      >
-        <SelectTrigger className="w-[140px] h-8">
-          <UserPlus className="h-3 w-3 mr-1" />
-          <SelectValue placeholder="Assign" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="unassigned">Unassigned</SelectItem>
-          {assignableUsers.map((user) => (
-            <SelectItem key={user.id} value={user.id}>
-              {user.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
       {/* Reopen button (only shown for done tasks) */}
       {isDone && (
         <Button
@@ -615,58 +581,14 @@ export default function EscalationsPage() {
               onFetchContent: handleFetchContent,
               onSelect: handleSelectItem,
               onResolve: handleResolve,
+              onAssign: handleAssign,
+              onAddComment: handleAddComment,
             }}
+            selectedItem={selectedInboxItem}
             toolbarActions={customActions}
           />
         </div>
 
-        {/* Comments Section (shown when task is selected) */}
-        {taskIdFromUrl && (
-          <div className="border-t border-border p-4 bg-muted/30">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium">Comments ({comments.length})</span>
-            </div>
-
-            {/* Comments list */}
-            {comments.length > 0 && (
-              <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
-                {comments.map((comment) => (
-                  <div
-                    key={comment.id}
-                    className="text-sm p-2 bg-background rounded border"
-                  >
-                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                      <span className="font-medium">{comment.userName}</span>
-                      <span>{format(new Date(comment.createdAt), "MMM d, h:mm a")}</span>
-                    </div>
-                    <p>{comment.content}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Add comment */}
-            <div className="flex gap-2">
-              <Textarea
-                placeholder="Add a comment..."
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                className="min-h-[60px] resize-none flex-1"
-              />
-              <Button
-                size="sm"
-                onClick={handleAddComment}
-                disabled={!newComment.trim() || addComment.isPending}
-              >
-                {addComment.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
     </AppShell>
   )

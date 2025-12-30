@@ -133,6 +133,17 @@ export interface InboxAttachment {
 }
 
 /**
+ * Comment on a task
+ */
+export interface InboxComment {
+  id: string;
+  content: string;
+  userId: string;
+  userName: string;
+  createdAt: Date;
+}
+
+/**
  * Full content for the detail view - includes body and thread context
  */
 export interface InboxItemContent {
@@ -164,6 +175,9 @@ export interface InboxItemContent {
 
   /** Thread messages (for email threads) */
   threadMessages?: InboxItemContent[];
+
+  /** Comments (for tasks) */
+  comments?: InboxComment[];
 
   /** Additional metadata */
   metadata?: Record<string, unknown>;
@@ -348,6 +362,11 @@ export interface InboxCallbacks {
    * Mark task as resolved/done
    */
   onResolve?: (itemId: string) => Promise<void>;
+
+  /**
+   * Add comment to a task
+   */
+  onAddComment?: (itemId: string, content: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -494,6 +513,7 @@ export interface InboxDetailPanelProps {
     | 'onUpdateStatus'
     | 'onUpdatePriority'
     | 'onResolve'
+    | 'onAddComment'
   >;
 
   /** Configuration */
