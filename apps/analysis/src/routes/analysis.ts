@@ -3,9 +3,10 @@ import { toStructuredError, sanitizeErrorForClient } from '@crm/shared';
 import { DomainExtractionService } from '../services/domain-extraction';
 import { ContactExtractionService } from '../services/contact-extraction';
 import { SignatureExtractionService } from '../services/signature-extraction';
+import { EmailFilterService, type ClassificationResult, type EmailCategory } from '../services/email-filter';
 import { AnalysisExecutor } from '../framework/executor';
 import { AnalysisConfigLoader } from '../framework/config-loader';
-import { AIService } from '../services/ai-service';
+import { AIService, type ModelConfig } from '../services/ai-service';
 import { analysisRegistry } from '../framework/registry';
 import { analysisCacheService } from '../services/cache-service';
 import { emailSchema, DEFAULT_ANALYSIS_CONFIG } from '@crm/shared';
@@ -22,6 +23,7 @@ const contactService = new ContactExtractionService();
 const aiService = new AIService();
 const signatureService = new SignatureExtractionService(aiService);
 const analysisExecutor = new AnalysisExecutor(aiService, analysisRegistry);
+const emailFilterService = new EmailFilterService(aiService);
 
 const domainExtractRequestSchema = z.object({
   tenantId: z.uuid(),
@@ -57,12 +59,30 @@ const analysisConfigSchema = z.object({
   customPrompts: z.record(z.string(), z.string()).optional(),
 }).optional();
 
+// Schema for filter model config (optional override for LLM classification)
+const filterModelConfigSchema = z.object({
+  provider: z.enum(['openai', 'anthropic', 'google', 'xai']),
+  model: z.string(),
+  temperature: z.number().optional(),
+  maxTokens: z.number().optional(),
+}).optional();
+
+// Schema for filter options
+const filterOptionsSchema = z.object({
+  enabled: z.boolean().default(false), // Whether to run email filter before analysis
+  skipHuggingFace: z.boolean().default(false), // Skip HuggingFace stages
+  skipLLM: z.boolean().default(false), // Skip LLM classification stage
+  filterCategories: z.array(z.enum(['spam', 'marketing', 'automated', 'transactional'])).default(['spam', 'marketing']), // Categories to filter out
+  llmModel: filterModelConfigSchema, // Optional model override for LLM classification
+}).optional();
+
 const analyzeRequestSchema = z.object({
   tenantId: z.uuid(),
   email: emailSchema,
   threadContext: z.string().optional(), // Thread context string (API service should build this)
   analysisTypes: z.array(z.string()).optional(), // Which analyses to run
   config: analysisConfigSchema, // Optional: override model configs, settings, etc.
+  filter: filterOptionsSchema, // Optional: email filter settings
 });
 
 /**
@@ -254,6 +274,56 @@ app.post('/analyze', async (c) => {
       'Analysis request received'
     );
 
+    // Run email filter if enabled
+    if (validated.filter?.enabled) {
+      const filterOptions = validated.filter;
+      const filterResult = await emailFilterService.classify(validated.email, {
+        llmModel: filterOptions.llmModel as ModelConfig | undefined,
+        skipHuggingFace: filterOptions.skipHuggingFace,
+        skipLLM: filterOptions.skipLLM,
+        tenantId: validated.tenantId,
+      });
+
+      // Check if email should be filtered out
+      const categoriesToFilter: readonly EmailCategory[] = filterOptions.filterCategories || ['spam', 'marketing'];
+      if (categoriesToFilter.includes(filterResult.category)) {
+        logger.info(
+          {
+            tenantId: validated.tenantId,
+            emailId: messageId,
+            category: filterResult.category,
+            confidence: filterResult.confidence,
+            stage: filterResult.stage,
+          },
+          'Email filtered out, skipping analysis'
+        );
+
+        return c.json<ApiResponse<{
+          filtered: true;
+          filterResult: ClassificationResult;
+          results: Record<string, any>;
+        }>>({
+          success: true,
+          data: {
+            filtered: true,
+            filterResult,
+            results: {},
+          },
+        });
+      }
+
+      logger.info(
+        {
+          tenantId: validated.tenantId,
+          emailId: messageId,
+          category: filterResult.category,
+          confidence: filterResult.confidence,
+          stage: filterResult.stage,
+        },
+        'Email passed filter, proceeding with analysis'
+      );
+    }
+
     // Merge provided config with defaults
     const configLoader = new AnalysisConfigLoader();
     const config: AnalysisConfig = configLoader.mergeWithDefaults({
@@ -383,6 +453,77 @@ app.post('/async/analyze', async (c) => {
   // For now, same implementation as /analyze
   // In the future, this will queue the analysis via Inngest
   return app.fetch(c.req.raw);
+});
+
+const filterRequestSchema = z.object({
+  tenantId: z.uuid(),
+  email: emailSchema,
+  skipHuggingFace: z.boolean().default(false),
+  skipLLM: z.boolean().default(false),
+  llmModel: filterModelConfigSchema,
+});
+
+/**
+ * POST /api/analysis/filter
+ * Standalone email classification endpoint
+ * Useful for testing different models or pre-filtering emails before analysis
+ */
+app.post('/filter', async (c) => {
+  try {
+    const body = await c.req.json();
+    const validated = filterRequestSchema.parse(body);
+
+    logger.info(
+      { tenantId: validated.tenantId, emailId: validated.email.messageId },
+      'Email filter request received'
+    );
+
+    const result = await emailFilterService.classify(validated.email, {
+      llmModel: validated.llmModel as ModelConfig | undefined,
+      skipHuggingFace: validated.skipHuggingFace,
+      skipLLM: validated.skipLLM,
+      tenantId: validated.tenantId,
+    });
+
+    logger.info(
+      {
+        tenantId: validated.tenantId,
+        emailId: validated.email.messageId,
+        category: result.category,
+        confidence: result.confidence,
+        stage: result.stage,
+      },
+      'Email classification completed'
+    );
+
+    return c.json<ApiResponse<{ classification: ClassificationResult }>>({
+      success: true,
+      data: {
+        classification: result,
+      },
+    });
+  } catch (error: unknown) {
+    const structuredError = toStructuredError(error);
+
+    logger.error(
+      {
+        error: structuredError,
+        path: c.req.path,
+        method: c.req.method,
+      },
+      'Email filter failed'
+    );
+
+    const sanitizedError = sanitizeErrorForClient(structuredError);
+
+    return c.json<ApiResponse<never>>(
+      {
+        success: false,
+        error: sanitizedError,
+      },
+      sanitizedError.statusCode as any
+    );
+  }
 });
 
 const summarizeRequestSchema = z.object({

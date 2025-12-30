@@ -32,6 +32,14 @@ export interface InboxSentiment {
 }
 
 /**
+ * Classification data for emails (spam/marketing/business/etc)
+ */
+export interface InboxClassification {
+  value: 'spam' | 'marketing' | 'transactional' | 'automated' | 'business';
+  confidence?: number;
+}
+
+/**
  * Priority levels for both tasks and emails
  */
 export type InboxPriority = 'critical' | 'high' | 'medium' | 'low';
@@ -102,6 +110,9 @@ export interface InboxItem<TOriginal = unknown> {
 
   /** Sentiment analysis result (for emails) */
   sentiment?: InboxSentiment;
+
+  /** Email classification (spam/marketing/business/etc) */
+  classification?: InboxClassification;
 
   /** Whether email is flagged as an escalation */
   isEscalation?: boolean;

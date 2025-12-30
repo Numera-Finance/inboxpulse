@@ -31,6 +31,13 @@ export const Signal = {
 
   // Competitor mention (50-59)
   COMPETITOR: 50,
+
+  // Email classification (60-69)
+  CLASSIFICATION_SPAM: 60,
+  CLASSIFICATION_MARKETING: 61,
+  CLASSIFICATION_TRANSACTIONAL: 62,
+  CLASSIFICATION_AUTOMATED: 63,
+  CLASSIFICATION_BUSINESS: 64,
 } as const;
 
 export type SignalType = (typeof Signal)[keyof typeof Signal];
@@ -48,6 +55,11 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   [Signal.CHURN_CRITICAL]: 'Churn Risk (Critical)',
   [Signal.KUDOS]: 'Kudos',
   [Signal.COMPETITOR]: 'Competitor Mention',
+  [Signal.CLASSIFICATION_SPAM]: 'Spam',
+  [Signal.CLASSIFICATION_MARKETING]: 'Marketing',
+  [Signal.CLASSIFICATION_TRANSACTIONAL]: 'Transactional',
+  [Signal.CLASSIFICATION_AUTOMATED]: 'Automated',
+  [Signal.CLASSIFICATION_BUSINESS]: 'Business',
 };
 
 // Helper to check if signals array contains a specific signal
@@ -87,6 +99,40 @@ export const CHURN_SIGNALS = [
   Signal.CHURN_HIGH,
   Signal.CHURN_CRITICAL,
 ] as const;
+
+// All classification signals
+export const CLASSIFICATION_SIGNALS = [
+  Signal.CLASSIFICATION_SPAM,
+  Signal.CLASSIFICATION_MARKETING,
+  Signal.CLASSIFICATION_TRANSACTIONAL,
+  Signal.CLASSIFICATION_AUTOMATED,
+  Signal.CLASSIFICATION_BUSINESS,
+] as const;
+
+// Classification type for the email filter
+export type EmailClassification = 'spam' | 'marketing' | 'transactional' | 'automated' | 'business';
+
+// Helper to get classification from signals array
+export function getClassificationFromSignals(signals: number[] | null | undefined): EmailClassification | null {
+  if (!signals) return null;
+  if (signals.includes(Signal.CLASSIFICATION_SPAM)) return 'spam';
+  if (signals.includes(Signal.CLASSIFICATION_MARKETING)) return 'marketing';
+  if (signals.includes(Signal.CLASSIFICATION_TRANSACTIONAL)) return 'transactional';
+  if (signals.includes(Signal.CLASSIFICATION_AUTOMATED)) return 'automated';
+  if (signals.includes(Signal.CLASSIFICATION_BUSINESS)) return 'business';
+  return null;
+}
+
+// Helper to get signal from classification category
+export function getSignalFromClassification(classification: EmailClassification): SignalType {
+  switch (classification) {
+    case 'spam': return Signal.CLASSIFICATION_SPAM;
+    case 'marketing': return Signal.CLASSIFICATION_MARKETING;
+    case 'transactional': return Signal.CLASSIFICATION_TRANSACTIONAL;
+    case 'automated': return Signal.CLASSIFICATION_AUTOMATED;
+    case 'business': return Signal.CLASSIFICATION_BUSINESS;
+  }
+}
 
 // =============================================================================
 
