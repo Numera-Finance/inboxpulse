@@ -47,3 +47,17 @@ export {
 
 // Role hooks
 export { useRoles, roleKeys } from './use-roles';
+
+// Task hooks
+export {
+  useTasks,
+  useTask,
+  useTaskComments,
+  useAssignableUsers,
+  useCreateTask,
+  useMarkTaskDone,
+  useReopenTask,
+  useReassignTask,
+  useAddTaskComment,
+  taskKeys,
+} from './use-tasks';

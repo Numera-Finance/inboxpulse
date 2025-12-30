@@ -107,6 +107,8 @@ export {
   escalationToInboxContent,
   apiEmailToInboxItem,
   apiEmailToInboxContent,
+  apiTaskToInboxItem,
+  apiTaskToInboxContent,
 } from "./adapters"
 
-export type { ApiEmailResponse } from "./adapters"
+export type { ApiEmailResponse, TaskWithComments } from "./adapters"

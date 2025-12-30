@@ -49,6 +49,7 @@ import oauthRoutes from './oauth/routes';
 import { customerRoutes } from './customers/routes';
 import { contactRoutes } from './contacts/routes';
 import { roleRoutes } from './roles/routes';
+import { taskRoutes } from './tasks/routes';
 import { authRoutes } from './auth/routes';
 import { betterAuthRoutes } from './auth/better-auth-routes';
 import inngestRoutes from './inngest/routes';
@@ -256,6 +257,7 @@ app.use('/api/runs/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/customers/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/contacts/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/roles/*', betterAuthRequestHeaderMiddleware);
+app.use('/api/tasks/*', betterAuthRequestHeaderMiddleware);
 
 app.route('/api/users', userRoutes);
 app.route('/api/integrations', integrationsRoutes);
@@ -265,6 +267,7 @@ app.route('/api/runs', runsRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/contacts', contactRoutes);
 app.route('/api/roles', roleRoutes);
+app.route('/api/tasks', taskRoutes);
 
 const port = process.env.PORT ? parseInt(process.env.PORT) : 4001;
 
