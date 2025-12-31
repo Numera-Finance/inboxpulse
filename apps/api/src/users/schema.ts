@@ -127,9 +127,6 @@ export const userCustomers = pgTable(
       .notNull()
       .references(() => customers.id, { onDelete: 'cascade' }),
     roleId: uuid('role_id'),
-    // Whether this user is the account owner for this customer
-    // Only one user per customer should be account owner (enforced in service layer)
-    isAccountOwner: boolean('is_account_owner').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
