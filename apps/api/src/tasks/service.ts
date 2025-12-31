@@ -1,34 +1,56 @@
 import { injectable, inject } from 'tsyringe';
+import { z } from 'zod';
 import type { RequestHeader } from '@crm/shared';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment } from './schema';
 import { logger } from '../utils/logger';
 
-export interface TaskSearchRequest {
-  status?: 'open' | 'done';
-  assignedToId?: string;
-  customerId?: string;
-  search?: string;
-  sortBy?: 'createdAt' | 'updatedAt';
-  sortOrder?: 'asc' | 'desc';
-  limit?: number;
-  offset?: number;
-  dateFrom?: string;
-  dateTo?: string;
-}
+// =============================================================================
+// Zod Schemas for request validation
+// =============================================================================
+
+export const taskSearchRequestSchema = z.object({
+  status: z.enum(['open', 'done']).optional(),
+  assignedToId: z.string().optional(),
+  customerId: z.string().uuid().optional(),
+  search: z.string().optional(),
+  sortBy: z.enum(['createdAt', 'updatedAt']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
+  limit: z.number().int().positive().max(100).optional(),
+  offset: z.number().int().min(0).optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});
+
+export const createTaskRequestSchema = z.object({
+  customerId: z.string().uuid(),
+  title: z.string().min(1).max(500),
+  emailId: z.string().uuid().optional(),
+  assignedToId: z.string().uuid().optional(),
+});
+
+export const reassignTaskRequestSchema = z.object({
+  assignedToId: z.string().uuid().nullable(),
+});
+
+export const addCommentRequestSchema = z.object({
+  content: z.string().min(1).max(5000),
+});
+
+// =============================================================================
+// Derived types from Zod schemas
+// =============================================================================
+
+export type TaskSearchRequest = z.infer<typeof taskSearchRequestSchema>;
+export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
+export type ReassignTaskRequest = z.infer<typeof reassignTaskRequestSchema>;
+export type AddCommentRequest = z.infer<typeof addCommentRequestSchema>;
 
 export interface TaskSearchResponse {
   items: TaskWithRelations[];
   total: number;
   limit: number;
   offset: number;
-}
-
-export interface CreateTaskRequest {
-  customerId: string;
-  title: string;
-  emailId?: string;
-  assignedToId?: string;
 }
 
 @injectable()

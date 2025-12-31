@@ -1,42 +1,17 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
-import { NotFoundError } from '@crm/shared';
-import { TaskService } from './service';
-import type { ApiResponse, RequestHeader } from '@crm/shared';
-import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { z } from 'zod';
-
-// Schema for searching tasks
-const taskSearchSchema = z.object({
-  status: z.enum(['open', 'done']).optional(),
-  assignedToId: z.string().optional(),
-  customerId: z.string().uuid().optional(),
-  search: z.string().optional(),
-  sortBy: z.enum(['createdAt', 'updatedAt']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional(),
-  limit: z.number().int().positive().max(100).optional(),
-  offset: z.number().int().min(0).optional(),
-  dateFrom: z.string().optional(),
-  dateTo: z.string().optional(),
-});
-
-// Schema for creating a task
-const createTaskSchema = z.object({
-  customerId: z.string().uuid(),
-  title: z.string().min(1).max(500),
-  emailId: z.string().uuid().optional(),
-  assignedToId: z.string().uuid().optional(),
-});
-
-// Schema for reassigning a task
-const reassignTaskSchema = z.object({
-  assignedToId: z.string().uuid().nullable(),
-});
-
-// Schema for adding a comment
-const addCommentSchema = z.object({
-  content: z.string().min(1).max(5000),
-});
+import { NotFoundError, Permission } from '@crm/shared';
+import {
+  TaskService,
+  taskSearchRequestSchema,
+  createTaskRequestSchema,
+  reassignTaskRequestSchema,
+  addCommentRequestSchema,
+} from './service';
+import type { RequestHeader } from '@crm/shared';
+import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
+import { requirePermission } from '../middleware/require-permission';
 
 export const taskRoutes = new Hono();
 
@@ -46,7 +21,7 @@ export const taskRoutes = new Hono();
 taskRoutes.post('/search', async (c) => {
   return handleApiRequest(
     c,
-    taskSearchSchema,
+    taskSearchRequestSchema,
     async (requestHeader: RequestHeader, searchRequest) => {
       const service = container.resolve(TaskService);
       return await service.search(requestHeader, searchRequest);
@@ -56,11 +31,12 @@ taskRoutes.post('/search', async (c) => {
 
 /**
  * POST /api/tasks - Create a new task
+ * Requires TASK_ADD permission
  */
-taskRoutes.post('/', async (c) => {
+taskRoutes.post('/', requirePermission(Permission.TASK_ADD), async (c) => {
   return handleApiRequest(
     c,
-    createTaskSchema,
+    createTaskRequestSchema,
     async (requestHeader: RequestHeader, createRequest) => {
       const service = container.resolve(TaskService);
       return await service.create(requestHeader, createRequest);
@@ -98,8 +74,9 @@ taskRoutes.get('/:id', async (c) => {
 
 /**
  * POST /api/tasks/:id/done - Mark task as done
+ * Requires TASK_EDIT permission
  */
-taskRoutes.post('/:id/done', async (c) => {
+taskRoutes.post('/:id/done', requirePermission(Permission.TASK_EDIT), async (c) => {
   return handleGetRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
@@ -116,8 +93,9 @@ taskRoutes.post('/:id/done', async (c) => {
 
 /**
  * POST /api/tasks/:id/reopen - Reopen a done task
+ * Requires TASK_EDIT permission
  */
-taskRoutes.post('/:id/reopen', async (c) => {
+taskRoutes.post('/:id/reopen', requirePermission(Permission.TASK_EDIT), async (c) => {
   return handleGetRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
@@ -134,12 +112,13 @@ taskRoutes.post('/:id/reopen', async (c) => {
 
 /**
  * PUT /api/tasks/:id/assign - Reassign task
+ * Requires TASK_EDIT permission
  */
-taskRoutes.put('/:id/assign', async (c) => {
+taskRoutes.put('/:id/assign', requirePermission(Permission.TASK_EDIT), async (c) => {
   return handleApiRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
-    reassignTaskSchema,
+    reassignTaskRequestSchema,
     async (requestHeader: RequestHeader, params, body) => {
       const service = container.resolve(TaskService);
       const task = await service.reassign(requestHeader, params.id, body.assignedToId);
@@ -167,12 +146,13 @@ taskRoutes.get('/:id/comments', async (c) => {
 
 /**
  * POST /api/tasks/:id/comments - Add comment to task
+ * Requires TASK_EDIT permission
  */
-taskRoutes.post('/:id/comments', async (c) => {
+taskRoutes.post('/:id/comments', requirePermission(Permission.TASK_EDIT), async (c) => {
   return handleApiRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
-    addCommentSchema,
+    addCommentRequestSchema,
     async (requestHeader: RequestHeader, params, body) => {
       const service = container.resolve(TaskService);
       const comment = await service.addComment(requestHeader, params.id, body.content);
