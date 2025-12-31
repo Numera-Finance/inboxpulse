@@ -14,8 +14,15 @@ export type EmailPriority = z.infer<typeof emailPrioritySchema>;
 export const emailSentimentSchema = z.enum(['positive', 'negative', 'neutral']);
 export type EmailSentiment = z.infer<typeof emailSentimentSchema>;
 
+// More permissive email validation that accepts real-world email formats
+// Zod's built-in .email() is too strict and rejects some valid RFC-compliant emails
+const permissiveEmailSchema = z.string().refine(
+  (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) || val.includes('@'),
+  { message: 'Invalid email address' }
+);
+
 export const emailAddressSchema = z.object({
-  email: z.string().email(),
+  email: permissiveEmailSchema,
   name: z.string().optional(),
 });
 export type EmailAddress = z.infer<typeof emailAddressSchema>;
