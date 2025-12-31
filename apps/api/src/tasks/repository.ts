@@ -1,7 +1,7 @@
 import { eq, and, sql, SQL, desc, asc, inArray } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import type { Database } from '@crm/database';
-import { isAdmin, type RequestHeader } from '@crm/shared';
+import { ScopedRepository, type Database } from '@crm/database';
+import type { RequestHeader } from '@crm/shared';
 import { tasks, taskComments, userSubordinates, type Task, type NewTask, type TaskComment, type NewTaskComment, TaskStatus } from './schema';
 import { users } from '../users/schema';
 import { customers } from '../customers/schema';
@@ -23,51 +23,22 @@ export interface TaskCommentWithUser extends TaskComment {
 }
 
 @injectable()
-export class TaskRepository {
-  constructor(@inject('Database') private db: Database) {}
-
-  /**
-   * Check if user can access a task (their own or subordinate's)
-   */
-  private async hasTaskAccess(header: RequestHeader, taskId: string): Promise<boolean> {
-    if (isAdmin(header.permissions)) {
-      return true;
-    }
-
-    const result = await this.db.execute(sql`
-      SELECT 1 FROM ${tasks} t
-      WHERE t.id = ${taskId}
-        AND t.tenant_id = ${header.tenantId}
-        AND (
-          t.assigned_to_id = ${header.userId}
-          OR t.assigned_to_id IS NULL
-          OR t.assigned_to_id IN (
-            SELECT subordinate_id FROM ${userSubordinates}
-            WHERE user_id = ${header.userId}
-          )
-        )
-      LIMIT 1
-    `);
-    return result.length > 0;
+export class TaskRepository extends ScopedRepository {
+  constructor(@inject('Database') db: Database) {
+    super(db);
   }
 
   /**
-   * SQL filter for task access control
-   * User can see: unassigned, their own, or subordinate's tasks
+   * Check if user can access a task (their own or subordinate's)
+   * Uses the inherited hasUserAccess but also verifies tenant
    */
-  private taskAccessFilter(header: RequestHeader): SQL {
-    if (isAdmin(header.permissions)) {
-      return sql`true`;
+  private async hasTaskAccess(header: RequestHeader, taskId: string): Promise<boolean> {
+    // First get the task to check tenant and assignedToId
+    const task = await this.findById(taskId);
+    if (!task || task.tenantId !== header.tenantId) {
+      return false;
     }
-
-    return sql`(
-      ${tasks.assignedToId} IS NULL
-      OR ${tasks.assignedToId} = ${header.userId}
-      OR ${tasks.assignedToId} IN (
-        SELECT subordinate_id FROM ${userSubordinates}
-        WHERE user_id = ${header.userId}
-      )
-    )`;
+    return this.hasUserAccess(header, task.assignedToId);
   }
 
   /**
@@ -136,7 +107,7 @@ export class TaskRepository {
       .where(
         and(
           eq(tasks.id, id),
-          eq(tasks.tenantId, header.tenantId)
+          this.tenantFilter(tasks.tenantId, header)
         )
       );
 
@@ -170,8 +141,8 @@ export class TaskRepository {
     }
   ): Promise<{ items: TaskWithRelations[]; total: number }> {
     const conditions: SQL[] = [
-      eq(tasks.tenantId, header.tenantId),
-      this.taskAccessFilter(header),
+      this.tenantFilter(tasks.tenantId, header),
+      this.userAccessFilter(tasks.assignedToId, header),
     ];
 
     if (options.status !== undefined) {
@@ -395,7 +366,7 @@ export class TaskRepository {
       .from(users)
       .where(
         and(
-          eq(users.tenantId, header.tenantId),
+          this.tenantFilter(users.tenantId, header),
           inArray(users.id, subordinateIds)
         )
       );
