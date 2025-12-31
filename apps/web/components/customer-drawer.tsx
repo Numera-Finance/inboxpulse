@@ -49,6 +49,29 @@ interface CustomerDrawerProps {
 }
 
 export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false }: CustomerDrawerProps) {
+  // Track visibility separately from open to allow exit animation
+  const [isVisible, setIsVisible] = React.useState(open)
+  const [shouldRender, setShouldRender] = React.useState(open)
+
+  // Handle open/close transitions
+  React.useEffect(() => {
+    if (open) {
+      // Opening: render immediately, then animate in
+      setShouldRender(true)
+      // Small delay to ensure DOM is ready before animation
+      requestAnimationFrame(() => {
+        setIsVisible(true)
+      })
+    } else {
+      // Closing: animate out, then stop rendering
+      setIsVisible(false)
+      const timer = setTimeout(() => {
+        setShouldRender(false)
+      }, 300) // Match animation duration
+      return () => clearTimeout(timer)
+    }
+  }, [open])
+
   const [contactSearch, setContactSearch] = React.useState("")
   const [editingContact, setEditingContact] = React.useState<string | null>(null)
   const [addingContact, setAddingContact] = React.useState(false)
@@ -155,6 +178,26 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       setEditingRoleId(null)
     }
   }, [open])
+
+  // Close drawer on Escape key
+  React.useEffect(() => {
+    if (!open) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Don't close if email drawer is open (let it handle its own escape)
+        if (emailDrawerOpen) return
+        // Don't close if user is in an input field (let them cancel editing)
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+          return
+        }
+        onClose()
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [open, emailDrawerOpen, onClose])
 
   // Reset filters and customer-specific state when customer changes
   React.useEffect(() => {
@@ -382,18 +425,22 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   // Show loading state or return null if no customer and not loading
   // This must come AFTER all hooks are called
   if (!customer) {
-    if (!open) return null
+    if (!shouldRender) return null
 
     // Show loading state when drawer is open but customer is still loading
     return (
       <>
         {/* Overlay */}
         <div
-          className="fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity opacity-100"
+          className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
+            isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
           onClick={onClose}
         />
         {/* Drawer with loading state */}
-        <div className="fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl translate-x-0">
+        <div className={`fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
+          isVisible ? "translate-x-0" : "translate-x-full"
+        }`}>
           <div className="flex h-full flex-col items-center justify-center">
             {isLoading ? (
               <>
@@ -563,20 +610,23 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     (label) => !labels.includes(label) && label.toLowerCase().includes(newLabelInput.toLowerCase()),
   )
 
+  // Don't render if not visible and animation complete
+  if (!shouldRender) return null
+
   return (
     <>
       {/* Overlay */}
       <div
-        className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity ${
-          open ? "opacity-100" : "opacity-0 pointer-events-none"
+        className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
+          isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}
       />
 
       {/* Drawer - Always full width */}
       <div
-        className={`fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl transition-transform duration-300 ${
-          open ? "translate-x-0" : "translate-x-full"
+        className={`fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
+          isVisible ? "translate-x-0" : "translate-x-full"
         }`}
       >
         <div className="flex h-full flex-col">
