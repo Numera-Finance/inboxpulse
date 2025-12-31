@@ -150,7 +150,7 @@ export class TaskService {
   async create(header: RequestHeader, request: CreateTaskRequest): Promise<Task> {
     logger.info({ customerId: request.customerId, title: request.title }, 'Creating task');
 
-    return this.taskRepository.create({
+    const task = await this.taskRepository.create({
       tenantId: header.tenantId,
       customerId: request.customerId,
       title: request.title,
@@ -158,6 +158,20 @@ export class TaskService {
       assignedToId: request.assignedToId,
       createdBySystem: false,
     });
+
+    // Send notification if task is assigned
+    if (task.assignedToId) {
+      const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
+      if (taskWithRelations) {
+        // Get assigner name (the user who created the task)
+        const assigner = await this.userRepository.findById(header.userId);
+        const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
+        // Fire and forget - don't block on notification
+        this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => {});
+      }
+    }
+
+    return task;
   }
 
   /**
@@ -208,7 +222,22 @@ export class TaskService {
    */
   async reassign(header: RequestHeader, id: string, assignedToId: string | null): Promise<Task | undefined> {
     logger.info({ taskId: id, assignedToId }, 'Reassigning task');
-    return this.taskRepository.reassign(header, id, assignedToId);
+
+    const task = await this.taskRepository.reassign(header, id, assignedToId);
+
+    // Send notification if task is reassigned to someone
+    if (task && assignedToId) {
+      const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
+      if (taskWithRelations) {
+        // Get assigner name (the user who reassigned the task)
+        const assigner = await this.userRepository.findById(header.userId);
+        const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
+        // Fire and forget - don't block on notification
+        this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => {});
+      }
+    }
+
+    return task;
   }
 
   /**
@@ -371,34 +400,28 @@ export class TaskService {
   }
 
   /**
-   * Send escalation notification to a manager via the notifications service.
+   * Send escalation batch notification to a manager via the notifications service.
    */
   async sendEscalationNotification(
     tenantId: string,
     data: ManagerEscalationData
   ): Promise<boolean> {
     try {
+      const notificationsUrl = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004';
       const response = await fetch(
-        `${process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004'}/api/notifications/send`,
+        `${notificationsUrl}/api/notifications/send/escalation-batch`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-tenant-id': tenantId,
+            'x-user-id': data.manager.id,
           },
           body: JSON.stringify({
-            template: 'escalation-batch',
-            channel: 'email',
-            recipient: {
-              userId: data.manager.id,
-              email: data.manager.email,
-              name: `${data.manager.firstName} ${data.manager.lastName}`,
-            },
-            data: {
-              recipientName: data.manager.firstName,
-              escalations: data.escalations,
-              metrics: data.metrics,
-            },
+            escalations: data.escalations,
+            metrics: data.metrics,
+            recipientName: data.manager.firstName,
+            recipientEmail: data.manager.email,
           }),
         }
       );
@@ -410,14 +433,77 @@ export class TaskService {
         );
         return true;
       } else {
+        const errorData = await response.json().catch(() => ({}));
         logger.error(
-          { managerId: data.manager.id, status: response.status },
+          { managerId: data.manager.id, status: response.status, error: errorData },
           'Failed to send escalation notification'
         );
         return false;
       }
     } catch (error) {
       logger.error({ managerId: data.manager.id, error }, 'Error sending escalation notification');
+      return false;
+    }
+  }
+
+  /**
+   * Send task-assigned notification via the notifications service.
+   * Called when a task is created with an assignee or reassigned.
+   */
+  async sendTaskAssignedNotification(
+    task: TaskWithRelations,
+    assignedByName?: string
+  ): Promise<boolean> {
+    if (!task.assignedToId) {
+      logger.debug({ taskId: task.id }, 'No assignee, skipping notification');
+      return false;
+    }
+
+    try {
+      const notificationsUrl = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004';
+      const webUrl = process.env.WEB_URL || 'http://localhost:4000';
+
+      const response = await fetch(
+        `${notificationsUrl}/api/notifications/send/task-assigned`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-id': task.tenantId,
+            'x-user-id': task.assignedToId,
+          },
+          body: JSON.stringify({
+            task: {
+              id: task.id,
+              customer: task.customerName || 'Unknown Customer',
+              subject: task.title,
+              dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
+              assignedTo: task.assignedToName || 'Unassigned',
+              assignedBy: assignedByName || null,
+              accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
+              detailsUrl: `${webUrl}/tasks/${task.id}`,
+            },
+            recipientName: task.assignedToName?.split(' ')[0] || 'Team',
+          }),
+        }
+      );
+
+      if (response.ok) {
+        logger.info(
+          { taskId: task.id, assignedToId: task.assignedToId },
+          'Sent task-assigned notification'
+        );
+        return true;
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        logger.error(
+          { taskId: task.id, status: response.status, error: errorData },
+          'Failed to send task-assigned notification'
+        );
+        return false;
+      }
+    } catch (error) {
+      logger.error({ taskId: task.id, error }, 'Error sending task-assigned notification');
       return false;
     }
   }

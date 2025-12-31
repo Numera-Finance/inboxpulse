@@ -1,7 +1,7 @@
 import { eq, and, sql, SQL, desc, asc, inArray } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository, type Database } from '@crm/database';
-import type { RequestHeader } from '@crm/shared';
+import { Permission, type RequestHeader } from '@crm/shared';
 import { tasks, taskComments, userSubordinates, type Task, type NewTask, type TaskComment, type NewTaskComment, TaskStatus } from './schema';
 import { users } from '../users/schema';
 import { customers } from '../customers/schema';
@@ -346,11 +346,35 @@ export class TaskRepository extends ScopedRepository {
   }
 
   /**
-   * Get users that can be assigned tasks (subordinates only, excluding self)
+   * Get users that can be assigned tasks
+   * - Admins: can assign to any user in tenant (excluding self)
+   * - Others: can only assign to subordinates
    * The current user is shown as "Me" in the frontend dropdown
    */
   async getAssignableUsers(header: RequestHeader): Promise<Array<{ id: string; name: string }>> {
-    // Get subordinates only (exclude self - frontend has "Me" option)
+    const isAdmin = header.permissions?.includes(Permission.ADMIN) ?? false;
+
+    if (isAdmin) {
+      // Admins can assign to any user in the tenant (excluding themselves)
+      const result = await this.db
+        .select({
+          id: users.id,
+          name: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('name'),
+        })
+        .from(users)
+        .where(
+          and(
+            this.tenantFilter(users.tenantId, header),
+            sql`${users.id} != ${header.userId}`,
+            sql`${users.rowStatus} = 0` // Active users only
+          )
+        )
+        .orderBy(users.firstName, users.lastName);
+
+      return result;
+    }
+
+    // Non-admins: get subordinates only (exclude self - frontend has "Me" option)
     const subordinateIds = await this.getSubordinates(header.userId);
 
     // If no subordinates, return empty array
@@ -369,7 +393,8 @@ export class TaskRepository extends ScopedRepository {
           this.tenantFilter(users.tenantId, header),
           inArray(users.id, subordinateIds)
         )
-      );
+      )
+      .orderBy(users.firstName, users.lastName);
 
     return result;
   }

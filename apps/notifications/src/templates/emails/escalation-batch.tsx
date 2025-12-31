@@ -56,8 +56,11 @@ export function EscalationBatchEmail({
       <Head />
       <Preview>{previewText}</Preview>
       <Tailwind>
-        <Body className="bg-gray-200 font-sans">
-          <Container className="bg-white mx-auto my-10 max-w-[540px] rounded-xl overflow-hidden shadow-sm">
+        <Body className="bg-white font-sans">
+          <Container
+            className="bg-white mx-auto my-10 max-w-[540px] rounded-xl overflow-hidden"
+            style={{ border: '1px solid #e4e4e7' }}
+          >
             {/* Header */}
             <Section className="bg-zinc-900 px-8 py-7">
               <Text className="text-red-400 text-xs font-medium uppercase tracking-wider m-0 mb-2">
@@ -135,75 +138,62 @@ export function EscalationBatchEmail({
               </Text>
 
               {escalations.map((item, index) => (
-                <Link
+                <div
                   key={item.id}
-                  href={item.detailsUrl}
-                  className={`block no-underline p-4 rounded-lg bg-zinc-50 border border-zinc-100 ${
+                  className={`p-5 rounded-lg bg-zinc-50 ${
                     index < escalations.length - 1 ? "mb-3" : ""
                   }`}
+                  style={{ border: '1px solid #e4e4e7' }}
                 >
+                  <Link
+                    href={item.detailsUrl}
+                    className="text-lg font-semibold text-zinc-900 no-underline"
+                  >
+                    {item.customer} →
+                  </Link>
+                  <Text className="text-[15px] text-zinc-600 m-0 mt-1 mb-4 leading-snug">
+                    {item.subject}
+                  </Text>
+
+                  {/* Details Grid */}
                   <table width="100%" cellPadding={0} cellSpacing={0}>
                     <tr>
-                      {/* Number badge */}
-                      <td width="42" valign="top">
-                        <div
-                          className="w-7 h-7 bg-red-50 rounded-full text-center"
-                          style={{ lineHeight: "28px" }}
-                        >
-                          <span className="text-xs font-semibold text-red-600">
-                            {index + 1}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Content */}
-                      <td valign="top">
-                        <Text className="text-[15px] font-semibold text-zinc-900 m-0 mb-1">
-                          {item.customer}
+                      <td width="50%" valign="top" style={{ paddingRight: "12px" }}>
+                        <Text className="text-[10px] text-zinc-400 uppercase tracking-wide m-0 mb-1">
+                          Opened
                         </Text>
-                        <Text className="text-sm text-zinc-600 m-0 mb-2.5 leading-snug">
-                          {item.subject}
+                        <Text className="text-sm text-zinc-700 font-medium m-0">
+                          {item.dateOpened}
                         </Text>
-                        <div className="text-xs text-zinc-500">
-                          <Text className="m-0 mb-0.5">
-                            <span className="text-zinc-400">Opened:</span>{" "}
-                            {item.dateOpened}
-                          </Text>
-                          {isSamePerson(item.assignedTo, item.accountOwner) ? (
-                            <Text className="m-0">
-                              <span className="text-zinc-400">Assigned & Owner:</span>{" "}
-                              {item.assignedTo}
-                            </Text>
-                          ) : (
-                            <>
-                              <Text className="m-0 mb-0.5">
-                                <span className="text-zinc-400">Assigned:</span>{" "}
-                                {item.assignedTo}
-                              </Text>
-                              <Text className="m-0">
-                                <span className="text-zinc-400">Account Owner:</span>{" "}
-                                {item.accountOwner}
-                              </Text>
-                            </>
-                          )}
-                        </div>
                       </td>
-
-                      {/* Chevron */}
-                      <td width="24" valign="middle" align="right">
-                        <span className="text-xl text-zinc-400">›</span>
+                      <td width="50%" valign="top" style={{ paddingLeft: "12px" }}>
+                        <Text className="text-[10px] text-zinc-400 uppercase tracking-wide m-0 mb-1">
+                          Assigned To
+                        </Text>
+                        <Text className="text-sm text-zinc-700 font-medium m-0">
+                          {item.assignedTo}
+                        </Text>
                       </td>
                     </tr>
+                    {!isSamePerson(item.assignedTo, item.accountOwner) && (
+                      <tr>
+                        <td
+                          colSpan={2}
+                          style={{ paddingTop: "12px" }}
+                          valign="top"
+                        >
+                          <Text className="text-[10px] text-zinc-400 uppercase tracking-wide m-0 mb-1">
+                            Account Owner
+                          </Text>
+                          <Text className="text-sm text-zinc-700 font-medium m-0">
+                            {item.accountOwner}
+                          </Text>
+                        </td>
+                      </tr>
+                    )}
                   </table>
-                </Link>
+                </div>
               ))}
-            </Section>
-
-            {/* Footer */}
-            <Section className="px-8 py-5 bg-zinc-50 border-t border-zinc-100">
-              <Text className="text-sm text-zinc-500 m-0 text-center">
-                Click any item to view details and take action.
-              </Text>
             </Section>
           </Container>
         </Body>

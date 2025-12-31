@@ -47,8 +47,11 @@ export function TaskAssignedEmail({
       <Head />
       <Preview>{previewText}</Preview>
       <Tailwind>
-        <Body className="bg-gray-200 font-sans">
-          <Container className="bg-white mx-auto my-10 max-w-[540px] rounded-xl overflow-hidden shadow-sm">
+        <Body className="bg-white font-sans">
+          <Container
+            className="bg-white mx-auto my-10 max-w-[540px] rounded-xl overflow-hidden"
+            style={{ border: '1px solid #e4e4e7' }}
+          >
             {/* Header */}
             <Section className="bg-zinc-900 px-8 py-7">
               <Text className="text-blue-400 text-xs font-medium uppercase tracking-wider m-0 mb-2">
@@ -120,7 +123,7 @@ export function TaskAssignedEmail({
               </div>
 
               {/* CTA Button */}
-              <Section className="mt-6 text-center">
+              <Section className="mt-6 mb-2 text-center">
                 <Link
                   href={task.detailsUrl}
                   className="inline-block bg-zinc-900 text-white text-sm font-medium px-6 py-3 rounded-lg no-underline"
@@ -128,13 +131,6 @@ export function TaskAssignedEmail({
                   View Escalation
                 </Link>
               </Section>
-            </Section>
-
-            {/* Footer */}
-            <Section className="px-8 py-5 bg-zinc-50 border-t border-zinc-100">
-              <Text className="text-sm text-zinc-500 m-0 text-center">
-                Please review and take action on this escalation.
-              </Text>
             </Section>
           </Container>
         </Body>

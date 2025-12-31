@@ -533,19 +533,159 @@ function getSubjectForTemplate(templateId: string, props: Record<string, any>): 
 }
 
 // =============================================================================
-// Simulation Routes (for testing email delivery)
+// Send Task Notification (Real Data)
 // =============================================================================
 
 /**
- * Simulate task-assigned notification
- * POST /api/notifications/simulate/task-assigned
+ * Send task-assigned notification
+ * POST /api/notifications/send/task-assigned
  *
- * Sends a test task assignment email to the hardcoded test recipient
+ * Body: {
+ *   task: {
+ *     id: string,
+ *     customer: string,
+ *     subject: string,
+ *     dateOpened: string,
+ *     assignedTo: string,
+ *     assignedBy?: string,
+ *     accountOwner: string,
+ *     detailsUrl?: string
+ *   },
+ *   recipientName?: string
+ * }
+ */
+app.post('/send/task-assigned', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+
+  const { task, recipientName } = body;
+
+  if (!task) {
+    return c.json({ success: false, error: 'task object is required' }, 400);
+  }
+
+  if (!task.id || !task.customer || !task.subject) {
+    return c.json({
+      success: false,
+      error: 'task.id, task.customer, and task.subject are required'
+    }, 400);
+  }
+
+  try {
+    // Build task data for email template with defaults
+    const taskData = {
+      id: task.id,
+      customer: task.customer,
+      subject: task.subject,
+      dateOpened: task.dateOpened || new Date().toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }),
+      assignedTo: task.assignedTo || 'Unassigned',
+      assignedBy: task.assignedBy || null,
+      accountOwner: task.accountOwner || task.assignedTo || 'Unknown',
+      detailsUrl: task.detailsUrl || `${process.env.WEB_URL || 'http://localhost:4000'}/tasks/${task.id}`,
+    };
+
+    // Render the email template
+    const html = await render(
+      TaskAssignedEmail({
+        task: taskData,
+        recipientName: recipientName || (taskData.assignedTo !== 'Unassigned' ? taskData.assignedTo.split(' ')[0] : 'Team'),
+      })
+    );
+
+    const subject = `New Escalation: ${taskData.customer} - ${taskData.subject.substring(0, 50)}${taskData.subject.length > 50 ? '...' : ''}`;
+
+    // Send via Postmark
+    const result = await sendEmailViaPostmark(subject, html);
+
+    return c.json({
+      success: result.success,
+      data: {
+        template: 'task-assigned',
+        recipient: TEST_EMAIL_RECIPIENT,
+        subject,
+        messageId: result.messageId,
+        taskData,
+      },
+      error: result.error,
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to send task-assigned notification');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * Send escalation batch notification
+ * POST /api/notifications/send/escalation-batch
+ *
+ * Body: {
+ *   escalations: Array<{ id, customer, subject, dateOpened, assignedTo, accountOwner, detailsUrl }>,
+ *   metrics: { new, open1Day, open3Days, openMoreThan3Days },
+ *   recipientName: string,
+ *   recipientEmail?: string
+ * }
+ */
+app.post('/send/escalation-batch', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+
+  const { escalations, metrics, recipientName, recipientEmail } = body;
+
+  if (!escalations || !Array.isArray(escalations)) {
+    return c.json({ success: false, error: 'escalations array is required' }, 400);
+  }
+
+  if (!metrics) {
+    return c.json({ success: false, error: 'metrics object is required' }, 400);
+  }
+
+  try {
+    // Render the email template
+    const html = await render(
+      EscalationBatchEmail({
+        escalations,
+        metrics,
+        recipientName: recipientName || 'Team',
+      })
+    );
+
+    const totalCount = (metrics.new || 0) + (metrics.open1Day || 0) + (metrics.open3Days || 0) + (metrics.openMoreThan3Days || 0);
+    const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
+
+    // Send via Postmark
+    const result = await sendEmailViaPostmark(subject, html);
+
+    return c.json({
+      success: result.success,
+      data: {
+        template: 'escalation-batch',
+        recipient: TEST_EMAIL_RECIPIENT, // TODO: Use recipientEmail when ready
+        subject,
+        messageId: result.messageId,
+        metrics,
+        escalationCount: escalations.length,
+      },
+      error: result.error,
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to send escalation-batch notification');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// Simulation Routes (for testing with sample data)
+// =============================================================================
+
+/**
+ * Simulate task-assigned notification with sample data
+ * POST /api/notifications/simulate/task-assigned
  */
 app.post('/simulate/task-assigned', async (c) => {
   const body = await c.req.json().catch(() => ({}));
 
-  // Sample task data (can be overridden via request body)
   const taskData = {
     id: body.id || 'task-123',
     customer: body.customer || 'Acme Corporation',
@@ -560,7 +700,6 @@ app.post('/simulate/task-assigned', async (c) => {
   const recipientName = body.recipientName || 'Manish';
 
   try {
-    // Render the email template
     const html = await render(
       TaskAssignedEmail({
         task: taskData,
@@ -569,8 +708,6 @@ app.post('/simulate/task-assigned', async (c) => {
     );
 
     const subject = `New Escalation: ${taskData.customer} - ${taskData.subject.substring(0, 50)}${taskData.subject.length > 50 ? '...' : ''}`;
-
-    // Send via Postmark
     const result = await sendEmailViaPostmark(subject, html);
 
     return c.json({
@@ -684,7 +821,7 @@ app.post('/simulate/escalation-batch', async (c) => {
 });
 
 /**
- * List available simulation endpoints
+ * List available notification endpoints
  * GET /api/notifications/simulate
  */
 app.get('/simulate', (c) => {
@@ -695,8 +832,38 @@ app.get('/simulate', (c) => {
       endpoints: [
         {
           method: 'POST',
+          path: '/api/notifications/send/task-assigned',
+          description: 'Send task assignment notification with provided task data',
+          sampleBody: {
+            task: {
+              id: 'uuid-of-task',
+              customer: 'Acme Corp',
+              subject: 'Issue with invoice',
+              dateOpened: 'Dec 31, 2025',
+              assignedTo: 'John Smith',
+              assignedBy: 'Manager Name',
+              accountOwner: 'Lisa Chen',
+            },
+            recipientName: 'John',
+          },
+        },
+        {
+          method: 'POST',
+          path: '/api/notifications/send/escalation-batch',
+          description: 'Send escalation batch summary to a manager',
+          sampleBody: {
+            escalations: [
+              { id: 'task-1', customer: 'Acme Corp', subject: 'Issue', dateOpened: 'Dec 31, 2025', assignedTo: 'John', accountOwner: 'Lisa', detailsUrl: 'http://...' },
+            ],
+            metrics: { new: 2, open1Day: 3, open3Days: 1, openMoreThan3Days: 4 },
+            recipientName: 'Manager',
+            recipientEmail: 'manager@example.com',
+          },
+        },
+        {
+          method: 'POST',
           path: '/api/notifications/simulate/task-assigned',
-          description: 'Send a test task assignment notification email',
+          description: 'Send a test task assignment notification with sample data',
           sampleBody: {
             recipientName: 'John',
             customer: 'Acme Corp',
@@ -707,7 +874,7 @@ app.get('/simulate', (c) => {
         {
           method: 'POST',
           path: '/api/notifications/simulate/escalation-batch',
-          description: 'Send a test escalation batch summary email',
+          description: 'Send a test escalation batch summary email with sample data',
           sampleBody: {
             recipientName: 'Team',
             metrics: { new: 2, open1Day: 3, open3Days: 1, openMoreThan3Days: 4 },
