@@ -15,7 +15,7 @@
     "@crm/shared": "workspace:*",
     "@hono/node-server": "catalog:",
     "better-auth": "^1.4.7",
-    "date-fns": "^4.1.0",
+    "date-fns": "catalog:",
     "date-fns-tz": "^3.2.0",
     "dotenv": "catalog:",
     "drizzle-orm": "catalog:",

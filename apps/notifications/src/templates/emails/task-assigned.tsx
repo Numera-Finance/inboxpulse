@@ -33,17 +33,8 @@ export interface TaskAssignedEmailProps {
 }
 
 export function TaskAssignedEmail({
-  task = {
-    id: "1",
-    customer: "Acme Corp",
-    subject: "Billing discrepancy on invoice #4521",
-    dateOpened: "Dec 30, 2024",
-    assignedTo: "John Smith",
-    assignedBy: null,
-    accountOwner: "Lisa Chen",
-    detailsUrl: "https://app.example.com/tasks/1",
-  },
-  recipientName = "John",
+  task,
+  recipientName,
 }: TaskAssignedEmailProps) {
   const isSystemAssigned = !task.assignedBy;
   const previewText = `New escalation assigned: ${task.customer} - ${task.subject}`;

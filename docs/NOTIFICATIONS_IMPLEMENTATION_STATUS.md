@@ -10,18 +10,18 @@ This document tracks the implementation progress of the notification module agai
 
 ## Implementation Summary
 
-| Component | Status | Location |
-|-----------|--------|----------|
-| Package Core | Implemented | `packages/notifications/` |
-| App Service | Implemented | `apps/notifications/` |
-| Database Schema | Implemented | `apps/notifications/sql/` |
-| Email Channel | Implemented | `packages/notifications/src/channels/email/` |
-| Slack Channel | Not Started | - |
-| Google Chat Channel | Not Started | - |
-| SMS Channel | Not Started | - |
-| React Email Templates | Implemented | `apps/notifications/src/templates/` |
-| Inngest Functions | Implemented | `packages/notifications/src/inngest/` |
-| API Routes | Implemented | `apps/notifications/src/routes/` |
+| Component             | Status      | Location                                     |
+| --------------------- | ----------- | -------------------------------------------- |
+| Package Core          | Implemented | `packages/notifications/`                    |
+| App Service           | Implemented | `apps/notifications/`                        |
+| Database Schema       | Implemented | `apps/notifications/sql/`                    |
+| Email Channel         | Implemented | `packages/notifications/src/channels/email/` |
+| Slack Channel         | Not Started | -                                            |
+| Google Chat Channel   | Not Started | -                                            |
+| SMS Channel           | Not Started | -                                            |
+| React Email Templates | Implemented | `apps/notifications/src/templates/`          |
+| Inngest Functions     | Implemented | `packages/notifications/src/inngest/`        |
+| API Routes            | Implemented | `apps/notifications/src/routes/`             |
 
 ---
 
@@ -29,65 +29,65 @@ This document tracks the implementation progress of the notification module agai
 
 ### Phase 1: Core Infrastructure - COMPLETE
 
-| Deliverable | Status | Notes |
-|-------------|--------|-------|
-| Database schema | Done | All tables created in `apps/notifications/sql/` |
-| Repository layer | Done | `NotificationRepository`, `NotificationTypeRepository`, `BatchRepository` |
-| Service layer | Done | `NotificationService`, `DeliveryService`, `PreferencesService`, `ActionService` |
-| API routes | Done | Full REST API in `apps/notifications/src/routes/index.ts` |
-| Email channel adapter | Done | `EmailChannel` with SES and Postmark providers |
-| Email templates | Done | 4 sample templates using react-email |
+| Deliverable           | Status | Notes                                                                           |
+| --------------------- | ------ | ------------------------------------------------------------------------------- |
+| Database schema       | Done   | All tables created in `apps/notifications/sql/`                                 |
+| Repository layer      | Done   | `NotificationRepository`, `NotificationTypeRepository`, `BatchRepository`       |
+| Service layer         | Done   | `NotificationService`, `DeliveryService`, `PreferencesService`, `ActionService` |
+| API routes            | Done   | Full REST API in `apps/notifications/src/routes/index.ts`                       |
+| Email channel adapter | Done   | `EmailChannel` with SES and Postmark providers                                  |
+| Email templates       | Done   | 4 sample templates using react-email                                            |
 
 ### Phase 2: Batching & Scheduling - COMPLETE
 
-| Deliverable | Status | Notes |
-|-------------|--------|-------|
-| Batch manager | Done | `BatchRepository` handles batch operations |
-| Batch interval calculation | Done | Supported in schema and types |
-| Inngest cron function | Done | `notification-process-batches` function |
-| Batch aggregation | Done | `BatchDigest` template for aggregated view |
-| Batch template | Done | `batch-digest.tsx` template |
+| Deliverable                | Status | Notes                                      |
+| -------------------------- | ------ | ------------------------------------------ |
+| Batch manager              | Done   | `BatchRepository` handles batch operations |
+| Batch interval calculation | Done   | Supported in schema and types              |
+| Inngest cron function      | Done   | `notification-process-batches` function    |
+| Batch aggregation          | Done   | `BatchDigest` template for aggregated view |
+| Batch template             | Done   | `batch-digest.tsx` template                |
 
 ### Phase 3: Fan-Out & Preferences - COMPLETE
 
-| Deliverable | Status | Notes |
-|-------------|--------|-------|
-| Fan-out service | Done | `NotificationService.sendNotification()` with fan-out |
-| User subscription query | Done | `PreferencesService.getSubscribers()` |
-| Preference resolution | Done | Falls back from user → type defaults |
-| Quiet hours | Done | `PreferencesService.isInQuietHours()` |
-| Inngest fan-out function | Done | `notification-fan-out` function |
-| Subscription APIs | Done | `/subscribe`, `/unsubscribe`, `/preferences` routes |
+| Deliverable              | Status | Notes                                                 |
+| ------------------------ | ------ | ----------------------------------------------------- |
+| Fan-out service          | Done   | `NotificationService.sendNotification()` with fan-out |
+| User subscription query  | Done   | `PreferencesService.getSubscribers()`                 |
+| Preference resolution    | Done   | Falls back from user → type defaults                  |
+| Quiet hours              | Done   | `PreferencesService.isInQuietHours()`                 |
+| Inngest fan-out function | Done   | `notification-fan-out` function                       |
+| Subscription APIs        | Done   | `/subscribe`, `/unsubscribe`, `/preferences` routes   |
 
 ### Phase 4: Actions - COMPLETE
 
-| Deliverable | Status | Notes |
-|-------------|--------|-------|
-| Action endpoints | Done | `/notifications/:id/action`, `/notifications/batch-action` |
-| Action processing | Done | `ActionService.performAction()` |
-| Signed token generation | Done | `ActionTokenService` with JWT |
-| Action handlers | Done | Generic action handler pattern |
-| Batch action support | Done | `ActionService.performBatchAction()` |
+| Deliverable             | Status | Notes                                                      |
+| ----------------------- | ------ | ---------------------------------------------------------- |
+| Action endpoints        | Done   | `/notifications/:id/action`, `/notifications/batch-action` |
+| Action processing       | Done   | `ActionService.performAction()`                            |
+| Signed token generation | Done   | `ActionTokenService` with JWT                              |
+| Action handlers         | Done   | Generic action handler pattern                             |
+| Batch action support    | Done   | `ActionService.performBatchAction()`                       |
 
 ### Phase 5: Additional Channels - NOT STARTED
 
-| Deliverable | Status | Notes |
-|-------------|--------|-------|
-| Slack channel | Not Started | Interface defined, needs implementation |
+| Deliverable         | Status      | Notes                                   |
+| ------------------- | ----------- | --------------------------------------- |
+| Slack channel       | Not Started | Interface defined, needs implementation |
 | Google Chat channel | Not Started | Interface defined, needs implementation |
-| SMS channel | Not Started | Interface defined, needs implementation |
+| SMS channel         | Not Started | Interface defined, needs implementation |
 | Mobile push channel | Not Started | Interface defined, needs implementation |
 
 ### Phase 6: Templates & Polish - PARTIAL
 
-| Deliverable | Status | Notes |
-|-------------|--------|-------|
-| Rich email templates | Done | 4 react-email templates |
-| Slack block templates | Not Started | - |
-| Template versioning | Not Started | - |
-| Template management API | Not Started | - |
-| Documentation | Done | Architecture doc and this status doc |
-| Testing | Not Started | - |
+| Deliverable             | Status      | Notes                                |
+| ----------------------- | ----------- | ------------------------------------ |
+| Rich email templates    | Done        | 4 react-email templates              |
+| Slack block templates   | Not Started | -                                    |
+| Template versioning     | Not Started | -                                    |
+| Template management API | Not Started | -                                    |
+| Documentation           | Done        | Architecture doc and this status doc |
+| Testing                 | Not Started | -                                    |
 
 ---
 
@@ -96,6 +96,7 @@ This document tracks the implementation progress of the notification module agai
 ### Package Layer (`packages/notifications/`)
 
 **Implemented:**
+
 - `src/types/core.ts` - Core TypeScript types
 - `src/types/interfaces.ts` - Pluggable interfaces (TemplateProvider, UserResolver, Channel)
 - `src/schema/*.ts` - Drizzle schema definitions
@@ -114,6 +115,7 @@ This document tracks the implementation progress of the notification module agai
 - `src/inngest/functions.ts` - Inngest background job functions
 
 **Not Implemented:**
+
 - `src/channels/slack/` - Slack channel
 - `src/channels/sms/` - SMS channel
 - `src/channels/push/` - Push notification channel
@@ -123,6 +125,7 @@ This document tracks the implementation progress of the notification module agai
 ### App Layer (`apps/notifications/`)
 
 **Implemented:**
+
 - `src/index.ts` - Hono server entry point
 - `src/di/container.ts` - tsyringe dependency injection setup
 - `src/routes/index.ts` - All REST API endpoints
@@ -138,6 +141,7 @@ This document tracks the implementation progress of the notification module agai
 - `src/templates/registry.ts` - Template registration
 
 **Not Implemented:**
+
 - Health check endpoints
 - Metrics/observability
 - Rate limiting middleware
@@ -146,6 +150,7 @@ This document tracks the implementation progress of the notification module agai
 ### Database Schema
 
 **Tables Implemented:**
+
 1. `notification_types` - Notification type definitions
 2. `user_notification_preferences` - User preference settings
 3. `notification_batches` - Batch groupings
@@ -160,62 +165,67 @@ This document tracks the implementation progress of the notification module agai
 
 ## API Endpoints
 
-| Method | Path | Status | Description |
-|--------|------|--------|-------------|
-| POST | `/send` | Done | Send notification (fan-out) |
-| POST | `/types` | Done | Create notification type |
-| GET | `/types` | Done | List notification types |
-| GET | `/preferences` | Done | Get user preferences |
-| PUT | `/preferences/:typeId` | Done | Update preference for type |
-| POST | `/subscribe` | Done | Subscribe to notification type |
-| POST | `/unsubscribe/:typeId` | Done | Unsubscribe from type |
-| GET | `/notifications` | Done | List user notifications |
-| GET | `/notifications/:id` | Done | Get single notification |
-| POST | `/notifications/:id/read` | Done | Mark as read |
-| POST | `/notifications/:id/action` | Done | Perform action |
-| POST | `/notifications/batch-action` | Done | Bulk action |
-| GET | `/actions/:actionType` | Done | One-click action via token |
-| GET | `/unsubscribe` | Done | One-click unsubscribe from email |
+| Method | Path                          | Status | Description                      |
+| ------ | ----------------------------- | ------ | -------------------------------- |
+| POST   | `/send`                       | Done   | Send notification (fan-out)      |
+| POST   | `/types`                      | Done   | Create notification type         |
+| GET    | `/types`                      | Done   | List notification types          |
+| GET    | `/preferences`                | Done   | Get user preferences             |
+| PUT    | `/preferences/:typeId`        | Done   | Update preference for type       |
+| POST   | `/subscribe`                  | Done   | Subscribe to notification type   |
+| POST   | `/unsubscribe/:typeId`        | Done   | Unsubscribe from type            |
+| GET    | `/notifications`              | Done   | List user notifications          |
+| GET    | `/notifications/:id`          | Done   | Get single notification          |
+| POST   | `/notifications/:id/read`     | Done   | Mark as read                     |
+| POST   | `/notifications/:id/action`   | Done   | Perform action                   |
+| POST   | `/notifications/batch-action` | Done   | Bulk action                      |
+| GET    | `/actions/:actionType`        | Done   | One-click action via token       |
+| GET    | `/unsubscribe`                | Done   | One-click unsubscribe from email |
 
 ---
 
 ## Email Templates
 
-| Template ID | Component | Description |
-|-------------|-----------|-------------|
-| `email.escalation` | `EmailEscalation` | Email needs attention/escalation |
-| `email.response_needed` | `EmailEscalation` | Response needed alert |
-| `deal.won` | `DealWon` | Deal closed successfully |
-| `deal.closed` | `DealWon` | Deal closure notification |
-| `task.assigned` | `TaskAssignment` | Task assignment notification |
-| `task.due_soon` | `TaskAssignment` | Task due reminder |
-| `task.overdue` | `TaskAssignment` | Overdue task alert |
-| `batch.digest` | `BatchDigest` | Batched notification summary |
+| Template ID             | Component         | Description                      |
+| ----------------------- | ----------------- | -------------------------------- |
+| `email.escalation`      | `EmailEscalation` | Email needs attention/escalation |
+| `email.response_needed` | `EmailEscalation` | Response needed alert            |
+| `deal.won`              | `DealWon`         | Deal closed successfully         |
+| `deal.closed`           | `DealWon`         | Deal closure notification        |
+| `task.assigned`         | `TaskAssignment`  | Task assignment notification     |
+| `task.due_soon`         | `TaskAssignment`  | Task due reminder                |
+| `task.overdue`          | `TaskAssignment`  | Overdue task alert               |
+| `batch.digest`          | `BatchDigest`     | Batched notification summary     |
 
 ---
 
 ## Architecture Decisions Implemented
 
 ### 1. Separate Service Architecture
+
 - Notification service runs as standalone Hono app (`apps/notifications/`)
 - Package contains reusable core (`packages/notifications/`)
 - Communicates with main API via shared database
 
 ### 2. Email Providers
+
 - **Primary:** AWS SES (default)
 - **Alternative:** Postmark (configurable via `EMAIL_PROVIDER` env var)
 
 ### 3. Template System
+
 - React Email for rich HTML templates
 - Template registry pattern for type-safe template lookup
 - Fallback template support
 
 ### 4. Action Tokens
+
 - JWT-based signed tokens
 - Configurable expiry (default 7 days)
 - One-time use with consumption tracking
 
 ### 5. CAN-SPAM Compliance
+
 - `user_channel_addresses` tracks verification and opt-out
 - `notification_bounce_complaints` tracks bounces/complaints
 - Unsubscribe links included in emails
@@ -260,7 +270,7 @@ AWS_ACCESS_KEY_ID=xxx
 AWS_SECRET_ACCESS_KEY=xxx
 
 # Postmark Configuration
-POSTMARK_SERVER_TOKEN=xxx
+POSTMARK_API_TOKEN=xxx
 POSTMARK_MESSAGE_STREAM=outbound
 
 # Notification Settings

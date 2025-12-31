@@ -24,7 +24,66 @@ import {
   DealWon,
   TaskAssignment,
   BatchDigest,
+  TaskAssignedEmail,
+  EscalationBatchEmail,
 } from '../templates/emails';
+
+// =============================================================================
+// Postmark Email Sender (for testing)
+// =============================================================================
+
+const TEST_EMAIL_RECIPIENT = 'mbalsara@mystartupcfo.com';
+const FROM_EMAIL = 'hello@9mo.ai';
+const FROM_NAME = 'MSCFO Email Sentiment';
+
+interface PostmarkSendResult {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+}
+
+async function sendEmailViaPostmark(
+  subject: string,
+  htmlBody: string
+): Promise<PostmarkSendResult> {
+  const serverToken = process.env.POSTMARK_API_TOKEN;
+
+  if (!serverToken) {
+    logger.warn('POSTMARK_API_TOKEN not set, skipping email send');
+    return { success: false, error: 'POSTMARK_API_TOKEN not configured' };
+  }
+
+  try {
+    const response = await fetch('https://api.postmarkapp.com/email', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Postmark-Server-Token': serverToken,
+      },
+      body: JSON.stringify({
+        From: `${FROM_NAME} <${FROM_EMAIL}>`,
+        To: TEST_EMAIL_RECIPIENT,
+        Subject: subject,
+        HtmlBody: htmlBody,
+        MessageStream: 'outbound',
+      }),
+    });
+
+    const data = await response.json() as { MessageID?: string; ErrorCode?: number; Message?: string };
+
+    if (!response.ok || (data.ErrorCode && data.ErrorCode !== 0)) {
+      logger.error({ data }, 'Postmark send failed');
+      return { success: false, error: data.Message || `HTTP ${response.status}` };
+    }
+
+    logger.info({ messageId: data.MessageID, to: TEST_EMAIL_RECIPIENT }, 'Email sent via Postmark');
+    return { success: true, messageId: data.MessageID };
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Postmark request failed');
+    return { success: false, error: error.message };
+  }
+}
 
 const app = new Hono();
 
@@ -472,5 +531,192 @@ function getSubjectForTemplate(templateId: string, props: Record<string, any>): 
   };
   return subjects[templateId] || templateId;
 }
+
+// =============================================================================
+// Simulation Routes (for testing email delivery)
+// =============================================================================
+
+/**
+ * Simulate task-assigned notification
+ * POST /api/notifications/simulate/task-assigned
+ *
+ * Sends a test task assignment email to the hardcoded test recipient
+ */
+app.post('/simulate/task-assigned', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+
+  // Sample task data (can be overridden via request body)
+  const taskData = {
+    id: body.id || 'task-123',
+    customer: body.customer || 'Acme Corporation',
+    subject: body.subject || 'Urgent: Billing discrepancy on invoice #4521',
+    dateOpened: body.dateOpened || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    assignedTo: body.assignedTo || 'Manish Balsara',
+    assignedBy: body.assignedBy || 'Sarah Johnson',
+    accountOwner: body.accountOwner || 'Lisa Chen',
+    detailsUrl: body.detailsUrl || 'https://app.mystartupcfo.com/tasks/task-123',
+  };
+
+  const recipientName = body.recipientName || 'Manish';
+
+  try {
+    // Render the email template
+    const html = await render(
+      TaskAssignedEmail({
+        task: taskData,
+        recipientName,
+      })
+    );
+
+    const subject = `New Escalation: ${taskData.customer} - ${taskData.subject.substring(0, 50)}${taskData.subject.length > 50 ? '...' : ''}`;
+
+    // Send via Postmark
+    const result = await sendEmailViaPostmark(subject, html);
+
+    return c.json({
+      success: result.success,
+      data: {
+        template: 'task-assigned',
+        recipient: TEST_EMAIL_RECIPIENT,
+        subject,
+        messageId: result.messageId,
+        taskData,
+      },
+      error: result.error,
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to simulate task-assigned notification');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * Simulate escalation-batch notification
+ * POST /api/notifications/simulate/escalation-batch
+ *
+ * Sends a test escalation batch summary email to the hardcoded test recipient
+ */
+app.post('/simulate/escalation-batch', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+
+  // Sample metrics
+  const metrics = body.metrics || {
+    new: 3,
+    open1Day: 2,
+    open3Days: 4,
+    openMoreThan3Days: 1,
+  };
+
+  // Sample escalations
+  const escalations = body.escalations || [
+    {
+      id: 'esc-1',
+      customer: 'Acme Corporation',
+      subject: 'Billing discrepancy on invoice #4521',
+      dateOpened: 'Dec 30, 2024',
+      assignedTo: 'John Smith',
+      accountOwner: 'Lisa Chen',
+      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-1',
+    },
+    {
+      id: 'esc-2',
+      customer: 'TechStart Inc',
+      subject: 'Integration API timeout issues affecting production',
+      dateOpened: 'Dec 29, 2024',
+      assignedTo: 'Sarah Johnson',
+      accountOwner: 'Sarah Johnson',
+      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-2',
+    },
+    {
+      id: 'esc-3',
+      customer: 'Global Logistics',
+      subject: 'Missing shipment documentation for Q4 orders',
+      dateOpened: 'Dec 27, 2024',
+      assignedTo: 'Mike Chen',
+      accountOwner: 'Rachel Kim',
+      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-3',
+    },
+    {
+      id: 'esc-4',
+      customer: 'Startup Ventures',
+      subject: 'Contract renewal discussion needed',
+      dateOpened: 'Dec 25, 2024',
+      assignedTo: 'Alex Wong',
+      accountOwner: 'Lisa Chen',
+      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-4',
+    },
+  ];
+
+  const recipientName = body.recipientName || 'Manish';
+
+  try {
+    // Render the email template
+    const html = await render(
+      EscalationBatchEmail({
+        escalations,
+        metrics,
+        recipientName,
+      })
+    );
+
+    const totalCount = metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
+    const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
+
+    // Send via Postmark
+    const result = await sendEmailViaPostmark(subject, html);
+
+    return c.json({
+      success: result.success,
+      data: {
+        template: 'escalation-batch',
+        recipient: TEST_EMAIL_RECIPIENT,
+        subject,
+        messageId: result.messageId,
+        metrics,
+        escalationCount: escalations.length,
+      },
+      error: result.error,
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to simulate escalation-batch notification');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * List available simulation endpoints
+ * GET /api/notifications/simulate
+ */
+app.get('/simulate', (c) => {
+  return c.json({
+    success: true,
+    data: {
+      testRecipient: TEST_EMAIL_RECIPIENT,
+      endpoints: [
+        {
+          method: 'POST',
+          path: '/api/notifications/simulate/task-assigned',
+          description: 'Send a test task assignment notification email',
+          sampleBody: {
+            recipientName: 'John',
+            customer: 'Acme Corp',
+            subject: 'Issue with invoice',
+            assignedBy: 'Manager Name',
+          },
+        },
+        {
+          method: 'POST',
+          path: '/api/notifications/simulate/escalation-batch',
+          description: 'Send a test escalation batch summary email',
+          sampleBody: {
+            recipientName: 'Team',
+            metrics: { new: 2, open1Day: 3, open3Days: 1, openMoreThan3Days: 4 },
+          },
+        },
+      ],
+      note: 'All test emails are sent to the hardcoded recipient. Set POSTMARK_API_TOKEN in .env.local to enable sending.',
+    },
+  });
+});
 
 export default app;

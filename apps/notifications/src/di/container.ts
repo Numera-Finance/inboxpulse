@@ -72,14 +72,14 @@ export function setupContainer() {
   // Configure email provider based on environment
   const emailProvider = process.env.EMAIL_PROVIDER === 'postmark'
     ? new PostmarkProvider({
-        serverToken: process.env.POSTMARK_SERVER_TOKEN || '',
-        messageStream: process.env.POSTMARK_MESSAGE_STREAM,
-      })
+      serverToken: process.env.POSTMARK_API_TOKEN || '',
+      messageStream: process.env.POSTMARK_MESSAGE_STREAM,
+    })
     : new SesProvider({
-        region: process.env.AWS_REGION || 'us-east-1',
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      });
+      region: process.env.AWS_REGION || 'us-east-1',
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    });
 
   const emailChannel = new EmailChannel({
     provider: emailProvider,

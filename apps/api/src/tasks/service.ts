@@ -1,8 +1,15 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
+import { eq, and } from 'drizzle-orm';
+import { format } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 import type { RequestHeader } from '@crm/shared';
+import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
-import { TaskStatus, type Task, type TaskComment } from './schema';
+import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
+import { customers } from '../customers/schema';
+import { users } from '../users/schema';
+import { UserRepository } from '../users/repository';
 import { logger } from '../utils/logger';
 
 // =============================================================================
@@ -53,10 +60,45 @@ export interface TaskSearchResponse {
   offset: number;
 }
 
+// =============================================================================
+// Escalation Notification Types
+// =============================================================================
+
+export interface EscalationMetrics {
+  new: number;
+  open1Day: number;
+  open3Days: number;
+  openMoreThan3Days: number;
+}
+
+export interface EscalationItem {
+  id: string;
+  customer: string;
+  subject: string;
+  dateOpened: string;
+  assignedTo: string;
+  accountOwner: string;
+  detailsUrl: string;
+}
+
+export interface ManagerEscalationData {
+  manager: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    timezone: string | null;
+  };
+  escalations: EscalationItem[];
+  metrics: EscalationMetrics;
+}
+
 @injectable()
 export class TaskService {
   constructor(
-    @inject(TaskRepository) private taskRepository: TaskRepository
+    @inject('Database') private db: Database,
+    @inject(TaskRepository) private taskRepository: TaskRepository,
+    @inject(UserRepository) private userRepository: UserRepository
   ) {}
 
   /**
@@ -189,5 +231,194 @@ export class TaskService {
    */
   async getAssignableUsers(header: RequestHeader): Promise<Array<{ id: string; name: string }>> {
     return this.taskRepository.getAssignableUsers(header);
+  }
+
+  // ===========================================================================
+  // Escalation Notification Processing
+  // ===========================================================================
+
+  /**
+   * Get all open escalation data for a tenant, grouped by manager.
+   * This is used by the Inngest cron function to send batch notifications.
+   * Returns a map of manager ID to their escalation data.
+   */
+  async getEscalationDataForTenant(tenantId: string): Promise<Map<string, ManagerEscalationData>> {
+    const now = new Date();
+
+    // Get all open escalation tasks (created by system, status = OPEN)
+    const escalationTasks = await this.db
+      .select({
+        task: tasks,
+        customerName: customers.name,
+        assignedToFirstName: users.firstName,
+        assignedToLastName: users.lastName,
+      })
+      .from(tasks)
+      .innerJoin(customers, eq(tasks.customerId, customers.id))
+      .leftJoin(users, eq(tasks.assignedToId, users.id))
+      .where(
+        and(
+          eq(tasks.tenantId, tenantId),
+          eq(tasks.status, TaskStatus.OPEN),
+          eq(tasks.createdBySystem, true)
+        )
+      );
+
+    if (escalationTasks.length === 0) {
+      logger.debug({ tenantId }, 'No open escalations found');
+      return new Map();
+    }
+
+    // Calculate date boundaries for metrics
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+
+    const threeDaysAgoStart = new Date(todayStart);
+    threeDaysAgoStart.setDate(threeDaysAgoStart.getDate() - 3);
+
+    // Calculate metrics (no duplicates - mutually exclusive categories)
+    const metrics: EscalationMetrics = {
+      new: 0,
+      open1Day: 0,
+      open3Days: 0,
+      openMoreThan3Days: 0,
+    };
+
+    for (const { task } of escalationTasks) {
+      const createdAt = new Date(task.createdAt);
+      if (createdAt >= todayStart) {
+        metrics.new++;
+      } else if (createdAt >= yesterdayStart) {
+        metrics.open1Day++;
+      } else if (createdAt >= threeDaysAgoStart) {
+        metrics.open3Days++;
+      } else {
+        metrics.openMoreThan3Days++;
+      }
+    }
+
+    // Group tasks by customer and collect managers
+    const customerIds = [...new Set(escalationTasks.map(t => t.task.customerId))];
+    const managerEscalationMap = new Map<string, ManagerEscalationData>();
+
+    for (const customerId of customerIds) {
+      // Get all managers in the hierarchy for this customer
+      const managers = await this.userRepository.getAllManagersForCustomer(customerId);
+
+      // Get account owner
+      const accountOwner = await this.userRepository.getAccountOwner(customerId);
+      const accountOwnerName = accountOwner
+        ? `${accountOwner.firstName} ${accountOwner.lastName}`
+        : 'Not assigned';
+
+      // Get tasks for this customer
+      const customerTasks = escalationTasks.filter(t => t.task.customerId === customerId);
+
+      for (const manager of managers) {
+        if (!managerEscalationMap.has(manager.id)) {
+          managerEscalationMap.set(manager.id, {
+            manager: {
+              id: manager.id,
+              email: manager.email,
+              firstName: manager.firstName,
+              lastName: manager.lastName,
+              timezone: manager.timezone,
+            },
+            escalations: [],
+            metrics: { ...metrics },
+          });
+        }
+
+        const managerData = managerEscalationMap.get(manager.id)!;
+
+        // Add escalations for this customer
+        for (const { task, customerName, assignedToFirstName, assignedToLastName } of customerTasks) {
+          const assignedToName = assignedToFirstName && assignedToLastName
+            ? `${assignedToFirstName} ${assignedToLastName}`
+            : 'Unassigned';
+
+          managerData.escalations.push({
+            id: task.id,
+            customer: customerName || 'Unknown Customer',
+            subject: task.title,
+            dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
+            assignedTo: assignedToName,
+            accountOwner: accountOwnerName,
+            detailsUrl: `${process.env.APP_URL || 'http://localhost:3000'}/tasks/${task.id}`,
+          });
+        }
+      }
+    }
+
+    return managerEscalationMap;
+  }
+
+  /**
+   * Check if it's time to send notifications to a manager based on their timezone.
+   * Currently defaults to 8am local time daily.
+   */
+  shouldSendNotification(timezone: string | null, now: Date = new Date()): boolean {
+    const tz = timezone || 'Asia/Kolkata';
+    const managerLocalTime = toZonedTime(now, tz);
+    const currentHour = managerLocalTime.getHours();
+
+    // Default: daily at 8am local time
+    // TODO: Read from user notification preferences
+    return currentHour === 8;
+  }
+
+  /**
+   * Send escalation notification to a manager via the notifications service.
+   */
+  async sendEscalationNotification(
+    tenantId: string,
+    data: ManagerEscalationData
+  ): Promise<boolean> {
+    try {
+      const response = await fetch(
+        `${process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004'}/api/notifications/send`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-id': tenantId,
+          },
+          body: JSON.stringify({
+            template: 'escalation-batch',
+            channel: 'email',
+            recipient: {
+              userId: data.manager.id,
+              email: data.manager.email,
+              name: `${data.manager.firstName} ${data.manager.lastName}`,
+            },
+            data: {
+              recipientName: data.manager.firstName,
+              escalations: data.escalations,
+              metrics: data.metrics,
+            },
+          }),
+        }
+      );
+
+      if (response.ok) {
+        logger.info(
+          { managerId: data.manager.id, escalationCount: data.escalations.length },
+          'Sent escalation batch notification'
+        );
+        return true;
+      } else {
+        logger.error(
+          { managerId: data.manager.id, status: response.status },
+          'Failed to send escalation notification'
+        );
+        return false;
+      }
+    } catch (error) {
+      logger.error({ managerId: data.manager.id, error }, 'Error sending escalation notification');
+      return false;
+    }
   }
 }

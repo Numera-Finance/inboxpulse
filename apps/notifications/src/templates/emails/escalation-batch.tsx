@@ -40,42 +40,9 @@ export interface EscalationBatchEmailProps {
 }
 
 export function EscalationBatchEmail({
-  escalations = [
-    {
-      id: "1",
-      customer: "Acme Corp",
-      subject: "Billing discrepancy on invoice #4521",
-      dateOpened: "Dec 28, 2024",
-      assignedTo: "John Smith",
-      accountOwner: "Lisa Chen",
-      detailsUrl: "https://app.example.com/tasks/1",
-    },
-    {
-      id: "2",
-      customer: "TechStart Inc",
-      subject: "Integration API timeout issues",
-      dateOpened: "Dec 27, 2024",
-      assignedTo: "Sarah Johnson",
-      accountOwner: "Sarah Johnson",
-      detailsUrl: "https://app.example.com/tasks/2",
-    },
-    {
-      id: "3",
-      customer: "Global Logistics",
-      subject: "Missing shipment documentation",
-      dateOpened: "Dec 25, 2024",
-      assignedTo: "Mike Chen",
-      accountOwner: "Rachel Kim",
-      detailsUrl: "https://app.example.com/tasks/3",
-    },
-  ],
-  metrics = {
-    new: 2,
-    open1Day: 3,
-    open3Days: 1,
-    openMoreThan3Days: 4,
-  },
-  recipientName = "Team",
+  escalations,
+  metrics,
+  recipientName,
 }: EscalationBatchEmailProps) {
   const totalEscalations =
     metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
