@@ -1,9 +1,9 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
-import type { CoreMessage } from 'ai';
 import type { Email } from '@crm/shared';
 import type { AnalysisType, AnalysisConfig } from '@crm/shared';
 import { AIService, type ModelConfig as AIServiceModelConfig } from '../services/ai-service';
+import type { PromptMessage } from '../services/ai-types';
 import { AnalysisRegistry } from './registry';
 import type { AnalysisDefinition, AnalysisResult, BatchAnalysisResult, ThreadContext } from './types';
 import { logger } from '../utils/logger';
@@ -109,7 +109,7 @@ export class AnalysisExecutor {
     definitions: AnalysisDefinition[],
     email: Email,
     threadContext?: ThreadContext
-  ): string | CoreMessage[] {
+  ): string | PromptMessage[] {
     // Combine all module instructions
     const instructions = definitions
       .map((def) => `## ${def.name}\n${def.module.instructions}`)
@@ -422,7 +422,7 @@ export class AnalysisExecutor {
    */
   private async executeWithFallback(
     modelConfig: { primary: AIServiceModelConfig; fallback?: AIServiceModelConfig },
-    prompt: string | CoreMessage[],
+    prompt: string | PromptMessage[],
     schema: z.ZodSchema<any>,
     labels: { tenantId: string; traceId?: string; tags?: string[]; metadata?: Record<string, any> },
     maxRetries?: number

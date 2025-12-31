@@ -301,7 +301,7 @@ export class UserRepository extends ScopedRepository {
   /**
    * Get all users assigned to a specific customer
    */
-  async getUsersByCustomer(customerId: string): Promise<Array<User & { roleId: string | null }>> {
+  async getUsersByCustomer(customerId: string): Promise<Array<User & { roleId: string | null; isAccountOwner: boolean }>> {
     const result = await this.db
       .select({
         id: users.id,
@@ -310,8 +310,10 @@ export class UserRepository extends ScopedRepository {
         lastName: users.lastName,
         email: users.email,
         roleId: userCustomers.roleId,
+        isAccountOwner: userCustomers.isAccountOwner,
         apiKeyHash: users.apiKeyHash,
         canLogin: users.canLogin,
+        timezone: users.timezone,
         rowStatus: users.rowStatus,
         createdAt: users.createdAt,
         updatedAt: users.updatedAt,
@@ -321,6 +323,109 @@ export class UserRepository extends ScopedRepository {
       .innerJoin(users, eq(users.id, userCustomers.userId))
       .where(eq(userCustomers.customerId, customerId));
     return result;
+  }
+
+  /**
+   * Get the account owner for a customer
+   */
+  async getAccountOwner(customerId: string): Promise<User | undefined> {
+    const result = await this.db
+      .select({ user: users })
+      .from(userCustomers)
+      .innerJoin(users, eq(users.id, userCustomers.userId))
+      .where(
+        and(
+          eq(userCustomers.customerId, customerId),
+          eq(userCustomers.isAccountOwner, true)
+        )
+      )
+      .limit(1);
+    return result[0]?.user;
+  }
+
+  /**
+   * Set account owner for a customer (clears existing owner first)
+   */
+  async setAccountOwner(customerId: string, userId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      // Clear existing account owner
+      await tx
+        .update(userCustomers)
+        .set({ isAccountOwner: false })
+        .where(eq(userCustomers.customerId, customerId));
+
+      // Set new account owner
+      await tx
+        .update(userCustomers)
+        .set({ isAccountOwner: true })
+        .where(
+          and(
+            eq(userCustomers.customerId, customerId),
+            eq(userCustomers.userId, userId)
+          )
+        );
+    });
+  }
+
+  /**
+   * Get ALL managers in the hierarchy for users assigned to a customer.
+   * Uses recursive CTE to traverse up the manager chain.
+   * Returns unique list of all managers (direct + indirect).
+   */
+  async getAllManagersForCustomer(customerId: string): Promise<User[]> {
+    const result = await this.db.execute<{
+      id: string;
+      tenant_id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      role_id: string | null;
+      api_key_hash: string | null;
+      can_login: boolean;
+      timezone: string | null;
+      row_status: number;
+      created_at: Date;
+      updated_at: Date;
+      last_login_at: Date | null;
+    }>(sql`
+      WITH RECURSIVE manager_chain AS (
+        -- Base case: direct managers of users assigned to customer
+        SELECT DISTINCT um.manager_id
+        FROM user_customers uc
+        JOIN user_managers um ON um.user_id = uc.user_id
+        WHERE uc.customer_id = ${customerId}
+
+        UNION
+
+        -- Recursive case: managers of managers
+        SELECT um2.manager_id
+        FROM manager_chain mc
+        JOIN user_managers um2 ON um2.user_id = mc.manager_id
+      )
+      SELECT u.id, u.tenant_id, u.first_name, u.last_name, u.email,
+             u.role_id, u.api_key_hash, u.can_login, u.timezone,
+             u.row_status, u.created_at, u.updated_at, u.last_login_at
+      FROM manager_chain mc
+      JOIN users u ON u.id = mc.manager_id
+      WHERE u.row_status = ${RowStatus.ACTIVE}
+    `);
+
+    // Map raw result to User type
+    return result.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      email: row.email,
+      roleId: row.role_id,
+      apiKeyHash: row.api_key_hash,
+      canLogin: row.can_login,
+      timezone: row.timezone,
+      rowStatus: row.row_status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastLoginAt: row.last_login_at,
+    }));
   }
 
   /**
@@ -343,14 +448,15 @@ export class UserRepository extends ScopedRepository {
   async addCustomerAssignment(
     userId: string,
     customerId: string,
-    roleId?: string
+    roleId?: string,
+    isAccountOwner?: boolean
   ): Promise<UserCustomer> {
     const result = await this.db
       .insert(userCustomers)
-      .values({ userId, customerId, roleId })
+      .values({ userId, customerId, roleId, isAccountOwner: isAccountOwner ?? false })
       .onConflictDoUpdate({
         target: [userCustomers.userId, userCustomers.customerId],
-        set: { roleId },
+        set: { roleId, isAccountOwner: isAccountOwner ?? false },
       })
       .returning();
     return result[0];
@@ -375,7 +481,7 @@ export class UserRepository extends ScopedRepository {
 
   async setCustomerAssignments(
     userId: string,
-    assignments: Array<{ customerId: string; roleId?: string }>
+    assignments: Array<{ customerId: string; roleId?: string; isAccountOwner?: boolean }>
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
       // Clear existing
@@ -390,6 +496,7 @@ export class UserRepository extends ScopedRepository {
             userId,
             customerId: a.customerId,
             roleId: a.roleId,
+            isAccountOwner: a.isAccountOwner ?? false,
           }))
         );
       }

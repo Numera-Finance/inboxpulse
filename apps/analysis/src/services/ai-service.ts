@@ -7,7 +7,7 @@ import { xai } from '@ai-sdk/xai';
 import { Langfuse } from 'langfuse';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
-import type { CoreMessage } from 'ai';
+import type { PromptMessage } from './ai-types';
 
 /**
  * Supported AI providers
@@ -41,7 +41,7 @@ export interface ObservabilityLabels {
  */
 export interface GenerateTextOptions {
   model: ModelConfig;
-  prompt: string | CoreMessage[];
+  prompt: string | PromptMessage[];
   labels?: ObservabilityLabels;
   maxRetries?: number;
 }
@@ -64,7 +64,7 @@ export interface GenerateTextResult {
  */
 export interface GenerateStructuredOutputOptions<T extends z.ZodTypeAny> {
   model: ModelConfig;
-  prompt: string | CoreMessage[];
+  prompt: string | PromptMessage[];
   schema: T;
   labels?: ObservabilityLabels;
   maxRetries?: number;
@@ -161,7 +161,7 @@ export class AIService {
           maxTokens: model.maxTokens,
         };
 
-        // Handle prompt type (string or CoreMessage[])
+        // Handle prompt type (string or PromptMessage[])
         if (typeof finalPrompt === 'string') {
           generateTextOptions.prompt = finalPrompt;
         } else {
@@ -305,7 +305,7 @@ export class AIService {
           maxTokens: model.maxTokens,
         };
 
-        // Handle prompt type (string or CoreMessage[])
+        // Handle prompt type (string or PromptMessage[])
         if (typeof finalPrompt === 'string') {
           generateObjectOptions.prompt = finalPrompt;
         } else {
@@ -445,7 +445,7 @@ export class AIService {
   /**
    * Validate input prompt
    */
-  private validateInput(prompt: string | CoreMessage[], model: ModelConfig): void {
+  private validateInput(prompt: string | PromptMessage[], model: ModelConfig): void {
     if (typeof prompt === 'string') {
       if (!prompt || prompt.trim().length === 0) {
         throw new Error('Prompt cannot be empty');
@@ -455,7 +455,7 @@ export class AIService {
         throw new Error('Prompt messages array cannot be empty');
       }
     } else {
-      throw new Error('Prompt must be a string or array of CoreMessage');
+      throw new Error('Prompt must be a string or array of PromptMessage');
     }
 
     if (!model.provider || !model.model) {
@@ -476,10 +476,10 @@ export class AIService {
    * Build prompt with validation error feedback if retrying
    */
   private buildPrompt(
-    originalPrompt: string | CoreMessage[],
+    originalPrompt: string | PromptMessage[],
     validationError: string | null,
     attempt: number
-  ): string | CoreMessage[] {
+  ): string | PromptMessage[] {
     // If no validation error or first attempt, return original prompt
     if (!validationError || attempt === 0) {
       return originalPrompt;

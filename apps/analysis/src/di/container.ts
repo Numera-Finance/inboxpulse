@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { container } from '@crm/shared';
+import { container } from 'tsyringe';
 import { logger } from '../utils/logger';
 
 // Import classes to ensure they're loaded and decorators are evaluated

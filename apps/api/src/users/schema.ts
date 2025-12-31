@@ -56,6 +56,9 @@ export const users = pgTable(
     // Whether the user can login to the application
     canLogin: boolean('can_login').notNull().default(true),
 
+    // User's timezone for notification scheduling (IANA timezone)
+    timezone: varchar('timezone', { length: 50 }).default('Asia/Kolkata'),
+
     // Status: 0 = active, 1 = inactive, 2 = archived
     rowStatus: smallint('row_status').notNull().default(0),
 
@@ -124,6 +127,9 @@ export const userCustomers = pgTable(
       .notNull()
       .references(() => customers.id, { onDelete: 'cascade' }),
     roleId: uuid('role_id'),
+    // Whether this user is the account owner for this customer
+    // Only one user per customer should be account owner (enforced in service layer)
+    isAccountOwner: boolean('is_account_owner').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -8,6 +8,8 @@ import {
   type ReactEmailTemplate,
 } from '@crm/notifications';
 import { EmailEscalation } from './emails/email-escalation';
+import { EscalationBatchEmail } from './emails/escalation-batch';
+import { TaskAssignedEmail } from './emails/task-assigned';
 import { DealWon } from './emails/deal-won';
 import { TaskAssignment } from './emails/task-assignment';
 import { BatchDigest } from './emails/batch-digest';
@@ -55,6 +57,16 @@ export const emailTemplates: ReactEmailTemplate[] = [
     id: 'batch.digest',
     component: BatchDigest,
     subject: 'Your notification summary for {{periodLabel}}',
+  },
+  {
+    id: 'escalation-batch',
+    component: EscalationBatchEmail,
+    subject: 'Escalation Summary: {{totalCount}} open escalations require attention',
+  },
+  {
+    id: 'task-assigned',
+    component: TaskAssignedEmail,
+    subject: 'New Escalation Assigned: {{customer}} - {{subject}}',
   },
 ];
 
