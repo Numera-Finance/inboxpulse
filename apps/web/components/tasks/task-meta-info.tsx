@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { formatDistanceToNow } from "date-fns"
-import { Building2, User, Clock, Pencil, Loader2, Check } from "lucide-react"
+import { formatDistanceToNow, formatDistance, format } from "date-fns"
+import { Building2, User, Clock, Pencil, Loader2, Check, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -18,8 +18,9 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
-import { useAssignableUsers, useReassignTask, taskKeys } from "@/lib/hooks"
+import { useAssignableUsers, useReassignTask, useTask, taskKeys } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
+import { TaskStatus } from "@crm/clients"
 
 interface TaskMetaInfoProps {
   taskId: string
@@ -46,7 +47,12 @@ export function TaskMetaInfo({
 }: TaskMetaInfoProps) {
   const queryClient = useQueryClient()
   const { data: assignableUsers = [] } = useAssignableUsers()
+  const { data: taskData } = useTask(taskId)
   const reassign = useReassignTask()
+
+  // Determine if task is resolved
+  const isResolved = taskData?.status === TaskStatus.DONE
+  const completedAt = taskData?.completedAt ? new Date(taskData.completedAt) : null
 
   const [assigneeOpen, setAssigneeOpen] = React.useState(false)
   const [assigneeSearch, setAssigneeSearch] = React.useState("")
@@ -106,7 +112,7 @@ export function TaskMetaInfo({
   return (
     <div
       className={cn(
-        "grid grid-cols-2 md:grid-cols-3 gap-4 p-3 rounded-lg bg-muted/50 text-sm border-0",
+        "grid grid-cols-2 md:grid-cols-4 gap-4 p-3 rounded-lg bg-muted/50 text-sm border-0",
         className
       )}
     >
@@ -126,65 +132,90 @@ export function TaskMetaInfo({
         </div>
         <div className="flex items-center gap-1">
           <p className="font-medium">{displayAssignee.name}</p>
-          <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5"
-                disabled={isAssigning}
-              >
-                {isAssigning ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[220px] p-0" align="start">
-              <Command shouldFilter={false}>
-                <CommandInput
-                  placeholder="Search users..."
-                  value={assigneeSearch}
-                  onValueChange={setAssigneeSearch}
-                />
-                <CommandList>
-                  <CommandEmpty>No users found.</CommandEmpty>
-                  <CommandGroup>
-                    {filteredUsers.map((user) => {
-                      const isSelected = displayAssignee.id === user.id
-                      return (
-                        <CommandItem
-                          key={user.id}
-                          value={user.id}
-                          onSelect={() => handleAssign(user.id)}
-                        >
-                          <Check
-                            className={cn(
-                              "mr-2 h-4 w-4",
-                              isSelected ? "opacity-100" : "opacity-0"
-                            )}
-                          />
-                          {user.name}
-                        </CommandItem>
-                      )
-                    })}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
+          {!isResolved && (
+            <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5"
+                  disabled={isAssigning}
+                >
+                  {isAssigning ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[220px] p-0" align="start">
+                <Command shouldFilter={false}>
+                  <CommandInput
+                    placeholder="Search users..."
+                    value={assigneeSearch}
+                    onValueChange={setAssigneeSearch}
+                  />
+                  <CommandList>
+                    <CommandEmpty>No users found.</CommandEmpty>
+                    <CommandGroup>
+                      {filteredUsers.map((user) => {
+                        const isSelected = displayAssignee.id === user.id
+                        return (
+                          <CommandItem
+                            key={user.id}
+                            value={user.id}
+                            onSelect={() => handleAssign(user.id)}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                isSelected ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            {user.name}
+                          </CommandItem>
+                        )
+                      })}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       </div>
-      <div>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-          <Clock className="h-3 w-3" />
-          Open
+      {isResolved && completedAt ? (
+        <>
+          <div>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+              <Clock className="h-3 w-3" />
+              Time to Close
+            </div>
+            <p className="font-medium">
+              {formatDistance(completedAt, createdAt)}
+            </p>
+          </div>
+          <div>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+              <CheckCircle2 className="h-3 w-3" />
+              Resolved on
+            </div>
+            <p className="font-medium">
+              {format(completedAt, "MMM d, yyyy")}
+            </p>
+          </div>
+        </>
+      ) : (
+        <div>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+            <Clock className="h-3 w-3" />
+            Open
+          </div>
+          <p className="font-medium">
+            {formatDistanceToNow(createdAt, { addSuffix: false })}
+          </p>
         </div>
-        <p className="font-medium">
-          {formatDistanceToNow(createdAt, { addSuffix: false })}
-        </p>
-      </div>
+      )}
     </div>
   )
 }

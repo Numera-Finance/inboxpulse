@@ -21,6 +21,7 @@ import {
   TaskComments,
   TaskCommentsBadge,
   TaskMetaInfo,
+  TASK_COMMENTS_ID,
   type TaskFilter,
 } from "@/components/tasks"
 import {
@@ -342,9 +343,17 @@ export default function EscalationsPage() {
     ) : null
   ), [handleResolve])
 
+  // Scroll to comments section when badge is clicked
+  const scrollToComments = React.useCallback(() => {
+    const commentsSection = document.getElementById(TASK_COMMENTS_ID)
+    if (commentsSection) {
+      commentsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
+
   const renderHeaderBadges = React.useCallback((item: InboxItem) => (
-    <TaskCommentsBadge taskId={item.id} />
-  ), [])
+    <TaskCommentsBadge taskId={item.id} onClick={scrollToComments} />
+  ), [scrollToComments])
 
   const renderMetaInfo = React.useCallback((item: InboxItem) => (
     <TaskMetaInfo

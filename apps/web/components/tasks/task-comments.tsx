@@ -38,6 +38,9 @@ function getInitials(name: string): string {
  * Fetches and manages comments internally using React Query.
  * Handles optimistic updates for adding comments.
  */
+// ID used for scroll-to-comments functionality
+export const TASK_COMMENTS_ID = 'task-comments-section'
+
 export function TaskComments({ taskId, className }: TaskCommentsProps) {
   const queryClient = useQueryClient()
   const { data: comments = [], isLoading } = useTaskComments(taskId)
@@ -104,7 +107,7 @@ export function TaskComments({ taskId, className }: TaskCommentsProps) {
 
   if (isLoading) {
     return (
-      <div className={className}>
+      <div id={TASK_COMMENTS_ID} className={className}>
         <Separator className="my-4" />
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -115,7 +118,7 @@ export function TaskComments({ taskId, className }: TaskCommentsProps) {
   }
 
   return (
-    <div className={className}>
+    <div id={TASK_COMMENTS_ID} className={className}>
       <Separator className="my-4" />
       <div className="space-y-4">
         <div className="flex items-center gap-2">
