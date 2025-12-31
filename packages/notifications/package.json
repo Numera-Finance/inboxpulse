@@ -72,7 +72,7 @@
     "inngest": "catalog:",
     "uuid": "^13.0.0",
     "date-fns": "catalog:",
-    "date-fns-tz": "^3.2.0",
+    "date-fns-tz": "catalog:",
     "react": "catalog:"
   },
   "peerDependencies": {

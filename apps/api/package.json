@@ -16,7 +16,7 @@
     "@hono/node-server": "catalog:",
     "better-auth": "^1.4.7",
     "date-fns": "catalog:",
-    "date-fns-tz": "^3.2.0",
+    "date-fns-tz": "catalog:",
     "dotenv": "catalog:",
     "drizzle-orm": "catalog:",
     "email-reply-parser": "^2.3.5",
