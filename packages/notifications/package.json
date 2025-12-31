@@ -58,7 +58,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest"
+    "test": "vitest",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@crm/database": "workspace:*",

@@ -26,7 +26,7 @@ const ESCALATION_FREQUENCY_OPTIONS = [
 ] as const
 
 export function UserPreferences() {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -43,11 +43,9 @@ export function UserPreferences() {
   useEffect(() => {
     async function fetchPreferences() {
       try {
-        // Fetch user profile for timezone
+        // Fetch user profile for timezone (uses cookie-based auth)
         const response = await fetch('/api/users/me', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          credentials: 'include',
         })
 
         if (response.ok) {
@@ -69,19 +67,19 @@ export function UserPreferences() {
       }
     }
 
-    if (token) {
+    if (user) {
       fetchPreferences()
     }
-  }, [token])
+  }, [user])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      // Save timezone to user profile
+      // Save timezone to user profile (uses cookie-based auth)
       const response = await fetch('/api/users/me/preferences', {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
