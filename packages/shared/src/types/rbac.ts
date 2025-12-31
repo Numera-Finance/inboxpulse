@@ -17,6 +17,8 @@ export const Permission = {
   CUSTOMER_DEL: 6,
   USER_CUSTOMER_MANAGE: 7,
   ADMIN: 8, // Full admin access, bypasses scoped queries
+  TASK_ADD: 9,
+  TASK_EDIT: 10,
 } as const;
 
 export type PermissionType = (typeof Permission)[keyof typeof Permission];
@@ -33,6 +35,8 @@ export const PERMISSION_LABELS: Record<PermissionType, string> = {
   [Permission.CUSTOMER_DEL]: 'Delete Customers',
   [Permission.USER_CUSTOMER_MANAGE]: 'Manage User-Customer Assignments',
   [Permission.ADMIN]: 'Full Admin Access',
+  [Permission.TASK_ADD]: 'Create Tasks',
+  [Permission.TASK_EDIT]: 'Edit Tasks',
 };
 
 /**
@@ -88,6 +92,8 @@ export const DEFAULT_ROLES = {
       Permission.CUSTOMER_EDIT,
       Permission.CUSTOMER_DEL,
       Permission.USER_CUSTOMER_MANAGE,
+      Permission.TASK_ADD,
+      Permission.TASK_EDIT,
     ],
   },
   ADMINISTRATOR: {
@@ -102,6 +108,8 @@ export const DEFAULT_ROLES = {
       Permission.CUSTOMER_DEL,
       Permission.USER_CUSTOMER_MANAGE,
       Permission.ADMIN,
+      Permission.TASK_ADD,
+      Permission.TASK_EDIT,
     ],
   },
 } as const;

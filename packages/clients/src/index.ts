@@ -8,3 +8,4 @@ export * from './contact';
 export * from './analysis';
 export * from './user';
 export * from './role';
+export * from './task';

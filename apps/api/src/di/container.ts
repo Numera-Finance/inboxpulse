@@ -1,7 +1,7 @@
 import { container } from 'tsyringe';
 import { createDatabase, type Database } from '@crm/database';
 // Import schemas from API modules (co-located with their code)
-import { users, userManagers, userCustomers, userAccessibleCustomers, tenants, integrations, emailThreads, emails, emailAnalyses, threadAnalyses, runs, customers, contacts, roles } from '../schemas';
+import { users, userManagers, userCustomers, userAccessibleCustomers, tenants, integrations, emailThreads, emails, emailAnalyses, threadAnalyses, runs, customers, contacts, roles, tasks, taskComments, userSubordinates } from '../schemas';
 // Notification schemas removed - notifications is now a standalone app
 // Import better-auth schemas
 import { betterAuthUser, betterAuthSession, betterAuthAccount, betterAuthVerification } from '../auth/better-auth-schema';
@@ -28,6 +28,8 @@ import { CustomerService } from '../customers/service';
 import { ContactRepository } from '../contacts/repository';
 import { ContactService } from '../contacts/service';
 import { RoleRepository } from '../roles/repository';
+import { TaskRepository } from '../tasks/repository';
+import { TaskService } from '../tasks/service';
 import { BetterAuthUserService } from '../auth/better-auth-user-service';
 
 export function setupContainer() {
@@ -48,6 +50,9 @@ export function setupContainer() {
     customers,
     contacts,
     roles,
+    tasks,
+    taskComments,
+    userSubordinates,
     // Better-auth schemas
     betterAuthUser,
     betterAuthSession,
@@ -73,6 +78,7 @@ export function setupContainer() {
   container.register(CustomerRepository, { useClass: CustomerRepository });
   container.register(ContactRepository, { useClass: ContactRepository });
   container.register(RoleRepository, { useClass: RoleRepository });
+  container.register(TaskRepository, { useClass: TaskRepository });
 
   // Register services (order matters - dependencies must be registered first)
   container.register(UserService, { useClass: UserService });
@@ -81,6 +87,7 @@ export function setupContainer() {
   container.register(RunService, { useClass: RunService });
   container.register(CustomerService, { useClass: CustomerService });
   container.register(ContactService, { useClass: ContactService });
+  container.register(TaskService, { useClass: TaskService });
 
   // Register services with more dependencies (after their dependencies)
   container.register(ThreadAnalysisService, { useClass: ThreadAnalysisService });

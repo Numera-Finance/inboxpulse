@@ -133,6 +133,17 @@ export interface InboxAttachment {
 }
 
 /**
+ * Comment on a task
+ */
+export interface InboxComment {
+  id: string;
+  content: string;
+  userId: string;
+  userName: string;
+  createdAt: Date;
+}
+
+/**
  * Full content for the detail view - includes body and thread context
  */
 export interface InboxItemContent {
@@ -164,6 +175,9 @@ export interface InboxItemContent {
 
   /** Thread messages (for email threads) */
   threadMessages?: InboxItemContent[];
+
+  /** Comments (for tasks) */
+  comments?: InboxComment[];
 
   /** Additional metadata */
   metadata?: Record<string, unknown>;
@@ -348,6 +362,11 @@ export interface InboxCallbacks {
    * Mark task as resolved/done
    */
   onResolve?: (itemId: string) => Promise<void>;
+
+  /**
+   * Add comment to a task
+   */
+  onAddComment?: (itemId: string, content: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -443,6 +462,34 @@ export interface InboxViewProps {
 
   /** Class name for container */
   className?: string;
+
+  // -------------------------------------------------------------------------
+  // Detail Panel Render Props
+  // -------------------------------------------------------------------------
+
+  /**
+   * Render prop for header actions in detail panel
+   * Receives (item, content) to render context-aware actions
+   */
+  renderHeaderActions?: (item: InboxItem, content: InboxItemContent | null) => React.ReactNode;
+
+  /**
+   * Render prop for meta info section in detail panel
+   * Receives (item, content) to render context-aware meta info
+   */
+  renderMetaInfo?: (item: InboxItem, content: InboxItemContent | null) => React.ReactNode;
+
+  /**
+   * Render prop for additional header badges in detail panel
+   * Receives (item, content) to render context-aware badges
+   */
+  renderHeaderBadges?: (item: InboxItem, content: InboxItemContent | null) => React.ReactNode;
+
+  /**
+   * Render prop for content after messages in detail panel
+   * Receives (item, content) to render context-aware content
+   */
+  renderAfterContent?: (item: InboxItem, content: InboxItemContent | null) => React.ReactNode;
 }
 
 /**
@@ -455,8 +502,11 @@ export interface InboxListItemProps {
   /** Whether this item is selected */
   isSelected: boolean;
 
-  /** Click handler */
-  onClick: () => void;
+  /** Click handler - can be a function or undefined */
+  onClick?: () => void;
+
+  /** Alternative click handler that receives item ID - for better memoization */
+  onItemClick?: (itemId: string) => void;
 
   /** Configuration for display options */
   config: Pick<InboxConfig, 'showPriority' | 'showCustomer' | 'showThreadCount' | 'itemType'>;
@@ -490,17 +540,37 @@ export interface InboxDetailPanelProps {
     | 'onReply'
     | 'onReplyAll'
     | 'onForward'
-    | 'onAssign'
-    | 'onUpdateStatus'
-    | 'onUpdatePriority'
     | 'onResolve'
   >;
 
   /** Configuration */
   config: Pick<InboxConfig, 'itemType'>;
 
-  /** Custom actions slot */
+  /** Custom actions slot (toolbar right side) */
   customActions?: React.ReactNode;
+
+  /**
+   * Render prop for header actions (e.g., "Done" button for tasks)
+   * Rendered inline with the subject line
+   */
+  headerActions?: React.ReactNode;
+
+  /**
+   * Render prop for meta info section (e.g., customer, assignee, open time for tasks)
+   * Rendered below the header badges
+   */
+  metaInfo?: React.ReactNode;
+
+  /**
+   * Render prop for additional badges in the header (e.g., comment count)
+   */
+  headerBadges?: React.ReactNode;
+
+  /**
+   * Render prop for content after the main message/thread
+   * (e.g., comments section for tasks)
+   */
+  afterContent?: React.ReactNode;
 }
 
 // =============================================================================

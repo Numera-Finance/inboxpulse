@@ -1,4 +1,4 @@
-import { UserClient, CustomerClient, ContactClient, IntegrationClient, EmailClient, RoleClient } from '@crm/clients';
+import { UserClient, CustomerClient, ContactClient, IntegrationClient, EmailClient, RoleClient, TaskClient } from '@crm/clients';
 
 // Extend Window interface for runtime config
 declare global {
@@ -25,6 +25,7 @@ let contactClient: ContactClient | null = null;
 let integrationClient: IntegrationClient | null = null;
 let emailClient: EmailClient | null = null;
 let roleClient: RoleClient | null = null;
+let taskClient: TaskClient | null = null;
 
 /**
  * Get the User client instance
@@ -88,6 +89,16 @@ export function getRoleClient(): RoleClient {
 }
 
 /**
+ * Get the Task client instance
+ */
+export function getTaskClient(): TaskClient {
+  if (!taskClient) {
+    taskClient = new TaskClient(API_BASE_URL);
+  }
+  return taskClient;
+}
+
+/**
  * Clear all client instances (useful for logout)
  */
 export function clearClients(): void {
@@ -97,4 +108,5 @@ export function clearClients(): void {
   integrationClient = null;
   emailClient = null;
   roleClient = null;
+  taskClient = null;
 }

@@ -14,6 +14,8 @@ import { UserService } from '../users/service';
 import { ContactRepository } from '../contacts/repository';
 import { ContactService, type SignatureData } from '../contacts/service';
 import { CustomerRepository } from '../customers/repository';
+import { TaskService } from '../tasks/service';
+import { TenantService } from '../tenants/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply, hasAnalyzableSignatureContent } from './extraction/extractor';
 
@@ -95,7 +97,9 @@ export class EmailAnalysisService {
     private emailRepo: EmailRepository,
     private threadAnalysisService: ThreadAnalysisService,
     private userService: UserService,
-    private contactService: ContactService
+    private contactService: ContactService,
+    private taskService: TaskService,
+    private tenantService: TenantService
   ) { }
 
   // ===========================================================================
@@ -494,6 +498,9 @@ export class EmailAnalysisService {
         { tenantId: ctx.tenantId, emailId: ctx.emailId, logType: 'DB_TRANSACTION_COMPLETE' },
         'Database transaction completed successfully'
       );
+
+      // Step 8: Auto-create task for negative sentiment emails (outside transaction)
+      await this.maybeCreateTaskForNegativeEmail(ctx, data);
     } catch (error: any) {
       logger.error(
         { tenantId: ctx.tenantId, emailId: ctx.emailId, error: error.message },
@@ -797,6 +804,105 @@ export class EmailAnalysisService {
   // ===========================================================================
   // Helper Methods
   // ===========================================================================
+
+  /**
+   * Auto-create task for negative sentiment emails
+   * Conditions:
+   * - Email has negative sentiment
+   * - Email is NOT classified as spam, marketing, or automated
+   * - Email has a valid customer association
+   */
+  private async maybeCreateTaskForNegativeEmail(
+    ctx: AnalysisContext,
+    data: CollectedData
+  ): Promise<void> {
+    try {
+      const sentimentResult = data.analysisResults?.['sentiment'];
+      const classificationResult = data.classificationResult;
+
+      // Check if sentiment is negative
+      if (sentimentResult?.value !== 'negative') {
+        return;
+      }
+
+      // Check if email is spam, marketing, or automated
+      const skipCategories = ['spam', 'marketing', 'automated'];
+      if (classificationResult?.category && skipCategories.includes(classificationResult.category)) {
+        logger.debug(
+          {
+            emailId: ctx.emailId,
+            category: classificationResult.category,
+            logType: 'SKIP_TASK_CREATION_CATEGORY'
+          },
+          'Skipping task creation for marketing/spam/automated email'
+        );
+        return;
+      }
+
+      // Get customer ID from email participants
+      const email = await this.emailRepo.findById(ctx.emailId);
+      if (!email) {
+        logger.warn({ emailId: ctx.emailId }, 'Email not found for task creation');
+        return;
+      }
+
+      // Skip task creation for internal emails (sender domain = tenant domain)
+      if (email.fromEmail) {
+        const senderDomain = email.fromEmail.split('@')[1]?.toLowerCase();
+        if (senderDomain) {
+          const tenant = await this.tenantService.findById(ctx.tenantId);
+          if (tenant?.domain && senderDomain === tenant.domain.toLowerCase()) {
+            logger.debug(
+              {
+                emailId: ctx.emailId,
+                senderDomain,
+                tenantDomain: tenant.domain,
+                logType: 'SKIP_TASK_CREATION_INTERNAL_EMAIL'
+              },
+              'Skipping task creation for internal email (sender domain matches tenant domain)'
+            );
+            return;
+          }
+        }
+      }
+
+      // Find customer ID from email participants
+      const participants = await this.emailRepo.getParticipants(ctx.emailId);
+      const participantWithCustomer = participants.find(p => p.customerId);
+
+      if (!participantWithCustomer?.customerId) {
+        logger.debug(
+          { emailId: ctx.emailId, logType: 'SKIP_TASK_CREATION_NO_CUSTOMER' },
+          'Skipping task creation - no customer associated'
+        );
+        return;
+      }
+
+      // Create task
+      const task = await this.taskService.createFromEmail(
+        ctx.tenantId,
+        participantWithCustomer.customerId,
+        ctx.emailId,
+        email.subject || 'Negative sentiment email'
+      );
+
+      logger.info(
+        {
+          emailId: ctx.emailId,
+          taskId: task.id,
+          customerId: participantWithCustomer.customerId,
+          logType: 'TASK_AUTO_CREATED'
+        },
+        'Auto-created task for negative sentiment email'
+      );
+    } catch (error: any) {
+      // Non-blocking - log and continue
+      logger.warn(
+        { emailId: ctx.emailId, error: error.message },
+        'Failed to auto-create task for negative email (non-blocking)'
+      );
+    }
+  }
 
   /**
    * Create analysis context from options

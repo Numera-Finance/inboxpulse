@@ -1,12 +1,8 @@
 "use client"
 
+import * as React from "react"
 import {
-  Building2,
   Mail,
-  Clock,
-  User,
-  Calendar,
-  CheckCircle,
   Trash2,
   Star,
   Archive,
@@ -132,9 +128,9 @@ function sanitizeEmailHtml(html: string): string {
  */
 function MessageContent({ message }: { message: InboxItemContent }) {
   return (
-    <div className="mb-6">
+    <div className="mb-4">
       {/* Message header */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-3">
         <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
           {getInitials(message.from.name)}
         </div>
@@ -165,7 +161,7 @@ function MessageContent({ message }: { message: InboxItemContent }) {
         )}
 
         {/* Body */}
-        <div className="prose prose-sm dark:prose-invert max-w-none">
+        <div className="prose prose-sm dark:prose-invert max-w-none [&_*]:border-0">
           {message.bodyFormat === "html" ? (
             <div
               className="text-sm leading-relaxed"
@@ -210,15 +206,22 @@ function MessageContent({ message }: { message: InboxItemContent }) {
 }
 
 /**
- * InboxDetailPanel - Reusable detail panel for both emails and tasks
+ * InboxDetailPanel - Generic detail panel for emails and tasks
+ *
+ * This component is intentionally generic. Task-specific features (meta info,
+ * comments, assignment) should be passed via render props.
  *
  * Shows:
  * - Toolbar with actions (archive, delete, star, etc.)
  * - Item header with subject, priority, status badges
- * - Meta info grid (customer, assignee, response time, etc.)
  * - Message content/body
  * - Thread messages (for email threads)
- * - Reply/Forward actions
+ *
+ * Render props for customization:
+ * - headerActions: Actions next to subject (e.g., "Done" button)
+ * - headerBadges: Additional badges (e.g., comment count)
+ * - metaInfo: Meta information grid (e.g., customer, assignee)
+ * - afterContent: Content after messages (e.g., comments section)
  */
 export function InboxDetailPanel({
   item,
@@ -227,6 +230,10 @@ export function InboxDetailPanel({
   callbacks,
   config,
   customActions,
+  headerActions,
+  metaInfo,
+  headerBadges,
+  afterContent,
 }: InboxDetailPanelProps) {
   // Empty state
   if (!item) {
@@ -240,8 +247,8 @@ export function InboxDetailPanel({
     )
   }
 
-  // Loading state
-  if (isLoading) {
+  // Loading state - show if loading and either no content or content is for a different item
+  if (isLoading && (!content || content.id !== item.id)) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
         <div className="text-center">
@@ -252,13 +259,10 @@ export function InboxDetailPanel({
     )
   }
 
-  const isTask = config.itemType === "task"
-  const isEmail = config.itemType === "email"
-
   return (
     <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+      <div className="flex items-center justify-between px-4 py-1">
         <div className="flex items-center gap-1">
           {callbacks.onArchive && (
             <TooltipProvider>
@@ -321,32 +325,24 @@ export function InboxDetailPanel({
           )}
         </div>
         <div className="flex items-center gap-1">
-          {/* Task-specific: Done button */}
-          {isTask && callbacks.onResolve && (
-            <Button
-              className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
-              onClick={() => callbacks.onResolve?.(item.id)}
-            >
-              <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
-              Done
-            </Button>
-          )}
           {/* Custom actions slot */}
           {customActions}
         </div>
       </div>
 
-      <ScrollArea className="flex-1 h-0 min-h-0">
-        <div className="p-6">
+      <ScrollArea className="flex-1 h-0 min-h-0 border-0 border-t-0">
+        <div className="px-4 pb-4 pt-2">
           {/* Header */}
-          <div className="mb-6">
+          <div className="mb-4">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <h2 className="text-xl font-semibold">{item.subject}</h2>
+              <h2 className="text-xl font-semibold flex-1">{item.subject}</h2>
               {item.sentiment && (
                 <SentimentIndicator sentiment={item.sentiment} size="md" showLabel />
               )}
+              {/* Header actions slot (e.g., "Done" button for tasks) */}
+              {headerActions}
             </div>
-            {(item.isStarred || item.priority || item.status) && (
+            {(item.isStarred || item.priority || item.status || headerBadges) && (
               <div className="flex items-center gap-2 flex-wrap">
                 {item.isStarred && (
                   <Badge className="bg-amber-500/10 text-amber-600 border-0 text-xs">
@@ -367,49 +363,14 @@ export function InboxDetailPanel({
                     {formatStatus(item.status)}
                   </Badge>
                 )}
+                {/* Header badges slot (e.g., comment count) */}
+                {headerBadges}
               </div>
             )}
 
-            {/* Meta info grid - primarily for tasks */}
-            {isTask && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg bg-muted/50 text-sm">
-                {item.customerName && (
-                  <div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                      <Building2 className="h-3 w-3" />
-                      Customer
-                    </div>
-                    <p className="font-medium">{item.customerName}</p>
-                  </div>
-                )}
-                {item.recipients && item.recipients.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                      <User className="h-3 w-3" />
-                      Assigned To
-                    </div>
-                    <p className="font-medium">{item.recipients[0].name}</p>
-                  </div>
-                )}
-                <div>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                    <Clock className="h-3 w-3" />
-                    Created
-                  </div>
-                  <p className="font-medium">{formatTimestamp(item.timestamp)}</p>
-                </div>
-                <div>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                    <Calendar className="h-3 w-3" />
-                    Last Update
-                  </div>
-                  <p className="font-medium">{formatTimestamp(item.timestamp)}</p>
-                </div>
-              </div>
-            )}
+            {/* Meta info slot (e.g., customer, assignee, open time for tasks) */}
+            {metaInfo && <div className="mt-3">{metaInfo}</div>}
           </div>
-
-          <Separator className="my-6" />
 
           {/* Content */}
           {content ? (
@@ -418,17 +379,14 @@ export function InboxDetailPanel({
 
               {/* Thread messages */}
               {content.threadMessages && content.threadMessages.length > 0 && (
-                <>
-                  <Separator className="my-6" />
-                  <div className="space-y-6">
-                    {content.threadMessages.map((message, index) => (
-                      <div key={message.id || index}>
-                        {index > 0 && <Separator className="my-6" />}
-                        <MessageContent message={message} />
-                      </div>
-                    ))}
-                  </div>
-                </>
+                <div className="space-y-4 mt-4">
+                  {content.threadMessages.map((message, index) => (
+                    <div key={message.id || index}>
+                      {index > 0 && <Separator className="my-4" />}
+                      <MessageContent message={message} />
+                    </div>
+                  ))}
+                </div>
               )}
             </>
           ) : (
@@ -450,6 +408,10 @@ export function InboxDetailPanel({
               </div>
             </div>
           )}
+
+          {/* After content slot - always shown when item is selected */}
+          {/* Rendered outside content conditional so it can load independently */}
+          {afterContent}
 
         </div>
       </ScrollArea>

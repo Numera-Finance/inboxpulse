@@ -7,6 +7,7 @@
 
 import type { Email as FrontendEmail } from "@/lib/types"
 import type { Escalation } from "@/lib/data"
+import type { Task, TaskComment } from "@crm/clients"
 import type {
   InboxItem,
   InboxItemContent,
@@ -18,6 +19,7 @@ import type {
   InboxClassification,
 } from "./types"
 import { getClassificationFromSignals } from "@crm/shared"
+import { TaskStatus } from "@crm/clients"
 
 // =============================================================================
 // Email Adapters
@@ -427,4 +429,102 @@ Please prioritize this request as we are a ${escalation.isPremier ? "Premier" : 
 Best regards,
 ${senderName}
 ${escalation.customerName}`
+}
+
+// =============================================================================
+// API Task Adapters (for real task data from API)
+// =============================================================================
+
+/**
+ * Map API task status to inbox status
+ */
+function mapApiTaskStatus(status: number): InboxStatus {
+  return status === TaskStatus.DONE ? "resolved" : "open"
+}
+
+/**
+ * Convert API Task to InboxItem
+ */
+export const apiTaskToInboxItem: InboxItemAdapter<Task> = (
+  task
+): InboxItem<Task> => {
+  const timestamp = new Date(task.createdAt)
+
+  return {
+    id: task.id,
+    type: "task",
+    subject: task.title,
+    preview: task.emailSubject ? `Re: ${task.emailSubject}` : task.title,
+    timestamp,
+    isRead: task.status === TaskStatus.DONE,
+    isStarred: false,
+    sender: {
+      name: task.emailFromName || task.emailFromEmail || task.customerName || "Unknown",
+      email: task.emailFromEmail || "",
+    },
+    recipients: task.assignedToName
+      ? [{ name: task.assignedToName, id: task.assignedToId || undefined }]
+      : [],
+    status: mapApiTaskStatus(task.status),
+    customerId: task.customerId,
+    customerName: task.customerName || undefined,
+    originalData: task,
+  }
+}
+
+/**
+ * Extended task type with comments for content adapter
+ */
+export interface TaskWithComments extends Task {
+  comments?: TaskComment[]
+}
+
+/**
+ * Convert API Task to InboxItemContent
+ */
+export const apiTaskToInboxContent: InboxContentAdapter<TaskWithComments> = (
+  task
+): InboxItemContent => {
+  const timestamp = new Date(task.createdAt)
+
+  // Build body from email content or task title
+  let body = ""
+  if (task.emailBody) {
+    body = task.emailBody
+  } else {
+    body = task.title
+  }
+
+  // Convert task comments to inbox comments
+  const comments = task.comments?.map((comment) => ({
+    id: comment.id,
+    content: comment.content,
+    userId: comment.userId,
+    userName: comment.userName || "Unknown",
+    createdAt: new Date(comment.createdAt),
+  }))
+
+  return {
+    id: task.id,
+    subject: task.title,
+    body,
+    bodyFormat: "html",
+    from: {
+      name: task.emailFromName || task.emailFromEmail || task.customerName || "Unknown",
+      email: task.emailFromEmail || "",
+    },
+    to: task.assignedToName
+      ? [{ name: task.assignedToName, id: task.assignedToId || undefined }]
+      : [],
+    timestamp,
+    comments,
+    metadata: {
+      status: task.status,
+      customerId: task.customerId,
+      customerName: task.customerName,
+      emailId: task.emailId,
+      createdBySystem: task.createdBySystem,
+      completedAt: task.completedAt,
+    },
+  }
 }

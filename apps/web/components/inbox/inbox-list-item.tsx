@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { Star, Paperclip, MessageSquare } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -88,11 +89,14 @@ function formatStatus(status?: string): string {
  * - Timestamp
  * - Thread count (if applicable)
  * - Attachment indicator
+ *
+ * Memoized to prevent unnecessary re-renders when parent state changes.
  */
-export function InboxListItem({
+export const InboxListItem = React.memo(function InboxListItem({
   item,
   isSelected,
   onClick,
+  onItemClick,
   config,
   showCheckbox = false,
   isChecked = false,
@@ -102,16 +106,24 @@ export function InboxListItem({
     e.stopPropagation()
   }
 
+  const handleClick = React.useCallback(() => {
+    if (onItemClick) {
+      onItemClick(item.id)
+    } else if (onClick) {
+      onClick()
+    }
+  }, [item.id, onItemClick, onClick])
+
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => e.key === 'Enter' && onClick?.()}
+      onClick={handleClick}
+      onKeyDown={(e) => e.key === 'Enter' && handleClick()}
       className={cn(
         "w-full text-left px-4 py-3 border-b border-border hover:bg-muted/50 transition-colors cursor-pointer overflow-hidden",
-        isSelected && "bg-muted",
-        !item.isRead && "bg-primary/5"
+        !item.isRead && !isSelected && "bg-primary/5",
+        isSelected && "bg-accent border-l-2 border-l-primary"
       )}
     >
       <div className="flex items-start gap-3 w-full">
@@ -126,7 +138,7 @@ export function InboxListItem({
         )}
 
         <div className="flex-1 min-w-0 w-0">
-          {/* Header row: Sender/Customer + Star + Time */}
+          {/* Header row: Sender/Customer + Assigned User + Star + Time */}
           <div className="flex items-center gap-2 mb-1">
             <div className="flex-1 min-w-0 w-0 flex items-center gap-2">
               <span
@@ -139,6 +151,17 @@ export function InboxListItem({
                   ? item.customerName
                   : item.sender.name}
               </span>
+              {/* Assigned user (for tasks) */}
+              {config.itemType === 'task' && (
+                <>
+                  <span className="text-muted-foreground text-xs">•</span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {item.recipients && item.recipients.length > 0 && item.recipients[0].name?.trim()
+                      ? item.recipients[0].name
+                      : "Unassigned"}
+                  </span>
+                </>
+              )}
               {item.isStarred && (
                 <Star className="h-3 w-3 text-amber-500 fill-amber-500 flex-shrink-0" />
               )}
@@ -216,4 +239,4 @@ export function InboxListItem({
       </div>
     </div>
   )
-}
+})

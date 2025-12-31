@@ -54,6 +54,10 @@ export function InboxView({
   emptyState,
   loadingState,
   className,
+  renderHeaderActions,
+  renderMetaInfo,
+  renderHeaderBadges,
+  renderAfterContent,
 }: InboxViewProps) {
   // Internal state
   const [items, setItems] = React.useState<InboxItem[]>([])
@@ -87,6 +91,15 @@ export function InboxView({
   // Debounced search
   const searchTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
 
+  // Track if initial fetch has happened to prevent double-fetch
+  const initialFetchDoneRef = React.useRef(false)
+
+  // Store callbacks in ref to avoid fetchItems depending on them
+  const callbacksRef = React.useRef(callbacks)
+  React.useEffect(() => {
+    callbacksRef.current = callbacks
+  }, [callbacks])
+
   // Resizable panel state
   const [panelWidth, setPanelWidth] = React.useState(() => {
     if (typeof window !== "undefined") {
@@ -106,7 +119,7 @@ export function InboxView({
   // Items per page
   const pageSize = 20
 
-  // Fetch items
+  // Fetch items - uses callbacksRef to avoid depending on callbacks prop
   const fetchItems = React.useCallback(
     async (pageNum: number) => {
       try {
@@ -119,27 +132,23 @@ export function InboxView({
           sentiment: sentimentFilter === "all" ? undefined : sentimentFilter,
         }
 
-        const result = await callbacks.onFetchItems(currentFilter, {
+        const result = await callbacksRef.current.onFetchItems(currentFilter, {
           page: pageNum,
           limit: pageSize,
         })
 
         setItems(result.items)
-        // Auto-select first item if none selected or on page change
-        if (result.items.length > 0) {
-          handleSelectItem(result.items[0])
-        }
-
         setTotal(result.total)
         setHasMore(result.hasMore)
         setPage(pageNum)
+        initialFetchDoneRef.current = true
       } catch (error) {
         console.error("Failed to fetch items:", error)
       } finally {
         setIsLoading(false)
       }
     },
-    [callbacks, filter, searchQuery, statusFilter, sentimentFilter]
+    [filter, searchQuery, statusFilter, sentimentFilter]
   )
 
   // Pagination handlers
@@ -159,13 +168,24 @@ export function InboxView({
     }
   }
 
-  // Initial fetch
+  // Initial fetch on mount only
   React.useEffect(() => {
     fetchItems(1)
-  }, [statusFilter, sentimentFilter]) // Re-fetch when filters change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run on mount
 
-  // Debounced search
+  // Re-fetch when filters change (not callbacks)
   React.useEffect(() => {
+    // Skip if this is the initial render (handled by mount effect)
+    if (!initialFetchDoneRef.current) return
+    fetchItems(1)
+  }, [filter, statusFilter, sentimentFilter, fetchItems])
+
+  // Debounced search - only after initial fetch
+  React.useEffect(() => {
+    // Skip if initial fetch hasn't happened yet
+    if (!initialFetchDoneRef.current) return
+
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current)
     }
@@ -179,9 +199,9 @@ export function InboxView({
         clearTimeout(searchTimeoutRef.current)
       }
     }
-  }, [searchQuery])
+  }, [searchQuery, fetchItems])
 
-  // Fetch content when selection changes
+  // Fetch content when selection changes - uses callbacksRef to avoid re-running on callback changes
   React.useEffect(() => {
     if (!selectedItem) {
       setContent(null)
@@ -191,7 +211,7 @@ export function InboxView({
     const fetchContent = async () => {
       setIsLoadingContent(true)
       try {
-        const itemContent = await callbacks.onFetchContent(selectedItem.id)
+        const itemContent = await callbacksRef.current.onFetchContent(selectedItem.id)
         setContent(itemContent)
       } catch (error) {
         console.error("Failed to fetch content:", error)
@@ -202,24 +222,36 @@ export function InboxView({
     }
 
     fetchContent()
-  }, [selectedItem?.id, callbacks])
+  }, [selectedItem?.id])
 
-  // Handle item selection
-  const handleSelectItem = (item: InboxItem) => {
-    if (controlledSelectedItem === undefined) {
+  // Track if we're in controlled mode (selectedItem prop is provided)
+  // This doesn't change during the component's lifecycle
+  const isControlledRef = React.useRef(controlledSelectedItem !== undefined)
+
+  // Handle item selection - memoized with useCallback
+  // Uses refs to avoid depending on controlledSelectedItem or callbacks values
+  const handleSelectItem = React.useCallback((item: InboxItem) => {
+    if (!isControlledRef.current) {
       setInternalSelectedItem(item)
     }
-    callbacks.onSelect(item)
+    callbacksRef.current.onSelect(item)
 
     // Mark as read if unread
-    if (!item.isRead && callbacks.onMarkRead) {
-      callbacks.onMarkRead([item.id], true)
+    if (!item.isRead && callbacksRef.current.onMarkRead) {
+      callbacksRef.current.onMarkRead([item.id], true)
       // Optimistically update local state
       setItems((prev) =>
         prev.map((i) => (i.id === item.id ? { ...i, isRead: true } : i))
       )
     }
-  }
+  }, [])
+
+  // Auto-select first item when items load and nothing is selected
+  React.useEffect(() => {
+    if (items.length > 0 && !controlledSelectedItem && !internalSelectedItem) {
+      handleSelectItem(items[0])
+    }
+  }, [items, controlledSelectedItem, internalSelectedItem, handleSelectItem])
 
   // Handle refresh
   const handleRefresh = () => {
@@ -248,18 +280,18 @@ export function InboxView({
         if (currentIndex > 0) {
           handleSelectItem(items[currentIndex - 1])
         }
-      } else if (e.key === "e" && callbacks.onArchive && selectedItem) {
+      } else if (e.key === "e" && callbacksRef.current.onArchive && selectedItem) {
         // Archive
-        callbacks.onArchive([selectedItem.id])
-      } else if (e.key === "s" && callbacks.onStar && selectedItem) {
+        callbacksRef.current.onArchive([selectedItem.id])
+      } else if (e.key === "s" && callbacksRef.current.onStar && selectedItem) {
         // Star/unstar
-        callbacks.onStar(selectedItem.id, !selectedItem.isStarred)
+        callbacksRef.current.onStar(selectedItem.id, !selectedItem.isStarred)
       }
     }
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [items, selectedItem, callbacks])
+  }, [items, selectedItem, handleSelectItem])
 
   // Handle panel resize
   const handleResizeStart = React.useCallback((e: React.MouseEvent) => {
@@ -295,6 +327,28 @@ export function InboxView({
   // Count items by status for badges
   const openCount = items.filter((i) => i.status === "open").length
   const inProgressCount = items.filter((i) => i.status === "in_progress").length
+
+  // Memoize the list item config to prevent re-renders
+  const listItemConfig = React.useMemo(() => ({
+    showPriority: config.showPriority,
+    showCustomer: config.showCustomer,
+    showThreadCount: config.showThreadCount,
+    itemType: config.itemType,
+  }), [config.showPriority, config.showCustomer, config.showThreadCount, config.itemType])
+
+  // Store items in a ref to avoid handleItemClick dependency on items
+  const itemsRef = React.useRef(items)
+  React.useEffect(() => {
+    itemsRef.current = items
+  }, [items])
+
+  // Create stable click handler that uses ref
+  const handleItemClick = React.useCallback((itemId: string) => {
+    const item = itemsRef.current.find(i => i.id === itemId)
+    if (item) {
+      handleSelectItem(item)
+    }
+  }, [handleSelectItem])
 
   return (
     <div ref={containerRef} className={cn("flex h-full overflow-hidden", className)}>
@@ -510,13 +564,8 @@ export function InboxView({
                   key={item.id}
                   item={item}
                   isSelected={selectedItem?.id === item.id}
-                  onClick={() => handleSelectItem(item)}
-                  config={{
-                    showPriority: config.showPriority,
-                    showCustomer: config.showCustomer,
-                    showThreadCount: config.showThreadCount,
-                    itemType: config.itemType,
-                  }}
+                  onItemClick={handleItemClick}
+                  config={listItemConfig}
                   showCheckbox={config.multiSelect}
                 />
               ))
@@ -560,12 +609,17 @@ export function InboxView({
             onReply: callbacks.onReply,
             onReplyAll: callbacks.onReplyAll,
             onForward: callbacks.onForward,
-            onAssign: callbacks.onAssign,
-            onUpdateStatus: callbacks.onUpdateStatus,
-            onUpdatePriority: callbacks.onUpdatePriority,
-            onResolve: callbacks.onResolve,
+            onResolve: callbacks.onResolve ? async (itemId) => {
+              await callbacks.onResolve!(itemId)
+              // Refresh the list to show updated status
+              fetchItems(page)
+            } : undefined,
           }}
           config={{ itemType: config.itemType }}
+          headerActions={selectedItem && renderHeaderActions ? renderHeaderActions(selectedItem, content) : undefined}
+          metaInfo={selectedItem && renderMetaInfo ? renderMetaInfo(selectedItem, content) : undefined}
+          headerBadges={selectedItem && renderHeaderBadges ? renderHeaderBadges(selectedItem, content) : undefined}
+          afterContent={selectedItem && renderAfterContent ? renderAfterContent(selectedItem, content) : undefined}
         />
       </div>
     </div>
