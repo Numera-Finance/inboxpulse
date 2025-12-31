@@ -2,8 +2,9 @@
 
 import * as React from "react"
 import { useSearchParams, useNavigate, useParams } from "react-router-dom"
-import { Inbox } from "lucide-react"
+import { Inbox, CheckCircle } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
+import { Button } from "@/components/ui/button"
 import {
   InboxView,
   apiTaskToInboxItem,
@@ -15,13 +16,17 @@ import {
   type InboxItemContent,
   type TaskWithComments,
 } from "@/components/inbox"
-import { TaskFilters, type TaskFilter } from "@/components/tasks/task-filters"
+import {
+  TaskFilters,
+  TaskComments,
+  TaskCommentsBadge,
+  TaskMetaInfo,
+  type TaskFilter,
+} from "@/components/tasks"
 import {
   useTask,
   useAssignableUsers,
   useMarkTaskDone,
-  useReassignTask,
-  useAddTaskComment,
   useCustomers,
   taskKeys,
 } from "@/lib/hooks"
@@ -91,8 +96,6 @@ export default function EscalationsPage() {
 
   // Mutations
   const markDone = useMarkTaskDone()
-  const reassign = useReassignTask()
-  const addComment = useAddTaskComment()
 
   // Build search request from URL params
   const buildSearchRequest = React.useCallback(
@@ -242,25 +245,6 @@ export default function EscalationsPage() {
     [markDone, queryClient]
   )
 
-  // Handle reassign
-  const handleAssign = React.useCallback(
-    async (itemId: string, userId: string) => {
-      await reassign.mutateAsync({ id: itemId, assignedToId: userId })
-      queryClient.invalidateQueries({ queryKey: taskKeys.lists() })
-      queryClient.invalidateQueries({ queryKey: taskKeys.detail(itemId) })
-    },
-    [reassign, queryClient]
-  )
-
-  // Handle add comment
-  const handleAddComment = React.useCallback(
-    async (itemId: string, content: string) => {
-      await addComment.mutateAsync({ taskId: itemId, content })
-      queryClient.invalidateQueries({ queryKey: taskKeys.detail(itemId) })
-    },
-    [addComment, queryClient]
-  )
-
   // Handle filter changes - sync to URL params
   const handleFiltersChange = React.useCallback((newFilters: TaskFilter) => {
     setSearchParams((prev) => {
@@ -321,6 +305,61 @@ export default function EscalationsPage() {
     return apiTaskToInboxItem(selectedTask)
   }, [selectedTask])
 
+  // Memoize callbacks to prevent InboxView re-renders
+  const inboxCallbacks = React.useMemo(() => ({
+    onFetchItems: handleFetchItems,
+    onFetchContent: handleFetchContent,
+    onSelect: handleSelectItem,
+    onResolve: handleResolve,
+  }), [handleFetchItems, handleFetchContent, handleSelectItem, handleResolve])
+
+  // Memoize config to prevent re-renders
+  const inboxConfig = React.useMemo(() => ({
+    itemType: "task" as const,
+    showSearch: true,
+    showStatusFilter: false,
+    showCustomer: true,
+    statusFilters: [
+      { value: "all" as const, label: "All" },
+      { value: "open" as const, label: "Open" },
+      { value: "resolved" as const, label: "Done" },
+    ],
+    embedded: true,
+    emptyMessage: "No tasks found",
+    searchPlaceholder: "Search tasks...",
+  }), [])
+
+  // Memoize render functions to prevent re-renders
+  const renderHeaderActions = React.useCallback((item: InboxItem) => (
+    item.status !== "resolved" ? (
+      <Button
+        className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
+        onClick={() => handleResolve(item.id)}
+      >
+        <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
+        Done
+      </Button>
+    ) : null
+  ), [handleResolve])
+
+  const renderHeaderBadges = React.useCallback((item: InboxItem) => (
+    <TaskCommentsBadge taskId={item.id} />
+  ), [])
+
+  const renderMetaInfo = React.useCallback((item: InboxItem) => (
+    <TaskMetaInfo
+      taskId={item.id}
+      customerName={item.customerName}
+      assigneeId={item.recipients?.[0]?.id}
+      assigneeName={item.recipients?.[0]?.name}
+      createdAt={item.timestamp}
+    />
+  ), [])
+
+  const renderAfterContent = React.useCallback((item: InboxItem) => (
+    <TaskComments taskId={item.id} />
+  ), [])
+
   // Get customer name for display (if needed)
   const { data: customersData } = useCustomers({
     queries: [],
@@ -359,32 +398,16 @@ export default function EscalationsPage() {
         <div className="flex-1 overflow-hidden">
           <InboxView
             key={searchParams.toString()}
-            config={{
-              itemType: "task",
-              showSearch: true,
-              showStatusFilter: false,  // Status filter handled by TaskFilters component
-              showCustomer: true,
-              statusFilters: [
-                { value: "all", label: "All" },
-                { value: "open", label: "Open" },
-                { value: "resolved", label: "Done" },
-              ],
-              embedded: true,
-              emptyMessage: "No tasks found",
-              searchPlaceholder: "Search tasks...",
-            }}
-            callbacks={{
-              onFetchItems: handleFetchItems,
-              onFetchContent: handleFetchContent,
-              onSelect: handleSelectItem,
-              onResolve: handleResolve,
-              onAssign: handleAssign,
-              onAddComment: handleAddComment,
-            }}
+            config={inboxConfig}
+            callbacks={inboxCallbacks}
             initialFilter={{
               status: effectiveStatus === 'all' ? 'all' : 'open',
             }}
             selectedItem={selectedInboxItem}
+            renderHeaderActions={renderHeaderActions}
+            renderHeaderBadges={renderHeaderBadges}
+            renderMetaInfo={renderMetaInfo}
+            renderAfterContent={renderAfterContent}
           />
         </div>
 

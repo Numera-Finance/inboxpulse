@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { Star, Paperclip, MessageSquare } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -88,11 +89,14 @@ function formatStatus(status?: string): string {
  * - Timestamp
  * - Thread count (if applicable)
  * - Attachment indicator
+ *
+ * Memoized to prevent unnecessary re-renders when parent state changes.
  */
-export function InboxListItem({
+export const InboxListItem = React.memo(function InboxListItem({
   item,
   isSelected,
   onClick,
+  onItemClick,
   config,
   showCheckbox = false,
   isChecked = false,
@@ -102,12 +106,20 @@ export function InboxListItem({
     e.stopPropagation()
   }
 
+  const handleClick = React.useCallback(() => {
+    if (onItemClick) {
+      onItemClick(item.id)
+    } else if (onClick) {
+      onClick()
+    }
+  }, [item.id, onItemClick, onClick])
+
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => e.key === 'Enter' && onClick?.()}
+      onClick={handleClick}
+      onKeyDown={(e) => e.key === 'Enter' && handleClick()}
       className={cn(
         "w-full text-left px-4 py-3 border-b border-border hover:bg-muted/50 transition-colors cursor-pointer overflow-hidden",
         !item.isRead && !isSelected && "bg-primary/5",
@@ -227,4 +239,4 @@ export function InboxListItem({
       </div>
     </div>
   )
-}
+})
