@@ -359,41 +359,48 @@ app.get('/unsubscribe', async (c) => {
 
 
 // =============================================================================
-// Simulation Routes (for testing with sample data)
+// Simulation Routes (for testing - caller must provide all data)
 // =============================================================================
 
 /**
- * Simulate task-assigned notification with sample data
+ * Simulate task-assigned notification
  * POST /api/notifications/simulate/task-assigned
+ *
+ * Body: {
+ *   task: { id, customer, subject, dateOpened, assignedTo, assignedBy?, accountOwner, detailsUrl },
+ *   recipientName: string,
+ *   recipientEmail: string
+ * }
  *
  * Uses EMAIL_OVERRIDE env var if set, otherwise sends to recipientEmail.
  */
 app.post('/simulate/task-assigned', async (c) => {
   const body = await c.req.json().catch(() => ({}));
 
-  const taskData = {
-    id: body.id || 'task-123',
-    customer: body.customer || 'Acme Corporation',
-    subject: body.subject || 'Urgent: Billing discrepancy on invoice #4521',
-    dateOpened: body.dateOpened || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-    assignedTo: body.assignedTo || 'Manish Balsara',
-    assignedBy: body.assignedBy || 'Sarah Johnson',
-    accountOwner: body.accountOwner || 'Lisa Chen',
-    detailsUrl: body.detailsUrl || 'https://app.mystartupcfo.com/tasks/task-123',
-  };
+  const { task, recipientName, recipientEmail } = body;
 
-  const recipientName = body.recipientName || 'Manish';
-  const recipientEmail = body.recipientEmail || 'test@example.com';
+  if (!task) {
+    return c.json({ success: false, error: 'task object is required' }, 400);
+  }
+  if (!recipientEmail) {
+    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
+  }
+
+  const requiredFields = ['id', 'customer', 'subject', 'dateOpened', 'assignedTo', 'accountOwner', 'detailsUrl'];
+  const missingFields = requiredFields.filter(f => !task[f]);
+  if (missingFields.length > 0) {
+    return c.json({ success: false, error: `Missing task fields: ${missingFields.join(', ')}` }, 400);
+  }
 
   try {
     const html = await render(
       TaskAssignedEmail({
-        task: taskData,
-        recipientName,
+        task,
+        recipientName: recipientName || 'Team',
       })
     );
 
-    const subject = `New Escalation: ${taskData.customer} - ${taskData.subject.substring(0, 50)}${taskData.subject.length > 50 ? '...' : ''}`;
+    const subject = `New Escalation: ${task.customer} - ${task.subject.substring(0, 50)}${task.subject.length > 50 ? '...' : ''}`;
 
     const emailSender = getEmailSender();
     const result = await emailSender.send({
@@ -410,7 +417,6 @@ app.post('/simulate/task-assigned', async (c) => {
         recipient: recipientEmail,
         subject,
         messageId: result.messageId,
-        taskData,
       },
       error: result.error,
     });
@@ -424,69 +430,42 @@ app.post('/simulate/task-assigned', async (c) => {
  * Simulate escalation-batch notification
  * POST /api/notifications/simulate/escalation-batch
  *
+ * Body: {
+ *   escalations: [{ id, customer, subject, dateOpened, assignedTo, accountOwner, detailsUrl }],
+ *   metrics: { new, open1Day, open3Days, openMoreThan3Days },
+ *   recipientName?: string,
+ *   recipientEmail: string
+ * }
+ *
  * Uses EMAIL_OVERRIDE env var if set, otherwise sends to recipientEmail.
  */
 app.post('/simulate/escalation-batch', async (c) => {
   const body = await c.req.json().catch(() => ({}));
 
-  // Sample metrics
-  const metrics = body.metrics || {
-    new: 3,
-    open1Day: 2,
-    open3Days: 4,
-    openMoreThan3Days: 1,
-  };
+  const { escalations, metrics, recipientName, recipientEmail } = body;
 
-  // Sample escalations
-  const escalations = body.escalations || [
-    {
-      id: 'esc-1',
-      customer: 'Acme Corporation',
-      subject: 'Billing discrepancy on invoice #4521',
-      dateOpened: 'Dec 30, 2024',
-      assignedTo: 'John Smith',
-      accountOwner: 'Lisa Chen',
-      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-1',
-    },
-    {
-      id: 'esc-2',
-      customer: 'TechStart Inc',
-      subject: 'Integration API timeout issues affecting production',
-      dateOpened: 'Dec 29, 2024',
-      assignedTo: 'Sarah Johnson',
-      accountOwner: 'Sarah Johnson',
-      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-2',
-    },
-    {
-      id: 'esc-3',
-      customer: 'Global Logistics',
-      subject: 'Missing shipment documentation for Q4 orders',
-      dateOpened: 'Dec 27, 2024',
-      assignedTo: 'Mike Chen',
-      accountOwner: 'Rachel Kim',
-      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-3',
-    },
-    {
-      id: 'esc-4',
-      customer: 'Startup Ventures',
-      subject: 'Contract renewal discussion needed',
-      dateOpened: 'Dec 25, 2024',
-      assignedTo: 'Alex Wong',
-      accountOwner: 'Lisa Chen',
-      detailsUrl: 'https://app.mystartupcfo.com/tasks/esc-4',
-    },
-  ];
+  if (!escalations || !Array.isArray(escalations)) {
+    return c.json({ success: false, error: 'escalations array is required' }, 400);
+  }
+  if (!metrics) {
+    return c.json({ success: false, error: 'metrics object is required' }, 400);
+  }
+  if (!recipientEmail) {
+    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
+  }
 
-  const recipientName = body.recipientName || 'Manish';
-  const recipientEmail = body.recipientEmail || 'test@example.com';
+  const requiredMetrics = ['new', 'open1Day', 'open3Days', 'openMoreThan3Days'];
+  const missingMetrics = requiredMetrics.filter(m => metrics[m] === undefined);
+  if (missingMetrics.length > 0) {
+    return c.json({ success: false, error: `Missing metrics fields: ${missingMetrics.join(', ')}` }, 400);
+  }
 
   try {
-    // Render the email template
     const html = await render(
       EscalationBatchEmail({
         escalations,
         metrics,
-        recipientName,
+        recipientName: recipientName || 'Team',
       })
     );
 
@@ -508,7 +487,6 @@ app.post('/simulate/escalation-batch', async (c) => {
         recipient: recipientEmail,
         subject,
         messageId: result.messageId,
-        metrics,
         escalationCount: escalations.length,
       },
       error: result.error,
@@ -669,10 +647,6 @@ app.get('/preferences/by-name/:templateName/user/:userId', async (c) => {
   }
 });
 
-// =============================================================================
-// Simulation Routes (for testing with sample data)
-// =============================================================================
-
 /**
  * List available notification endpoints
  * GET /api/notifications/simulate
@@ -685,56 +659,36 @@ app.get('/simulate', (c) => {
       endpoints: [
         {
           method: 'POST',
-          path: '/api/notifications/send/task-assigned',
-          description: 'Send task assignment notification with provided task data',
-          sampleBody: {
-            task: {
-              id: 'uuid-of-task',
-              customer: 'Acme Corp',
-              subject: 'Issue with invoice',
-              dateOpened: 'Dec 31, 2025',
-              assignedTo: 'John Smith',
-              assignedBy: 'Manager Name',
-              accountOwner: 'Lisa Chen',
-            },
-            recipientName: 'John',
-          },
-        },
-        {
-          method: 'POST',
-          path: '/api/notifications/send/escalation-batch',
-          description: 'Send escalation batch summary to a manager',
-          sampleBody: {
-            escalations: [
-              { id: 'task-1', customer: 'Acme Corp', subject: 'Issue', dateOpened: 'Dec 31, 2025', assignedTo: 'John', accountOwner: 'Lisa', detailsUrl: 'http://...' },
-            ],
-            metrics: { new: 2, open1Day: 3, open3Days: 1, openMoreThan3Days: 4 },
-            recipientName: 'Manager',
-            recipientEmail: 'manager@example.com',
-          },
-        },
-        {
-          method: 'POST',
           path: '/api/notifications/simulate/task-assigned',
-          description: 'Send a test task assignment notification with sample data',
-          sampleBody: {
-            recipientName: 'John',
-            customer: 'Acme Corp',
-            subject: 'Issue with invoice',
-            assignedBy: 'Manager Name',
+          description: 'Send a task assignment notification (all fields required)',
+          requiredBody: {
+            task: {
+              id: 'string (required)',
+              customer: 'string (required)',
+              subject: 'string (required)',
+              dateOpened: 'string (required)',
+              assignedTo: 'string (required)',
+              assignedBy: 'string (optional)',
+              accountOwner: 'string (required)',
+              detailsUrl: 'string (required)',
+            },
+            recipientName: 'string (optional, defaults to "Team")',
+            recipientEmail: 'string (required)',
           },
         },
         {
           method: 'POST',
           path: '/api/notifications/simulate/escalation-batch',
-          description: 'Send a test escalation batch summary email with sample data',
-          sampleBody: {
-            recipientName: 'Team',
-            metrics: { new: 2, open1Day: 3, open3Days: 1, openMoreThan3Days: 4 },
+          description: 'Send an escalation batch summary email (all fields required)',
+          requiredBody: {
+            escalations: '[{ id, customer, subject, dateOpened, assignedTo, accountOwner, detailsUrl }] (required)',
+            metrics: '{ new, open1Day, open3Days, openMoreThan3Days } (required)',
+            recipientName: 'string (optional, defaults to "Team")',
+            recipientEmail: 'string (required)',
           },
         },
       ],
-      note: 'All test emails are sent to the hardcoded recipient. Set POSTMARK_API_TOKEN in .env.local to enable sending.',
+      note: 'If EMAIL_OVERRIDE is set, all emails are redirected to that address.',
     },
   });
 });

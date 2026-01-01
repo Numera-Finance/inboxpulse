@@ -651,7 +651,7 @@ export class TaskService {
                 assignedTo: task.assignedToName || 'Unassigned',
                 assignedBy: assignedByName || null,
                 accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
-                detailsUrl: `${webUrl}/tasks/${task.id}`,
+                detailsUrl: `${webUrl}/escalations/${task.id}`,
               },
               recipientName: task.assignedToName?.split(' ')[0] || 'Team',
             },
