@@ -220,24 +220,26 @@ export class TaskService {
   /**
    * Reassign task to another user
    */
-  async reassign(header: RequestHeader, id: string, assignedToId: string | null): Promise<Task | undefined> {
+  async reassign(header: RequestHeader, id: string, assignedToId: string | null): Promise<TaskWithRelations | undefined> {
     logger.info({ taskId: id, assignedToId }, 'Reassigning task');
 
     const task = await this.taskRepository.reassign(header, id, assignedToId);
+    if (!task) return undefined;
+
+    // Fetch full task with relations (customerName, assignedToName, etc.)
+    const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
+    if (!taskWithRelations) return undefined;
 
     // Send notification if task is reassigned to someone
-    if (task && assignedToId) {
-      const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
-      if (taskWithRelations) {
-        // Get assigner name (the user who reassigned the task)
-        const assigner = await this.userRepository.findById(header.userId);
-        const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
-        // Fire and forget - don't block on notification
-        this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => { });
-      }
+    if (assignedToId) {
+      // Get assigner name (the user who reassigned the task)
+      const assigner = await this.userRepository.findById(header.userId);
+      const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
+      // Fire and forget - don't block on notification
+      this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => { });
     }
 
-    return task;
+    return taskWithRelations;
   }
 
   /**

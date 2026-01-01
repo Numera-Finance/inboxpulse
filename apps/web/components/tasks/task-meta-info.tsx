@@ -18,8 +18,7 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
-import { useAssignableUsers, useReassignTask, useTask, taskKeys } from "@/lib/hooks"
-import { useQueryClient } from "@tanstack/react-query"
+import { useAssignableUsers, useReassignTask, useTask } from "@/lib/hooks"
 import { TaskStatus } from "@crm/clients"
 
 interface TaskMetaInfoProps {
@@ -45,7 +44,6 @@ export function TaskMetaInfo({
   createdAt,
   className,
 }: TaskMetaInfoProps) {
-  const queryClient = useQueryClient()
   const { data: assignableUsers = [] } = useAssignableUsers()
   const { data: taskData } = useTask(taskId)
   const reassign = useReassignTask()
@@ -53,6 +51,9 @@ export function TaskMetaInfo({
   // Determine if task is resolved
   const isResolved = taskData?.status === TaskStatus.DONE
   const completedAt = taskData?.completedAt ? new Date(taskData.completedAt) : null
+
+  // Use taskData.customerName as fallback to prevent flickering during refetch
+  const displayCustomerName = customerName || taskData?.customerName
 
   const [assigneeOpen, setAssigneeOpen] = React.useState(false)
   const [assigneeSearch, setAssigneeSearch] = React.useState("")
@@ -97,9 +98,8 @@ export function TaskMetaInfo({
     setIsAssigning(true)
 
     try {
+      // useReassignTask.onSuccess already updates the cache and invalidates lists
       await reassign.mutateAsync({ id: taskId, assignedToId: userId })
-      queryClient.invalidateQueries({ queryKey: taskKeys.lists() })
-      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) })
     } catch (error) {
       console.error("Failed to assign:", error)
       // Revert optimistic update on error
@@ -116,13 +116,13 @@ export function TaskMetaInfo({
         className
       )}
     >
-      {customerName && (
+      {displayCustomerName && (
         <div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
             <Building2 className="h-3 w-3" />
             Customer
           </div>
-          <p className="font-medium">{customerName}</p>
+          <p className="font-medium">{displayCustomerName}</p>
         </div>
       )}
       <div>
