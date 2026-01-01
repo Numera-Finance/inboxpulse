@@ -62,6 +62,7 @@ export function setupContainer() {
 
   // Register table references for services that need direct access
   container.register('UserNotificationPreferencesTable', { useValue: userNotificationPreferences });
+  container.register('UsersTable', { useValue: users });
 
   // Register user resolver
   container.register('UserResolver', { useClass: CrmUserResolver });

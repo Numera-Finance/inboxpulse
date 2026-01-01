@@ -62,18 +62,19 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@aws-sdk/client-ses": "^3.700.0",
     "@crm/database": "workspace:*",
     "@crm/shared": "workspace:*",
-    "@aws-sdk/client-ses": "^3.700.0",
     "@react-email/components": "^0.0.31",
     "@react-email/render": "^1.0.3",
-    "zod": "catalog:",
-    "tsyringe": "catalog:",
-    "inngest": "catalog:",
-    "uuid": "^13.0.0",
+    "cron-parser": "^5.4.0",
     "date-fns": "catalog:",
     "date-fns-tz": "catalog:",
-    "react": "catalog:"
+    "inngest": "catalog:",
+    "react": "catalog:",
+    "tsyringe": "catalog:",
+    "uuid": "^13.0.0",
+    "zod": "catalog:"
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:"

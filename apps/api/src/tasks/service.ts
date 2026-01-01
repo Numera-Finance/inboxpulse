@@ -1,9 +1,9 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
-import type { RequestHeader } from '@crm/shared';
+import { type RequestHeader, getServiceAuthHeaders } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
@@ -386,6 +386,163 @@ export class TaskService {
   }
 
   /**
+   * Get escalation data for a specific manager.
+   * Used by the notifications service to fetch data for batch emails.
+   * Returns escalations for customers managed by this user (directly or via subordinates).
+   */
+  async getEscalationsForManager(
+    header: RequestHeader,
+    managerId: string,
+    since?: Date
+  ): Promise<{ escalations: EscalationItem[]; metrics: EscalationMetrics }> {
+    const now = new Date();
+
+    // Get all subordinate IDs for this manager (users they manage directly or indirectly)
+    const subordinateIds = await this.getSubordinateIds(managerId, header.tenantId);
+
+    // Include the manager's own customers too
+    const userIdsToCheck = [managerId, ...subordinateIds];
+
+    // Get all customers assigned to these users
+    const customerIds = await this.getCustomerIdsForUsers(userIdsToCheck);
+
+    if (customerIds.length === 0) {
+      return { escalations: [], metrics: { new: 0, open1Day: 0, open3Days: 0, openMoreThan3Days: 0 } };
+    }
+
+    // Get escalation tasks for these customers
+    const { inArray } = await import('drizzle-orm');
+    let whereConditions = and(
+      eq(tasks.tenantId, header.tenantId),
+      eq(tasks.status, TaskStatus.OPEN),
+      eq(tasks.createdBySystem, true),
+      inArray(tasks.customerId, customerIds)
+    );
+
+    // Apply 'since' filter if provided (for incremental updates)
+    // Note: We still return all open tasks, but could use this for filtering
+    // For now, we ignore 'since' and always return all open escalations
+
+    const escalationTasks = await this.db
+      .select({
+        task: tasks,
+        customerName: customers.name,
+        assignedToFirstName: users.firstName,
+        assignedToLastName: users.lastName,
+      })
+      .from(tasks)
+      .innerJoin(customers, eq(tasks.customerId, customers.id))
+      .leftJoin(users, eq(tasks.assignedToId, users.id))
+      .where(whereConditions);
+
+    if (escalationTasks.length === 0) {
+      return { escalations: [], metrics: { new: 0, open1Day: 0, open3Days: 0, openMoreThan3Days: 0 } };
+    }
+
+    // Calculate date boundaries for metrics
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+
+    const threeDaysAgoStart = new Date(todayStart);
+    threeDaysAgoStart.setDate(threeDaysAgoStart.getDate() - 3);
+
+    // Calculate metrics (no duplicates - mutually exclusive categories)
+    const metrics: EscalationMetrics = {
+      new: 0,
+      open1Day: 0,
+      open3Days: 0,
+      openMoreThan3Days: 0,
+    };
+
+    const escalations: EscalationItem[] = [];
+
+    for (const { task, customerName, assignedToFirstName, assignedToLastName } of escalationTasks) {
+      const createdAt = new Date(task.createdAt);
+      if (createdAt >= todayStart) {
+        metrics.new++;
+      } else if (createdAt >= yesterdayStart) {
+        metrics.open1Day++;
+      } else if (createdAt >= threeDaysAgoStart) {
+        metrics.open3Days++;
+      } else {
+        metrics.openMoreThan3Days++;
+      }
+
+      // Get account owner for this customer
+      const accountOwner = await this.userRepository.getAccountOwner(task.customerId);
+      const accountOwnerName = accountOwner
+        ? `${accountOwner.firstName} ${accountOwner.lastName}`
+        : 'Not assigned';
+
+      const assignedToName = assignedToFirstName && assignedToLastName
+        ? `${assignedToFirstName} ${assignedToLastName}`
+        : 'Unassigned';
+
+      escalations.push({
+        id: task.id,
+        customer: customerName || 'Unknown Customer',
+        subject: task.title,
+        dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
+        assignedTo: assignedToName,
+        accountOwner: accountOwnerName,
+        detailsUrl: `${process.env.APP_URL || 'http://localhost:3000'}/tasks/${task.id}`,
+      });
+    }
+
+    return { escalations, metrics };
+  }
+
+  /**
+   * Get all subordinate user IDs for a manager (direct and indirect reports)
+   */
+  private async getSubordinateIds(managerId: string, tenantId: string): Promise<string[]> {
+    const result = await this.db.execute<{ subordinate_id: string }>(sql`
+      WITH RECURSIVE subordinates AS (
+        -- Base case: direct reports
+        SELECT um.user_id AS subordinate_id
+        FROM user_managers um
+        JOIN users u ON u.id = um.user_id
+        WHERE um.manager_id = ${managerId}
+          AND u.tenant_id = ${tenantId}
+          AND u.row_status = 0
+
+        UNION
+
+        -- Recursive case: reports of reports
+        SELECT um2.user_id AS subordinate_id
+        FROM subordinates s
+        JOIN user_managers um2 ON um2.manager_id = s.subordinate_id
+        JOIN users u ON u.id = um2.user_id
+        WHERE u.tenant_id = ${tenantId}
+          AND u.row_status = 0
+      )
+      SELECT DISTINCT subordinate_id FROM subordinates
+    `);
+
+    return result.map(r => r.subordinate_id);
+  }
+
+  /**
+   * Get all customer IDs assigned to a list of users
+   */
+  private async getCustomerIdsForUsers(userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return [];
+
+    const { inArray } = await import('drizzle-orm');
+    const { userCustomers } = await import('../users/schema');
+
+    const result = await this.db
+      .select({ customerId: userCustomers.customerId })
+      .from(userCustomers)
+      .where(inArray(userCustomers.userId, userIds));
+
+    return [...new Set(result.map(r => r.customerId))];
+  }
+
+  /**
    * Check if it's time to send notifications to a manager based on their timezone.
    * Currently defaults to 8am local time daily.
    */
@@ -416,6 +573,7 @@ export class TaskService {
             'Content-Type': 'application/json',
             'x-tenant-id': tenantId,
             'x-user-id': data.manager.id,
+            ...getServiceAuthHeaders(),
           },
           body: JSON.stringify({
             escalations: data.escalations,
@@ -449,6 +607,7 @@ export class TaskService {
   /**
    * Send task-assigned notification via the notifications service.
    * Called when a task is created with an assignee or reassigned.
+   * Checks user preferences before sending.
    */
   async sendTaskAssignedNotification(
     task: TaskWithRelations,
@@ -459,8 +618,42 @@ export class TaskService {
       return false;
     }
 
+    const notificationsUrl = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004';
+
     try {
-      const notificationsUrl = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004';
+      // Check if user has task-assigned notifications enabled
+      const prefResponse = await fetch(
+        `${notificationsUrl}/api/notifications/preferences/by-name/task.assigned/user/${task.assignedToId}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-id': task.tenantId,
+            'x-user-id': task.assignedToId,
+            ...getServiceAuthHeaders(),
+          },
+        }
+      );
+
+      if (prefResponse.ok) {
+        const prefData = await prefResponse.json() as { success: boolean; data?: { enabled: boolean } };
+        if (prefData.success && prefData.data?.enabled === false) {
+          logger.debug(
+            { taskId: task.id, assignedToId: task.assignedToId },
+            'User has disabled task-assigned notifications, skipping'
+          );
+          return false;
+        }
+      }
+      // If preference check fails, default to sending (fail-open)
+    } catch (error) {
+      logger.warn(
+        { taskId: task.id, error },
+        'Failed to check notification preference, will send notification anyway'
+      );
+    }
+
+    try {
       const webUrl = process.env.WEB_URL || 'http://localhost:4000';
 
       const response = await fetch(
@@ -471,6 +664,7 @@ export class TaskService {
             'Content-Type': 'application/json',
             'x-tenant-id': task.tenantId,
             'x-user-id': task.assignedToId,
+            ...getServiceAuthHeaders(),
           },
           body: JSON.stringify({
             task: {

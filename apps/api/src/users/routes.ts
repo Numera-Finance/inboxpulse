@@ -76,26 +76,9 @@ userRoutes.get('/me/debug', async (c) => {
 });
 
 /**
- * GET /api/users/me - Get current user's profile
- */
-userRoutes.get('/me', async (c) => {
-  const requestHeader = getRequestHeader(c);
-  const service = container.resolve(UserService);
-  const user = await service.getById(requestHeader, requestHeader.userId);
-
-  if (!user) {
-    throw new NotFoundError('User', requestHeader.userId);
-  }
-
-  return c.json<ApiResponse<typeof user>>({
-    success: true,
-    data: user,
-  });
-});
-
-/**
  * PATCH /api/users/me/preferences - Update current user's preferences
  * Self-service endpoint - no special permissions required
+ * NOTE: Must be defined BEFORE /me to avoid route conflicts
  */
 userRoutes.patch('/me/preferences', async (c) => {
   return handleApiRequest(
@@ -112,6 +95,24 @@ userRoutes.patch('/me/preferences', async (c) => {
       return user;
     }
   );
+});
+
+/**
+ * GET /api/users/me - Get current user's profile
+ */
+userRoutes.get('/me', async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const service = container.resolve(UserService);
+  const user = await service.getById(requestHeader, requestHeader.userId);
+
+  if (!user) {
+    throw new NotFoundError('User', requestHeader.userId);
+  }
+
+  return c.json<ApiResponse<typeof user>>({
+    success: true,
+    data: user,
+  });
 });
 
 /**

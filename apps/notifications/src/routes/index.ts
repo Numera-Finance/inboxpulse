@@ -13,8 +13,9 @@ import {
   NotificationTypeRepository,
   sendNotificationRequestSchema,
   createNotificationTypeRequestSchema,
-  updateUserPreferencesRequestSchema,
-  subscribeRequestSchema,
+  getTemplate,
+  templateExists,
+  getAllTemplates,
 } from '@crm/notifications';
 import type { RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
@@ -156,14 +157,14 @@ app.get('/types', async (c) => {
 });
 
 /**
- * Get user preferences
+ * Get user preferences (legacy - redirects to /preferences/all)
  */
 app.get('/preferences', async (c) => {
   const header = getRequestHeader(c);
 
   try {
     const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const preferences = await preferencesService.getUserPreferences(header.userId, header);
+    const preferences = await preferencesService.getAllPreferencesWithDefaults(header.userId, header);
 
     return c.json({ success: true, data: { preferences } });
   } catch (error: any) {
@@ -173,28 +174,24 @@ app.get('/preferences', async (c) => {
 });
 
 /**
- * Update user preferences for a notification type
+ * Update user preferences for a notification type (legacy - use PUT /preferences/by-name/:templateName instead)
+ * Kept for backwards compatibility - typeId is treated as templateName
  */
 app.put('/preferences/:typeId', async (c) => {
   const header = getRequestHeader(c);
-  const typeId = c.req.param('typeId');
-  const body = await c.req.json();
-
-  const validationResult = updateUserPreferencesRequestSchema.safeParse({
-    ...body,
-    notificationTypeId: typeId,
-  });
-  if (!validationResult.success) {
-    logger.error({ errors: validationResult.error.issues }, 'Invalid update preferences request');
-    return c.json({ success: false, error: 'Invalid request', details: validationResult.error.issues }, 400);
-  }
+  const templateName = c.req.param('typeId'); // Legacy: typeId is now templateName
+  const body = await c.req.json().catch(() => ({}));
 
   try {
+    if (!templateExists(templateName)) {
+      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
+    }
+
     const preferencesService = container.resolve<PreferencesService>(PreferencesService);
     const result = await preferencesService.updatePreference(
       header.userId,
-      typeId,
-      validationResult.data,
+      templateName,
+      body,
       header
     );
 
@@ -206,21 +203,30 @@ app.put('/preferences/:typeId', async (c) => {
 });
 
 /**
- * Subscribe to notification type
+ * Subscribe to notification type (legacy - use PUT /preferences/by-name/:templateName instead)
+ * Sets enabled: true for the given template
  */
 app.post('/subscribe', async (c) => {
   const header = getRequestHeader(c);
-  const body = await c.req.json();
+  const body = await c.req.json().catch(() => ({}));
 
-  const validationResult = subscribeRequestSchema.safeParse(body);
-  if (!validationResult.success) {
-    logger.error({ errors: validationResult.error.issues }, 'Invalid subscribe request');
-    return c.json({ success: false, error: 'Invalid request', details: validationResult.error.issues }, 400);
+  const templateName = body.notificationTypeId || body.templateName;
+  if (!templateName) {
+    return c.json({ success: false, error: 'templateName or notificationTypeId is required' }, 400);
   }
 
   try {
+    if (!templateExists(templateName)) {
+      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
+    }
+
     const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const result = await preferencesService.subscribe(header.userId, validationResult.data, header);
+    const result = await preferencesService.updatePreference(
+      header.userId,
+      templateName,
+      { enabled: true },
+      header
+    );
 
     return c.json({ success: true, data: result });
   } catch (error: any) {
@@ -230,15 +236,25 @@ app.post('/subscribe', async (c) => {
 });
 
 /**
- * Unsubscribe from notification type
+ * Unsubscribe from notification type (legacy - use PUT /preferences/by-name/:templateName instead)
+ * Sets enabled: false for the given template
  */
 app.post('/unsubscribe/:typeId', async (c) => {
   const header = getRequestHeader(c);
-  const typeId = c.req.param('typeId');
+  const templateName = c.req.param('typeId');
 
   try {
+    if (!templateExists(templateName)) {
+      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
+    }
+
     const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    await preferencesService.unsubscribe(header.userId, typeId, header);
+    await preferencesService.updatePreference(
+      header.userId,
+      templateName,
+      { enabled: false },
+      header
+    );
 
     return c.json({ success: true });
   } catch (error: any) {
@@ -320,9 +336,9 @@ app.post('/notifications/:id/read', async (c) => {
  */
 app.get('/unsubscribe', async (c) => {
   const notificationId = c.req.query('nid');
-  const typeId = c.req.query('type');
+  const templateName = c.req.query('type');
 
-  if (!notificationId || !typeId) {
+  if (!notificationId || !templateName) {
     return c.json({ success: false, error: 'Invalid unsubscribe link' }, 400);
   }
 
@@ -345,8 +361,14 @@ app.get('/unsubscribe', async (c) => {
       permissions: [],
     };
 
+    // Set enabled: false for this template
     const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    await preferencesService.unsubscribe(notification.userId, typeId, header);
+    await preferencesService.updatePreference(
+      notification.userId,
+      templateName,
+      { enabled: false },
+      header
+    );
 
     // Return HTML response for browser
     return c.html(`
@@ -819,6 +841,160 @@ app.post('/simulate/escalation-batch', async (c) => {
     return c.json({ success: false, error: error.message }, 500);
   }
 });
+
+// =============================================================================
+// Preferences API (template-based)
+// =============================================================================
+// Templates are defined in code. User preferences stored per templateName.
+
+/**
+ * Get all preferences for current user (merged with template defaults)
+ * GET /api/notifications/preferences/all
+ */
+app.get('/preferences/all', async (c) => {
+  const header = getRequestHeader(c);
+
+  try {
+    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+    const preferences = await preferencesService.getAllPreferencesWithDefaults(header.userId, header);
+
+    return c.json({ success: true, data: { preferences } });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to get all preferences');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * Get user's preference for a template by name
+ * GET /api/notifications/preferences/by-name/:templateName
+ */
+app.get('/preferences/by-name/:templateName', async (c) => {
+  const header = getRequestHeader(c);
+  const templateName = c.req.param('templateName');
+
+  try {
+    const template = getTemplate(templateName);
+    if (!template) {
+      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
+    }
+
+    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+    const preference = await preferencesService.getPreference(header.userId, templateName, header);
+
+    // Return preference or defaults from template
+    return c.json({
+      success: true,
+      data: preference || {
+        templateName: template.name,
+        enabled: template.defaultEnabled,
+        channels: template.defaultChannels,
+        frequency: template.defaultFrequency,
+        batchInterval: template.defaultBatchInterval,
+        payload: null,
+        lastSentAt: null,
+        nextSendAt: null,
+      },
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message, templateName }, 'Failed to get preference');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * Update user's preference for a template
+ * PUT /api/notifications/preferences/by-name/:templateName
+ *
+ * Body: { enabled?: boolean, channels?: string[], frequency?: string, batchInterval?: object }
+ */
+app.put('/preferences/by-name/:templateName', async (c) => {
+  const header = getRequestHeader(c);
+  const templateName = c.req.param('templateName');
+  const body = await c.req.json().catch(() => ({}));
+
+  try {
+    if (!templateExists(templateName)) {
+      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
+    }
+
+    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+    const result = await preferencesService.updatePreference(
+      header.userId,
+      templateName,
+      body,
+      header
+    );
+
+    return c.json({ success: true, data: result });
+  } catch (error: any) {
+    logger.error({ error: error.message, templateName }, 'Failed to update preference');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * Delete user's preference (revert to defaults)
+ * DELETE /api/notifications/preferences/by-name/:templateName
+ */
+app.delete('/preferences/by-name/:templateName', async (c) => {
+  const header = getRequestHeader(c);
+  const templateName = c.req.param('templateName');
+
+  try {
+    if (!templateExists(templateName)) {
+      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
+    }
+
+    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+    await preferencesService.deletePreference(header.userId, templateName, header);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    logger.error({ error: error.message, templateName }, 'Failed to delete preference');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * Check if a template is enabled for a specific user
+ * GET /api/notifications/preferences/by-name/:templateName/user/:userId
+ *
+ * Used by API service to check if user wants to receive a notification
+ */
+app.get('/preferences/by-name/:templateName/user/:userId', async (c) => {
+  const header = getRequestHeader(c);
+  const templateName = c.req.param('templateName');
+  const userId = c.req.param('userId');
+
+  try {
+    const template = getTemplate(templateName);
+    if (!template) {
+      // Unknown template - default to enabled (fail-open)
+      return c.json({ success: true, data: { enabled: true } });
+    }
+
+    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+    const preference = await preferencesService.getPreference(userId, templateName, header);
+
+    return c.json({
+      success: true,
+      data: {
+        enabled: preference?.enabled ?? template.defaultEnabled,
+        frequency: preference?.frequency ?? template.defaultFrequency,
+        batchInterval: preference?.batchInterval ?? template.defaultBatchInterval,
+      },
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message, templateName, userId }, 'Failed to check preference');
+    // Fail-open: if we can't check, default to enabled
+    return c.json({ success: true, data: { enabled: true } });
+  }
+});
+
+// =============================================================================
+// Simulation Routes (for testing with sample data)
+// =============================================================================
 
 /**
  * List available notification endpoints

@@ -5,78 +5,112 @@
  * - Subscription management
  * - Channel preferences
  * - Frequency settings
- * - Quiet hours
+ * - Batch scheduling
  */
 
 import { injectable, inject } from 'tsyringe';
-import { eq, and, type Database } from '@crm/database';
+import { eq, and, isNull, lte, or, sql, type Database } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
-import type { UserResolver } from '../types/interfaces';
-import type {
-  NotificationChannel,
-  BatchInterval,
-  QuietHours,
-  UserNotificationPreference,
-  NotificationType,
-} from '../types/core';
-import { NotificationTypeRepository } from '../repositories/notification-type-repository';
+import type { NotificationChannel } from '../types/core';
+import {
+  NOTIFICATION_TEMPLATES,
+  getAllTemplates,
+  getTemplate,
+  type TemplateDefinition,
+  type TemplateBatchInterval,
+} from '../templates/template-definitions';
+
+export interface UserPreference {
+  templateName: string;
+  enabled: boolean;
+  channels: NotificationChannel[];
+  frequency: 'immediate' | 'batched';
+  batchInterval: TemplateBatchInterval | null;
+  payload: Record<string, unknown> | null;
+  lastSentAt: Date | null;
+  nextSendAt: Date | null;
+}
+
+export interface UserPreferenceWithDefaults extends UserPreference {
+  // Template metadata
+  label: string;
+  description: string;
+  category: string;
+}
 
 export interface UpdatePreferencesParams {
   enabled?: boolean;
   channels?: NotificationChannel[];
   frequency?: 'immediate' | 'batched';
-  batchInterval?: BatchInterval | null;
-  quietHours?: QuietHours | null;
-  timezone?: string | null;
+  batchInterval?: TemplateBatchInterval | null;
+  payload?: Record<string, unknown> | null;
 }
 
-export interface SubscribeParams {
-  notificationTypeId: string;
-  channels?: NotificationChannel[];
-  frequency?: 'immediate' | 'batched';
-  batchInterval?: BatchInterval;
+export interface BatchEligibleUser {
+  userId: string;
+  tenantId: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  timezone: string;
+  lastSentAt: Date | null;
+  batchInterval: TemplateBatchInterval | null;
+  payload: Record<string, unknown> | null;
 }
 
 @injectable()
 export class PreferencesService {
   constructor(
     @inject('Database') private db: Database,
-    @inject('NotificationTypeRepository') private typeRepo: NotificationTypeRepository,
-    @inject('UserResolver') private userResolver: UserResolver,
-    @inject('UserNotificationPreferencesTable') private preferencesTable: any
+    @inject('UserNotificationPreferencesTable') private preferencesTable: any,
+    @inject('UsersTable') private usersTable: any
   ) {}
 
   /**
-   * Get user's preference for a specific notification type
+   * Get user's preference for a specific template
    */
   async getPreference(
     userId: string,
-    notificationTypeId: string,
+    templateName: string,
     header: RequestHeader
-  ): Promise<UserNotificationPreference | null> {
+  ): Promise<UserPreference | null> {
     const result = await this.db
       .select()
       .from(this.preferencesTable)
       .where(
         and(
           eq(this.preferencesTable.userId, userId),
-          eq(this.preferencesTable.notificationTypeId, notificationTypeId),
+          eq(this.preferencesTable.templateName, templateName),
           eq(this.preferencesTable.tenantId, header.tenantId)
         )
       )
       .limit(1);
 
-    return (result[0] as UserNotificationPreference) || null;
+    if (!result[0]) return null;
+
+    const row = result[0] as any;
+    return {
+      templateName: row.templateName,
+      enabled: row.enabled,
+      channels: row.channels || [],
+      frequency: row.frequency,
+      batchInterval: row.batchInterval,
+      payload: row.payload,
+      lastSentAt: row.lastSentAt,
+      nextSendAt: row.nextSendAt,
+    };
   }
 
   /**
-   * Get all preferences for a user
+   * Get all preferences for a user, merged with template defaults
+   * Returns all templates with user's preferences or defaults
    */
-  async getUserPreferences(
+  async getAllPreferencesWithDefaults(
     userId: string,
     header: RequestHeader
-  ): Promise<UserNotificationPreference[]> {
-    const results = await this.db
+  ): Promise<UserPreferenceWithDefaults[]> {
+    // Get all user's stored preferences
+    const storedPrefs = await this.db
       .select()
       .from(this.preferencesTable)
       .where(
@@ -85,197 +119,311 @@ export class PreferencesService {
           eq(this.preferencesTable.tenantId, header.tenantId)
         )
       );
-    return results as UserNotificationPreference[];
+
+    const storedPrefsMap = new Map<string, any>();
+    for (const pref of storedPrefs) {
+      storedPrefsMap.set((pref as any).templateName, pref);
+    }
+
+    // Merge with all template definitions
+    const templates = getAllTemplates();
+    return templates.map(template => {
+      const stored = storedPrefsMap.get(template.name);
+
+      if (stored) {
+        return {
+          templateName: template.name,
+          label: template.label,
+          description: template.description,
+          category: template.category,
+          enabled: stored.enabled,
+          channels: stored.channels || template.defaultChannels,
+          frequency: stored.frequency || template.defaultFrequency,
+          batchInterval: stored.batchInterval ?? template.defaultBatchInterval,
+          payload: stored.payload,
+          lastSentAt: stored.lastSentAt,
+          nextSendAt: stored.nextSendAt,
+        };
+      }
+
+      // Return defaults
+      return {
+        templateName: template.name,
+        label: template.label,
+        description: template.description,
+        category: template.category,
+        enabled: template.defaultEnabled,
+        channels: template.defaultChannels,
+        frequency: template.defaultFrequency,
+        batchInterval: template.defaultBatchInterval,
+        payload: null,
+        lastSentAt: null,
+        nextSendAt: null,
+      };
+    });
   }
 
   /**
-   * Update user's preference for a notification type
+   * Update user's preference for a template (upsert)
    */
   async updatePreference(
     userId: string,
-    notificationTypeId: string,
+    templateName: string,
     params: UpdatePreferencesParams,
     header: RequestHeader
-  ): Promise<UserNotificationPreference> {
-    const existing = await this.getPreference(userId, notificationTypeId, header);
+  ): Promise<UserPreference> {
+    const template = getTemplate(templateName);
+    if (!template) {
+      throw new Error(`Unknown template: ${templateName}`);
+    }
+
+    const existing = await this.getPreference(userId, templateName, header);
 
     if (existing) {
       // Update existing preference
       const result = await this.db
         .update(this.preferencesTable)
         .set({
-          ...params,
+          ...(params.enabled !== undefined && { enabled: params.enabled }),
+          ...(params.channels !== undefined && { channels: params.channels }),
+          ...(params.frequency !== undefined && { frequency: params.frequency }),
+          ...(params.batchInterval !== undefined && { batchInterval: params.batchInterval }),
+          ...(params.payload !== undefined && { payload: params.payload }),
           updatedAt: new Date(),
         })
-        .where(eq(this.preferencesTable.id, existing.id))
+        .where(
+          and(
+            eq(this.preferencesTable.userId, userId),
+            eq(this.preferencesTable.templateName, templateName),
+            eq(this.preferencesTable.tenantId, header.tenantId)
+          )
+        )
         .returning();
 
-      return result[0] as UserNotificationPreference;
+      const row = result[0] as any;
+      return {
+        templateName: row.templateName,
+        enabled: row.enabled,
+        channels: row.channels || [],
+        frequency: row.frequency,
+        batchInterval: row.batchInterval,
+        payload: row.payload,
+        lastSentAt: row.lastSentAt,
+        nextSendAt: row.nextSendAt,
+      };
     } else {
       // Create new preference
-      const notificationType = await this.typeRepo.findById(notificationTypeId, header);
-      if (!notificationType) {
-        throw new Error(`Notification type ${notificationTypeId} not found`);
-      }
-
       const result = await this.db
         .insert(this.preferencesTable)
         .values({
           tenantId: header.tenantId,
           userId,
-          notificationTypeId,
-          enabled: params.enabled ?? true,
-          channels: params.channels ?? notificationType.defaultChannels,
-          frequency: params.frequency ?? notificationType.defaultFrequency,
-          batchInterval: params.batchInterval ?? notificationType.defaultBatchInterval,
-          quietHours: params.quietHours,
-          timezone: params.timezone,
-          subscriptionSource: 'manual',
+          templateName,
+          enabled: params.enabled ?? template.defaultEnabled,
+          channels: params.channels ?? template.defaultChannels,
+          frequency: params.frequency ?? template.defaultFrequency,
+          batchInterval: params.batchInterval ?? template.defaultBatchInterval,
+          payload: params.payload ?? null,
         })
         .returning();
 
-      return result[0] as UserNotificationPreference;
+      const row = result[0] as any;
+      return {
+        templateName: row.templateName,
+        enabled: row.enabled,
+        channels: row.channels || [],
+        frequency: row.frequency,
+        batchInterval: row.batchInterval,
+        payload: row.payload,
+        lastSentAt: row.lastSentAt,
+        nextSendAt: row.nextSendAt,
+      };
     }
   }
 
   /**
-   * Subscribe user to a notification type
+   * Delete user's preference (revert to defaults)
    */
-  async subscribe(
+  async deletePreference(
     userId: string,
-    params: SubscribeParams,
-    header: RequestHeader
-  ): Promise<UserNotificationPreference> {
-    // Verify notification type exists and is active
-    const notificationType = await this.typeRepo.findById(params.notificationTypeId, header);
-    if (!notificationType) {
-      throw new Error(`Notification type ${params.notificationTypeId} not found`);
-    }
-    if (!notificationType.isActive) {
-      throw new Error(`Notification type ${params.notificationTypeId} is not active`);
-    }
-
-    // Check if user has required permission
-    if (notificationType.requiredPermission) {
-      const hasPermission = await this.userResolver.userHasPermission(
-        userId,
-        notificationType.requiredPermission
-      );
-      if (!hasPermission) {
-        throw new Error(`User does not have permission to subscribe to this notification type`);
-      }
-    }
-
-    // Check subscription conditions
-    if (notificationType.subscriptionConditions) {
-      const meetsConditions = await this.userResolver.userMatchesConditions(
-        userId,
-        notificationType.subscriptionConditions
-      );
-      if (!meetsConditions) {
-        throw new Error(`User does not meet subscription conditions`);
-      }
-    }
-
-    return this.updatePreference(
-      userId,
-      params.notificationTypeId,
-      {
-        enabled: true,
-        channels: params.channels ?? notificationType.defaultChannels,
-        frequency: params.frequency ?? notificationType.defaultFrequency,
-        batchInterval: params.batchInterval ?? notificationType.defaultBatchInterval,
-      },
-      header
-    );
-  }
-
-  /**
-   * Unsubscribe user from a notification type
-   */
-  async unsubscribe(
-    userId: string,
-    notificationTypeId: string,
+    templateName: string,
     header: RequestHeader
   ): Promise<void> {
-    const existing = await this.getPreference(userId, notificationTypeId, header);
-
-    if (existing) {
-      await this.db
-        .update(this.preferencesTable)
-        .set({
-          enabled: false,
-          updatedAt: new Date(),
-        })
-        .where(eq(this.preferencesTable.id, existing.id));
-    }
+    await this.db
+      .delete(this.preferencesTable)
+      .where(
+        and(
+          eq(this.preferencesTable.userId, userId),
+          eq(this.preferencesTable.templateName, templateName),
+          eq(this.preferencesTable.tenantId, header.tenantId)
+        )
+      );
   }
 
   /**
-   * Get all subscribers for a notification type
+   * Get users eligible for batch notification
+   * Two queries:
+   * 1. Users with preference row where nextSendAt <= now
+   * 2. Users with no preference row (never sent)
    */
-  async getSubscribers(
-    notificationTypeId: string,
+  async getBatchEligibleUsers(
+    templateName: string,
     header: RequestHeader
-  ): Promise<string[]> {
-    const preferences = await this.db
-      .select({ userId: this.preferencesTable.userId })
+  ): Promise<BatchEligibleUser[]> {
+    const template = getTemplate(templateName);
+    if (!template || !template.isBatchTemplate) {
+      return [];
+    }
+
+    const now = new Date();
+
+    // Query 1: Users with explicit preferences due now
+    const explicitDue = await this.db
+      .select({
+        userId: this.preferencesTable.userId,
+        tenantId: this.preferencesTable.tenantId,
+        email: this.usersTable.email,
+        firstName: this.usersTable.firstName,
+        lastName: this.usersTable.lastName,
+        timezone: this.usersTable.timezone,
+        lastSentAt: this.preferencesTable.lastSentAt,
+        batchInterval: this.preferencesTable.batchInterval,
+        payload: this.preferencesTable.payload,
+      })
       .from(this.preferencesTable)
+      .innerJoin(this.usersTable, eq(this.preferencesTable.userId, this.usersTable.id))
       .where(
         and(
-          eq(this.preferencesTable.notificationTypeId, notificationTypeId),
+          eq(this.preferencesTable.templateName, templateName),
           eq(this.preferencesTable.tenantId, header.tenantId),
-          eq(this.preferencesTable.enabled, true)
+          eq(this.preferencesTable.enabled, true),
+          eq(this.preferencesTable.frequency, 'batched'),
+          lte(this.preferencesTable.nextSendAt, now)
         )
       );
 
-    return preferences.map(p => p.userId);
+    // Query 2: Users with no preference row (never sent, use defaults)
+    // This is more complex - need to find users who DON'T have a preference row
+    const neverSentResult = await this.db.execute(sql`
+      SELECT
+        u.id as "userId",
+        u.tenant_id as "tenantId",
+        u.email,
+        u.first_name as "firstName",
+        u.last_name as "lastName",
+        COALESCE(u.timezone, 'UTC') as timezone,
+        NULL as "lastSentAt",
+        NULL as "batchInterval",
+        NULL as payload
+      FROM users u
+      WHERE u.tenant_id = ${header.tenantId}
+        AND u.row_status = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM user_notification_preferences p
+          WHERE p.user_id = u.id
+            AND p.template_name = ${templateName}
+        )
+    `);
+
+    // Convert raw result to typed array
+    // drizzle execute returns an array directly
+    const resultArray = Array.isArray(neverSentResult) ? neverSentResult : [];
+    const neverSent: BatchEligibleUser[] = resultArray.map((row: any) => ({
+      userId: row.userId,
+      tenantId: row.tenantId,
+      email: row.email,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      timezone: row.timezone || 'UTC',
+      lastSentAt: null,
+      batchInterval: null,
+      payload: null,
+    }));
+
+    // Combine results
+    const allUsers: BatchEligibleUser[] = [
+      ...explicitDue.map(row => ({
+        userId: row.userId,
+        tenantId: row.tenantId,
+        email: row.email,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        timezone: row.timezone || 'UTC',
+        lastSentAt: row.lastSentAt,
+        batchInterval: row.batchInterval as TemplateBatchInterval | null,
+        payload: row.payload as Record<string, unknown> | null,
+      })),
+      ...neverSent,
+    ];
+
+    return allUsers;
   }
 
   /**
-   * Auto-subscribe users who meet conditions for a notification type
+   * Update batch scheduling after sending
    */
-  async refreshAutoSubscriptions(
-    notificationTypeId: string,
+  async updateBatchSchedule(
+    userId: string,
+    templateName: string,
+    lastSentAt: Date,
+    nextSendAt: Date,
     header: RequestHeader
-  ): Promise<{ subscribed: number; unsubscribed: number }> {
-    const notificationType = await this.typeRepo.findById(notificationTypeId, header);
-    if (!notificationType || !notificationType.autoSubscribeEnabled) {
-      return { subscribed: 0, unsubscribed: 0 };
-    }
+  ): Promise<void> {
+    const existing = await this.getPreference(userId, templateName, header);
 
-    // This would iterate through users and check conditions
-    // Implementation depends on how you want to query users
-    // For now, return empty result
-    return { subscribed: 0, unsubscribed: 0 };
+    if (existing) {
+      // Update existing
+      await this.db
+        .update(this.preferencesTable)
+        .set({
+          lastSentAt,
+          nextSendAt,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(this.preferencesTable.userId, userId),
+            eq(this.preferencesTable.templateName, templateName),
+            eq(this.preferencesTable.tenantId, header.tenantId)
+          )
+        );
+    } else {
+      // Create with defaults
+      const template = getTemplate(templateName);
+      if (!template) return;
+
+      await this.db
+        .insert(this.preferencesTable)
+        .values({
+          tenantId: header.tenantId,
+          userId,
+          templateName,
+          enabled: template.defaultEnabled,
+          channels: template.defaultChannels,
+          frequency: template.defaultFrequency,
+          batchInterval: template.defaultBatchInterval,
+          lastSentAt,
+          nextSendAt,
+        });
+    }
   }
 
   /**
-   * Check if a notification should be sent based on quiet hours
+   * Check if a template is enabled for a user
    */
-  isInQuietHours(
-    quietHours: QuietHours | null | undefined,
-    timezone: string = 'UTC'
-  ): boolean {
-    if (!quietHours) return false;
+  async isEnabled(
+    userId: string,
+    templateName: string,
+    header: RequestHeader
+  ): Promise<boolean> {
+    const pref = await this.getPreference(userId, templateName, header);
 
-    const now = new Date();
-    // Convert to user's timezone
-    const userTime = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
-    const hours = userTime.getHours();
-    const minutes = userTime.getMinutes();
-    const currentTime = hours * 60 + minutes;
-
-    const [startHours, startMinutes] = quietHours.start.split(':').map(Number);
-    const [endHours, endMinutes] = quietHours.end.split(':').map(Number);
-    const startTime = startHours * 60 + startMinutes;
-    const endTime = endHours * 60 + endMinutes;
-
-    // Handle overnight quiet hours (e.g., 22:00 - 07:00)
-    if (startTime > endTime) {
-      return currentTime >= startTime || currentTime <= endTime;
+    if (pref) {
+      return pref.enabled;
     }
 
-    return currentTime >= startTime && currentTime <= endTime;
+    // No preference - use template default
+    const template = getTemplate(templateName);
+    return template?.defaultEnabled ?? true;
   }
 }

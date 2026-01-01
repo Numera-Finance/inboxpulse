@@ -10,12 +10,41 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/src/contexts/AuthContext"
 import { useToast } from "@/components/ui/use-toast"
 import { getSupportedTimezones } from "@/lib/constants/timezones"
+import { getUserClient, getNotificationsClient } from "@/lib/api/clients"
+import type { NotificationPreference, BatchInterval } from "@crm/clients"
 import { Loader2 } from "lucide-react"
+
+type EscalationFrequency = 'none' | 'daily' | 'every_4_hours' | 'every_8_hours'
 
 interface UserPreferencesData {
   timezone: string | null
   notifyTaskAssigned: boolean
-  escalationSummaryFrequency: 'none' | 'daily' | 'every_4_hours' | 'every_8_hours'
+  escalationSummaryFrequency: EscalationFrequency
+}
+
+// Helper to convert notification preference to UI frequency
+function preferenceToFrequency(pref: NotificationPreference): EscalationFrequency {
+  if (!pref.enabled) return 'none'
+  if (pref.batchInterval?.type === 'daily') return 'daily'
+  if (pref.batchInterval?.type === 'hours') {
+    if (pref.batchInterval.value === 4) return 'every_4_hours'
+    if (pref.batchInterval.value === 8) return 'every_8_hours'
+  }
+  return 'daily' // default
+}
+
+// Helper to convert UI frequency to notification preference
+function frequencyToPreference(freq: EscalationFrequency): { enabled: boolean; frequency?: 'immediate' | 'batched'; batchInterval?: BatchInterval | null } {
+  switch (freq) {
+    case 'none':
+      return { enabled: false }
+    case 'daily':
+      return { enabled: true, frequency: 'batched', batchInterval: { type: 'daily', time: '08:00' } }
+    case 'every_4_hours':
+      return { enabled: true, frequency: 'batched', batchInterval: { type: 'hours', value: 4 } }
+    case 'every_8_hours':
+      return { enabled: true, frequency: 'batched', batchInterval: { type: 'hours', value: 8 } }
+  }
 }
 
 const ESCALATION_FREQUENCY_OPTIONS = [
@@ -43,23 +72,31 @@ export function UserPreferences() {
   useEffect(() => {
     async function fetchPreferences() {
       try {
-        // Fetch user profile for timezone (uses cookie-based auth)
-        const response = await fetch('/api/users/me', {
-          credentials: 'include',
-        })
+        // Fetch user profile for timezone
+        const userClient = getUserClient()
+        const userData = await userClient.getMe()
 
-        if (response.ok) {
-          const data = await response.json()
-          if (data.success && data.data) {
-            setPreferences(prev => ({
-              ...prev,
-              timezone: data.data.timezone || 'Asia/Kolkata',
-            }))
-          }
+        if (userData) {
+          setPreferences(prev => ({
+            ...prev,
+            timezone: userData.timezone || 'Asia/Kolkata',
+          }))
         }
 
-        // TODO: Fetch notification preferences from notifications service
-        // For now, use defaults
+        // Fetch notification preferences from notifications service
+        const notificationsClient = getNotificationsClient()
+
+        // Fetch task.assigned preference
+        const taskPref = await notificationsClient.getPreference('task.assigned')
+
+        // Fetch escalation.summary preference
+        const escalationPref = await notificationsClient.getPreference('escalation.summary')
+
+        setPreferences(prev => ({
+          ...prev,
+          notifyTaskAssigned: taskPref.enabled,
+          escalationSummaryFrequency: preferenceToFrequency(escalationPref),
+        }))
       } catch (error) {
         console.error('Failed to fetch preferences:', error)
       } finally {
@@ -75,24 +112,23 @@ export function UserPreferences() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      // Save timezone to user profile (uses cookie-based auth)
-      const response = await fetch('/api/users/me/preferences', {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          timezone: preferences.timezone,
-        }),
+      // Save timezone to user profile
+      const userClient = getUserClient()
+      await userClient.updateMyPreferences({
+        timezone: preferences.timezone || undefined,
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to save preferences')
-      }
+      // Save notification preferences to notifications service
+      const notificationsClient = getNotificationsClient()
 
-      // TODO: Save notification preferences to notifications service
-      // This will be implemented when we add the notification preferences API
+      // Update task.assigned preference
+      await notificationsClient.updatePreference('task.assigned', {
+        enabled: preferences.notifyTaskAssigned,
+      })
+
+      // Update escalation.summary preference
+      const escalationPref = frequencyToPreference(preferences.escalationSummaryFrequency)
+      await notificationsClient.updatePreference('escalation.summary', escalationPref)
 
       toast({
         title: "Preferences saved",
