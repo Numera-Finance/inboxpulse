@@ -28,63 +28,9 @@ import {
   TaskAssignedEmail,
   EscalationBatchEmail,
 } from '../templates/emails';
-
-// =============================================================================
-// Postmark Email Sender (for testing)
-// =============================================================================
-
-const TEST_EMAIL_RECIPIENT = 'mbalsara@mystartupcfo.com';
-const FROM_EMAIL = 'hello@9mo.ai';
-const FROM_NAME = 'MSCFO Email Sentiment';
-
-interface PostmarkSendResult {
-  success: boolean;
-  messageId?: string;
-  error?: string;
-}
-
-async function sendEmailViaPostmark(
-  subject: string,
-  htmlBody: string
-): Promise<PostmarkSendResult> {
-  const serverToken = process.env.POSTMARK_API_TOKEN;
-
-  if (!serverToken) {
-    logger.warn('POSTMARK_API_TOKEN not set, skipping email send');
-    return { success: false, error: 'POSTMARK_API_TOKEN not configured' };
-  }
-
-  try {
-    const response = await fetch('https://api.postmarkapp.com/email', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'X-Postmark-Server-Token': serverToken,
-      },
-      body: JSON.stringify({
-        From: `${FROM_NAME} <${FROM_EMAIL}>`,
-        To: TEST_EMAIL_RECIPIENT,
-        Subject: subject,
-        HtmlBody: htmlBody,
-        MessageStream: 'outbound',
-      }),
-    });
-
-    const data = await response.json() as { MessageID?: string; ErrorCode?: number; Message?: string };
-
-    if (!response.ok || (data.ErrorCode && data.ErrorCode !== 0)) {
-      logger.error({ data }, 'Postmark send failed');
-      return { success: false, error: data.Message || `HTTP ${response.status}` };
-    }
-
-    logger.info({ messageId: data.MessageID, to: TEST_EMAIL_RECIPIENT }, 'Email sent via Postmark');
-    return { success: true, messageId: data.MessageID };
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Postmark request failed');
-    return { success: false, error: error.message };
-  }
-}
+import { getEmailSender } from '../senders';
+import { taskAssignedTemplate } from '../templates/immediate';
+import { escalationSummaryTemplate } from '../templates/batch';
 
 const app = new Hono();
 
@@ -573,13 +519,15 @@ function getSubjectForTemplate(templateId: string, props: Record<string, any>): 
  *     accountOwner: string,
  *     detailsUrl?: string
  *   },
+ *   recipientEmail: string,
  *   recipientName?: string
  * }
  */
 app.post('/send/task-assigned', async (c) => {
+  const header = getRequestHeader(c);
   const body = await c.req.json().catch(() => ({}));
 
-  const { task, recipientName } = body;
+  const { task, recipientEmail, recipientName } = body;
 
   if (!task) {
     return c.json({ success: false, error: 'task object is required' }, 400);
@@ -590,6 +538,10 @@ app.post('/send/task-assigned', async (c) => {
       success: false,
       error: 'task.id, task.customer, and task.subject are required'
     }, 400);
+  }
+
+  if (!recipientEmail) {
+    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
   }
 
   try {
@@ -619,14 +571,30 @@ app.post('/send/task-assigned', async (c) => {
 
     const subject = `New Escalation: ${taskData.customer} - ${taskData.subject.substring(0, 50)}${taskData.subject.length > 50 ? '...' : ''}`;
 
-    // Send via Postmark
-    const result = await sendEmailViaPostmark(subject, html);
+    // Build user and payload for template
+    const user = {
+      userId: header.userId,
+      tenantId: header.tenantId,
+      email: recipientEmail,
+      timezone: 'UTC',
+    };
+
+    const payload = {
+      channel: 'email' as const,
+      to: recipientEmail,
+      subject,
+      html,
+    };
+
+    // Send via template (uses EMAIL_OVERRIDE in dev)
+    const emailSender = getEmailSender();
+    const result = await taskAssignedTemplate.send(user, payload, emailSender);
 
     return c.json({
-      success: result.success,
+      success: result.sent,
       data: {
         template: 'task-assigned',
-        recipient: TEST_EMAIL_RECIPIENT,
+        recipient: recipientEmail,
         subject,
         messageId: result.messageId,
         taskData,
@@ -640,17 +608,21 @@ app.post('/send/task-assigned', async (c) => {
 });
 
 /**
- * Send escalation batch notification
+ * Send escalation batch notification (for manual testing)
  * POST /api/notifications/send/escalation-batch
+ *
+ * Note: In production, batch templates are triggered by cron/Inngest.
+ * This endpoint is for manual testing with provided data.
  *
  * Body: {
  *   escalations: Array<{ id, customer, subject, dateOpened, assignedTo, accountOwner, detailsUrl }>,
  *   metrics: { new, open1Day, open3Days, openMoreThan3Days },
  *   recipientName: string,
- *   recipientEmail?: string
+ *   recipientEmail: string
  * }
  */
 app.post('/send/escalation-batch', async (c) => {
+  const header = getRequestHeader(c);
   const body = await c.req.json().catch(() => ({}));
 
   const { escalations, metrics, recipientName, recipientEmail } = body;
@@ -661,6 +633,10 @@ app.post('/send/escalation-batch', async (c) => {
 
   if (!metrics) {
     return c.json({ success: false, error: 'metrics object is required' }, 400);
+  }
+
+  if (!recipientEmail) {
+    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
   }
 
   try {
@@ -676,14 +652,20 @@ app.post('/send/escalation-batch', async (c) => {
     const totalCount = (metrics.new || 0) + (metrics.open1Day || 0) + (metrics.open3Days || 0) + (metrics.openMoreThan3Days || 0);
     const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
 
-    // Send via Postmark
-    const result = await sendEmailViaPostmark(subject, html);
+    // Build payload and send via email sender (uses EMAIL_OVERRIDE in dev)
+    const emailSender = getEmailSender();
+    const result = await emailSender.send({
+      channel: 'email',
+      to: recipientEmail,
+      subject,
+      html,
+    });
 
     return c.json({
-      success: result.success,
+      success: result.sent,
       data: {
         template: 'escalation-batch',
-        recipient: TEST_EMAIL_RECIPIENT, // TODO: Use recipientEmail when ready
+        recipient: recipientEmail,
         subject,
         messageId: result.messageId,
         metrics,
@@ -704,6 +686,8 @@ app.post('/send/escalation-batch', async (c) => {
 /**
  * Simulate task-assigned notification with sample data
  * POST /api/notifications/simulate/task-assigned
+ *
+ * Uses EMAIL_OVERRIDE env var if set, otherwise sends to recipientEmail.
  */
 app.post('/simulate/task-assigned', async (c) => {
   const body = await c.req.json().catch(() => ({}));
@@ -720,6 +704,7 @@ app.post('/simulate/task-assigned', async (c) => {
   };
 
   const recipientName = body.recipientName || 'Manish';
+  const recipientEmail = body.recipientEmail || 'test@example.com';
 
   try {
     const html = await render(
@@ -730,13 +715,20 @@ app.post('/simulate/task-assigned', async (c) => {
     );
 
     const subject = `New Escalation: ${taskData.customer} - ${taskData.subject.substring(0, 50)}${taskData.subject.length > 50 ? '...' : ''}`;
-    const result = await sendEmailViaPostmark(subject, html);
+
+    const emailSender = getEmailSender();
+    const result = await emailSender.send({
+      channel: 'email',
+      to: recipientEmail,
+      subject,
+      html,
+    });
 
     return c.json({
-      success: result.success,
+      success: result.sent,
       data: {
         template: 'task-assigned',
-        recipient: TEST_EMAIL_RECIPIENT,
+        recipient: recipientEmail,
         subject,
         messageId: result.messageId,
         taskData,
@@ -753,7 +745,7 @@ app.post('/simulate/task-assigned', async (c) => {
  * Simulate escalation-batch notification
  * POST /api/notifications/simulate/escalation-batch
  *
- * Sends a test escalation batch summary email to the hardcoded test recipient
+ * Uses EMAIL_OVERRIDE env var if set, otherwise sends to recipientEmail.
  */
 app.post('/simulate/escalation-batch', async (c) => {
   const body = await c.req.json().catch(() => ({}));
@@ -807,6 +799,7 @@ app.post('/simulate/escalation-batch', async (c) => {
   ];
 
   const recipientName = body.recipientName || 'Manish';
+  const recipientEmail = body.recipientEmail || 'test@example.com';
 
   try {
     // Render the email template
@@ -821,14 +814,19 @@ app.post('/simulate/escalation-batch', async (c) => {
     const totalCount = metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
     const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
 
-    // Send via Postmark
-    const result = await sendEmailViaPostmark(subject, html);
+    const emailSender = getEmailSender();
+    const result = await emailSender.send({
+      channel: 'email',
+      to: recipientEmail,
+      subject,
+      html,
+    });
 
     return c.json({
-      success: result.success,
+      success: result.sent,
       data: {
         template: 'escalation-batch',
-        recipient: TEST_EMAIL_RECIPIENT,
+        recipient: recipientEmail,
         subject,
         messageId: result.messageId,
         metrics,
@@ -1004,7 +1002,7 @@ app.get('/simulate', (c) => {
   return c.json({
     success: true,
     data: {
-      testRecipient: TEST_EMAIL_RECIPIENT,
+      emailOverride: process.env.EMAIL_OVERRIDE || null,
       endpoints: [
         {
           method: 'POST',
