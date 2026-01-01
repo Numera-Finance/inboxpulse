@@ -99,7 +99,7 @@ export class TaskService {
     @inject('Database') private db: Database,
     @inject(TaskRepository) private taskRepository: TaskRepository,
     @inject(UserRepository) private userRepository: UserRepository
-  ) {}
+  ) { }
 
   /**
    * Search tasks with filters
@@ -110,7 +110,7 @@ export class TaskService {
   ): Promise<TaskSearchResponse> {
     const status = request.status === 'open' ? TaskStatus.OPEN
       : request.status === 'done' ? TaskStatus.DONE
-      : undefined;
+        : undefined;
 
     // Convert date strings to Date objects for repository
     const dateFrom = request.dateFrom ? new Date(request.dateFrom) : undefined;
@@ -167,7 +167,7 @@ export class TaskService {
         const assigner = await this.userRepository.findById(header.userId);
         const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
         // Fire and forget - don't block on notification
-        this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => {});
+        this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => { });
       }
     }
 
@@ -233,7 +233,7 @@ export class TaskService {
         const assigner = await this.userRepository.findById(header.userId);
         const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
         // Fire and forget - don't block on notification
-        this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => {});
+        this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => { });
       }
     }
 
@@ -564,7 +564,7 @@ export class TaskService {
     data: ManagerEscalationData
   ): Promise<boolean> {
     try {
-      const notificationsUrl = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004';
+      const notificationsUrl = process.env.SERVICE_NOTIFICATIONS_URL || 'http://localhost:4004';
       const response = await fetch(
         `${notificationsUrl}/api/notifications/send/escalation-batch`,
         {
@@ -618,46 +618,19 @@ export class TaskService {
       return false;
     }
 
-    const notificationsUrl = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:4004';
-
-    try {
-      // Check if user has task-assigned notifications enabled
-      const prefResponse = await fetch(
-        `${notificationsUrl}/api/notifications/preferences/by-name/task.assigned/user/${task.assignedToId}`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-tenant-id': task.tenantId,
-            'x-user-id': task.assignedToId,
-            ...getServiceAuthHeaders(),
-          },
-        }
-      );
-
-      if (prefResponse.ok) {
-        const prefData = await prefResponse.json() as { success: boolean; data?: { enabled: boolean } };
-        if (prefData.success && prefData.data?.enabled === false) {
-          logger.debug(
-            { taskId: task.id, assignedToId: task.assignedToId },
-            'User has disabled task-assigned notifications, skipping'
-          );
-          return false;
-        }
-      }
-      // If preference check fails, default to sending (fail-open)
-    } catch (error) {
-      logger.warn(
-        { taskId: task.id, error },
-        'Failed to check notification preference, will send notification anyway'
-      );
+    const recipientEmail = task.assignedToEmail;
+    if (!recipientEmail) {
+      logger.warn({ taskId: task.id }, 'No email for assignee, skipping notification');
+      return false;
     }
 
-    try {
-      const webUrl = process.env.WEB_URL || 'http://localhost:4000';
+    const notificationsUrl = process.env.SERVICE_NOTIFICATIONS_URL || 'http://localhost:4004';
+    const webUrl = process.env.WEB_URL || 'http://localhost:4000';
 
+    try {
+      // Call /send - the notification service handles preference checks
       const response = await fetch(
-        `${notificationsUrl}/api/notifications/send/task-assigned`,
+        `${notificationsUrl}/api/notifications/send`,
         {
           method: 'POST',
           headers: {
@@ -667,17 +640,21 @@ export class TaskService {
             ...getServiceAuthHeaders(),
           },
           body: JSON.stringify({
-            task: {
-              id: task.id,
-              customer: task.customerName || 'Unknown Customer',
-              subject: task.title,
-              dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
-              assignedTo: task.assignedToName || 'Unassigned',
-              assignedBy: assignedByName || null,
-              accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
-              detailsUrl: `${webUrl}/tasks/${task.id}`,
+            templateName: 'task.assigned',
+            recipientEmail,
+            data: {
+              task: {
+                id: task.id,
+                customer: task.customerName || 'Unknown Customer',
+                subject: task.title,
+                dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
+                assignedTo: task.assignedToName || 'Unassigned',
+                assignedBy: assignedByName || null,
+                accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
+                detailsUrl: `${webUrl}/tasks/${task.id}`,
+              },
+              recipientName: task.assignedToName?.split(' ')[0] || 'Team',
             },
-            recipientName: task.assignedToName?.split(' ')[0] || 'Team',
           }),
         }
       );

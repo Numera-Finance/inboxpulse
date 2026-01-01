@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import {
   registerTemplate,
+  registerTemplateInstance,
   type TemplateDefinition,
   type TemplateBatchInterval,
 } from './template-definitions';
@@ -132,6 +133,8 @@ export abstract class BaseNotificationTemplate {
     const ctor = this.constructor as typeof BaseNotificationTemplate;
     if (ctor.definition) {
       registerTemplate(ctor.definition);
+      // Register instance for lookup by name
+      registerTemplateInstance(ctor.definition.name, this);
     }
   }
 

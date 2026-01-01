@@ -11,6 +11,5 @@ export * from './batch';
 // Import immediate templates (registration happens on import)
 export * from './immediate';
 
-// Re-export email templates and registry
+// Re-export email templates
 export * from './emails';
-export * from './registry';

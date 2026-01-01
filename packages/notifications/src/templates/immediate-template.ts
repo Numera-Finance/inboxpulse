@@ -2,59 +2,76 @@
  * Base Immediate Template
  *
  * For immediate, single-user notifications.
- * Caller builds the payload externally; template gates and sends.
+ * Templates implement send() to render and deliver content.
  */
 
+import { z } from 'zod';
 import {
   BaseNotificationTemplate,
   type TemplateUser,
-  type ChannelPayload,
   type ChannelSender,
   type SendResult,
 } from './base-template';
+
+/**
+ * Input for immediate template send
+ */
+export const immediateInputSchema = z.object({
+  user: z.object({
+    userId: z.string().uuid(),
+    tenantId: z.string().uuid(),
+    email: z.string().email(),
+    timezone: z.string().default('UTC'),
+  }),
+  data: z.record(z.string(), z.unknown()),
+  channel: z.enum(['email', 'sms', 'push', 'in_app']).default('email'),
+});
+
+export type ImmediateInput = z.infer<typeof immediateInputSchema>;
 
 /**
  * Base class for immediate notification templates.
  *
  * Immediate templates:
  * - Send to a single user
- * - Receive a ready-to-send payload from caller
- * - Check canSend() and forward to sender
- * - No data fetching, no batching, no scheduling
+ * - Implement send() to render content and deliver
+ * - No batching, no scheduling
  *
  * @example
  * ```typescript
- * class TaskAssignedTemplate extends BaseImmediateTemplate {
- *   static readonly definition: TemplateDefinition = {
- *     name: 'task.assigned',
- *     defaultFrequency: 'immediate',
- *     isBatchTemplate: false,
- *     ...
- *   };
- *
- *   readonly name = TaskAssignedTemplate.definition.name;
+ * class TaskAssignedTemplate extends BaseImmediateTemplate<TaskAssignedData> {
+ *   async send(input: ImmediateInput, sender: ChannelSender): Promise<SendResult> {
+ *     const data = input.data as TaskAssignedData;
+ *     const html = await render(TaskAssignedEmail(data));
+ *     return sender.send({
+ *       channel: 'email',
+ *       to: input.user.email,
+ *       subject: `New Task: ${data.task.subject}`,
+ *       html,
+ *     });
+ *   }
  * }
- *
- * // Usage: caller builds payload, template sends
- * const html = await render(TaskAssignedEmail(data));
- * await template.send(user, { channel: 'email', to: user.email, subject, html }, sender);
  * ```
  */
-export abstract class BaseImmediateTemplate extends BaseNotificationTemplate {
+export abstract class BaseImmediateTemplate<TData = unknown> extends BaseNotificationTemplate {
   /**
    * Send notification to a single user.
+   * Templates implement this to render content and deliver.
    *
-   * @param user - The user to send to
-   * @param payload - Ready-to-send channel payload (built by caller)
+   * @param input - User, data, and channel
    * @param sender - Channel sender for delivery
    * @returns Send result
    */
-  async send(
-    user: TemplateUser,
-    payload: ChannelPayload,
+  abstract send(
+    input: ImmediateInput,
     sender: ChannelSender
-  ): Promise<SendResult> {
-    // Check if notification can be sent to this user
+  ): Promise<SendResult>;
+
+  /**
+   * Helper to check if user can receive this notification.
+   * Call this at the start of send() if needed.
+   */
+  protected async checkCanSend(user: TemplateUser): Promise<SendResult | null> {
     if (!await this.canSend(user)) {
       return {
         sent: false,
@@ -62,18 +79,6 @@ export abstract class BaseImmediateTemplate extends BaseNotificationTemplate {
         skipReason: 'User has disabled this notification',
       };
     }
-
-    // Send via channel
-    try {
-      const result = await sender.send(payload);
-      return result;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return {
-        sent: false,
-        skipped: false,
-        error: message,
-      };
-    }
+    return null; // OK to send
   }
 }

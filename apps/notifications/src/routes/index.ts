@@ -6,100 +6,123 @@ import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { render } from '@react-email/components';
 import {
-  NotificationService,
-  DeliveryService,
   PreferencesService,
   NotificationRepository,
-  NotificationTypeRepository,
-  sendNotificationRequestSchema,
-  createNotificationTypeRequestSchema,
   getTemplate,
   templateExists,
   getAllTemplates,
+  getTemplateInstance,
 } from '@crm/notifications';
 import type { RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { getRequestHeader } from '../utils/request-header';
-import {
-  EmailEscalation,
-  DealWon,
-  TaskAssignment,
-  BatchDigest,
-  TaskAssignedEmail,
-  EscalationBatchEmail,
-} from '../templates/emails';
+import { TaskAssignedEmail, EscalationBatchEmail } from '../templates/emails';
 import { getEmailSender } from '../senders';
-import { taskAssignedTemplate } from '../templates/immediate';
-import { escalationSummaryTemplate } from '../templates/batch';
+
+// Import templates to trigger registration
+import '../templates';
 
 const app = new Hono();
 
 /**
- * Send notification (fan-out to subscribers)
+ * Unified send notification endpoint
+ * POST /api/notifications/send
+ *
+ * Body: {
+ *   templateName: string,  // e.g., 'task.assigned'
+ *   data: object,          // template-specific data
+ *   recipientEmail: string // email address to send to
+ * }
  */
 app.post('/send', async (c) => {
   const header = getRequestHeader(c);
-  const body = await c.req.json();
+  const body = await c.req.json().catch(() => ({}));
 
-  const validationResult = sendNotificationRequestSchema.safeParse(body);
-  if (!validationResult.success) {
-    logger.error({ errors: validationResult.error.issues }, 'Invalid send notification request');
-    return c.json({ success: false, error: 'Invalid request', details: validationResult.error.issues }, 400);
+  const { templateName, data, recipientEmail } = body;
+
+  if (!templateName) {
+    return c.json({ success: false, error: 'templateName is required' }, 400);
+  }
+
+  if (!templateExists(templateName)) {
+    return c.json({ success: false, error: `Unknown template: ${templateName}` }, 400);
+  }
+
+  if (!recipientEmail) {
+    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
   }
 
   try {
-    const notificationService = container.resolve<NotificationService>(NotificationService);
-    const result = await notificationService.sendNotification(validationResult.data, header);
+    // Check if it's a batch template (not supported via this endpoint)
+    const definition = getTemplate(templateName);
+    if (definition?.isBatchTemplate) {
+      return c.json({
+        success: false,
+        error: 'Batch templates should be triggered via cron/scheduler, not /send'
+      }, 400);
+    }
 
-    return c.json({ success: true, data: result });
+    // Check user preferences - skip if user has disabled this notification
+    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+    const isEnabled = await preferencesService.isEnabled(header.userId, templateName, header);
+    if (!isEnabled) {
+      return c.json({
+        success: true,
+        data: {
+          templateName,
+          recipient: recipientEmail,
+          skipped: true,
+          skipReason: 'User has disabled this notification type',
+        },
+      });
+    }
+
+    // Get template instance
+    const template = getTemplateInstance<{ send: (input: unknown, sender: unknown) => Promise<{ sent: boolean; messageId?: string; skipped?: boolean; skipReason?: string; error?: string }> }>(templateName);
+    if (!template) {
+      return c.json({ success: false, error: `Template not instantiated: ${templateName}` }, 500);
+    }
+
+    // Build input for immediate template
+    const input = {
+      user: {
+        userId: header.userId,
+        tenantId: header.tenantId,
+        email: recipientEmail,
+        timezone: 'UTC',
+      },
+      data: data || {},
+      channel: 'email' as const,
+    };
+
+    // Send via template
+    const emailSender = getEmailSender();
+    const result = await template.send(input, emailSender);
+
+    return c.json({
+      success: result.sent,
+      data: {
+        templateName,
+        recipient: recipientEmail,
+        messageId: result.messageId,
+        skipped: result.skipped,
+        skipReason: result.skipReason,
+      },
+      error: result.error,
+    });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to send notification');
+    logger.error({ error: error.message, templateName }, 'Failed to send notification');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
 
 /**
- * Create notification type
+ * Get all available notification templates
+ * Templates are defined in code, not in database.
  */
-app.post('/types', async (c) => {
-  const header = getRequestHeader(c);
-  const body = await c.req.json();
-
-  const validationResult = createNotificationTypeRequestSchema.safeParse({
-    ...body,
-    tenantId: header.tenantId,
-  });
-  if (!validationResult.success) {
-    logger.error({ errors: validationResult.error.issues }, 'Invalid create notification type request');
-    return c.json({ success: false, error: 'Invalid request', details: validationResult.error.issues }, 400);
-  }
-
-  try {
-    const typeRepo = container.resolve<NotificationTypeRepository>('NotificationTypeRepository');
-    const result = await typeRepo.create(validationResult.data, header);
-
-    return c.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to create notification type');
-    return c.json({ success: false, error: error.message }, 500);
-  }
-});
-
-/**
- * Get notification types
- */
-app.get('/types', async (c) => {
-  const header = getRequestHeader(c);
-
-  try {
-    const typeRepo = container.resolve<NotificationTypeRepository>('NotificationTypeRepository');
-    const types = await typeRepo.findAll(header);
-
-    return c.json({ success: true, data: { types } });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to get notification types');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+app.get('/templates', (c) => {
+  const templates = getAllTemplates();
+  return c.json({ success: true, data: { templates } });
 });
 
 /**
@@ -333,351 +356,7 @@ app.get('/unsubscribe', async (c) => {
   }
 });
 
-/**
- * Preview template - sample data for each template type
- */
-const sampleTemplateData: Record<string, { component: any; props: Record<string, any> }> = {
-  'email.escalation': {
-    component: EmailEscalation,
-    props: {
-      recipientName: 'John Smith',
-      customerName: 'Acme Corporation',
-      emailSubject: 'Urgent: Service outage affecting production',
-      severity: 'high',
-      reason: 'Customer has been waiting for a response for over 24 hours',
-      waitingHours: 26,
-      viewUrl: 'https://app.example.com/emails/123',
-      approveUrl: 'https://app.example.com/actions/approve?token=abc123',
-      rejectUrl: 'https://app.example.com/actions/reject?token=abc123',
-      unsubscribeUrl: 'https://app.example.com/unsubscribe?nid=123&type=email.escalation',
-    },
-  },
-  'deal.won': {
-    component: DealWon,
-    props: {
-      recipientName: 'Sarah Johnson',
-      dealName: 'Enterprise License - Acme Corp',
-      customerName: 'Acme Corporation',
-      dealValue: '150,000',
-      currency: 'USD',
-      closedBy: 'Mike Wilson',
-      closedDate: new Date().toLocaleDateString(),
-      viewUrl: 'https://app.example.com/deals/456',
-      unsubscribeUrl: 'https://app.example.com/unsubscribe?nid=456&type=deal.won',
-    },
-  },
-  'task.assigned': {
-    component: TaskAssignment,
-    props: {
-      recipientName: 'Alex Chen',
-      taskTitle: 'Follow up with Acme Corp on contract renewal',
-      taskDescription: 'Contact the procurement team to discuss Q1 contract renewal terms.',
-      assignedBy: 'Sarah Johnson',
-      dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString(),
-      priority: 'high',
-      viewUrl: 'https://app.example.com/tasks/789',
-      completeUrl: 'https://app.example.com/actions/complete?token=xyz789',
-      unsubscribeUrl: 'https://app.example.com/unsubscribe?nid=789&type=task.assigned',
-    },
-  },
-  'batch.digest': {
-    component: BatchDigest,
-    props: {
-      recipientName: 'Team Member',
-      periodLabel: 'Today',
-      notifications: [
-        {
-          id: '1',
-          type: 'email.escalation',
-          title: 'Email from Acme Corp needs attention',
-          summary: 'High priority - waiting 12 hours',
-          timestamp: '2 hours ago',
-          priority: 'high',
-          viewUrl: 'https://app.example.com/emails/101',
-        },
-        {
-          id: '2',
-          type: 'deal.won',
-          title: 'Deal Won: TechStart Inc',
-          summary: 'USD 45,000 - Closed by Mike',
-          timestamp: '4 hours ago',
-          viewUrl: 'https://app.example.com/deals/102',
-        },
-        {
-          id: '3',
-          type: 'task.assigned',
-          title: 'New Task: Prepare Q4 report',
-          summary: 'Due in 3 days',
-          timestamp: '5 hours ago',
-          priority: 'medium',
-          viewUrl: 'https://app.example.com/tasks/103',
-        },
-      ],
-      totalCount: 7,
-      viewAllUrl: 'https://app.example.com/notifications',
-      unsubscribeUrl: 'https://app.example.com/unsubscribe?type=batch.digest',
-    },
-  },
-};
 
-/**
- * List available preview templates
- */
-app.get('/preview', (c) => {
-  const templates = Object.keys(sampleTemplateData).map((id) => ({
-    id,
-    previewUrl: `/api/notifications/preview/${id}`,
-    htmlUrl: `/api/notifications/preview/${id}?format=html`,
-  }));
-
-  return c.json({
-    success: true,
-    data: { templates },
-  });
-});
-
-/**
- * Preview a notification template
- * Query params:
- *   - format: 'json' (default) or 'html'
- *   - Can override props via query params (e.g., ?recipientName=Jane)
- */
-app.get('/preview/:templateId', async (c) => {
-  const templateId = c.req.param('templateId');
-  const format = c.req.query('format') || 'json';
-
-  const template = sampleTemplateData[templateId];
-  if (!template) {
-    return c.json({
-      success: false,
-      error: `Template not found: ${templateId}`,
-      availableTemplates: Object.keys(sampleTemplateData),
-    }, 404);
-  }
-
-  try {
-    // Merge sample props with any query param overrides
-    const queryOverrides: Record<string, string> = {};
-    for (const [key, value] of Object.entries(c.req.query())) {
-      if (key !== 'format' && value) {
-        queryOverrides[key] = value;
-      }
-    }
-
-    const props = { ...template.props, ...queryOverrides };
-    const Component = template.component;
-    const html = await render(Component(props));
-
-    if (format === 'html') {
-      return c.html(html);
-    }
-
-    return c.json({
-      success: true,
-      data: {
-        templateId,
-        props,
-        html,
-        subject: getSubjectForTemplate(templateId, props),
-      },
-    });
-  } catch (error: any) {
-    logger.error({ error: error.message, templateId }, 'Failed to render template preview');
-    return c.json({ success: false, error: error.message }, 500);
-  }
-});
-
-/**
- * Get subject line for template
- */
-function getSubjectForTemplate(templateId: string, props: Record<string, any>): string {
-  const subjects: Record<string, string> = {
-    'email.escalation': `${props.severity}: Email from ${props.customerName} needs attention`,
-    'deal.won': `Deal Won: ${props.dealName} - ${props.currency} ${props.dealValue}`,
-    'task.assigned': `New Task: ${props.taskTitle}`,
-    'batch.digest': `Your notification summary for ${props.periodLabel}`,
-  };
-  return subjects[templateId] || templateId;
-}
-
-// =============================================================================
-// Send Task Notification (Real Data)
-// =============================================================================
-
-/**
- * Send task-assigned notification
- * POST /api/notifications/send/task-assigned
- *
- * Body: {
- *   task: {
- *     id: string,
- *     customer: string,
- *     subject: string,
- *     dateOpened: string,
- *     assignedTo: string,
- *     assignedBy?: string,
- *     accountOwner: string,
- *     detailsUrl?: string
- *   },
- *   recipientEmail: string,
- *   recipientName?: string
- * }
- */
-app.post('/send/task-assigned', async (c) => {
-  const header = getRequestHeader(c);
-  const body = await c.req.json().catch(() => ({}));
-
-  const { task, recipientEmail, recipientName } = body;
-
-  if (!task) {
-    return c.json({ success: false, error: 'task object is required' }, 400);
-  }
-
-  if (!task.id || !task.customer || !task.subject) {
-    return c.json({
-      success: false,
-      error: 'task.id, task.customer, and task.subject are required'
-    }, 400);
-  }
-
-  if (!recipientEmail) {
-    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
-  }
-
-  try {
-    // Build task data for email template with defaults
-    const taskData = {
-      id: task.id,
-      customer: task.customer,
-      subject: task.subject,
-      dateOpened: task.dateOpened || new Date().toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      }),
-      assignedTo: task.assignedTo || 'Unassigned',
-      assignedBy: task.assignedBy || null,
-      accountOwner: task.accountOwner || task.assignedTo || 'Unknown',
-      detailsUrl: task.detailsUrl || `${process.env.WEB_URL || 'http://localhost:4000'}/tasks/${task.id}`,
-    };
-
-    // Render the email template
-    const html = await render(
-      TaskAssignedEmail({
-        task: taskData,
-        recipientName: recipientName || (taskData.assignedTo !== 'Unassigned' ? taskData.assignedTo.split(' ')[0] : 'Team'),
-      })
-    );
-
-    const subject = `New Escalation: ${taskData.customer} - ${taskData.subject.substring(0, 50)}${taskData.subject.length > 50 ? '...' : ''}`;
-
-    // Build user and payload for template
-    const user = {
-      userId: header.userId,
-      tenantId: header.tenantId,
-      email: recipientEmail,
-      timezone: 'UTC',
-    };
-
-    const payload = {
-      channel: 'email' as const,
-      to: recipientEmail,
-      subject,
-      html,
-    };
-
-    // Send via template (uses EMAIL_OVERRIDE in dev)
-    const emailSender = getEmailSender();
-    const result = await taskAssignedTemplate.send(user, payload, emailSender);
-
-    return c.json({
-      success: result.sent,
-      data: {
-        template: 'task-assigned',
-        recipient: recipientEmail,
-        subject,
-        messageId: result.messageId,
-        taskData,
-      },
-      error: result.error,
-    });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to send task-assigned notification');
-    return c.json({ success: false, error: error.message }, 500);
-  }
-});
-
-/**
- * Send escalation batch notification (for manual testing)
- * POST /api/notifications/send/escalation-batch
- *
- * Note: In production, batch templates are triggered by cron/Inngest.
- * This endpoint is for manual testing with provided data.
- *
- * Body: {
- *   escalations: Array<{ id, customer, subject, dateOpened, assignedTo, accountOwner, detailsUrl }>,
- *   metrics: { new, open1Day, open3Days, openMoreThan3Days },
- *   recipientName: string,
- *   recipientEmail: string
- * }
- */
-app.post('/send/escalation-batch', async (c) => {
-  const header = getRequestHeader(c);
-  const body = await c.req.json().catch(() => ({}));
-
-  const { escalations, metrics, recipientName, recipientEmail } = body;
-
-  if (!escalations || !Array.isArray(escalations)) {
-    return c.json({ success: false, error: 'escalations array is required' }, 400);
-  }
-
-  if (!metrics) {
-    return c.json({ success: false, error: 'metrics object is required' }, 400);
-  }
-
-  if (!recipientEmail) {
-    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
-  }
-
-  try {
-    // Render the email template
-    const html = await render(
-      EscalationBatchEmail({
-        escalations,
-        metrics,
-        recipientName: recipientName || 'Team',
-      })
-    );
-
-    const totalCount = (metrics.new || 0) + (metrics.open1Day || 0) + (metrics.open3Days || 0) + (metrics.openMoreThan3Days || 0);
-    const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
-
-    // Build payload and send via email sender (uses EMAIL_OVERRIDE in dev)
-    const emailSender = getEmailSender();
-    const result = await emailSender.send({
-      channel: 'email',
-      to: recipientEmail,
-      subject,
-      html,
-    });
-
-    return c.json({
-      success: result.sent,
-      data: {
-        template: 'escalation-batch',
-        recipient: recipientEmail,
-        subject,
-        messageId: result.messageId,
-        metrics,
-        escalationCount: escalations.length,
-      },
-      error: result.error,
-    });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to send escalation-batch notification');
-    return c.json({ success: false, error: error.message }, 500);
-  }
-});
 
 // =============================================================================
 // Simulation Routes (for testing with sample data)

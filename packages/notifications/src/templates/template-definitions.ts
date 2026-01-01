@@ -70,6 +70,13 @@ export type TemplateDefinition = z.infer<typeof templateDefinitionSchema>;
 const templateRegistry = new Map<string, TemplateDefinition>();
 
 /**
+ * Instance registry for looking up template instances by name.
+ * Used by unified /send endpoint.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const templateInstanceRegistry = new Map<string, any>();
+
+/**
  * Register a template definition.
  * Called by template classes to register their definitions.
  */
@@ -80,6 +87,21 @@ export function registerTemplate(definition: TemplateDefinition): void {
   // Validate the definition
   templateDefinitionSchema.parse(definition);
   templateRegistry.set(definition.name, definition);
+}
+
+/**
+ * Register a template instance.
+ * Called by template base class constructor.
+ */
+export function registerTemplateInstance(name: string, instance: unknown): void {
+  templateInstanceRegistry.set(name, instance);
+}
+
+/**
+ * Get a template instance by name
+ */
+export function getTemplateInstance<T = unknown>(name: string): T | undefined {
+  return templateInstanceRegistry.get(name) as T | undefined;
 }
 
 /**

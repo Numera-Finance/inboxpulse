@@ -12,6 +12,7 @@ export interface TaskWithRelations extends Task {
   customerName?: string | null;
   customerDomain?: string;
   assignedToName?: string | null;
+  assignedToEmail?: string | null;
   emailSubject?: string | null;
   emailBody?: string | null;
   emailFromEmail?: string | null;
@@ -95,6 +96,7 @@ export class TaskRepository extends ScopedRepository {
         completedAt: tasks.completedAt,
         customerName: customers.name,
         assignedToName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('assignedToName'),
+        assignedToEmail: users.email,
         emailSubject: emails.subject,
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,
@@ -209,6 +211,7 @@ export class TaskRepository extends ScopedRepository {
         completedAt: tasks.completedAt,
         customerName: customers.name,
         assignedToName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('assignedToName'),
+        assignedToEmail: users.email,
         emailSubject: emails.subject,
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,
