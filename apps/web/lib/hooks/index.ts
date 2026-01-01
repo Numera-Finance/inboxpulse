@@ -61,3 +61,13 @@ export {
   useAddTaskComment,
   taskKeys,
 } from './use-tasks';
+
+// Dashboard hooks
+export {
+  useDashboardCustomers,
+  useDashboardEmails,
+  useDashboardEscalations,
+  useDashboardOpportunities,
+  useDashboardSentiment,
+  dashboardKeys,
+} from './use-dashboard';

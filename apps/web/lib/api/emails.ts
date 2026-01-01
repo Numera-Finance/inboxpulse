@@ -20,3 +20,55 @@ export async function getEmailsByCustomer(
   return getEmailClient().getByCustomer(tenantId, customerId, options);
 }
 
+// Dashboard Statistics
+
+export interface DashboardEmailStats {
+  total: number;
+  analyzed: number;
+}
+
+export interface DashboardSentimentStats {
+  positive: number;
+  neutral: number;
+  negative: number;
+}
+
+/**
+ * Get dashboard email statistics
+ */
+export async function getDashboardEmailStats(
+  filters?: {
+    customerId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+): Promise<DashboardEmailStats> {
+  return getEmailClient().getDashboardStats(filters);
+}
+
+/**
+ * Get sentiment distribution for dashboard
+ */
+export async function getDashboardSentimentStats(
+  filters?: {
+    customerId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+): Promise<DashboardSentimentStats> {
+  return getEmailClient().getSentimentStats(filters);
+}
+
+/**
+ * Get upsell opportunity count for dashboard
+ */
+export async function getDashboardUpsellCount(
+  filters?: {
+    customerId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+): Promise<number> {
+  return getEmailClient().getUpsellCount(filters);
+}
+

@@ -169,4 +169,74 @@ export class EmailClient extends BaseClient {
 
     return response.data;
   }
+
+  // ===========================================================================
+  // Dashboard Statistics
+  // ===========================================================================
+
+  /**
+   * Get dashboard email statistics
+   */
+  async getDashboardStats(
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<{ total: number; analyzed: number }> {
+    const params = new URLSearchParams();
+    if (filters?.customerId) params.set('customerId', filters.customerId);
+    if (filters?.dateFrom) params.set('from', filters.dateFrom);
+    if (filters?.dateTo) params.set('to', filters.dateTo);
+
+    const queryString = params.toString();
+    const url = queryString ? `/api/emails/stats?${queryString}` : '/api/emails/stats';
+    const response = await this.get<ApiResponse<{ total: number; analyzed: number }>>(url);
+
+    return response?.data ?? { total: 0, analyzed: 0 };
+  }
+
+  /**
+   * Get sentiment distribution for dashboard
+   */
+  async getSentimentStats(
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<{ positive: number; neutral: number; negative: number }> {
+    const params = new URLSearchParams();
+    if (filters?.customerId) params.set('customerId', filters.customerId);
+    if (filters?.dateFrom) params.set('from', filters.dateFrom);
+    if (filters?.dateTo) params.set('to', filters.dateTo);
+
+    const queryString = params.toString();
+    const url = queryString ? `/api/emails/sentiment-stats?${queryString}` : '/api/emails/sentiment-stats';
+    const response = await this.get<ApiResponse<{ positive: number; neutral: number; negative: number }>>(url);
+
+    return response?.data ?? { positive: 0, neutral: 0, negative: 0 };
+  }
+
+  /**
+   * Get upsell opportunity count for dashboard
+   */
+  async getUpsellCount(
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<number> {
+    const params = new URLSearchParams();
+    if (filters?.customerId) params.set('customerId', filters.customerId);
+    if (filters?.dateFrom) params.set('from', filters.dateFrom);
+    if (filters?.dateTo) params.set('to', filters.dateTo);
+
+    const queryString = params.toString();
+    const url = queryString ? `/api/emails/upsell-count?${queryString}` : '/api/emails/upsell-count';
+    const response = await this.get<ApiResponse<number>>(url);
+
+    return response?.data ?? 0;
+  }
 }

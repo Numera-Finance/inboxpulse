@@ -56,6 +56,7 @@ async function toClientCustomer(
 @injectable()
 export class CustomerService {
   private fieldMapping = {
+    id: customers.id,
     name: customers.name,
     industry: customers.industry,
     createdAt: customers.createdAt,
