@@ -3,7 +3,7 @@ import { ScopedRepository } from '@crm/database';
 import type { Database } from '@crm/database';
 import { isAdmin, type RequestHeader, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
-import { emails, EmailAnalysisStatus, emailParticipants } from './schema';
+import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from './schema';
 import { eq, and, desc, sql, inArray, or, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
@@ -1027,5 +1027,163 @@ export class EmailRepository extends ScopedRepository {
       );
 
     return accessibleCustomerIds.map(r => r.customerId);
+  }
+
+  // ===========================================================================
+  // Dashboard Statistics
+  // ===========================================================================
+
+  /**
+   * Get dashboard email statistics with access control
+   * Returns total email count and analyzed email count
+   */
+  async getDashboardStatsScoped(
+    header: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<{ total: number; analyzed: number }> {
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+    ];
+
+    // Add customer filter via email_participants
+    if (filters?.customerId) {
+      conditions.push(
+        sql`${emails.id} IN (
+          SELECT ep.email_id FROM email_participants ep
+          WHERE ep.customer_id = ${filters.customerId}
+        )`
+      );
+    }
+
+    // Add date filters
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
+    const result = await this.db
+      .select({
+        total: sql<number>`count(*)::int`,
+        analyzed: sql<number>`count(*) FILTER (WHERE ${emails.id} IN (
+          SELECT DISTINCT ea.email_id FROM email_analyses ea
+        ))::int`,
+      })
+      .from(emails)
+      .where(and(...conditions));
+
+    return {
+      total: result[0]?.total ?? 0,
+      analyzed: result[0]?.analyzed ?? 0,
+    };
+  }
+
+  /**
+   * Get sentiment distribution for dashboard chart with access control
+   * Returns counts for positive, neutral, and negative sentiment
+   * Queries email_analyses table for sentiment data
+   */
+  async getSentimentStatsScoped(
+    header: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<{ positive: number; neutral: number; negative: number }> {
+    const conditions: SQL[] = [
+      eq(emailAnalyses.tenantId, header.tenantId),
+      eq(emailAnalyses.analysisType, 'sentiment'),
+    ];
+
+    // Add customer filter via email_participants
+    if (filters?.customerId) {
+      conditions.push(
+        sql`${emailAnalyses.emailId} IN (
+          SELECT ep.email_id FROM email_participants ep
+          WHERE ep.customer_id = ${filters.customerId}
+        )`
+      );
+    }
+
+    // Add date filters via emails table
+    if (filters?.dateFrom || filters?.dateTo) {
+      const dateConditions: SQL[] = [];
+      if (filters?.dateFrom) {
+        dateConditions.push(sql`e.received_at >= ${filters.dateFrom}::timestamp`);
+      }
+      if (filters?.dateTo) {
+        dateConditions.push(sql`e.received_at <= ${filters.dateTo}::timestamp`);
+      }
+      conditions.push(
+        sql`${emailAnalyses.emailId} IN (
+          SELECT e.id FROM emails e
+          WHERE ${and(...dateConditions)}
+        )`
+      );
+    }
+
+    const result = await this.db
+      .select({
+        positive: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`,
+        neutral: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`,
+        negative: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`,
+      })
+      .from(emailAnalyses)
+      .where(and(...conditions));
+
+    return {
+      positive: result[0]?.positive ?? 0,
+      neutral: result[0]?.neutral ?? 0,
+      negative: result[0]?.negative ?? 0,
+    };
+  }
+
+  /**
+   * Get upsell opportunity count for dashboard with access control
+   */
+  async getUpsellCountScoped(
+    header: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<number> {
+    const conditions: SQL[] = [
+      this.tenantFilter(emails.tenantId, header),
+      this.emailAccessSubquery(header),
+      signalContains(Signal.UPSELL),
+    ];
+
+    // Add customer filter
+    if (filters?.customerId) {
+      conditions.push(
+        sql`${emails.id} IN (
+          SELECT ep.email_id FROM email_participants ep
+          WHERE ep.customer_id = ${filters.customerId}
+        )`
+      );
+    }
+
+    // Add date filters
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
+    const result = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(emails)
+      .where(and(...conditions));
+
+    return result[0]?.count ?? 0;
   }
 }

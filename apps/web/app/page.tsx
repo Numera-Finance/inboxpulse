@@ -1,83 +1,118 @@
 "use client"
 
-import { Users, Mail, Clock, AlertTriangle, TrendingUp, Target, Filter } from "lucide-react"
+import { useCallback, useMemo, useState, useEffect } from "react"
+import { useSearchParams } from "react-router-dom"
+import { subDays, startOfDay, endOfDay } from "date-fns"
+import { RotateCcw } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
-import { StatCard } from "@/components/dashboard/stat-card"
-import { SentimentChart } from "@/components/dashboard/sentiment-chart"
-import { TurnaroundChart } from "@/components/dashboard/turnaround-chart"
-import { dashboardStats } from "@/lib/data"
+import { DashboardGrid, useDashboardLayout } from "@/components/dashboard/dashboard-grid"
+import { DashboardFilters } from "@/components/dashboard/dashboard-filters"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import type { TileFilters } from "@/components/dashboard/tiles"
+
+// Debounce delay for filter changes
+const DEBOUNCE_MS = 500
 
 export default function DashboardPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { resetLayout } = useDashboardLayout()
+
+  // Parse filters from URL
+  const filtersFromUrl = useMemo<TileFilters>(() => {
+    const defaultFrom = startOfDay(subDays(new Date(), 30)).toISOString()
+    const defaultTo = endOfDay(new Date()).toISOString()
+
+    return {
+      customerId: searchParams.get("customer") || undefined,
+      userId: searchParams.get("user") || undefined,
+      dateFrom: searchParams.get("from") || defaultFrom,
+      dateTo: searchParams.get("to") || defaultTo,
+    }
+  }, [searchParams])
+
+  // Local state for immediate UI updates
+  const [filters, setFilters] = useState<TileFilters>(filtersFromUrl)
+
+  // Debounced filters for API calls
+  const [debouncedFilters, setDebouncedFilters] = useState<TileFilters>(filtersFromUrl)
+
+  // Sync URL to local state when URL changes externally
+  useEffect(() => {
+    setFilters(filtersFromUrl)
+    setDebouncedFilters(filtersFromUrl)
+  }, [filtersFromUrl])
+
+  // Debounce filter changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedFilters(filters)
+    }, DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  }, [filters])
+
+  // Update URL when filters change (debounced)
+  useEffect(() => {
+    const params = new URLSearchParams()
+
+    if (debouncedFilters.customerId) {
+      params.set("customer", debouncedFilters.customerId)
+    }
+    if (debouncedFilters.userId) {
+      params.set("user", debouncedFilters.userId)
+    }
+    if (debouncedFilters.dateFrom) {
+      params.set("from", debouncedFilters.dateFrom)
+    }
+    if (debouncedFilters.dateTo) {
+      params.set("to", debouncedFilters.dateTo)
+    }
+
+    // Only update if different from current URL
+    const currentParams = searchParams.toString()
+    const newParams = params.toString()
+    if (newParams !== currentParams) {
+      setSearchParams(params, { replace: true })
+    }
+  }, [debouncedFilters, searchParams, setSearchParams])
+
+  // Handle filter changes from UI
+  const handleFiltersChange = useCallback((newFilters: TileFilters) => {
+    setFilters(newFilters)
+  }, [])
+
   return (
     <AppShell>
       <div className="p-6 space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-            <p className="text-muted-foreground">Enterprise-wide email intelligence and customer insights</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm">
-              <Filter className="mr-2 h-4 w-4" />
-              Filter
+        {/* Header */}
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+              <p className="text-muted-foreground">
+                Enterprise-wide email intelligence and customer insights
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetLayout}
+              className="h-8"
+              title="Reset layout to default"
+            >
+              <RotateCcw className="h-4 w-4" />
             </Button>
-            <Select defaultValue="all">
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Select customers" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Customers</SelectItem>
-                <SelectItem value="premier">Premier Only</SelectItem>
-                <SelectItem value="standard">Standard Only</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
-        </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <StatCard
-            title="Total Customers"
-            value={dashboardStats.totalCustomers}
-            change={dashboardStats.customersChange}
-            icon={Users}
-            trend="up"
-          />
-          <StatCard title="Emails Analyzed" value="15.2K" change={dashboardStats.emailsChange} icon={Mail} trend="up" />
-          <StatCard
-            title="Avg Turnaround Time"
-            value={dashboardStats.avgTurnaroundTime}
-            change={dashboardStats.tatChange}
-            icon={Clock}
-            trend="up"
-          />
-          <StatCard
-            title="Active Escalations"
-            value={dashboardStats.activeEscalations}
-            change={dashboardStats.escalationsNew}
-            icon={AlertTriangle}
-            trend="down"
-          />
-          <StatCard
-            title="Upsell Opportunities"
-            value={dashboardStats.upsellOpportunities}
-            change={dashboardStats.upsellChange}
-            icon={TrendingUp}
-            trend="up"
-          />
-          <StatCard
-            title="Premier Accounts"
-            value={dashboardStats.premierAccounts}
-            change={dashboardStats.premierCompliance}
-            icon={Target}
+          {/* Filters */}
+          <DashboardFilters
+            filters={filters}
+            onFiltersChange={handleFiltersChange}
           />
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <SentimentChart />
-          <TurnaroundChart />
-        </div>
+        {/* Grid Layout - uses debounced filters for API calls */}
+        <DashboardGrid filters={debouncedFilters} />
       </div>
     </AppShell>
   )

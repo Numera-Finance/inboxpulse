@@ -153,6 +153,69 @@ app.get('/', async (c) => {
 });
 
 /**
+ * GET /api/emails/stats - Get dashboard email statistics (with access control)
+ * Query params:
+ *   - customerId: string (optional) - filter by customer
+ *   - from: string (optional) - start date ISO string
+ *   - to: string (optional) - end date ISO string
+ */
+app.get('/stats', async (c) => {
+  return handleGetRequest(c, async (requestHeader: RequestHeader) => {
+    const customerId = c.req.query('customerId');
+    const dateFrom = c.req.query('from');
+    const dateTo = c.req.query('to');
+    const service = container.resolve(EmailService);
+    return await service.getDashboardStats(requestHeader, {
+      customerId: customerId || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    });
+  });
+});
+
+/**
+ * GET /api/emails/sentiment-stats - Get sentiment distribution for dashboard (with access control)
+ * Query params:
+ *   - customerId: string (optional) - filter by customer
+ *   - from: string (optional) - start date ISO string
+ *   - to: string (optional) - end date ISO string
+ */
+app.get('/sentiment-stats', async (c) => {
+  return handleGetRequest(c, async (requestHeader: RequestHeader) => {
+    const customerId = c.req.query('customerId');
+    const dateFrom = c.req.query('from');
+    const dateTo = c.req.query('to');
+    const service = container.resolve(EmailService);
+    return await service.getSentimentStats(requestHeader, {
+      customerId: customerId || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    });
+  });
+});
+
+/**
+ * GET /api/emails/upsell-count - Get upsell opportunity count for dashboard (with access control)
+ * Query params:
+ *   - customerId: string (optional) - filter by customer
+ *   - from: string (optional) - start date ISO string
+ *   - to: string (optional) - end date ISO string
+ */
+app.get('/upsell-count', async (c) => {
+  return handleGetRequest(c, async (requestHeader: RequestHeader) => {
+    const customerId = c.req.query('customerId');
+    const dateFrom = c.req.query('from');
+    const dateTo = c.req.query('to');
+    const service = container.resolve(EmailService);
+    return await service.getUpsellCount(requestHeader, {
+      customerId: customerId || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    });
+  });
+});
+
+/**
  * GET /api/emails/customer/:customerId - Get emails by customer (with access control)
  * Query params:
  *   - limit: number (default 50)

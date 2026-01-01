@@ -162,3 +162,67 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ===========================================
+ * Dashboard Grid Layout Styles
+ * react-grid-layout customizations
+ * =========================================== */
+
+.react-grid-item {
+  transition: all 200ms ease;
+  transition-property: left, top;
+}
+
+.react-grid-item.cssTransforms {
+  transition-property: transform;
+}
+
+.react-grid-item.react-draggable-dragging {
+  transition: none;
+  z-index: 100;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+.react-grid-item.react-grid-placeholder {
+  background: hsl(var(--primary) / 0.1);
+  border: 2px dashed hsl(var(--primary));
+  border-radius: var(--radius);
+}
+
+.react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  bottom: 0;
+  right: 0;
+  cursor: se-resize;
+}
+
+.react-resizable-handle::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid hsl(var(--muted-foreground) / 0.4);
+  border-bottom: 2px solid hsl(var(--muted-foreground) / 0.4);
+}
+
+/* Dashboard tile styling */
+.dashboard-tile {
+  background: hsl(var(--card));
+  border-radius: var(--radius);
+  border: 1px solid hsl(var(--border));
+  overflow: hidden;
+  height: 100%;
+}
+
+/* Drag handle cursor */
+.tile-drag-handle {
+  cursor: grab;
+}
+
+.tile-drag-handle:active {
+  cursor: grabbing;
+}

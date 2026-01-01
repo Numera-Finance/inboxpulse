@@ -529,4 +529,50 @@ export class EmailService {
       );
     }
   }
+
+  // ===========================================================================
+  // Dashboard Statistics Methods
+  // ===========================================================================
+
+  /**
+   * Get dashboard email statistics with access control
+   */
+  async getDashboardStats(
+    requestHeader: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ) {
+    return this.emailRepo.getDashboardStatsScoped(requestHeader, filters);
+  }
+
+  /**
+   * Get sentiment distribution for dashboard with access control
+   */
+  async getSentimentStats(
+    requestHeader: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ) {
+    return this.emailRepo.getSentimentStatsScoped(requestHeader, filters);
+  }
+
+  /**
+   * Get upsell opportunity count for dashboard with access control
+   */
+  async getUpsellCount(
+    requestHeader: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ) {
+    return this.emailRepo.getUpsellCountScoped(requestHeader, filters);
+  }
 }
