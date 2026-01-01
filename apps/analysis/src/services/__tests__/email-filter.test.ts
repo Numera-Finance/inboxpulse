@@ -8,18 +8,17 @@ import type { Email } from '@crm/shared';
  */
 function createTestEmail(overrides: Partial<Email> = {}): Email {
   return {
+    provider: 'gmail',
     messageId: 'test-message-id',
     threadId: 'test-thread-id',
     subject: 'Test Subject',
     body: 'Test body content',
-    snippet: 'Test snippet',
     from: {
       email: 'test@example.com',
       name: 'Test Sender',
     },
-    to: [{ email: 'recipient@example.com', name: 'Recipient' }],
+    tos: [{ email: 'recipient@example.com', name: 'Recipient' }],
     receivedAt: new Date(),
-    isRead: false,
     labels: [],
     ...overrides,
   };

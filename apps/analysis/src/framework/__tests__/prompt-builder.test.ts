@@ -66,7 +66,7 @@ describe('PromptBuilder', () => {
   });
 
   describe('buildPromptMessages', () => {
-    it('should build CoreMessage array', () => {
+    it('should build PromptMessage array', () => {
       const definitions = [sentimentAnalysisDefinition];
       const sections = builder.buildPromptSections(definitions, mockEmail);
       const messages = builder.buildPromptMessages(sections);

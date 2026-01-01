@@ -56,6 +56,9 @@ export const users = pgTable(
     // Whether the user can login to the application
     canLogin: boolean('can_login').notNull().default(true),
 
+    // User's timezone for notification scheduling (IANA timezone)
+    timezone: varchar('timezone', { length: 50 }).default('Asia/Kolkata'),
+
     // Status: 0 = active, 1 = inactive, 2 = archived
     rowStatus: smallint('row_status').notNull().default(0),
 

@@ -91,20 +91,23 @@ export function createNotificationSchemas(
       userId: uuid('user_id')
         .notNull()
         .references(() => usersId, { onDelete: 'cascade' }),
-      notificationTypeId: uuid('notification_type_id')
-        .notNull()
-        .references(() => notificationTypes.id, { onDelete: 'cascade' }),
-      
+
+      // Template name instead of FK to notification_types
+      // e.g., 'task.assigned', 'escalation.summary'
+      templateName: varchar('template_name', { length: 100 }).notNull(),
+
       enabled: boolean('enabled').notNull().default(true),
       channels: jsonb('channels').$type<NotificationChannel[]>().notNull().default([]),
       frequency: varchar('frequency', { length: 20 }).notNull().default('immediate'),
       batchInterval: jsonb('batch_interval'),
-      quietHours: jsonb('quiet_hours'),
-      timezone: varchar('timezone', { length: 50 }),
-      
-      subscriptionSource: varchar('subscription_source', { length: 50 }).default('manual'),
-      autoSubscribedAt: timestamp('auto_subscribed_at', { withTimezone: true }),
-      
+
+      // Template-specific payload data
+      payload: jsonb('payload'),
+
+      // Batch scheduling fields
+      lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+      nextSendAt: timestamp('next_send_at', { withTimezone: true }),
+
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .defaultNow(),
@@ -113,10 +116,11 @@ export function createNotificationSchemas(
         .defaultNow(),
     },
     (table: any) => [
-      uniqueIndex('uniq_user_notification_preferences').on(table.userId, table.notificationTypeId),
+      uniqueIndex('uniq_user_notification_preferences_template').on(table.userId, table.templateName),
       index('idx_user_notification_preferences_user').on(table.userId),
-      index('idx_user_notification_preferences_type').on(table.notificationTypeId),
-      index('idx_user_notification_preferences_enabled').on(table.userId, table.enabled).where(sql`enabled = true`),
+      index('idx_user_notification_preferences_template_name').on(table.templateName),
+      // Index for finding eligible users for batch notifications
+      index('idx_user_notification_preferences_batch_due').on(table.templateName, table.nextSendAt).where(sql`enabled = true AND frequency = 'batched'`),
     ]
   );
 

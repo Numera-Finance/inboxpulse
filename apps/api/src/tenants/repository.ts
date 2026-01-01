@@ -13,6 +13,10 @@ export class TenantRepository {
     return result[0] || null;
   }
 
+  async findAll() {
+    return this.db.select().from(tenants);
+  }
+
   async create(requestHeader: RequestHeader, data: { name: string}) {
     const now = new Date();
     const result = await this.db

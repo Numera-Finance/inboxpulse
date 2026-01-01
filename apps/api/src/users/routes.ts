@@ -9,6 +9,7 @@ import { UserService } from './service';
 import {
   createUserRequestSchema,
   updateUserRequestSchema,
+  updateUserPreferencesSchema,
   addManagerRequestSchema,
   addCustomerRequestSchema,
 } from '@crm/clients';
@@ -28,6 +29,89 @@ userRoutes.get('/me/permissions', async (c) => {
     data: {
       permissions: requestHeader.permissions ?? [],
     },
+  });
+});
+
+/**
+ * GET /api/users/me/debug - Debug endpoint to check role and permissions
+ * Returns detailed info about current user's role setup
+ */
+userRoutes.get('/me/debug', async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const service = container.resolve(UserService);
+  const user = await service.getById(requestHeader, requestHeader.userId);
+
+  // Get role details if user has a role
+  let roleDetails = null;
+  if (user?.roleId) {
+    const { RoleRepository } = await import('../roles/repository');
+    const roleRepository = container.resolve(RoleRepository);
+    const role = await roleRepository.findById(user.roleId);
+    roleDetails = role ? {
+      id: role.id,
+      name: role.name,
+      permissions: role.permissions,
+      isSystem: role.isSystem,
+    } : null;
+  }
+
+  return c.json<ApiResponse<{
+    userId: string;
+    email: string;
+    roleId: string | null;
+    roleDetails: typeof roleDetails;
+    effectivePermissions: number[];
+    isAdmin: boolean;
+  }>>({
+    success: true,
+    data: {
+      userId: requestHeader.userId,
+      email: user?.email ?? 'unknown',
+      roleId: user?.roleId ?? null,
+      roleDetails,
+      effectivePermissions: requestHeader.permissions ?? [],
+      isAdmin: requestHeader.permissions?.includes(8) ?? false,
+    },
+  });
+});
+
+/**
+ * PATCH /api/users/me/preferences - Update current user's preferences
+ * Self-service endpoint - no special permissions required
+ * NOTE: Must be defined BEFORE /me to avoid route conflicts
+ */
+userRoutes.patch('/me/preferences', async (c) => {
+  return handleApiRequest(
+    c,
+    updateUserPreferencesSchema,
+    async (requestHeader: RequestHeader, request) => {
+      const service = container.resolve(UserService);
+      const user = await service.update(requestHeader.userId, request);
+
+      if (!user) {
+        throw new NotFoundError('User', requestHeader.userId);
+      }
+
+      return user;
+    }
+  );
+});
+
+/**
+ * GET /api/users/me - Get current user's profile
+ */
+userRoutes.get('/me', async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const service = container.resolve(UserService);
+  const user = await service.getById(requestHeader, requestHeader.userId);
+
+  if (!user) {
+    throw new NotFoundError('User', requestHeader.userId);
+  }
+
+  return c.json<ApiResponse<typeof user>>({
+    success: true,
+    data: user,
   });
 });
 

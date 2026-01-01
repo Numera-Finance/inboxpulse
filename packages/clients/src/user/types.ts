@@ -34,9 +34,19 @@ export const updateUserRequestSchema = z.object({
   email: z.string().email().max(255).optional(),
   roleId: z.string().uuid().optional(), // RBAC system role
   canLogin: z.boolean().optional(), // Whether user can login to the application
+  timezone: z.string().max(50).optional(), // IANA timezone (e.g., 'Asia/Kolkata')
 });
 
 export type UpdateUserRequest = z.infer<typeof updateUserRequestSchema>;
+
+/**
+ * Zod schema for updating user preferences (self-service)
+ */
+export const updateUserPreferencesSchema = z.object({
+  timezone: z.string().max(50).optional(),
+});
+
+export type UpdateUserPreferences = z.infer<typeof updateUserPreferencesSchema>;
 
 /**
  * Customer assignment in response
@@ -63,6 +73,7 @@ export const userResponseSchema = z.object({
   roleId: z.string().uuid().nullable().optional(), // RBAC system role
   role: roleResponseSchema.nullable().optional(), // Nested role object
   canLogin: z.boolean().optional(), // Whether user can login to the application
+  timezone: z.string().nullable().optional(), // IANA timezone
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   lastLoginAt: z.coerce.date().nullable().optional(), // Last login timestamp

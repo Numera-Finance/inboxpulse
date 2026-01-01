@@ -312,6 +312,7 @@ export class UserRepository extends ScopedRepository {
         roleId: userCustomers.roleId,
         apiKeyHash: users.apiKeyHash,
         canLogin: users.canLogin,
+        timezone: users.timezone,
         rowStatus: users.rowStatus,
         createdAt: users.createdAt,
         updatedAt: users.updatedAt,
@@ -321,6 +322,87 @@ export class UserRepository extends ScopedRepository {
       .innerJoin(users, eq(users.id, userCustomers.userId))
       .where(eq(userCustomers.customerId, customerId));
     return result;
+  }
+
+  /**
+   * Get the account owner (Account Manager) for a customer
+   * Account Manager role ID: 550e8400-e29b-41d4-a716-446655440001
+   */
+  async getAccountOwner(customerId: string): Promise<User | undefined> {
+    const ACCOUNT_MANAGER_ROLE_ID = '550e8400-e29b-41d4-a716-446655440001';
+    const result = await this.db
+      .select({ user: users })
+      .from(userCustomers)
+      .innerJoin(users, eq(users.id, userCustomers.userId))
+      .where(
+        and(
+          eq(userCustomers.customerId, customerId),
+          eq(userCustomers.roleId, ACCOUNT_MANAGER_ROLE_ID)
+        )
+      )
+      .limit(1);
+    return result[0]?.user;
+  }
+
+  /**
+   * Get ALL managers in the hierarchy for users assigned to a customer.
+   * Uses recursive CTE to traverse up the manager chain.
+   * Returns unique list of all managers (direct + indirect).
+   */
+  async getAllManagersForCustomer(customerId: string): Promise<User[]> {
+    const result = await this.db.execute<{
+      id: string;
+      tenant_id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      role_id: string | null;
+      api_key_hash: string | null;
+      can_login: boolean;
+      timezone: string | null;
+      row_status: number;
+      created_at: Date;
+      updated_at: Date;
+      last_login_at: Date | null;
+    }>(sql`
+      WITH RECURSIVE manager_chain AS (
+        -- Base case: direct managers of users assigned to customer
+        SELECT DISTINCT um.manager_id
+        FROM user_customers uc
+        JOIN user_managers um ON um.user_id = uc.user_id
+        WHERE uc.customer_id = ${customerId}
+
+        UNION
+
+        -- Recursive case: managers of managers
+        SELECT um2.manager_id
+        FROM manager_chain mc
+        JOIN user_managers um2 ON um2.user_id = mc.manager_id
+      )
+      SELECT u.id, u.tenant_id, u.first_name, u.last_name, u.email,
+             u.role_id, u.api_key_hash, u.can_login, u.timezone,
+             u.row_status, u.created_at, u.updated_at, u.last_login_at
+      FROM manager_chain mc
+      JOIN users u ON u.id = mc.manager_id
+      WHERE u.row_status = ${RowStatus.ACTIVE}
+    `);
+
+    // Map raw result to User type
+    return result.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      email: row.email,
+      roleId: row.role_id,
+      apiKeyHash: row.api_key_hash,
+      canLogin: row.can_login,
+      timezone: row.timezone,
+      rowStatus: row.row_status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastLoginAt: row.last_login_at,
+    }));
   }
 
   /**

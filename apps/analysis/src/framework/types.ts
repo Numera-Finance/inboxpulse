@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { CoreMessage } from 'ai';
 import type { AnalysisType, ModelConfig, AnalysisSettings } from '@crm/shared';
 import type { Email } from '@crm/shared';
+import type { PromptMessage } from '../services/ai-types';
 
 /**
  * Analysis module - defines the prompt instructions and schema for an analysis type
@@ -40,7 +40,7 @@ export interface AnalysisDefinition {
   
   // Optional: Custom prompt builder function
   // If provided, overrides module.instructions
-  buildPrompt?: (email: Email, context?: ThreadContext) => string | CoreMessage[];
+  buildPrompt?: (email: Email, context?: ThreadContext) => string | PromptMessage[];
 }
 
 /**

@@ -347,44 +347,11 @@ export function createNotificationFunctions(
     }
   );
 
-  /**
-   * Refresh auto-subscriptions for a notification type
-   */
-  const refreshSubscriptions = inngest.createFunction(
-    {
-      id: 'notifications/refresh-subscriptions',
-      retries: 2,
-    },
-    { event: 'notification/refresh-subscriptions' },
-    async ({ event, step, logger }) => {
-      const { notificationTypeId, tenantId, requestId } = event.data;
-      const deps = await getDeps();
-
-      const header: RequestHeader = {
-        tenantId,
-        userId: 'system',
-        permissions: [],
-      };
-
-      const result = await step.run('refresh', async () => {
-        return deps.preferencesService.refreshAutoSubscriptions(notificationTypeId, header);
-      });
-
-      logger.info(
-        { notificationTypeId, subscribed: result.subscribed, unsubscribed: result.unsubscribed },
-        'Subscription refresh completed'
-      );
-
-      return result;
-    }
-  );
-
   return {
     processPendingNotifications,
     sendNotification,
     processBatch,
     processPendingBatches,
-    refreshSubscriptions,
   };
 }
 

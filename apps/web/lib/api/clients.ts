@@ -1,4 +1,4 @@
-import { UserClient, CustomerClient, ContactClient, IntegrationClient, EmailClient, RoleClient, TaskClient } from '@crm/clients';
+import { UserClient, CustomerClient, ContactClient, IntegrationClient, EmailClient, RoleClient, TaskClient, NotificationsClient } from '@crm/clients';
 
 // Extend Window interface for runtime config
 declare global {
@@ -18,6 +18,12 @@ const API_BASE_URL =
 // Export for use in integrations page
 export { API_BASE_URL };
 
+// Notifications service URL
+const NOTIFICATIONS_BASE_URL =
+  window.__RUNTIME_CONFIG__?.API_URL?.replace(':4001', ':4004') ||
+  import.meta.env.VITE_NOTIFICATIONS_URL ||
+  'http://localhost:4004';
+
 // Singleton client instances
 let userClient: UserClient | null = null;
 let customerClient: CustomerClient | null = null;
@@ -26,6 +32,7 @@ let integrationClient: IntegrationClient | null = null;
 let emailClient: EmailClient | null = null;
 let roleClient: RoleClient | null = null;
 let taskClient: TaskClient | null = null;
+let notificationsClient: NotificationsClient | null = null;
 
 /**
  * Get the User client instance
@@ -99,6 +106,17 @@ export function getTaskClient(): TaskClient {
 }
 
 /**
+ * Get the Notifications client instance
+ * Note: Connects to notifications service (port 4004)
+ */
+export function getNotificationsClient(): NotificationsClient {
+  if (!notificationsClient) {
+    notificationsClient = new NotificationsClient(NOTIFICATIONS_BASE_URL);
+  }
+  return notificationsClient;
+}
+
+/**
  * Clear all client instances (useful for logout)
  */
 export function clearClients(): void {
@@ -109,4 +127,5 @@ export function clearClients(): void {
   emailClient = null;
   roleClient = null;
   taskClient = null;
+  notificationsClient = null;
 }

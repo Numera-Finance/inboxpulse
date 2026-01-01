@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS users (
     -- Whether the user can login to the application
     can_login BOOLEAN NOT NULL DEFAULT true,
 
+    -- User's timezone for notification scheduling (IANA timezone)
+    timezone VARCHAR(50) DEFAULT 'Asia/Kolkata',
+
     -- Status: 0 = active, 1 = inactive, 2 = archived
     row_status SMALLINT NOT NULL DEFAULT 0,
 

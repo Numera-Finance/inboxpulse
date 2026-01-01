@@ -1,7 +1,6 @@
-import type { CoreMessage } from 'ai';
 import type { Email } from '@crm/shared';
 import type { AnalysisDefinition, ThreadContext } from './types';
-import { logger } from '../utils/logger';
+import type { PromptMessage } from '../services/ai-types';
 
 /**
  * Cache marker interface for prompt sections
@@ -42,7 +41,7 @@ export class PromptBuilder {
     const instructions = definitions
       .map((def) => `## ${def.name}\n${def.module.instructions}`)
       .join('\n\n');
-    
+
     sections.push({
       content: instructions,
       cacheable: true,
@@ -76,13 +75,13 @@ export class PromptBuilder {
   }
 
   /**
-   * Build prompt as CoreMessage[] for Vercel AI SDK
+   * Build prompt as PromptMessage[] for Vercel AI SDK
    * Includes cache control hints
    */
   buildPromptMessages(
     sections: PromptSection[]
-  ): CoreMessage[] {
-    const messages: CoreMessage[] = [];
+  ): PromptMessage[] {
+    const messages: PromptMessage[] = [];
 
     // Combine cacheable sections
     const cacheableContent: string[] = [];

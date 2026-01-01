@@ -1,8 +1,9 @@
 import { injectable, inject } from 'tsyringe';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import type { Database } from '@crm/database';
 import { UserRepository } from '../users/repository';
+import { RoleRepository } from '../roles/repository';
 import { tenants } from '../tenants/schema';
 import { users } from '../users/schema';
 import { betterAuthUser } from './better-auth-schema';
@@ -12,7 +13,8 @@ import { logger } from '../utils/logger';
 export class BetterAuthUserService {
   constructor(
     @inject('Database') private db: Database,
-    private userRepository: UserRepository
+    private userRepository: UserRepository,
+    private roleRepository: RoleRepository
   ) {}
 
   /**
@@ -79,6 +81,23 @@ export class BetterAuthUserService {
           throw new Error('Account configuration error. Please contact support.');
         }
         userId = existingUser[0].id;
+
+        // If user has no role, assign them the default User role
+        if (!existingUser[0].roleId) {
+          await this.roleRepository.seedDefaultRoles(tenantId);
+          const defaultRole = await this.roleRepository.getDefaultUserRole(tenantId);
+          if (defaultRole) {
+            await tx
+              .update(users)
+              .set({ roleId: defaultRole.id })
+              .where(eq(users.id, userId));
+            logger.info(
+              { userId, betterAuthUserId, email, tenantId, roleName: defaultRole.name },
+              'Assigned default role to existing user without role'
+            );
+          }
+        }
+
         logger.info(
           { userId, betterAuthUserId, email, tenantId },
           'Linked existing user to better-auth user via SSO'
@@ -92,15 +111,31 @@ export class BetterAuthUserService {
         const firstName = nameParts[0] || email.split('@')[0];
         const lastName = nameParts.slice(1).join(' ') || '';
 
+        // Ensure default roles exist for this tenant
+        await this.roleRepository.seedDefaultRoles(tenantId);
+
+        // Check if this is the first user for the tenant (should be Admin)
+        const existingUsersCount = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(users)
+          .where(eq(users.tenantId, tenantId));
+        const isFirstUser = Number(existingUsersCount[0]?.count ?? 0) === 0;
+
+        // Assign appropriate role - Admin for first user, User for others
+        const role = isFirstUser
+          ? await this.roleRepository.getAdminRole(tenantId)
+          : await this.roleRepository.getDefaultUserRole(tenantId);
+
         await tx.insert(users).values({
           id: userId,
           tenantId,
           email,
           firstName,
           lastName,
+          roleId: role?.id,
         });
         logger.info(
-          { userId, betterAuthUserId, email, tenantId },
+          { userId, betterAuthUserId, email, tenantId, roleName: role?.name, isFirstUser },
           'Auto-provisioned new user via SSO'
         );
       }

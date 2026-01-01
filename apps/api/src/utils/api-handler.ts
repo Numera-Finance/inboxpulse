@@ -111,7 +111,25 @@ export async function handleApiRequestWithParams<TParams, TRequest, TResponse>(
   const body = await c.req.json();
   const validatedRequest = requestSchema.parse(body);
   const result = await handler(requestHeader, params, validatedRequest);
-  
+
+  return c.json<ApiResponse<TResponse>>({
+    success: true,
+    data: result,
+  });
+}
+
+/**
+ * Standard GET handler with query parameters
+ */
+export async function handleGetRequestWithQuery<TQuery, TResponse>(
+  c: Context,
+  querySchema: z.ZodSchema<TQuery>,
+  handler: (requestHeader: RequestHeader, query: TQuery) => Promise<TResponse>
+): Promise<Response> {
+  const requestHeader = getRequestHeader(c);
+  const query = querySchema.parse(c.req.query());
+  const result = await handler(requestHeader, query);
+
   return c.json<ApiResponse<TResponse>>({
     success: true,
     data: result,

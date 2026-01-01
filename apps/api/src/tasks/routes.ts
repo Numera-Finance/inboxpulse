@@ -10,8 +10,18 @@ import {
   addCommentRequestSchema,
 } from './service';
 import type { RequestHeader } from '@crm/shared';
-import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
+import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams, handleGetRequestWithQuery } from '../utils/api-handler';
+
 import { requirePermission } from '../middleware/require-permission';
+import { requireServiceAuth } from '@crm/shared';
+
+/**
+ * Query params for escalations-for-manager endpoint
+ */
+const escalationsForManagerQuerySchema = z.object({
+  managerId: z.string().uuid(),
+  since: z.string().datetime().optional(),
+});
 
 export const taskRoutes = new Hono();
 
@@ -52,6 +62,26 @@ taskRoutes.get('/assignable-users', async (c) => {
     const service = container.resolve(TaskService);
     return await service.getAssignableUsers(requestHeader);
   });
+});
+
+/**
+ * GET /api/tasks/escalations-for-manager - Get escalation data for a manager
+ * Used by notifications service to fetch data for batch emails.
+ * INTERNAL ENDPOINT - Requires service-to-service authentication via x-service-api-key header.
+ * Query params:
+ *   - managerId: UUID of the manager
+ *   - since: Optional ISO date string for filtering (not currently used)
+ */
+taskRoutes.get('/escalations-for-manager', requireServiceAuth(), async (c) => {
+  return handleGetRequestWithQuery(
+    c,
+    escalationsForManagerQuerySchema,
+    async (requestHeader: RequestHeader, query) => {
+      const service = container.resolve(TaskService);
+      const since = query.since ? new Date(query.since) : undefined;
+      return await service.getEscalationsForManager(requestHeader, query.managerId, since);
+    }
+  );
 });
 
 /**

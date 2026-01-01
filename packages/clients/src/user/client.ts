@@ -6,6 +6,7 @@ import type {
   UserWithRole,
   CreateUserRequest,
   UpdateUserRequest,
+  UpdateUserPreferences,
   AddManagerRequest,
   AddCustomerRequest,
 } from './types';
@@ -20,6 +21,25 @@ export class UserClient extends BaseClient {
   async getById(id: string, signal?: AbortSignal): Promise<UserResponse | null> {
     const response = await this.get<ApiResponse<UserResponse>>(`/api/users/${id}`, signal);
     return response?.data || null;
+  }
+
+  /**
+   * Get current user's profile
+   */
+  async getMe(signal?: AbortSignal): Promise<UserResponse | null> {
+    const response = await this.get<ApiResponse<UserResponse>>('/api/users/me', signal);
+    return response?.data || null;
+  }
+
+  /**
+   * Update current user's preferences (timezone, etc.)
+   */
+  async updateMyPreferences(data: UpdateUserPreferences, signal?: AbortSignal): Promise<UserResponse> {
+    const response = await this.patch<ApiResponse<UserResponse>>('/api/users/me/preferences', data, signal);
+    if (!response?.data) {
+      throw new Error('Invalid API response: missing data');
+    }
+    return response.data;
   }
 
   /**
