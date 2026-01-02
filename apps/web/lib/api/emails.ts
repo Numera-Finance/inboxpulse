@@ -72,3 +72,38 @@ export async function getDashboardUpsellCount(
   return getEmailClient().getUpsellCount(filters);
 }
 
+export interface DashboardSentimentTrendData {
+  month: string;
+  positive: number;
+  neutral: number;
+  negative: number;
+}
+
+/**
+ * Get sentiment trend data for dashboard (6 months)
+ */
+export async function getDashboardSentimentTrend(
+  filters?: {
+    customerId?: string;
+  }
+): Promise<DashboardSentimentTrendData[]> {
+  return getEmailClient().getSentimentTrend(filters);
+}
+
+export interface DashboardEmailVolumeTrendData {
+  week: string;
+  totalEmails: number;
+  escalations: number;
+}
+
+/**
+ * Get email volume trend data for dashboard (4 weeks)
+ */
+export async function getDashboardEmailVolumeTrend(
+  filters?: {
+    customerId?: string;
+  }
+): Promise<DashboardEmailVolumeTrendData[]> {
+  return getEmailClient().getEmailVolumeTrend(filters);
+}
+

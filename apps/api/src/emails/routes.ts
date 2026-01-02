@@ -195,6 +195,38 @@ app.get('/sentiment-stats', async (c) => {
 });
 
 /**
+ * GET /api/emails/sentiment-trend - Get sentiment trend data for dashboard (with access control)
+ * Returns monthly percentages over last 6 months
+ * Query params:
+ *   - customerId: string (optional) - filter by customer
+ */
+app.get('/sentiment-trend', async (c) => {
+  return handleGetRequest(c, async (requestHeader: RequestHeader) => {
+    const customerId = c.req.query('customerId');
+    const service = container.resolve(EmailService);
+    return await service.getSentimentTrend(requestHeader, {
+      customerId: customerId || undefined,
+    });
+  });
+});
+
+/**
+ * GET /api/emails/volume-trend - Get email volume trend data for dashboard (with access control)
+ * Returns weekly counts for last 4 weeks
+ * Query params:
+ *   - customerId: string (optional) - filter by customer
+ */
+app.get('/volume-trend', async (c) => {
+  return handleGetRequest(c, async (requestHeader: RequestHeader) => {
+    const customerId = c.req.query('customerId');
+    const service = container.resolve(EmailService);
+    return await service.getEmailVolumeTrend(requestHeader, {
+      customerId: customerId || undefined,
+    });
+  });
+});
+
+/**
  * GET /api/emails/upsell-count - Get upsell opportunity count for dashboard (with access control)
  * Query params:
  *   - customerId: string (optional) - filter by customer

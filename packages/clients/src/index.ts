@@ -10,3 +10,4 @@ export * from './user';
 export * from './role';
 export * from './task';
 export * from './notification';
+export * from './dashboard';

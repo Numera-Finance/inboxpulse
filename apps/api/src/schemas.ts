@@ -10,3 +10,4 @@ export { contacts } from './contacts/schema';
 export { roles } from './roles/schema';
 export { tasks, taskComments, userSubordinates } from './tasks/schema';
 export { betterAuthUser, betterAuthSession, betterAuthAccount, betterAuthVerification } from './auth/better-auth-schema';
+export { dashboards } from './dashboards/schema';

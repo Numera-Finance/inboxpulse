@@ -239,4 +239,40 @@ export class EmailClient extends BaseClient {
 
     return response?.data ?? 0;
   }
+
+  /**
+   * Get sentiment trend data for dashboard (6 months)
+   */
+  async getSentimentTrend(
+    filters?: {
+      customerId?: string;
+    }
+  ): Promise<Array<{ month: string; positive: number; neutral: number; negative: number }>> {
+    const params = new URLSearchParams();
+    if (filters?.customerId) params.set('customerId', filters.customerId);
+
+    const queryString = params.toString();
+    const url = queryString ? `/api/emails/sentiment-trend?${queryString}` : '/api/emails/sentiment-trend';
+    const response = await this.get<ApiResponse<Array<{ month: string; positive: number; neutral: number; negative: number }>>>(url);
+
+    return response?.data ?? [];
+  }
+
+  /**
+   * Get email volume trend data for dashboard (4 weeks)
+   */
+  async getEmailVolumeTrend(
+    filters?: {
+      customerId?: string;
+    }
+  ): Promise<Array<{ week: string; totalEmails: number; escalations: number }>> {
+    const params = new URLSearchParams();
+    if (filters?.customerId) params.set('customerId', filters.customerId);
+
+    const queryString = params.toString();
+    const url = queryString ? `/api/emails/volume-trend?${queryString}` : '/api/emails/volume-trend';
+    const response = await this.get<ApiResponse<Array<{ week: string; totalEmails: number; escalations: number }>>>(url);
+
+    return response?.data ?? [];
+  }
 }

@@ -9,6 +9,7 @@ import {
   type StatTileConfig,
   type ChartTileConfig,
 } from "./tiles"
+import { Skeleton } from "@/components/ui/skeleton"
 
 import "react-grid-layout/css/styles.css"
 import "react-resizable/css/styles.css"
@@ -18,12 +19,28 @@ interface DashboardGridProps {
 }
 
 export function DashboardGrid({ filters }: DashboardGridProps) {
-  const { layouts, handleLayoutChange } = useDashboardLayout()
+  const { layouts, isLoading, handleLayoutChange } = useDashboardLayout()
 
   // v2 hook returns { width, mounted, containerRef }
   const { width, mounted, containerRef } = useContainerWidth({
     initialWidth: 1200,
   })
+
+  // Show loading skeleton while fetching layout
+  if (isLoading || !layouts) {
+    return (
+      <div ref={containerRef} className="grid grid-cols-4 gap-4">
+        {/* Stat tiles skeleton */}
+        <Skeleton className="h-[150px]" />
+        <Skeleton className="h-[150px]" />
+        <Skeleton className="h-[150px]" />
+        <Skeleton className="h-[150px]" />
+        {/* Chart tiles skeleton */}
+        <Skeleton className="h-[316px] col-span-2" />
+        <Skeleton className="h-[316px] col-span-2" />
+      </div>
+    )
+  }
 
   return (
     <div ref={containerRef}>

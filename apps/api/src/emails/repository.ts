@@ -1145,6 +1145,139 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Get sentiment trend data for dashboard chart with access control
+   * Returns monthly counts for positive, neutral, and negative sentiment over last 6 months
+   * Returns percentages (stacked to 100%)
+   */
+  async getSentimentTrendScoped(
+    header: RequestHeader,
+    filters?: {
+      customerId?: string;
+    }
+  ): Promise<Array<{ month: string; positive: number; neutral: number; negative: number }>> {
+    // Get last 6 months
+    const months: string[] = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(date.toISOString().slice(0, 7)); // YYYY-MM format
+    }
+
+    const conditions: SQL[] = [
+      eq(emailAnalyses.tenantId, header.tenantId),
+      eq(emailAnalyses.analysisType, 'sentiment'),
+      // Filter to last 6 months
+      sql`${emailAnalyses.createdAt} >= date_trunc('month', now() - interval '5 months')`,
+    ];
+
+    // Add customer filter via email_participants
+    if (filters?.customerId) {
+      conditions.push(
+        sql`${emailAnalyses.emailId} IN (
+          SELECT ep.email_id FROM email_participants ep
+          WHERE ep.customer_id = ${filters.customerId}
+        )`
+      );
+    }
+
+    const result = await this.db
+      .select({
+        month: sql<string>`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`,
+        positive: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`,
+        neutral: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`,
+        negative: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`,
+      })
+      .from(emailAnalyses)
+      .where(and(...conditions))
+      .groupBy(sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`)
+      .orderBy(sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`);
+
+    // Convert to percentages and ensure all months are represented
+    const resultMap = new Map(result.map(r => [r.month, r]));
+
+    return months.map(month => {
+      const data = resultMap.get(month);
+      if (!data) {
+        return { month, positive: 0, neutral: 0, negative: 0 };
+      }
+
+      const total = data.positive + data.neutral + data.negative;
+      if (total === 0) {
+        return { month, positive: 0, neutral: 0, negative: 0 };
+      }
+
+      return {
+        month,
+        positive: Math.round((data.positive / total) * 100),
+        neutral: Math.round((data.neutral / total) * 100),
+        negative: Math.round((data.negative / total) * 100),
+      };
+    });
+  }
+
+  /**
+   * Get email volume trend data for dashboard (last 4 weeks)
+   * Returns weekly counts for total emails and escalations
+   */
+  async getEmailVolumeTrendScoped(
+    header: RequestHeader,
+    filters?: {
+      customerId?: string;
+    }
+  ): Promise<Array<{ week: string; totalEmails: number; escalations: number }>> {
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      // Filter to last 4 weeks
+      sql`${emails.receivedAt} >= date_trunc('week', now() - interval '3 weeks')`,
+    ];
+
+    // Add customer filter via email_participants
+    if (filters?.customerId) {
+      conditions.push(
+        sql`${emails.id} IN (
+          SELECT ep.email_id FROM email_participants ep
+          WHERE ep.customer_id = ${filters.customerId}
+        )`
+      );
+    }
+
+    const result = await this.db
+      .select({
+        weekStart: sql<string>`to_char(date_trunc('week', ${emails.receivedAt}), 'Mon DD, YYYY')`,
+        totalEmails: sql<number>`count(*)::int`,
+        escalations: sql<number>`count(*) FILTER (WHERE ${emails.signals} @> ARRAY[10]::integer[])::int`,
+      })
+      .from(emails)
+      .where(and(...conditions))
+      .groupBy(sql`date_trunc('week', ${emails.receivedAt})`)
+      .orderBy(sql`date_trunc('week', ${emails.receivedAt})`);
+
+    // Generate last 4 weeks with start dates
+    const weeks: Array<{ week: string; totalEmails: number; escalations: number }> = [];
+    const now = new Date();
+
+    for (let i = 3; i >= 0; i--) {
+      const weekStart = new Date(now);
+      // Go back to start of current week (Monday for Postgres default), then subtract weeks
+      const day = weekStart.getDay();
+      const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Monday start
+      weekStart.setDate(diff - (i * 7));
+      const dateStr = weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const weekLabel = `Wk ${dateStr}`;
+
+      // Find matching data (match against full date string from DB)
+      const weekData = result.find(r => r.weekStart === dateStr);
+      weeks.push({
+        week: weekLabel,
+        totalEmails: weekData?.totalEmails ?? 0,
+        escalations: weekData?.escalations ?? 0,
+      });
+    }
+
+    return weeks;
+  }
+
+  /**
    * Get upsell opportunity count for dashboard with access control
    */
   async getUpsellCountScoped(

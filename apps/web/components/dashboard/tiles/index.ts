@@ -59,6 +59,8 @@ export interface TileDefinition {
 
 // Import chart components
 import { SentimentChart } from "../sentiment-chart"
+import { SentimentTrendChart } from "../sentiment-trend-chart"
+import { EmailVolumeChart } from "../email-volume-chart"
 
 // =============================================================================
 // TILE REGISTRY - Add new tiles here
@@ -118,6 +120,24 @@ export const TILE_DEFINITIONS: TileDefinition[] = [
       category: "chart",
       title: "Customer Sentiment",
       component: SentimentChart,
+    },
+    layout: { w: 2, h: 2, minW: 2, minH: 2 },
+  },
+  {
+    config: {
+      id: "sentiment-trend",
+      category: "chart",
+      title: "Sentiment Trend",
+      component: SentimentTrendChart,
+    },
+    layout: { w: 2, h: 2, minW: 2, minH: 2 },
+  },
+  {
+    config: {
+      id: "email-volume",
+      category: "chart",
+      title: "Email Volume & Escalations",
+      component: EmailVolumeChart,
     },
     layout: { w: 2, h: 2, minW: 2, minH: 2 },
   },

@@ -11,6 +11,8 @@ export const dashboardKeys = {
   escalations: (filters?: TileFilters) => [...dashboardKeys.all, 'escalations', filters] as const,
   opportunities: (filters?: TileFilters) => [...dashboardKeys.all, 'opportunities', filters] as const,
   sentiment: (filters?: TileFilters) => [...dashboardKeys.all, 'sentiment', filters] as const,
+  sentimentTrend: (filters?: TileFilters) => [...dashboardKeys.all, 'sentimentTrend', filters] as const,
+  emailVolumeTrend: (filters?: TileFilters) => [...dashboardKeys.all, 'emailVolumeTrend', filters] as const,
 };
 
 // Shared query options for dashboard tiles
@@ -153,6 +155,11 @@ export interface SentimentData {
   pieData: Array<{ name: string; value: number }>
 }
 
+// Sentiment trend data (6 months)
+export interface SentimentTrendData {
+  trendData: Array<{ month: string; Positive: number; Neutral: number; Negative: number }>
+}
+
 /**
  * Hook for sentiment chart data
  * Uses /api/emails/sentiment-stats endpoint
@@ -185,6 +192,66 @@ export function useDashboardSentiment(filters?: TileFilters) {
           { name: 'Neutral', value: Math.round((stats.neutral / total) * 100) },
           { name: 'Negative', value: Math.round((stats.negative / total) * 100) },
         ],
+      };
+    },
+    ...DASHBOARD_QUERY_OPTIONS,
+  });
+}
+
+/**
+ * Hook for sentiment trend chart data (6 months)
+ * Uses /api/emails/sentiment-trend endpoint
+ */
+export function useDashboardSentimentTrend(filters?: TileFilters) {
+  return useQuery({
+    queryKey: dashboardKeys.sentimentTrend(filters),
+    queryFn: async (): Promise<SentimentTrendData> => {
+      const data = await api.getDashboardSentimentTrend({
+        customerId: filters?.customerId,
+      });
+
+      // Format month names for display (e.g., "2024-01" -> "Jan")
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      return {
+        trendData: data.map(item => {
+          const monthIndex = parseInt(item.month.split('-')[1], 10) - 1;
+          return {
+            month: monthNames[monthIndex],
+            Positive: item.positive,
+            Neutral: item.neutral,
+            Negative: item.negative,
+          };
+        }),
+      };
+    },
+    ...DASHBOARD_QUERY_OPTIONS,
+  });
+}
+
+// Email volume trend data (4 weeks)
+export interface EmailVolumeTrendData {
+  trendData: Array<{ week: string; 'Total Emails': number; Escalations: number }>
+}
+
+/**
+ * Hook for email volume trend chart data (4 weeks)
+ * Uses /api/emails/volume-trend endpoint
+ */
+export function useDashboardEmailVolumeTrend(filters?: TileFilters) {
+  return useQuery({
+    queryKey: dashboardKeys.emailVolumeTrend(filters),
+    queryFn: async (): Promise<EmailVolumeTrendData> => {
+      const data = await api.getDashboardEmailVolumeTrend({
+        customerId: filters?.customerId,
+      });
+
+      return {
+        trendData: data.map(item => ({
+          week: item.week,
+          'Total Emails': item.totalEmails,
+          Escalations: item.escalations,
+        })),
       };
     },
     ...DASHBOARD_QUERY_OPTIONS,

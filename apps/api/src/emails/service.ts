@@ -575,4 +575,30 @@ export class EmailService {
   ) {
     return this.emailRepo.getUpsellCountScoped(requestHeader, filters);
   }
+
+  /**
+   * Get sentiment trend data for dashboard with access control
+   * Returns monthly percentages over last 6 months
+   */
+  async getSentimentTrend(
+    requestHeader: RequestHeader,
+    filters?: {
+      customerId?: string;
+    }
+  ) {
+    return this.emailRepo.getSentimentTrendScoped(requestHeader, filters);
+  }
+
+  /**
+   * Get email volume trend data for dashboard with access control
+   * Returns weekly counts for last 4 weeks
+   */
+  async getEmailVolumeTrend(
+    requestHeader: RequestHeader,
+    filters?: {
+      customerId?: string;
+    }
+  ) {
+    return this.emailRepo.getEmailVolumeTrendScoped(requestHeader, filters);
+  }
 }

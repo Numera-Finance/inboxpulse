@@ -69,5 +69,7 @@ export {
   useDashboardEscalations,
   useDashboardOpportunities,
   useDashboardSentiment,
+  useDashboardSentimentTrend,
+  useDashboardEmailVolumeTrend,
   dashboardKeys,
 } from './use-dashboard';
