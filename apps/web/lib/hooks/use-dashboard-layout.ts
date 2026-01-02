@@ -33,7 +33,7 @@ export function useDashboardLayout() {
   const queryClient = useQueryClient()
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Fetch layout from API
+  // Fetch layout from API - backend handles merging missing tiles
   const { data: layouts, isLoading } = useQuery({
     queryKey: DASHBOARD_LAYOUT_KEY,
     queryFn: async () => {

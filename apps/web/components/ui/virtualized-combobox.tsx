@@ -99,7 +99,7 @@ export function VirtualizedCombobox({
           role="combobox"
           aria-expanded={open}
           disabled={disabled || isLoading}
-          className={cn("w-full justify-between bg-transparent", className)}
+          className={cn("justify-between bg-transparent", className)}
         >
           <span className="truncate">
             {isLoading ? (
@@ -112,9 +112,9 @@ export function VirtualizedCombobox({
             )}
           </span>
           {isLoading ? (
-            <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-50" />
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin opacity-50" />
           ) : (
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
           )}
         </Button>
       </PopoverTrigger>

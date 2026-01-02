@@ -278,6 +278,61 @@ export class TaskRepository extends ScopedRepository {
   }
 
   // ===========================================================================
+  // Dashboard Operations
+  // ===========================================================================
+
+  /**
+   * Get recent escalations for dashboard tile
+   * Returns open tasks ordered by most recent, with customer and assignee info
+   */
+  async getRecentEscalationsScoped(
+    header: RequestHeader,
+    options?: {
+      customerId?: string;
+      limit?: number;
+    }
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    customerName: string | null;
+    customerId: string;
+    assignedToName: string | null;
+    assignedToId: string | null;
+    createdAt: Date;
+  }>> {
+    const conditions: SQL[] = [
+      this.tenantFilter(tasks.tenantId, header),
+      eq(tasks.status, TaskStatus.OPEN),
+    ];
+
+    // Add customer filter if provided
+    if (options?.customerId) {
+      conditions.push(eq(tasks.customerId, options.customerId));
+    }
+
+    const limit = options?.limit || 100;
+
+    const result = await this.db
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        customerName: customers.name,
+        customerId: tasks.customerId,
+        assignedToName: sql<string>`CONCAT(${users.firstName}, ' ', LEFT(${users.lastName}, 1), '.')`.as('assignedToName'),
+        assignedToId: tasks.assignedToId,
+        createdAt: tasks.createdAt,
+      })
+      .from(tasks)
+      .leftJoin(customers, eq(tasks.customerId, customers.id))
+      .leftJoin(users, eq(tasks.assignedToId, users.id))
+      .where(and(...conditions))
+      .orderBy(desc(tasks.createdAt))
+      .limit(limit);
+
+    return result;
+  }
+
+  // ===========================================================================
   // Comment Operations
   // ===========================================================================
 

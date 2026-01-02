@@ -67,6 +67,7 @@ export {
   useDashboardCustomers,
   useDashboardEmails,
   useDashboardEscalations,
+  useDashboardEscalationsTable,
   useDashboardOpportunities,
   useDashboardSentiment,
   useDashboardSentimentTrend,

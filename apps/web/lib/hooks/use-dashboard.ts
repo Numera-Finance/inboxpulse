@@ -9,6 +9,7 @@ export const dashboardKeys = {
   customers: (filters?: TileFilters) => [...dashboardKeys.all, 'customers', filters] as const,
   emails: (filters?: TileFilters) => [...dashboardKeys.all, 'emails', filters] as const,
   escalations: (filters?: TileFilters) => [...dashboardKeys.all, 'escalations', filters] as const,
+  escalationsTable: (filters?: TileFilters) => [...dashboardKeys.all, 'escalationsTable', filters] as const,
   opportunities: (filters?: TileFilters) => [...dashboardKeys.all, 'opportunities', filters] as const,
   sentiment: (filters?: TileFilters) => [...dashboardKeys.all, 'sentiment', filters] as const,
   sentimentTrend: (filters?: TileFilters) => [...dashboardKeys.all, 'sentimentTrend', filters] as const,
@@ -253,6 +254,43 @@ export function useDashboardEmailVolumeTrend(filters?: TileFilters) {
           Escalations: item.escalations,
         })),
       };
+    },
+    ...DASHBOARD_QUERY_OPTIONS,
+  });
+}
+
+/**
+ * Hook for escalations table dashboard tile
+ * Uses task search API to get open escalations sorted by recency
+ */
+export function useDashboardEscalationsTable(filters?: TileFilters) {
+  return useQuery({
+    queryKey: dashboardKeys.escalationsTable(filters),
+    queryFn: async () => {
+      const request: api.TaskSearchRequest = {
+        status: 'open',
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+        limit: 100,
+        offset: 0,
+      };
+
+      // Add filters
+      if (filters?.customerId) {
+        request.customerId = filters.customerId;
+      }
+      if (filters?.userId) {
+        request.assignedToId = filters.userId;
+      }
+      if (filters?.dateFrom) {
+        request.dateFrom = filters.dateFrom;
+      }
+      if (filters?.dateTo) {
+        request.dateTo = filters.dateTo;
+      }
+
+      const result = await api.searchTasks(request);
+      return result.items;
     },
     ...DASHBOARD_QUERY_OPTIONS,
   });

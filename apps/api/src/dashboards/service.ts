@@ -18,6 +18,7 @@ const TILE_DEFINITIONS = [
   { id: 'sentiment', w: 2, h: 2, minW: 2, minH: 2 },
   { id: 'sentiment-trend', w: 2, h: 2, minW: 2, minH: 2 },
   { id: 'email-volume', w: 2, h: 2, minW: 2, minH: 2 },
+  { id: 'escalations-table', w: 2, h: 2, minW: 2, minH: 2 },
 ];
 
 const BREAKPOINTS = { lg: 1200, md: 996, sm: 768, xs: 480 };
@@ -72,6 +73,57 @@ function generateDefaultLayouts(): DashboardLayoutConfig {
   };
 }
 
+/**
+ * Merge saved layout with tile definitions, adding any new tiles
+ * that aren't in the saved layout with proper positioning
+ */
+function mergeMissingTiles(savedConfig: DashboardLayoutConfig): DashboardLayoutConfig {
+  const tileIds = TILE_DEFINITIONS.map(t => t.id);
+  const result: DashboardLayoutConfig = {};
+
+  for (const [breakpoint, savedLayout] of Object.entries(savedConfig)) {
+    const cols = COLS[breakpoint as keyof typeof COLS] || 4;
+    const existingIds = new Set(savedLayout.map(l => l.i));
+    const mergedLayout = [...savedLayout];
+
+    // Find max Y position to place new tiles below existing ones
+    let maxY = 0;
+    for (const layout of savedLayout) {
+      maxY = Math.max(maxY, layout.y + layout.h);
+    }
+
+    // Add missing tiles
+    let currentX = 0;
+    for (const tileDef of TILE_DEFINITIONS) {
+      if (!existingIds.has(tileDef.id)) {
+        const w = Math.min(tileDef.w, cols);
+
+        // Wrap to next row if needed
+        if (currentX + w > cols) {
+          currentX = 0;
+          maxY += 2;
+        }
+
+        mergedLayout.push({
+          i: tileDef.id,
+          x: currentX,
+          y: maxY,
+          w,
+          h: tileDef.h,
+          minW: tileDef.minW ? Math.min(tileDef.minW, cols) : undefined,
+          minH: tileDef.minH,
+        });
+
+        currentX += w;
+      }
+    }
+
+    result[breakpoint] = mergedLayout;
+  }
+
+  return result;
+}
+
 @injectable()
 export class DashboardService {
   constructor(
@@ -81,12 +133,14 @@ export class DashboardService {
   /**
    * Get dashboard config for the current user
    * Creates default config lazily if none exists
+   * Merges in any new tiles that aren't in the saved layout
    */
   async getConfig(requestHeader: RequestHeader): Promise<DashboardLayoutConfig> {
     const config = await this.dashboardRepo.findByUser(requestHeader.tenantId, requestHeader.userId);
 
     if (config) {
-      return config;
+      // Merge any new tiles that aren't in the saved layout
+      return mergeMissingTiles(config);
     }
 
     // Create default config lazily
