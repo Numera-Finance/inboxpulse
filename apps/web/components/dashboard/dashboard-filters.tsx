@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { format, subDays, startOfDay, endOfDay } from "date-fns"
-import { CalendarIcon, RotateCcw, Building2 } from "lucide-react"
+import { CalendarIcon, X } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -160,15 +160,12 @@ export function DashboardFilters({
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
       {/* Customer Filter */}
-      <div className="flex items-center gap-2">
-        <Building2 className="h-4 w-4 text-muted-foreground hidden sm:block" />
-        <CustomerAutocomplete
-          value={filters.customerId || null}
-          onChange={handleCustomerChange}
-          placeholder="All Customers"
-          className="w-[200px]"
-        />
-      </div>
+      <CustomerAutocomplete
+        value={filters.customerId || null}
+        onChange={handleCustomerChange}
+        placeholder="All Customers"
+        className="w-[200px]"
+      />
 
       {/* User Filter */}
       <UserSelect
@@ -229,8 +226,8 @@ export function DashboardFilters({
           onClick={handleReset}
           className="text-muted-foreground"
         >
-          <RotateCcw className="h-4 w-4 mr-1" />
-          Reset
+          <X className="h-4 w-4 mr-1" />
+          Clear Filters
         </Button>
       )}
     </div>

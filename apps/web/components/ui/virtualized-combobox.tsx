@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandInput, CommandEmpty } from "@/components/ui/command"
+import type { LucideIcon } from "lucide-react"
 
 export interface ComboboxItem {
   value: string
@@ -24,6 +25,7 @@ interface VirtualizedComboboxProps {
   disabled?: boolean
   className?: string
   isLoading?: boolean
+  icon?: LucideIcon // Optional icon to show inside the button
 }
 
 export function VirtualizedCombobox({
@@ -36,6 +38,7 @@ export function VirtualizedCombobox({
   disabled = false,
   className,
   isLoading = false,
+  icon: Icon,
 }: VirtualizedComboboxProps) {
   const [open, setOpen] = React.useState(false)
   const [search, setSearch] = React.useState("")
@@ -101,20 +104,23 @@ export function VirtualizedCombobox({
           disabled={disabled || isLoading}
           className={cn("justify-between bg-transparent", className)}
         >
-          <span className="truncate">
-            {isLoading ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-muted-foreground">Loading...</span>
-              </span>
-            ) : (
-              selectedItem ? selectedItem.label : placeholder
-            )}
-          </span>
+          <div className="flex items-center gap-2 truncate">
+            {Icon && <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />}
+            <span className="truncate">
+              {isLoading ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-muted-foreground">Loading...</span>
+                </span>
+              ) : (
+                selectedItem ? selectedItem.label : placeholder
+              )}
+            </span>
+          </div>
           {isLoading ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin opacity-50" />
+            <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-50" />
           ) : (
-            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           )}
         </Button>
       </PopoverTrigger>

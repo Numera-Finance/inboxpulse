@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { Building2 } from "lucide-react"
 import { VirtualizedCombobox, type ComboboxItem } from "./virtualized-combobox"
 import { useCustomers } from "@/lib/hooks"
 
@@ -110,6 +111,7 @@ export function CustomerAutocomplete({
       disabled={disabled || !!error}
       className={className}
       isLoading={isLoading}
+      icon={Building2}
     />
   )
 }

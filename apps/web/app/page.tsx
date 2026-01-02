@@ -3,11 +3,20 @@
 import { useCallback, useMemo, useState, useEffect } from "react"
 import { useSearchParams } from "react-router-dom"
 import { subDays, startOfDay, endOfDay } from "date-fns"
-import { RotateCcw } from "lucide-react"
+import { RefreshCw, MoreVertical } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
-import { DashboardGrid, useDashboardLayout } from "@/components/dashboard/dashboard-grid"
+import { DashboardGrid } from "@/components/dashboard/dashboard-grid"
 import { DashboardFilters } from "@/components/dashboard/dashboard-filters"
+import { useDashboardLayout } from "@/lib/hooks/use-dashboard-layout"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { useQueryClient } from "@tanstack/react-query"
+import { dashboardKeys } from "@/lib/hooks"
 import type { TileFilters } from "@/components/dashboard/tiles"
 
 // Debounce delay for filter changes
@@ -15,7 +24,8 @@ const DEBOUNCE_MS = 500
 
 export default function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const { resetLayout } = useDashboardLayout()
+  const queryClient = useQueryClient()
+  const { layouts, isLoading: layoutsLoading, handleLayoutChange, resetLayout } = useDashboardLayout()
 
   // Parse filters from URL
   const filtersFromUrl = useMemo<TileFilters>(() => {
@@ -86,33 +96,51 @@ export default function DashboardPage() {
       <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <div>
+          <div>
+            <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-              <p className="text-muted-foreground">
-                Enterprise-wide email intelligence and customer insights
-              </p>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => queryClient.invalidateQueries({ queryKey: dashboardKeys.all })}
+                title="Refresh data"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={resetLayout}
-              className="h-8"
-              title="Reset layout to default"
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
+            <p className="text-muted-foreground">
+              Enterprise-wide email intelligence and customer insights
+            </p>
           </div>
 
           {/* Filters */}
-          <DashboardFilters
-            filters={filters}
-            onFiltersChange={handleFiltersChange}
-          />
+          <div className="flex items-center gap-2">
+            <DashboardFilters
+              filters={filters}
+              onFiltersChange={handleFiltersChange}
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" title="More options">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => resetLayout()}>
+                  Reset Layout
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         {/* Grid Layout - uses debounced filters for API calls */}
-        <DashboardGrid filters={debouncedFilters} />
+        <DashboardGrid
+          filters={debouncedFilters}
+          layouts={layouts}
+          isLoading={layoutsLoading}
+          onLayoutChange={handleLayoutChange}
+        />
       </div>
     </AppShell>
   )

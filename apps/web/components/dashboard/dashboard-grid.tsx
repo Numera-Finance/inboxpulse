@@ -1,7 +1,7 @@
 "use client"
 
 import { ResponsiveGridLayout, useContainerWidth } from "react-grid-layout"
-import { useDashboardLayout, BREAKPOINTS, COLS } from "@/lib/hooks/use-dashboard-layout"
+import { BREAKPOINTS, COLS } from "@/lib/hooks/use-dashboard-layout"
 import {
   TILE_DEFINITIONS,
   StatTile,
@@ -10,16 +10,23 @@ import {
   type ChartTileConfig,
 } from "./tiles"
 import { Skeleton } from "@/components/ui/skeleton"
+import type { Layout } from "react-grid-layout"
 
 import "react-grid-layout/css/styles.css"
 import "react-resizable/css/styles.css"
 
-interface DashboardGridProps {
-  filters?: TileFilters
+interface Layouts {
+  [breakpoint: string]: Layout[]
 }
 
-export function DashboardGrid({ filters }: DashboardGridProps) {
-  const { layouts, isLoading, handleLayoutChange } = useDashboardLayout()
+interface DashboardGridProps {
+  filters?: TileFilters
+  layouts: Layouts | null
+  isLoading: boolean
+  onLayoutChange: (currentLayout: Layout[], allLayouts: Layouts) => void
+}
+
+export function DashboardGrid({ filters, layouts, isLoading, onLayoutChange }: DashboardGridProps) {
 
   // v2 hook returns { width, mounted, containerRef }
   const { width, mounted, containerRef } = useContainerWidth({
@@ -52,7 +59,7 @@ export function DashboardGrid({ filters }: DashboardGridProps) {
           cols={COLS}
           rowHeight={150}
           width={width}
-          onLayoutChange={handleLayoutChange}
+          onLayoutChange={onLayoutChange}
           draggableHandle=".tile-drag-handle"
           isResizable={true}
           isDraggable={true}
@@ -92,5 +99,3 @@ function ChartTileRenderer({
   return <Component filters={filters} />
 }
 
-// Export resetLayout for use in parent components
-export { useDashboardLayout }
