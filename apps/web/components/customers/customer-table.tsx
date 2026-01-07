@@ -166,7 +166,7 @@ export function CustomerTable({ customers, onSelect }: CustomerTableProps) {
           className="p-0 hover:bg-transparent justify-start"
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
         >
-          Last Contact
+          Last Email
           <ArrowUpDown className="ml-2 h-3 w-3" />
         </Button>
       ),

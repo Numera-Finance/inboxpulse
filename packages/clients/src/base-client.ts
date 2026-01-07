@@ -114,6 +114,16 @@ export class BaseClient {
         throw new NotFoundError(message);
       }
 
+      // Handle 401 Unauthorized - redirect to login in browser
+      if (response.status === 401 && isBrowser) {
+        console.log('Session expired. Redirecting to login.');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const win = globalThis as any;
+        if (win.location?.pathname !== '/login') {
+          win.location.href = '/login';
+        }
+      }
+
       throw new HttpError(message, response.status);
     }
 

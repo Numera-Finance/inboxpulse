@@ -233,12 +233,12 @@ ${escalation.customerName}`,
               </div>
             </div>
 
-            <div className="pl-[52px]">
+            <div className="pl-[52px] overflow-hidden">
               <div className="text-sm text-muted-foreground mb-4">
                 <span>To: {emailContent.to}</span>
               </div>
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0">
+              <div className="prose prose-sm dark:prose-invert max-w-full overflow-hidden">
+                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0 break-words">
                   {emailContent.body}
                 </pre>
               </div>
