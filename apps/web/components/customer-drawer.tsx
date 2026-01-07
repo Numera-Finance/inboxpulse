@@ -46,9 +46,11 @@ interface CustomerDrawerProps {
   activeTab?: "emails" | "contacts" | "team"
   onTabChange?: (tab: string) => void
   isLoading?: boolean
+  selectedEmailId?: string
+  onEmailSelect?: (emailId: string | null) => void
 }
 
-export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false }: CustomerDrawerProps) {
+export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect }: CustomerDrawerProps) {
   // Track visibility separately from open to allow exit animation
   const [isVisible, setIsVisible] = React.useState(open)
   const [shouldRender, setShouldRender] = React.useState(open)
@@ -264,8 +266,8 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         return apiEmailToInboxContent(email)
       },
       onSelect: (item: InboxItem) => {
-        // Optional: track selection externally
-        console.log("Selected email:", item.id)
+        // Update URL when email is selected
+        onEmailSelect?.(item.id)
       },
       onReply: (item: InboxItem) => {
         // Convert API email to frontend Email type for the drawer
@@ -300,7 +302,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         }
       },
     }
-  }, [customer, emails])
+  }, [customer, emails, onEmailSelect])
 
   // Contact handlers - must be before contactColumns useMemo
   const handleStartEdit = (contact: ContactDisplay) => {
@@ -945,6 +947,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                       embedded: true,
                     }}
                     callbacks={emailCallbacks}
+                    initialSelectedId={selectedEmailId}
                     sentimentFilter={emailSentimentFilter}
                     onSentimentFilterChange={setEmailSentimentFilter}
                   />

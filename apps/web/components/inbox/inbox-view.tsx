@@ -46,6 +46,7 @@ export function InboxView({
   config,
   callbacks,
   initialFilter,
+  initialSelectedId,
   selectedItem: controlledSelectedItem,
   sentimentFilter: controlledSentimentFilter,
   onSentimentFilterChange,
@@ -246,12 +247,33 @@ export function InboxView({
     }
   }, [])
 
-  // Auto-select first item when items load and nothing is selected
+  // Auto-select item when items load - prefer initialSelectedId, then first item
   React.useEffect(() => {
     if (items.length > 0 && !controlledSelectedItem && !internalSelectedItem) {
+      // If initialSelectedId is provided, try to find and select that item
+      if (initialSelectedId) {
+        const targetItem = items.find(i => i.id === initialSelectedId)
+        if (targetItem) {
+          handleSelectItem(targetItem)
+          return
+        }
+      }
+      // Fall back to first item
       handleSelectItem(items[0])
     }
-  }, [items, controlledSelectedItem, internalSelectedItem, handleSelectItem])
+  }, [items, controlledSelectedItem, internalSelectedItem, handleSelectItem, initialSelectedId])
+
+  // Handle external URL changes (e.g., when user pastes a bookmarked link)
+  // This runs when initialSelectedId changes and we have items loaded
+  React.useEffect(() => {
+    if (initialSelectedId && items.length > 0 && internalSelectedItem?.id !== initialSelectedId) {
+      const targetItem = items.find(i => i.id === initialSelectedId)
+      if (targetItem) {
+        setInternalSelectedItem(targetItem)
+        // Don't call handleSelectItem here to avoid infinite loop with onSelect callback
+      }
+    }
+  }, [initialSelectedId, items, internalSelectedItem?.id])
 
   // Handle refresh
   const handleRefresh = () => {

@@ -39,7 +39,7 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function CustomersPage() {
-  const { customerId, tab } = useParams<{ customerId?: string; tab?: string }>()
+  const { customerId, tab, emailId } = useParams<{ customerId?: string; tab?: string; emailId?: string }>()
   const navigate = useNavigate()
 
   const [view, setView] = React.useState<"grid" | "table">("table")
@@ -108,6 +108,14 @@ export default function CustomersPage() {
   const handleTabChange = (newTab: string) => {
     if (customerId) {
       navigate(`/customers/${customerId}/${newTab}`)
+    }
+  }
+
+  const handleEmailSelect = (selectedEmailId: string | null) => {
+    if (customerId && selectedEmailId) {
+      navigate(`/customers/${customerId}/emails/${selectedEmailId}`, { replace: true })
+    } else if (customerId) {
+      navigate(`/customers/${customerId}/emails`, { replace: true })
     }
   }
 
@@ -239,6 +247,8 @@ export default function CustomersPage() {
           activeTab={tab === 'contacts' ? 'contacts' : tab === 'team' ? 'team' : 'emails'}
           onTabChange={handleTabChange}
           isLoading={Boolean(customerId) && !selectedCustomer && isLoadingCustomer}
+          selectedEmailId={emailId}
+          onEmailSelect={handleEmailSelect}
         />
 
         <AddCustomerDrawer

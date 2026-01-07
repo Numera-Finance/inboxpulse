@@ -439,6 +439,9 @@ export interface InboxViewProps {
   /** Initial filter state */
   initialFilter?: InboxFilter;
 
+  /** Initial selected item ID - used to auto-select an item when the view loads */
+  initialSelectedId?: string;
+
   /** External selected item (controlled mode) */
   selectedItem?: InboxItem | null;
 

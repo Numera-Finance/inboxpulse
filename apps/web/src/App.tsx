@@ -44,6 +44,14 @@ export default function App() {
         }
       />
       <Route
+        path="/customers/:customerId/emails/:emailId"
+        element={
+          <ProtectedRoute>
+            <CustomersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/users"
         element={
           <ProtectedRoute>
