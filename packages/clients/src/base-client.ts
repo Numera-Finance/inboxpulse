@@ -121,6 +121,9 @@ export class BaseClient {
         const win = globalThis as any;
         if (win.location?.pathname !== '/login') {
           win.location.href = '/login';
+          // Return a never-resolving promise to prevent further execution
+          // while the browser navigates to login
+          return new Promise(() => {}) as T;
         }
       }
 

@@ -2,8 +2,9 @@
 
 import * as React from "react"
 import { formatDistanceToNow } from "date-fns"
-import { MessageSquare, Send, Loader2 } from "lucide-react"
+import { MessageSquare, Send, Loader2, ChevronDown } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
@@ -191,6 +192,8 @@ export function TaskComments({ taskId, className }: TaskCommentsProps) {
 
 /**
  * TaskCommentsBadge - Small badge showing comment count with click-to-scroll
+ *
+ * Shows visual affordance to indicate it's clickable (unlike status/priority badges)
  */
 export function TaskCommentsBadge({
   taskId,
@@ -200,17 +203,24 @@ export function TaskCommentsBadge({
   onClick?: () => void
 }) {
   const { data: comments = [] } = useTaskComments(taskId)
-
-  if (comments.length === 0) return null
+  const hasComments = comments.length > 0
 
   return (
     <Badge
       variant="outline"
-      className="text-xs cursor-pointer hover:bg-muted"
+      className={cn(
+        "text-xs cursor-pointer transition-colors",
+        "hover:bg-primary/10 hover:border-primary hover:text-primary",
+        !hasComments && "border-dashed border-muted-foreground/50"
+      )}
       onClick={onClick}
     >
       <MessageSquare className="mr-1 h-3 w-3" />
-      {comments.length} {comments.length === 1 ? 'Comment' : 'Comments'}
+      {hasComments
+        ? `${comments.length} ${comments.length === 1 ? 'Comment' : 'Comments'}`
+        : 'Add comment'
+      }
+      <ChevronDown className="ml-1 h-3 w-3 opacity-50" />
     </Badge>
   )
 }

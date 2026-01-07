@@ -21,9 +21,11 @@ import {
   TaskComments,
   TaskCommentsBadge,
   TaskMetaInfo,
+  QuickCommentPopover,
   TASK_COMMENTS_ID,
   type TaskFilter,
 } from "@/components/tasks"
+import { useToast } from "@/hooks/use-toast"
 import {
   useTask,
   useAssignableUsers,
@@ -41,6 +43,7 @@ export default function EscalationsPage() {
   const { taskId: taskIdFromUrl } = useParams<{ taskId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
+  const { toast } = useToast()
 
   // Get current user ID for "Me" filter
   const { user } = useAuth()
@@ -246,6 +249,26 @@ export default function EscalationsPage() {
     [markDone, queryClient]
   )
 
+  // Handle mark done with comment check - requires at least one comment
+  const handleDoneWithCommentCheck = React.useCallback(
+    async (itemId: string) => {
+      const taskClient = getTaskClient()
+      const comments = await taskClient.getComments(itemId)
+
+      if (comments.length === 0) {
+        toast({
+          title: "Comment required",
+          description: "Please add a comment before marking this task as done.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      await handleResolve(itemId)
+    },
+    [handleResolve, toast]
+  )
+
   // Handle filter changes - sync to URL params
   const handleFiltersChange = React.useCallback((newFilters: TaskFilter) => {
     setSearchParams((prev) => {
@@ -333,15 +356,18 @@ export default function EscalationsPage() {
   // Memoize render functions to prevent re-renders
   const renderHeaderActions = React.useCallback((item: InboxItem) => (
     item.status !== "resolved" ? (
-      <Button
-        className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
-        onClick={() => handleResolve(item.id)}
-      >
-        <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
-        Done
-      </Button>
+      <div className="flex items-center gap-2">
+        <QuickCommentPopover taskId={item.id} />
+        <Button
+          className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
+          onClick={() => handleDoneWithCommentCheck(item.id)}
+        >
+          <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
+          Done
+        </Button>
+      </div>
     ) : null
-  ), [handleResolve])
+  ), [handleDoneWithCommentCheck])
 
   // Scroll to comments section when badge is clicked
   const scrollToComments = React.useCallback(() => {
