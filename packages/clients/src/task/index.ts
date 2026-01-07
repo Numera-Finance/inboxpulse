@@ -4,6 +4,8 @@ export type {
   TaskComment,
   TaskSearchRequest,
   TaskSearchResponse,
+  TaskExportRequest,
+  TaskWithComments,
   CreateTaskRequest,
   AssignableUser,
   TaskStatusType,

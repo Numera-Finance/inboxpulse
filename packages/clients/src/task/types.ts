@@ -95,3 +95,21 @@ export interface AssignableUser {
   id: string;
   name: string;
 }
+
+/**
+ * Export request for tasks (no pagination limit)
+ */
+export interface TaskExportRequest {
+  status?: 'open' | 'done';
+  assignedToId?: string;
+  customerId?: string;
+  dateFrom?: Date | string;
+  dateTo?: Date | string;
+}
+
+/**
+ * Task with comments for export
+ */
+export interface TaskWithComments extends Task {
+  comments: TaskComment[];
+}

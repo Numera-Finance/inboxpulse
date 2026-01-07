@@ -29,6 +29,14 @@ export const taskSearchRequestSchema = z.object({
   dateTo: z.string().optional(),
 });
 
+export const taskExportRequestSchema = z.object({
+  status: z.enum(['open', 'done']).optional(),
+  assignedToId: z.string().optional(),
+  customerId: z.string().uuid().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});
+
 export const createTaskRequestSchema = z.object({
   customerId: z.string().uuid(),
   title: z.string().min(1).max(500),
@@ -49,6 +57,7 @@ export const addCommentRequestSchema = z.object({
 // =============================================================================
 
 export type TaskSearchRequest = z.infer<typeof taskSearchRequestSchema>;
+export type TaskExportRequest = z.infer<typeof taskExportRequestSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type ReassignTaskRequest = z.infer<typeof reassignTaskRequestSchema>;
 export type AddCommentRequest = z.infer<typeof addCommentRequestSchema>;
@@ -135,6 +144,39 @@ export class TaskService {
       limit: request.limit || 20,
       offset: request.offset || 0,
     };
+  }
+
+  /**
+   * Export tasks with comments - no pagination limit
+   */
+  async exportWithComments(
+    header: RequestHeader,
+    request: TaskExportRequest
+  ): Promise<Array<TaskWithRelations & { comments: Array<{ userName: string; content: string }> }>> {
+    const status = request.status === 'open' ? TaskStatus.OPEN
+      : request.status === 'done' ? TaskStatus.DONE
+        : undefined;
+
+    const dateFrom = request.dateFrom ? new Date(request.dateFrom) : undefined;
+    const dateTo = request.dateTo ? new Date(request.dateTo) : undefined;
+
+    logger.info({ request, status, dateFrom, dateTo }, 'Export request');
+
+    const result = await this.taskRepository.exportWithComments(header, {
+      status,
+      assignedToId: request.assignedToId,
+      customerId: request.customerId,
+      dateFrom,
+      dateTo,
+    });
+
+    logger.info({
+      totalTasks: result.length,
+      tasksWithComments: result.filter(t => t.comments.length > 0).length,
+      totalComments: result.reduce((sum, t) => sum + t.comments.length, 0),
+    }, 'Export result');
+
+    return result;
   }
 
   /**

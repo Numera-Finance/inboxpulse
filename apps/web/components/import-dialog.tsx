@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { Upload, FileText, X, Download, AlertCircle, CheckCircle2 } from "lucide-react"
+import * as XLSX from "xlsx"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -78,23 +79,34 @@ function parseCSVLine(line: string): string[] {
   return result
 }
 
-function generateTemplate(entityType: "customers" | "users" | "employees"): string {
+function generateTemplateXLSX(entityType: "customers" | "users" | "employees"): Blob {
   // Normalize "employees" to "users"
   const normalizedType = entityType === "employees" ? "users" : entityType
   const columns = templateColumns[normalizedType as keyof typeof templateColumns] || templateColumns.users
   const examples = templateExamples[normalizedType as keyof typeof templateExamples] || templateExamples.users
 
-  const header = columns.join(",")
-  const rows = examples.map((ex) =>
-    columns
-      .map((col) => {
-        const val = ex[col as keyof typeof ex] || ""
-        return val.includes(",") ? `"${val}"` : val
-      })
-      .join(","),
-  )
+  // Convert examples to array of objects with proper column names
+  const data = examples.map((ex) => {
+    const row: Record<string, string> = {}
+    columns.forEach((col) => {
+      row[col] = ex[col as keyof typeof ex] || ""
+    })
+    return row
+  })
 
-  return [header, ...rows].join("\n")
+  const worksheet = XLSX.utils.json_to_sheet(data)
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Template")
+
+  const xlsxBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" })
+  return new Blob([xlsxBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+}
+
+function parseXLSX(buffer: ArrayBuffer): Record<string, string>[] {
+  const workbook = XLSX.read(buffer, { type: "array" })
+  const firstSheetName = workbook.SheetNames[0]
+  const worksheet = workbook.Sheets[firstSheetName]
+  return XLSX.utils.sheet_to_json<Record<string, string>>(worksheet, { defval: "" })
 }
 
 export function ImportDialog({ open, onClose, onImport, entityType }: ImportDialogProps) {
@@ -133,14 +145,24 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
   const processFile = async (file: File) => {
     setError(null)
 
-    if (!file.name.endsWith(".csv")) {
-      setError("Please upload a CSV file")
+    const isCSV = file.name.endsWith(".csv")
+    const isXLS = file.name.endsWith(".xls") || file.name.endsWith(".xlsx")
+
+    if (!isCSV && !isXLS) {
+      setError("Please upload a CSV or Excel file")
       return
     }
 
     try {
-      const text = await file.text()
-      const data = parseCSV(text)
+      let data: Record<string, string>[]
+
+      if (isCSV) {
+        const text = await file.text()
+        data = parseCSV(text)
+      } else {
+        const buffer = await file.arrayBuffer()
+        data = parseXLSX(buffer)
+      }
 
       if (data.length === 0) {
         setError("No valid records found in the file")
@@ -155,13 +177,12 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
   }
 
   const handleDownloadTemplate = () => {
-    const template = generateTemplate(entityType)
-    const blob = new Blob([template], { type: "text/csv" })
+    const blob = generateTemplateXLSX(entityType)
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
     const normalizedType = entityType === "employees" ? "users" : entityType
-    a.download = `${normalizedType}-template.csv`
+    a.download = `${normalizedType}-template.xlsx`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -193,7 +214,7 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
         <DialogHeader>
           <DialogTitle>Import {entityType === "customers" ? "Customers" : "Users"}</DialogTitle>
           <DialogDescription>
-            Upload a CSV file to import {entityType === "customers" ? "customers" : "users"}. Download the template to see the required format.
+            Upload a CSV or Excel file to import {entityType === "customers" ? "customers" : "users"}. Download the template to see the required format.
           </DialogDescription>
         </DialogHeader>
 
@@ -215,9 +236,9 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
               onClick={() => fileInputRef.current?.click()}
             >
               <Upload className="h-10 w-10 mx-auto text-muted-foreground mb-4" />
-              <p className="text-sm font-medium">Drag and drop your CSV file here</p>
-              <p className="text-xs text-muted-foreground mt-1">or click to browse</p>
-              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelect} />
+              <p className="text-sm font-medium">Drag and drop your file here</p>
+              <p className="text-xs text-muted-foreground mt-1">CSV or Excel (.xlsx, .xls)</p>
+              <input ref={fileInputRef} type="file" accept=".csv,.xls,.xlsx" className="hidden" onChange={handleFileSelect} />
             </div>
           ) : (
             <div className="border rounded-lg p-4">

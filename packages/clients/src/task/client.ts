@@ -5,6 +5,8 @@ import type {
   TaskComment,
   TaskSearchRequest,
   TaskSearchResponse,
+  TaskExportRequest,
+  TaskWithComments,
   CreateTaskRequest,
   AssignableUser,
 } from './types';
@@ -129,6 +131,19 @@ export class TaskClient extends BaseClient {
   async getAssignableUsers(signal?: AbortSignal): Promise<AssignableUser[]> {
     const response = await this.get<ApiResponse<AssignableUser[]>>(
       '/api/tasks/assignable-users',
+      signal
+    );
+
+    return response?.data || [];
+  }
+
+  /**
+   * Export tasks with comments (no pagination limit)
+   */
+  async exportWithComments(request: TaskExportRequest, signal?: AbortSignal): Promise<TaskWithComments[]> {
+    const response = await this.post<ApiResponse<TaskWithComments[]>>(
+      '/api/tasks/export',
+      request,
       signal
     );
 

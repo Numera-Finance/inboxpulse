@@ -61,6 +61,69 @@ export class TaskRepository extends ScopedRepository {
   }
 
   // ===========================================================================
+  // Shared Filter Building
+  // ===========================================================================
+
+  /**
+   * Build common filter conditions for task queries
+   */
+  private buildTaskFilters(
+    header: RequestHeader,
+    options: {
+      status?: number;
+      assignedToId?: string;
+      customerId?: string;
+      search?: string;
+      dateFrom?: Date;
+      dateTo?: Date;
+    }
+  ): SQL[] {
+    const conditions: SQL[] = [
+      this.tenantFilter(tasks.tenantId, header),
+      this.userAccessFilter(tasks.assignedToId, header),
+    ];
+
+    if (options.status !== undefined) {
+      conditions.push(eq(tasks.status, options.status));
+    }
+
+    if (options.assignedToId !== undefined) {
+      if (options.assignedToId === 'unassigned') {
+        conditions.push(sql`${tasks.assignedToId} IS NULL`);
+      } else {
+        conditions.push(eq(tasks.assignedToId, options.assignedToId));
+      }
+    }
+
+    if (options.customerId) {
+      conditions.push(eq(tasks.customerId, options.customerId));
+    }
+
+    if (options.search) {
+      const searchCondition = this.buildFreeformSearch(options.search);
+      if (searchCondition) {
+        conditions.push(searchCondition);
+      }
+    }
+
+    if (options.dateFrom) {
+      const dateFromStr = options.dateFrom instanceof Date
+        ? options.dateFrom.toISOString()
+        : options.dateFrom;
+      conditions.push(sql`${tasks.createdAt} >= ${dateFromStr}`);
+    }
+
+    if (options.dateTo) {
+      const dateToStr = options.dateTo instanceof Date
+        ? options.dateTo.toISOString()
+        : options.dateTo;
+      conditions.push(sql`${tasks.createdAt} <= ${dateToStr}`);
+    }
+
+    return conditions;
+  }
+
+  // ===========================================================================
   // Task CRUD Operations
   // ===========================================================================
 
@@ -142,50 +205,7 @@ export class TaskRepository extends ScopedRepository {
       dateTo?: Date;
     }
   ): Promise<{ items: TaskWithRelations[]; total: number }> {
-    const conditions: SQL[] = [
-      this.tenantFilter(tasks.tenantId, header),
-      this.userAccessFilter(tasks.assignedToId, header),
-    ];
-
-    if (options.status !== undefined) {
-      conditions.push(eq(tasks.status, options.status));
-    }
-
-    if (options.assignedToId !== undefined) {
-      if (options.assignedToId === 'unassigned') {
-        conditions.push(sql`${tasks.assignedToId} IS NULL`);
-      } else {
-        conditions.push(eq(tasks.assignedToId, options.assignedToId));
-      }
-    }
-
-    if (options.customerId) {
-      conditions.push(eq(tasks.customerId, options.customerId));
-    }
-
-    if (options.search) {
-      const searchCondition = this.buildFreeformSearch(options.search);
-      if (searchCondition) {
-        conditions.push(searchCondition);
-      }
-    }
-
-    if (options.dateFrom) {
-      // Convert Date to ISO string for postgres driver compatibility
-      const dateFromStr = options.dateFrom instanceof Date
-        ? options.dateFrom.toISOString()
-        : options.dateFrom;
-      conditions.push(sql`${tasks.createdAt} >= ${dateFromStr}`);
-    }
-
-    if (options.dateTo) {
-      // Convert Date to ISO string for postgres driver compatibility
-      const dateToStr = options.dateTo instanceof Date
-        ? options.dateTo.toISOString()
-        : options.dateTo;
-      conditions.push(sql`${tasks.createdAt} <= ${dateToStr}`);
-    }
-
+    const conditions = this.buildTaskFilters(header, options);
     const where = and(...conditions);
 
     // Determine sort
@@ -385,6 +405,92 @@ export class TaskRepository extends ScopedRepository {
       userId: header.userId,
       content,
     });
+  }
+
+  // ===========================================================================
+  // Export Operations
+  // ===========================================================================
+
+  /**
+   * Export tasks with comments - no pagination limit
+   * Returns all matching tasks with their comments aggregated
+   */
+  async exportWithComments(
+    header: RequestHeader,
+    options: {
+      status?: number;
+      assignedToId?: string;
+      customerId?: string;
+      dateFrom?: Date;
+      dateTo?: Date;
+    }
+  ): Promise<Array<TaskWithRelations & { comments: TaskCommentWithUser[] }>> {
+    const conditions = this.buildTaskFilters(header, options);
+    const where = and(...conditions);
+
+    // Get all tasks with relations (no limit)
+    const items = await this.db
+      .select({
+        id: tasks.id,
+        tenantId: tasks.tenantId,
+        emailId: tasks.emailId,
+        customerId: tasks.customerId,
+        title: tasks.title,
+        status: tasks.status,
+        assignedToId: tasks.assignedToId,
+        createdBySystem: tasks.createdBySystem,
+        createdAt: tasks.createdAt,
+        updatedAt: tasks.updatedAt,
+        completedAt: tasks.completedAt,
+        customerName: customers.name,
+        assignedToName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('assignedToName'),
+        assignedToEmail: users.email,
+        emailSubject: emails.subject,
+        emailBody: emails.body,
+        emailFromEmail: emails.fromEmail,
+        emailFromName: emails.fromName,
+      })
+      .from(tasks)
+      .leftJoin(customers, eq(tasks.customerId, customers.id))
+      .leftJoin(users, eq(tasks.assignedToId, users.id))
+      .leftJoin(emails, eq(tasks.emailId, emails.id))
+      .where(where)
+      .orderBy(desc(tasks.createdAt));
+
+    if (items.length === 0) {
+      return [];
+    }
+
+    // Get all comments for these tasks in one query
+    const taskIds = items.map(t => t.id);
+    const allComments = await this.db
+      .select({
+        id: taskComments.id,
+        taskId: taskComments.taskId,
+        userId: taskComments.userId,
+        content: taskComments.content,
+        createdAt: taskComments.createdAt,
+        updatedAt: taskComments.updatedAt,
+        userName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('userName'),
+      })
+      .from(taskComments)
+      .innerJoin(users, eq(taskComments.userId, users.id))
+      .where(inArray(taskComments.taskId, taskIds))
+      .orderBy(asc(taskComments.createdAt));
+
+    // Group comments by taskId
+    const commentsByTaskId = new Map<string, TaskCommentWithUser[]>();
+    for (const comment of allComments) {
+      const existing = commentsByTaskId.get(comment.taskId) || [];
+      existing.push(comment);
+      commentsByTaskId.set(comment.taskId, existing);
+    }
+
+    // Merge comments into tasks
+    return items.map(task => ({
+      ...task,
+      comments: commentsByTaskId.get(task.id) || [],
+    }));
   }
 
   // ===========================================================================

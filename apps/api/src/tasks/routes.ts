@@ -5,6 +5,7 @@ import { NotFoundError, Permission } from '@crm/shared';
 import {
   TaskService,
   taskSearchRequestSchema,
+  taskExportRequestSchema,
   createTaskRequestSchema,
   reassignTaskRequestSchema,
   addCommentRequestSchema,
@@ -35,6 +36,20 @@ taskRoutes.post('/search', async (c) => {
     async (requestHeader: RequestHeader, searchRequest) => {
       const service = container.resolve(TaskService);
       return await service.search(requestHeader, searchRequest);
+    }
+  );
+});
+
+/**
+ * POST /api/tasks/export - Export tasks with comments (no pagination limit)
+ */
+taskRoutes.post('/export', async (c) => {
+  return handleApiRequest(
+    c,
+    taskExportRequestSchema,
+    async (requestHeader: RequestHeader, exportRequest) => {
+      const service = container.resolve(TaskService);
+      return await service.exportWithComments(requestHeader, exportRequest);
     }
   );
 });

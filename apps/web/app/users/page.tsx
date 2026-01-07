@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { Search, Plus, Upload, Download } from "lucide-react"
+import { Search, Plus, Upload } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ViewToggle } from "@/components/view-toggle"
 import { UserCard } from "@/components/users/user-card"
@@ -13,6 +13,8 @@ import { type UserFormData } from "@/components/users/user-form"
 import { ImportDialog } from "@/components/import-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ExportButton } from "@/components/ui/export-button"
+import { createXlsxBlob } from "@/lib/utils/export"
 import { UserTableSkeleton } from "@/components/ui/table-skeleton"
 import { useUsers, useCreateUser, useImportUsers, useUpdateUser, useSetUserCustomerAssignments } from "@/lib/hooks"
 import { type User, mapUserToUser } from "@/lib/types"
@@ -168,30 +170,26 @@ export default function UsersPage() {
     setImportDialogOpen(false)
   }
 
-  const handleExport = async () => {
-    // Generate CSV from current users
-    const headers = ["Name", "Email", "Role", "Department", "Status"]
-    const rows = filteredUsers.map(user => [
-      user.name,
-      user.email,
-      user.role || "",
-      user.department || "",
-      user.status,
-    ])
+  const handleExport = React.useCallback(async () => {
+    const exportData = filteredUsers.map(user => ({
+      name: user.name,
+      email: user.email,
+      role: user.role || "",
+      department: user.department || "",
+      status: user.status,
+    }))
 
-    const csv = [
-      headers.join(","),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(","))
-    ].join("\n")
-
-    const blob = new Blob([csv], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "users.csv"
-    a.click()
-    URL.revokeObjectURL(url)
-  }
+    return createXlsxBlob(exportData, {
+      columns: [
+        { key: "name", header: "Name", width: 25 },
+        { key: "email", header: "Email", width: 35 },
+        { key: "role", header: "Role", width: 20 },
+        { key: "department", header: "Department", width: 20 },
+        { key: "status", header: "Status", width: 15 },
+      ],
+      sheetName: "Users",
+    })
+  }, [filteredUsers])
 
   return (
     <AppShell>
@@ -208,10 +206,11 @@ export default function UsersPage() {
                 Import
               </Button>
             </PermissionGate>
-            <Button variant="outline" onClick={handleExport}>
-              <Download className="mr-2 h-4 w-4" />
-              Export
-            </Button>
+            <ExportButton
+              onExport={handleExport}
+              filename="users.xlsx"
+              disabled={filteredUsers.length === 0}
+            />
             <PermissionGate permission={Permission.USER_ADD}>
               <Button onClick={() => setAddDrawerOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />

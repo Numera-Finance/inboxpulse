@@ -5,6 +5,8 @@ import { useSearchParams, useNavigate, useParams } from "react-router-dom"
 import { Inbox, CheckCircle } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
+import { ExportButton } from "@/components/ui/export-button"
+import { createXlsxBlob } from "@/lib/utils/export"
 import {
   InboxView,
   apiTaskToInboxItem,
@@ -25,7 +27,7 @@ import {
   TASK_COMMENTS_ID,
   type TaskFilter,
 } from "@/components/tasks"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import {
   useTask,
   useAssignableUsers,
@@ -34,7 +36,7 @@ import {
   taskKeys,
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
-import type { Task, TaskSearchRequest } from "@crm/clients"
+import type { Task, TaskSearchRequest, TaskExportRequest } from "@crm/clients"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { getTaskClient } from "@/lib/api/clients"
 
@@ -43,7 +45,6 @@ export default function EscalationsPage() {
   const { taskId: taskIdFromUrl } = useParams<{ taskId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
-  const { toast } = useToast()
 
   // Get current user ID for "Me" filter
   const { user } = useAuth()
@@ -256,17 +257,15 @@ export default function EscalationsPage() {
       const comments = await taskClient.getComments(itemId)
 
       if (comments.length === 0) {
-        toast({
-          title: "Comment required",
+        toast.error("Comment required", {
           description: "Please add a comment before marking this task as done.",
-          variant: "destructive",
         })
         return
       }
 
       await handleResolve(itemId)
     },
-    [handleResolve, toast]
+    [handleResolve]
   )
 
   // Handle filter changes - sync to URL params
@@ -410,14 +409,80 @@ export default function EscalationsPage() {
     return customer?.name || null
   }, [customerIdFromUrl, customersData])
 
+  // Export escalations with comments to Excel
+  const handleExportEscalations = React.useCallback(async (): Promise<Blob> => {
+    const taskClient = getTaskClient()
+
+    // Build export request with current filters
+    const exportRequest: TaskExportRequest = {}
+
+    // Apply current filters
+    if (effectiveStatus && effectiveStatus !== "all") {
+      exportRequest.status = effectiveStatus
+    }
+
+    if (assignedFromUrl && assignedFromUrl !== "all") {
+      if (assignedFromUrl === "unassigned") {
+        exportRequest.assignedToId = "unassigned"
+      } else if (assignedFromUrl === "me") {
+        exportRequest.assignedToId = currentUserId || undefined
+      } else if (assignedFromUrl !== "team") {
+        exportRequest.assignedToId = assignedFromUrl
+      }
+    }
+
+    if (customerIdFromUrl) {
+      exportRequest.customerId = customerIdFromUrl
+    }
+
+    if (dateFromUrl) {
+      const fromDate = new Date(dateFromUrl)
+      fromDate.setUTCHours(0, 0, 0, 0)
+      exportRequest.dateFrom = fromDate.toISOString()
+    }
+
+    if (dateToUrl) {
+      const toDate = new Date(dateToUrl)
+      toDate.setUTCHours(23, 59, 59, 999)
+      exportRequest.dateTo = toDate.toISOString()
+    }
+
+    // Fetch all escalations with comments in one request
+    const escalationsWithComments = await taskClient.exportWithComments(exportRequest)
+
+    // Build export data: Customer Name, Email Subject, Comments (newline separated)
+    const exportData = escalationsWithComments.map(escalation => ({
+      customerName: escalation.customerName || "",
+      emailSubject: escalation.emailSubject || escalation.title || "",
+      comments: (escalation.comments || [])
+        .map(c => `[${c.userName}]: ${c.content}`)
+        .join("\n"),
+    }))
+
+    return createXlsxBlob(exportData, {
+      columns: [
+        { key: "customerName", header: "Customer Name", width: 30 },
+        { key: "emailSubject", header: "Email Subject", width: 50 },
+        { key: "comments", header: "Comments", width: 80 },
+      ],
+      sheetName: "Escalations",
+    })
+  }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId])
+
   return (
     <AppShell>
       <div className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
         {/* Page Header */}
         <div className="p-4 border-b border-border">
-          <div className="flex items-center gap-2 mb-4">
-            <Inbox className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold">Escalations</h1>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Inbox className="h-5 w-5 text-primary" />
+              <h1 className="text-lg font-semibold">Escalations</h1>
+            </div>
+            <ExportButton
+              onExport={handleExportEscalations}
+              filename="escalations.xlsx"
+            />
           </div>
           <TaskFilters
             filters={taskFilters}

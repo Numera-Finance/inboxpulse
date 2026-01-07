@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { Search, Plus, Upload, Download } from "lucide-react"
+import { Search, Plus, Upload } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ViewToggle } from "@/components/view-toggle"
 import { CustomerCard } from "@/components/customers/customer-card"
@@ -12,6 +12,8 @@ import { AddCustomerDrawer, type CustomerFormData } from "@/components/add-custo
 import { ImportDialog } from "@/components/import-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ExportButton } from "@/components/ui/export-button"
+import { createXlsxBlob } from "@/lib/utils/export"
 import { CustomerTableSkeleton } from "@/components/ui/table-skeleton"
 import { useCustomers, useCustomer, useUpsertCustomer } from "@/lib/hooks"
 import { type Customer, mapApiCustomerToCustomer } from "@/lib/types"
@@ -131,29 +133,24 @@ export default function CustomersPage() {
     setImportDialogOpen(false)
   }
 
-  const handleExport = () => {
-    // Generate CSV from current customers
-    const headers = ["Name", "Domains", "Industry", "Website"]
-    const rows = filteredCustomers.map(customer => [
-      customer.name,
-      customer.domains.join("; "),
-      customer.industry || "",
-      customer.website || "",
-    ])
+  const handleExport = React.useCallback(async () => {
+    const exportData = filteredCustomers.map(customer => ({
+      name: customer.name,
+      domains: customer.domains.join("; "),
+      industry: customer.industry || "",
+      website: customer.website || "",
+    }))
 
-    const csv = [
-      headers.join(","),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(","))
-    ].join("\n")
-
-    const blob = new Blob([csv], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "customers.csv"
-    a.click()
-    URL.revokeObjectURL(url)
-  }
+    return createXlsxBlob(exportData, {
+      columns: [
+        { key: "name", header: "Name", width: 30 },
+        { key: "domains", header: "Domains", width: 40 },
+        { key: "industry", header: "Industry", width: 20 },
+        { key: "website", header: "Website", width: 40 },
+      ],
+      sheetName: "Customers",
+    })
+  }, [filteredCustomers])
 
   return (
     <AppShell>
@@ -170,10 +167,11 @@ export default function CustomersPage() {
                 Import
               </Button>
             </PermissionGate>
-            <Button variant="outline" onClick={handleExport}>
-              <Download className="mr-2 h-4 w-4" />
-              Export
-            </Button>
+            <ExportButton
+              onExport={handleExport}
+              filename="customers.xlsx"
+              disabled={filteredCustomers.length === 0}
+            />
             <PermissionGate permission={Permission.CUSTOMER_ADD}>
               <Button onClick={() => setAddDrawerOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
