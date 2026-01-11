@@ -23,21 +23,27 @@ Return:
 - value: positive|negative|neutral
 - confidence: 0-1 (how confident you are in the sentiment classification)
 
-IMPORTANT DISTINCTIONS:
+CRITICAL: Default to NEUTRAL. Only classify as POSITIVE when there is EXPLICIT emotional language expressing genuine satisfaction, delight, or heartfelt gratitude.
 
-**NEUTRAL** - Standard business communication:
+**NEUTRAL** - Standard business communication (THIS IS THE DEFAULT):
 - Routine confirmations ("I have scheduled the payment", "confirming receipt")
 - Polite acknowledgments ("Thank you for confirming", "Thanks for sending")
+- Simple agreements ("Yes, that works", "Sure, I can do that", "Sounds good")
+- Meeting scheduling ("Let's connect Tuesday", "I'll send an invite")
 - Factual updates or status reports
+- Forwarding information without commentary
+- Questions or requests for information
 - Standard business pleasantries without emotional content
 - Automated notifications or transactional emails
+- New Year/holiday greetings without additional emotional content
 
-**POSITIVE** - Genuine satisfaction or praise:
+**POSITIVE** - Genuine satisfaction or praise (REQUIRES EXPLICIT EMOTIONAL LANGUAGE):
+- Must contain words expressing genuine emotion: "happy", "delighted", "grateful", "impressed", "amazing", "fantastic", "love", "thrilled", "excellent"
 - Expressions of happiness or delight ("I'm so happy with...", "This is amazing!")
 - Compliments about service or product ("Your team has been fantastic")
-- Gratitude beyond routine politeness ("I really appreciate all the extra effort")
+- Heartfelt gratitude beyond routine politeness ("I really appreciate all the extra effort", "Grateful to be working together")
 - Testimonials or recommendations
-- Relief after problem resolution with expressed satisfaction
+- Relief after problem resolution WITH expressed satisfaction
 
 **NEGATIVE** - Dissatisfaction or frustration:
 - Complaints or expressions of frustration
@@ -46,13 +52,23 @@ IMPORTANT DISTINCTIONS:
 - Threats to cancel or escalate
 - Sarcasm or passive-aggressive language
 
-Do NOT mark as positive just because it contains:
-- "Thank you" (routine politeness)
-- "Please" or polite requests
-- Professional sign-offs
-- Standard confirmation language`,
+EXAMPLES - Classify as NEUTRAL (NOT positive):
+- "Yes, that works. Thank you." → NEUTRAL (simple acknowledgment)
+- "Sure, we can connect on Tuesday." → NEUTRAL (scheduling)
+- "Thanks for sending this over." → NEUTRAL (routine politeness)
+- "Got it, will review." → NEUTRAL (acknowledgment)
+- "Happy New Year! Please share the report." → NEUTRAL (greeting + request)
+- "Thank you for the update." → NEUTRAL (routine thanks)
+
+EXAMPLES - Classify as POSITIVE:
+- "Grateful to be working together!" → POSITIVE (explicit gratitude)
+- "Your team has been fantastic, thank you so much!" → POSITIVE (praise + enthusiasm)
+- "I'm really happy with how this turned out" → POSITIVE (explicit happiness)
+- "This is exactly what we needed, amazing work!" → POSITIVE (enthusiasm + praise)
+
+Remember: "Thank you" alone is NEVER sufficient for positive. Scheduling a meeting is NEVER positive. Simple agreements are NEVER positive.`,
   schema: sentimentSchema,
-  version: 'v1.1',
+  version: 'v1.2',
 };
 
 /**
