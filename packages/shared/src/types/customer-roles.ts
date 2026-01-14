@@ -27,6 +27,14 @@ export const CUSTOMER_ROLES: Record<string, CustomerRole> = {
     id: '550e8400-e29b-41d4-a716-446655440004',
     name: 'Accountant',
   },
+  SR_CONTROLLER: {
+    id: '550e8400-e29b-41d4-a716-446655440005',
+    name: 'Sr Controller',
+  },
+  SALES_PERSON: {
+    id: '550e8400-e29b-41d4-a716-446655440006',
+    name: 'Sales Person',
+  },
 } as const;
 
 /**
