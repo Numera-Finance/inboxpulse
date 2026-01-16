@@ -521,6 +521,41 @@ export class IntegrationRepository {
       .where(eq(integrations.id, integrationId));
   }
 
+  /**
+   * Update integration parameters by integration ID (merge with existing)
+   * Used for settings like blacklist emails, etc.
+   */
+  async updateParameters(
+    integrationId: string,
+    newParams: Record<string, any>
+  ) {
+    // Get current integration
+    const current = await this.findById(integrationId);
+    if (!current) {
+      throw new Error(`Integration not found: ${integrationId}`);
+    }
+
+    // Convert current parameters to object
+    const currentParams = parametersToObject(current.parameters as IntegrationParameters);
+
+    // Merge new params (shallow merge)
+    const mergedParams = { ...currentParams, ...newParams };
+
+    // Convert back to array format
+    const parametersArray = objectToParameters(mergedParams);
+
+    const result = await this.db
+      .update(integrations)
+      .set({
+        parameters: parametersArray,
+        updatedAt: new Date(),
+      })
+      .where(eq(integrations.id, integrationId))
+      .returning();
+
+    return this.mapToIntegration(result[0]);
+  }
+
   private async mapToIntegration(row: any) {
     // Convert parameters array to object
     const params = parametersToObject(row.parameters as IntegrationParameters);

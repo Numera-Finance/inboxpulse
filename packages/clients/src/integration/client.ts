@@ -121,4 +121,15 @@ export class IntegrationClient extends BaseClient {
   async disconnect(tenantId: string, source: string): Promise<void> {
     await this.delete(`/api/integrations/${tenantId}/${source}`);
   }
+
+  /**
+   * Update integration parameters by integration ID
+   * Used for settings like blacklist emails, etc.
+   */
+  async updateParameters(
+    integrationId: string,
+    parameters: Record<string, any>
+  ): Promise<void> {
+    await this.patch(`/api/integrations/${integrationId}/parameters`, { parameters });
+  }
 }

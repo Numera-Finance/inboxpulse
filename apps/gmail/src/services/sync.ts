@@ -140,6 +140,14 @@ export class SyncService {
       return { processed: 0, inserted: 0, skipped: 0 };
     }
 
+    // Fetch integration credentials to get blacklist emails
+    const credentials = await this.integrationClient.getCredentials(tenantId, 'gmail');
+    const blacklistEmails: string[] = credentials?.blacklistEmails || [];
+
+    if (blacklistEmails.length > 0) {
+      logger.info({ integrationId, blacklistCount: blacklistEmails.length }, 'Applying email blacklist filter');
+    }
+
     let totalProcessed = 0;
     let totalInserted = 0;
     let totalSkipped = 0;
@@ -159,8 +167,8 @@ export class SyncService {
         return historyA - historyB;
       });
 
-      // Parse and save to DB
-      const emailCollections = this.emailParser.parseMessages(messages, 'gmail');
+      // Parse and save to DB (with blacklist filtering)
+      const emailCollections = this.emailParser.parseMessages(messages, 'gmail', { blacklistEmails });
       const result = await this.emailClient.bulkInsertWithThreads(
         tenantId,
         integrationId,

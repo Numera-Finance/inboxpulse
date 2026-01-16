@@ -183,4 +183,13 @@ export class IntegrationService {
     logger.warn({ tenantId, source }, 'Deactivating integration');
     await this.integrationRepo.deactivate(tenantId, source, updatedBy);
   }
+
+  /**
+   * Update integration parameters by integration ID
+   * Used for settings like blacklist emails, etc.
+   */
+  async updateParameters(integrationId: string, parameters: Record<string, any>) {
+    logger.info({ integrationId, parameters }, 'Updating integration parameters');
+    return this.integrationRepo.updateParameters(integrationId, parameters);
+  }
 }

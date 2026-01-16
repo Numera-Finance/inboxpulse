@@ -1,12 +1,14 @@
 "use client"
 
+import * as React from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, CheckCircle2, ExternalLink, Unplug } from "lucide-react"
+import { Loader2, CheckCircle2, ExternalLink, Unplug, Settings } from "lucide-react"
 import { GMAIL_SCOPE_DESCRIPTIONS } from "@crm/shared"
 import type { Integration } from "@/lib/api"
 import { API_BASE_URL } from "@/lib/api"
+import { GmailSettingsDrawer } from "./gmail-settings-drawer"
 
 // Gmail logo SVG - official Google colors
 function GmailLogo({ className }: { className?: string }) {
@@ -40,6 +42,7 @@ export function GmailIntegrationCard({
   onConnect,
   onDisconnect
 }: GmailIntegrationCardProps) {
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
   const isConnected = integration?.isActive === true
 
   const handleConnect = () => {
@@ -139,6 +142,14 @@ export function GmailIntegrationCard({
             <div className="pt-2 flex gap-2">
               <Button
                 variant="outline"
+                onClick={() => setSettingsOpen(true)}
+                disabled={isDisconnecting}
+              >
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </Button>
+              <Button
+                variant="outline"
                 className="flex-1"
                 onClick={handleConnect}
                 disabled={isDisconnecting}
@@ -148,7 +159,6 @@ export function GmailIntegrationCard({
               </Button>
               <Button
                 variant="destructive"
-                className="flex-1"
                 onClick={onDisconnect}
                 disabled={isDisconnecting}
               >
@@ -186,6 +196,16 @@ export function GmailIntegrationCard({
           </div>
         )}
       </CardContent>
+
+      {/* Settings Drawer */}
+      {integration && (
+        <GmailSettingsDrawer
+          integration={integration}
+          tenantId={tenantId}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+        />
+      )}
     </Card>
   )
 }

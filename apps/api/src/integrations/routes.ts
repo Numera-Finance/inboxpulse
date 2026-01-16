@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { IntegrationService } from './service';
 import type { IntegrationSource } from './schema';
-import { updateRunStateSchema, updateAccessTokenSchema, updateWatchExpirySchema } from '@crm/clients';
+import { updateRunStateSchema, updateAccessTokenSchema, updateWatchExpirySchema, updateParametersSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 
 const app = new Hono();
@@ -312,6 +312,28 @@ app.patch('/:integrationId/watch-expiry', async (c) => {
   try {
     const data = updateWatchExpirySchema.parse(body);
     await integrationService.updateWatchExpiry(integrationId, data);
+    return c.json({ success: true });
+  } catch (error: any) {
+    if (error.name === 'ZodError') {
+      return c.json({ error: 'Invalid request data', details: error.errors }, 400);
+    }
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * Update integration parameters by integration ID
+ * Used for settings like blacklist emails, etc.
+ */
+app.patch('/:integrationId/parameters', async (c) => {
+  const integrationId = c.req.param('integrationId');
+  const body = await c.req.json();
+
+  const integrationService = container.resolve(IntegrationService);
+
+  try {
+    const data = updateParametersSchema.parse(body);
+    await integrationService.updateParameters(integrationId, data.parameters);
     return c.json({ success: true });
   } catch (error: any) {
     if (error.name === 'ZodError') {
