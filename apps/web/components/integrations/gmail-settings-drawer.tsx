@@ -1,10 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { X, Plus, Trash2, Loader2, Mail } from "lucide-react"
+import { Loader2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Drawer,
   DrawerClose,
@@ -24,14 +24,45 @@ interface GmailSettingsDrawerProps {
   onOpenChange: (open: boolean) => void
 }
 
+// Email validation regex
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+interface ValidationResult {
+  valid: string[]
+  invalid: string[]
+}
+
+function validateEmails(input: string): ValidationResult {
+  const emails = input
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0)
+
+  const valid: string[] = []
+  const invalid: string[] = []
+
+  for (const email of emails) {
+    if (EMAIL_REGEX.test(email)) {
+      // Avoid duplicates in valid list
+      if (!valid.includes(email)) {
+        valid.push(email)
+      }
+    } else {
+      invalid.push(email)
+    }
+  }
+
+  return { valid, invalid }
+}
+
 export function GmailSettingsDrawer({
   integration,
   tenantId,
   open,
   onOpenChange,
 }: GmailSettingsDrawerProps) {
-  const [newEmail, setNewEmail] = React.useState("")
-  const [localBlacklist, setLocalBlacklist] = React.useState<string[]>([])
+  const [emailText, setEmailText] = React.useState("")
+  const [validationErrors, setValidationErrors] = React.useState<string[]>([])
   const [hasChanges, setHasChanges] = React.useState(false)
 
   // Fetch current credentials to get blacklist
@@ -43,10 +74,11 @@ export function GmailSettingsDrawer({
   // Mutation to update parameters
   const updateParameters = useUpdateIntegrationParameters()
 
-  // Initialize local blacklist when credentials load
+  // Initialize email text when credentials load
   React.useEffect(() => {
     if (credentials?.blacklistEmails) {
-      setLocalBlacklist(credentials.blacklistEmails)
+      setEmailText(credentials.blacklistEmails.join(", "))
+      setValidationErrors([])
       setHasChanges(false)
     }
   }, [credentials?.blacklistEmails])
@@ -54,54 +86,40 @@ export function GmailSettingsDrawer({
   // Reset state when drawer closes
   React.useEffect(() => {
     if (!open) {
-      setNewEmail("")
       if (credentials?.blacklistEmails) {
-        setLocalBlacklist(credentials.blacklistEmails)
+        setEmailText(credentials.blacklistEmails.join(", "))
+      } else {
+        setEmailText("")
       }
+      setValidationErrors([])
       setHasChanges(false)
     }
   }, [open, credentials?.blacklistEmails])
 
-  const handleAddEmail = () => {
-    const email = newEmail.trim().toLowerCase()
-    if (!email) return
-
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(email)) {
-      return
-    }
-
-    // Don't add duplicates
-    if (localBlacklist.includes(email)) {
-      setNewEmail("")
-      return
-    }
-
-    setLocalBlacklist([...localBlacklist, email])
-    setNewEmail("")
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setEmailText(e.target.value)
     setHasChanges(true)
-  }
-
-  const handleRemoveEmail = (email: string) => {
-    setLocalBlacklist(localBlacklist.filter((e) => e !== email))
-    setHasChanges(true)
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault()
-      handleAddEmail()
+    // Clear validation errors while typing
+    if (validationErrors.length > 0) {
+      setValidationErrors([])
     }
   }
 
   const handleSave = async () => {
+    // Validate before saving
+    const { valid, invalid } = validateEmails(emailText)
+
+    if (invalid.length > 0) {
+      setValidationErrors(invalid)
+      return
+    }
+
     await updateParameters.mutateAsync({
       integrationId: integration.id,
       tenantId,
       source: 'gmail',
       parameters: {
-        blacklistEmails: localBlacklist,
+        blacklistEmails: valid,
       },
     })
     setHasChanges(false)
@@ -125,67 +143,46 @@ export function GmailSettingsDrawer({
               <Label className="text-base font-medium">Email Blacklist</Label>
               <p className="text-sm text-muted-foreground mt-1">
                 Emails from these addresses will be skipped during sync and won't be analyzed.
+                Enter email addresses separated by commas.
               </p>
             </div>
 
-            {/* Add new email */}
-            <div className="flex gap-2">
-              <Input
-                type="email"
-                placeholder="email@example.com"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className="flex-1"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={handleAddEmail}
-                disabled={!newEmail.trim()}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {/* Blacklist items */}
             {isLoadingCredentials ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
-            ) : localBlacklist.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-center">
-                <Mail className="mx-auto h-8 w-8 text-muted-foreground/50" />
-                <p className="mt-2 text-sm text-muted-foreground">
-                  No blacklisted emails yet
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Add email addresses above to skip them during sync
-                </p>
-              </div>
             ) : (
-              <div className="space-y-2">
-                {localBlacklist.map((email) => (
-                  <div
-                    key={email}
-                    className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">{email}</span>
+              <>
+                <Textarea
+                  placeholder="email1@example.com, email2@example.com"
+                  value={emailText}
+                  onChange={handleTextChange}
+                  rows={6}
+                  className={validationErrors.length > 0 ? "border-destructive" : ""}
+                />
+
+                {validationErrors.length > 0 && (
+                  <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-destructive">
+                          Invalid email addresses
+                        </p>
+                        <p className="text-xs text-destructive/80 mt-1">
+                          {validationErrors.join(", ")}
+                        </p>
+                      </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => handleRemoveEmail(email)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
                   </div>
-                ))}
-              </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  {emailText.trim() === ""
+                    ? "No emails blacklisted"
+                    : `${validateEmails(emailText).valid.length} valid email(s)`}
+                </p>
+              </>
             )}
           </div>
         </div>

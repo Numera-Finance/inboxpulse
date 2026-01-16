@@ -4,7 +4,7 @@ import * as React from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, CheckCircle2, ExternalLink, Unplug, Settings } from "lucide-react"
+import { Loader2, CheckCircle2, ExternalLink, Unplug, Pencil } from "lucide-react"
 import { GMAIL_SCOPE_DESCRIPTIONS } from "@crm/shared"
 import type { Integration } from "@/lib/api"
 import { API_BASE_URL } from "@/lib/api"
@@ -93,8 +93,18 @@ export function GmailIntegrationCard({
             <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white border shadow-sm">
               <GmailLogo className="h-7 w-7" />
             </div>
-            <div>
+            <div className="flex items-center gap-2">
               <CardTitle className="text-lg">Gmail</CardTitle>
+              {isConnected && (
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="Configure Gmail settings"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
           {isConnected ? (
@@ -140,14 +150,6 @@ export function GmailIntegrationCard({
               </div>
             </div>
             <div className="pt-2 flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setSettingsOpen(true)}
-                disabled={isDisconnecting}
-              >
-                <Settings className="mr-2 h-4 w-4" />
-                Settings
-              </Button>
               <Button
                 variant="outline"
                 className="flex-1"
