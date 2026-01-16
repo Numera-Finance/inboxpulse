@@ -19,6 +19,7 @@ const TILE_DEFINITIONS = [
   { id: 'sentiment-trend', w: 2, h: 2, minW: 2, minH: 2 },
   { id: 'email-volume', w: 2, h: 2, minW: 2, minH: 2 },
   { id: 'escalations-table', w: 2, h: 2, minW: 2, minH: 2 },
+  { id: 'tat-metrics', w: 2, h: 2, minW: 2, minH: 2 },
 ];
 
 const BREAKPOINTS = { lg: 1200, md: 996, sm: 768, xs: 480 };

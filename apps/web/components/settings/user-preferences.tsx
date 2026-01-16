@@ -99,11 +99,21 @@ export function UserPreferences() {
             escalationSummaryFrequency: preferenceToFrequency(escalationPref),
           }))
         } catch (notifError) {
-          // Notifications service may not be running - continue with defaults
+          // Notifications service may not be running - show warning
           console.warn('Notifications service unavailable, using default preferences')
+          toast({
+            title: "Warning",
+            description: "Notifications service unavailable. Notification preferences may not be accurate.",
+            variant: "destructive",
+          })
         }
       } catch (error) {
         console.error('Failed to fetch preferences:', error)
+        toast({
+          title: "Error",
+          description: "Failed to load preferences.",
+          variant: "destructive",
+        })
       } finally {
         setLoading(false)
       }
@@ -136,8 +146,14 @@ export function UserPreferences() {
         const escalationPref = frequencyToPreference(preferences.escalationSummaryFrequency)
         await notificationsClient.updatePreference('escalation.summary', escalationPref)
       } catch (notifError) {
-        // Notifications service may not be running - log but don't fail
+        // Notifications service may not be running - show warning but continue
         console.warn('Notifications service unavailable, notification preferences not saved')
+        toast({
+          title: "Partial save",
+          description: "Timezone saved, but notification preferences could not be saved (service unavailable).",
+          variant: "destructive",
+        })
+        return
       }
 
       toast({
