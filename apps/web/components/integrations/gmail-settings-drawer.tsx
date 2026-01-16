@@ -59,7 +59,7 @@ function validateEmails(input: string): ValidationResult {
  * Safely get blacklist emails as an array
  * Handles case where it might be stored as non-array
  */
-function getBlacklistArray(credentials: Record<string, any> | null): string[] {
+function getBlacklistArray(credentials: Record<string, any> | null | undefined): string[] {
   if (!credentials?.blacklistEmails) return []
   if (Array.isArray(credentials.blacklistEmails)) {
     return credentials.blacklistEmails
