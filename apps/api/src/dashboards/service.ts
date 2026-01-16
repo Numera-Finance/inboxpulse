@@ -75,21 +75,40 @@ function generateDefaultLayouts(): DashboardLayoutConfig {
 }
 
 /**
- * Merge saved layout with tile definitions, adding any new tiles
- * that aren't in the saved layout with proper positioning
+ * Merge saved layout with tile definitions:
+ * - Add any new tiles that aren't in the saved layout
+ * - Update minW/minH for existing tiles to match current definitions
+ * - Update w/h for existing tiles if they're smaller than minW/minH
  */
 function mergeMissingTiles(savedConfig: DashboardLayoutConfig): DashboardLayoutConfig {
-  const tileIds = TILE_DEFINITIONS.map(t => t.id);
+  const tileDefMap = new Map(TILE_DEFINITIONS.map(t => [t.id, t]));
   const result: DashboardLayoutConfig = {};
 
   for (const [breakpoint, savedLayout] of Object.entries(savedConfig)) {
     const cols = COLS[breakpoint as keyof typeof COLS] || 4;
     const existingIds = new Set(savedLayout.map(l => l.i));
-    const mergedLayout = [...savedLayout];
+
+    // Update existing tiles with current minW/minH and enforce minimum sizes
+    const updatedLayout = savedLayout.map(layout => {
+      const tileDef = tileDefMap.get(layout.i);
+      if (tileDef) {
+        const minW = tileDef.minW ? Math.min(tileDef.minW, cols) : undefined;
+        const minH = tileDef.minH;
+        return {
+          ...layout,
+          minW,
+          minH,
+          // Enforce minimum dimensions
+          w: minW && layout.w < minW ? minW : layout.w,
+          h: minH && layout.h < minH ? minH : layout.h,
+        };
+      }
+      return layout;
+    });
 
     // Find max Y position to place new tiles below existing ones
     let maxY = 0;
-    for (const layout of savedLayout) {
+    for (const layout of updatedLayout) {
       maxY = Math.max(maxY, layout.y + layout.h);
     }
 
@@ -105,7 +124,7 @@ function mergeMissingTiles(savedConfig: DashboardLayoutConfig): DashboardLayoutC
           maxY += 2;
         }
 
-        mergedLayout.push({
+        updatedLayout.push({
           i: tileDef.id,
           x: currentX,
           y: maxY,
@@ -119,7 +138,7 @@ function mergeMissingTiles(savedConfig: DashboardLayoutConfig): DashboardLayoutC
       }
     }
 
-    result[breakpoint] = mergedLayout;
+    result[breakpoint] = updatedLayout;
   }
 
   return result;
