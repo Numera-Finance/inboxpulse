@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     domain VARCHAR(255), -- Email domain for tenant users (e.g., 'acme.com') used for SSO auto-provisioning
-    controller_role_id UUID, -- Role ID that identifies "Controller" (Account Manager) for TAT tracking
+    account_manager_role_id UUID, -- Role ID that identifies "Controller" (Account Manager) for TAT tracking
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

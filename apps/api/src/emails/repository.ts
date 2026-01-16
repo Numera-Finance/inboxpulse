@@ -1362,10 +1362,10 @@ export class EmailRepository extends ScopedRepository {
     // Complex SQL query to calculate TAT metrics
     // 1. Get customer emails (fromEmail domain ≠ tenant domain)
     // 2. Link to customers via email_participants
-    // 3. Get controller via user_customers with tenant's controllerRoleId
+    // 3. Get account manager via user_customers with tenant's accountManagerRoleId
     // 4. Calculate business days using generate_series, excluding weekends and holidays
     // 5. Bucket into 1+, 2+, 3+, 5+, 6+ days
-    // 6. Aggregate by customer and controller
+    // 6. Aggregate by customer and account manager
     const query = sql`
       WITH customer_emails AS (
         -- Get customer emails (marked during ingestion) with their customer link
@@ -1385,46 +1385,46 @@ export class EmailRepository extends ScopedRepository {
           AND e.is_customer_email = true
           ${sql.raw(filterClause)}
       ),
-      email_with_controller AS (
-        -- Join with user_customers to get controller for each customer
+      email_with_account_manager AS (
+        -- Join with user_customers to get account manager for each customer
         SELECT
           ce.*,
-          uc.user_id AS controller_id,
-          CONCAT(u.first_name, ' ', u.last_name) AS controller_name,
-          COALESCE(u.timezone, 'UTC') AS controller_timezone
+          uc.user_id AS account_manager_id,
+          CONCAT(u.first_name, ' ', u.last_name) AS account_manager_name,
+          COALESCE(u.timezone, 'UTC') AS account_manager_timezone
         FROM customer_emails ce
         LEFT JOIN tenants t ON ce.tenant_id = t.id
         LEFT JOIN user_customers uc ON ce.customer_id = uc.customer_id
-          AND uc.role_id = t.controller_role_id
+          AND uc.role_id = t.account_manager_role_id
         LEFT JOIN users u ON uc.user_id = u.id
       ),
       email_with_business_days AS (
         -- Calculate business days for each email
         SELECT
-          ewc.*,
+          ewam.*,
           (
             SELECT GREATEST(0, COUNT(*) - 1)::int
             FROM generate_series(
-              (ewc.received_at AT TIME ZONE ewc.controller_timezone)::date,
-              (COALESCE(ewc.first_reply_at, NOW()) AT TIME ZONE ewc.controller_timezone)::date,
+              (ewam.received_at AT TIME ZONE ewam.account_manager_timezone)::date,
+              (COALESCE(ewam.first_reply_at, NOW()) AT TIME ZONE ewam.account_manager_timezone)::date,
               '1 day'::interval
             ) d
             WHERE EXTRACT(dow FROM d) BETWEEN 1 AND 5  -- Mon(1) to Fri(5)
               AND d::date NOT IN (
                 SELECT h.date::date
                 FROM holiday_calendars h
-                WHERE h.tenant_id = ewc.tenant_id
-                  AND h.timezone = ewc.controller_timezone
+                WHERE h.tenant_id = ewam.tenant_id
+                  AND h.timezone = ewam.account_manager_timezone
               )
           ) AS business_days
-        FROM email_with_controller ewc
+        FROM email_with_account_manager ewam
       )
-      -- Aggregate by customer and controller, bucket into TAT categories
+      -- Aggregate by customer and account manager, bucket into TAT categories
       SELECT
         customer_id AS "customerId",
         customer_name AS "customerName",
-        controller_id AS "controllerId",
-        controller_name AS "controllerName",
+        account_manager_id AS "controllerId",
+        account_manager_name AS "controllerName",
         COUNT(*) FILTER (WHERE business_days >= 1 AND business_days < 2)::int AS "onePlusDays",
         COUNT(*) FILTER (WHERE business_days >= 2 AND business_days < 3)::int AS "twoPlusDays",
         COUNT(*) FILTER (WHERE business_days >= 3 AND business_days < 5)::int AS "threePlusDays",
@@ -1432,8 +1432,8 @@ export class EmailRepository extends ScopedRepository {
         COUNT(*) FILTER (WHERE business_days >= 6)::int AS "sixPlusDays"
       FROM email_with_business_days
       WHERE business_days >= 1  -- Only SLA breaches (1+ business days)
-      GROUP BY customer_id, customer_name, controller_id, controller_name
-      ORDER BY customer_name, controller_name
+      GROUP BY customer_id, customer_name, account_manager_id, account_manager_name
+      ORDER BY customer_name, account_manager_name
     `;
 
     const result = await this.db.execute(query);

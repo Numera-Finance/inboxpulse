@@ -27,7 +27,7 @@ Execute files in the following order to set up the database from scratch:
 
 ## File Structure
 
-- `tenants.sql` - Tenants table (includes controller_role_id for TAT metrics)
+- `tenants.sql` - Tenants table (includes account_manager_role_id for TAT metrics)
 - `users.sql` - Users table
 - `integrations.sql` - Integrations table + integration enums (integration_source, integration_auth_type)
 - `customers.sql` - Customers table (references tenants, domain info stored in customer_domains table)

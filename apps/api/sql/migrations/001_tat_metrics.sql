@@ -6,7 +6,7 @@
 -- Changes:
 -- 1. Add is_customer_email column to emails table (for efficient TAT queries)
 -- 2. Add first_reply_email_id and first_reply_at to emails table (TAT tracking)
--- 3. Add controller_role_id to tenants table (configurable controller role)
+-- 3. Add account_manager_role_id to tenants table (configurable controller role)
 -- 4. Create holiday_calendars table (business days calculation)
 -- =============================================================================
 
@@ -40,11 +40,11 @@ ON emails(tenant_id, is_customer_email);
 -- 2. Tenants table: Add controller role configuration
 -- -----------------------------------------------------------------------------
 
--- controller_role_id: UUID of the role that identifies "Controller" (Account Manager)
+-- account_manager_role_id: UUID of the role that identifies "Controller" (Account Manager)
 -- Used to link customers to their controllers via user_customers table
 -- TAT metrics are grouped by controller
 ALTER TABLE tenants
-ADD COLUMN IF NOT EXISTS controller_role_id UUID;
+ADD COLUMN IF NOT EXISTS account_manager_role_id UUID;
 
 -- -----------------------------------------------------------------------------
 -- 3. Holiday Calendars table: Create for business days calculation
@@ -84,7 +84,7 @@ ON holiday_calendars(tenant_id, timezone);
 
 -- Check tenants columns:
 -- SELECT column_name, data_type FROM information_schema.columns
--- WHERE table_name = 'tenants' AND column_name = 'controller_role_id';
+-- WHERE table_name = 'tenants' AND column_name = 'account_manager_role_id';
 
 -- Check holiday_calendars table:
 -- SELECT * FROM information_schema.tables WHERE table_name = 'holiday_calendars';
