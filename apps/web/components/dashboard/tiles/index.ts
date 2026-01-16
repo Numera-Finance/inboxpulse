@@ -159,7 +159,7 @@ export const TILE_DEFINITIONS: TileDefinition[] = [
       title: "Email Response TAT",
       component: TATMetricsTable,
     },
-    layout: { w: 3, h: 2, minW: 2, minH: 2 },
+    layout: { w: 2, h: 2, minW: 2, minH: 2 },
   },
 ]
 
