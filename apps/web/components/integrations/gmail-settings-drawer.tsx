@@ -157,7 +157,7 @@ export function GmailSettingsDrawer({
                   placeholder="email1@example.com, email2@example.com"
                   value={emailText}
                   onChange={handleTextChange}
-                  rows={6}
+                  rows={10}
                   className={validationErrors.length > 0 ? "border-destructive" : ""}
                 />
 
