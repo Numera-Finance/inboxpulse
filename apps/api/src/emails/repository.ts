@@ -7,6 +7,21 @@ import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from '.
 import { eq, and, desc, sql, inArray, or, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
+/**
+ * TAT metric row for dashboard
+ */
+export interface TATMetricRow {
+  customerId: string;
+  customerName: string;
+  controllerId: string | null;
+  controllerName: string | null;
+  onePlusDays: number;
+  twoPlusDays: number;
+  threePlusDays: number;
+  fivePlusDays: number;
+  sixPlusDays: number;
+}
+
 // Helper to build signal containment condition
 // PostgreSQL: signals @> ARRAY[signalValue]
 function signalContains(signalValue: number): SQL {
@@ -1318,5 +1333,173 @@ export class EmailRepository extends ScopedRepository {
       .where(and(...conditions));
 
     return result[0]?.count ?? 0;
+  }
+
+  // ===========================================================================
+  // TAT (Turn Around Time) Metrics
+  // ===========================================================================
+
+  /**
+   * Get TAT metrics for dashboard with access control
+   * Returns counts of SLA breaches (1+, 2+, 3+, 5+, 6+ business days) grouped by customer and controller
+   *
+   * Business days = Mon-Fri, excluding holidays from holiday_calendars
+   *
+   * Only tracks customer emails (fromEmail domain ≠ tenant domain)
+   * TAT is calculated from email receivedAt to firstReplyAt (or now() if no reply)
+   */
+  async getTATMetricsScoped(
+    header: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<TATMetricRow[]> {
+    // Build filter conditions for customer emails
+    const filterConditions: string[] = [];
+
+    if (filters?.customerId) {
+      filterConditions.push(`AND ep.customer_id = '${filters.customerId}'`);
+    }
+    if (filters?.dateFrom) {
+      filterConditions.push(`AND e.received_at >= '${filters.dateFrom}'::timestamp`);
+    }
+    if (filters?.dateTo) {
+      filterConditions.push(`AND e.received_at <= '${filters.dateTo}'::timestamp`);
+    }
+
+    const filterClause = filterConditions.join(' ');
+
+    // Complex SQL query to calculate TAT metrics
+    // 1. Get customer emails (fromEmail domain ≠ tenant domain)
+    // 2. Link to customers via email_participants
+    // 3. Get controller via user_customers with tenant's controllerRoleId
+    // 4. Calculate business days using generate_series, excluding weekends and holidays
+    // 5. Bucket into 1+, 2+, 3+, 5+, 6+ days
+    // 6. Aggregate by customer and controller
+    const query = sql`
+      WITH customer_emails AS (
+        -- Get customer emails (not from tenant domain) with their customer link
+        SELECT DISTINCT ON (e.id)
+          e.id AS email_id,
+          e.tenant_id,
+          e.received_at,
+          e.first_reply_at,
+          e.from_email,
+          ep.customer_id,
+          c.name AS customer_name
+        FROM emails e
+        INNER JOIN email_participants ep ON e.id = ep.email_id AND ep.customer_id IS NOT NULL
+        INNER JOIN customers c ON ep.customer_id = c.id
+        INNER JOIN tenants t ON e.tenant_id = t.id
+        WHERE e.tenant_id = ${header.tenantId}
+          -- Only customer emails (fromEmail domain not matching tenant domain)
+          AND e.from_email NOT LIKE '%@' || t.domain
+          ${sql.raw(filterClause)}
+      ),
+      email_with_controller AS (
+        -- Join with user_customers to get controller for each customer
+        SELECT
+          ce.*,
+          uc.user_id AS controller_id,
+          CONCAT(u.first_name, ' ', u.last_name) AS controller_name,
+          COALESCE(u.timezone, 'UTC') AS controller_timezone
+        FROM customer_emails ce
+        LEFT JOIN tenants t ON ce.tenant_id = t.id
+        LEFT JOIN user_customers uc ON ce.customer_id = uc.customer_id
+          AND uc.role_id = t.controller_role_id
+        LEFT JOIN users u ON uc.user_id = u.id
+      ),
+      email_with_business_days AS (
+        -- Calculate business days for each email
+        SELECT
+          ewc.*,
+          (
+            SELECT GREATEST(0, COUNT(*) - 1)::int
+            FROM generate_series(
+              (ewc.received_at AT TIME ZONE ewc.controller_timezone)::date,
+              (COALESCE(ewc.first_reply_at, NOW()) AT TIME ZONE ewc.controller_timezone)::date,
+              '1 day'::interval
+            ) d
+            WHERE EXTRACT(dow FROM d) BETWEEN 1 AND 5  -- Mon(1) to Fri(5)
+              AND d::date NOT IN (
+                SELECT h.date::date
+                FROM holiday_calendars h
+                WHERE h.tenant_id = ewc.tenant_id
+                  AND h.timezone = ewc.controller_timezone
+              )
+          ) AS business_days
+        FROM email_with_controller ewc
+      )
+      -- Aggregate by customer and controller, bucket into TAT categories
+      SELECT
+        customer_id AS "customerId",
+        customer_name AS "customerName",
+        controller_id AS "controllerId",
+        controller_name AS "controllerName",
+        COUNT(*) FILTER (WHERE business_days >= 1 AND business_days < 2)::int AS "onePlusDays",
+        COUNT(*) FILTER (WHERE business_days >= 2 AND business_days < 3)::int AS "twoPlusDays",
+        COUNT(*) FILTER (WHERE business_days >= 3 AND business_days < 5)::int AS "threePlusDays",
+        COUNT(*) FILTER (WHERE business_days >= 5 AND business_days < 6)::int AS "fivePlusDays",
+        COUNT(*) FILTER (WHERE business_days >= 6)::int AS "sixPlusDays"
+      FROM email_with_business_days
+      WHERE business_days >= 1  -- Only SLA breaches (1+ business days)
+      GROUP BY customer_id, customer_name, controller_id, controller_name
+      ORDER BY customer_name, controller_name
+    `;
+
+    const result = await this.db.execute(query);
+
+    return result as unknown as TATMetricRow[];
+  }
+
+  /**
+   * Update first reply info for customer emails in a thread
+   * Called when a new email is inserted that's a reply from tenant domain
+   *
+   * @param tenantId - Tenant ID
+   * @param threadId - Thread ID
+   * @param replyEmailId - ID of the reply email
+   * @param replyReceivedAt - Timestamp of when the reply was received
+   * @param tenantDomain - Tenant's email domain (e.g., 'acme.com')
+   */
+  async updateFirstReplyForThread(
+    tenantId: string,
+    threadId: string,
+    replyEmailId: string,
+    replyReceivedAt: Date,
+    tenantDomain: string
+  ): Promise<number> {
+    // Update customer emails in this thread that don't have a firstReplyAt yet
+    // and were received before this reply
+    const result = await this.db.execute(sql`
+      UPDATE emails
+      SET
+        first_reply_email_id = ${replyEmailId},
+        first_reply_at = ${replyReceivedAt},
+        updated_at = NOW()
+      WHERE tenant_id = ${tenantId}
+        AND thread_id = ${threadId}
+        AND first_reply_at IS NULL
+        AND received_at < ${replyReceivedAt}
+        AND from_email NOT LIKE '%@' || ${tenantDomain}
+    `);
+
+    const rowCount = (result as any).rowCount || 0;
+
+    if (rowCount > 0) {
+      logger.info(
+        {
+          tenantId,
+          threadId,
+          replyEmailId,
+          updatedCount: rowCount,
+        },
+        'Updated firstReplyAt for customer emails in thread'
+      );
+    }
+
+    return rowCount;
   }
 }

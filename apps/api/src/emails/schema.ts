@@ -88,6 +88,13 @@ export const emails = pgTable('emails', {
   signals: integer('signals').array().default([]),
   analysisStatus: smallint('analysis_status'), // 1=pending, 2=processing, 3=completed, 4=failed
 
+  // TAT (Turn Around Time) tracking - populated for customer emails
+  // firstReplyEmailId: ID of the first reply email from tenant domain
+  // firstReplyAt: Timestamp when the first reply was sent
+  // These are populated during email sync when a reply is detected
+  firstReplyEmailId: uuid('first_reply_email_id'),
+  firstReplyAt: timestamp('first_reply_at'),
+
   // Tracking
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),

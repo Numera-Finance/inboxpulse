@@ -72,5 +72,6 @@ export {
   useDashboardSentiment,
   useDashboardSentimentTrend,
   useDashboardEmailVolumeTrend,
+  useDashboardTATMetrics,
   dashboardKeys,
 } from './use-dashboard';

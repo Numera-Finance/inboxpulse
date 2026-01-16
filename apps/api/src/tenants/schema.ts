@@ -6,6 +6,11 @@ export const tenants = pgTable('tenants', {
   name: text('name').notNull(),
   domain: varchar('domain', { length: 255 }), // Email domain for tenant users (e.g., 'acme.com')
 
+  // TAT Configuration
+  // controllerRoleId: The role that identifies Controllers (Account Managers)
+  // Used for TAT metrics dashboard to track response times by controller
+  controllerRoleId: uuid('controller_role_id'), // References roles.id (no FK to avoid circular dep)
+
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
