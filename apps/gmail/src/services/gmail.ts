@@ -234,6 +234,111 @@ export class GmailService {
   }
 
   /**
+   * Batch get message headers only (metadata format - no body content)
+   * Used for filtering before fetching full content
+   * Returns message ID and From header for blacklist filtering
+   */
+  async batchGetMessageHeaders(
+    tenantId: string,
+    messageIds: string[]
+  ): Promise<Array<{ id: string; from: string | null; historyId: string | null }>> {
+    if (messageIds.length === 0) {
+      return [];
+    }
+
+    const BATCH_SIZE = 50;
+    const headers: Array<{ id: string; from: string | null; historyId: string | null }> = [];
+
+    logger.info(
+      { tenantId, totalMessages: messageIds.length },
+      'Fetching message headers for blacklist filtering'
+    );
+
+    for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
+      const batchMessageIds = messageIds.slice(i, i + BATCH_SIZE);
+
+      try {
+        const batchResult = await withRetry(
+          async () => this.executeBatchGetHeaders(tenantId, batchMessageIds),
+          {
+            shouldRetry: (error) => {
+              const statusCode = error?.code || error?.response?.status;
+              return statusCode === 429 || statusCode === 403 || statusCode === 401;
+            },
+            onRetry: async (attempt, error) => {
+              const statusCode = error?.code || error?.response?.status;
+              if (statusCode === 401) {
+                await this.clientFactory.ensureValidTokenAndRefresh(tenantId);
+              }
+            },
+          }
+        );
+
+        headers.push(...batchResult);
+      } catch (error: any) {
+        logger.error(
+          { tenantId, error: error.message },
+          'Failed to fetch message headers'
+        );
+        break;
+      }
+
+      if (i + BATCH_SIZE < messageIds.length) {
+        await this.sleep(100);
+      }
+    }
+
+    return headers;
+  }
+
+  /**
+   * Execute batch request to get message headers (metadata only)
+   */
+  private async executeBatchGetHeaders(
+    tenantId: string,
+    messageIds: string[]
+  ): Promise<Array<{ id: string; from: string | null; historyId: string | null }>> {
+    const gmail = await this.clientFactory.getBatchClient(tenantId, 50);
+    const headers: Array<{ id: string; from: string | null; historyId: string | null }> = [];
+
+    // Request only metadata format with From header
+    const requests = messageIds.map((id) =>
+      gmail.users.messages.get({
+        userId: 'me',
+        id,
+        format: 'metadata',
+        metadataHeaders: ['From'],
+      })
+    );
+
+    const results = await Promise.allSettled(requests);
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+
+      if (result.status === 'fulfilled') {
+        const message = result.value.data;
+        const fromHeader = message.payload?.headers?.find(
+          (h) => h.name?.toLowerCase() === 'from'
+        );
+        headers.push({
+          id: message.id!,
+          from: fromHeader?.value || null,
+          historyId: message.historyId || null,
+        });
+      } else {
+        // Skip messages that can't be fetched (deleted/trashed/etc)
+        logger.debug(
+          { tenantId, messageId: messageIds[i] },
+          'Message header not found'
+        );
+      }
+    }
+
+    return headers;
+  }
+
+  /**
    * Fetch emails using History API (for incremental sync)
    */
   async fetchHistory(

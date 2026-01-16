@@ -127,6 +127,9 @@ export class SyncService {
 
   /**
    * Process message IDs in chunks with checkpointing
+   * Uses two-phase fetch when blacklist is configured:
+   * 1. Fetch headers only to check sender
+   * 2. Fetch full content only for non-blacklisted messages
    */
   private async processMessageIds(
     integration: Integration,
@@ -143,6 +146,7 @@ export class SyncService {
     // Fetch integration credentials to get blacklist emails
     const credentials = await this.integrationClient.getCredentials(tenantId, 'gmail');
     const blacklistEmails: string[] = credentials?.blacklistEmails || [];
+    const normalizedBlacklist = new Set(blacklistEmails.map(email => email.toLowerCase()));
 
     if (blacklistEmails.length > 0) {
       logger.info({ integrationId, blacklistCount: blacklistEmails.length }, 'Applying email blacklist filter');
@@ -151,12 +155,64 @@ export class SyncService {
     let totalProcessed = 0;
     let totalInserted = 0;
     let totalSkipped = 0;
+    let totalBlacklisted = 0;
 
     for (let i = 0; i < messageIds.length; i += CHUNK_SIZE) {
       const chunkMessageIds = messageIds.slice(i, i + CHUNK_SIZE);
+      let filteredMessageIds = chunkMessageIds;
+      let highestHistoryId: string | null = null;
 
-      // Fetch this chunk of messages from Gmail
-      const messages = await this.gmailService.batchGetMessages(tenantId, chunkMessageIds);
+      // Phase 1: If blacklist is configured, fetch headers first to filter
+      if (normalizedBlacklist.size > 0) {
+        const headers = await this.gmailService.batchGetMessageHeaders(tenantId, chunkMessageIds);
+
+        // Filter out blacklisted senders and track highest historyId
+        filteredMessageIds = [];
+        for (const header of headers) {
+          // Track highest historyId for checkpointing (even for blacklisted messages)
+          if (header.historyId) {
+            const historyIdNum = parseInt(header.historyId, 10);
+            const currentHighest = highestHistoryId ? parseInt(highestHistoryId, 10) : 0;
+            if (historyIdNum > currentHighest) {
+              highestHistoryId = header.historyId;
+            }
+          }
+
+          // Check if sender is blacklisted
+          if (header.from) {
+            const fromEmail = this.extractEmailFromHeader(header.from);
+            if (fromEmail && normalizedBlacklist.has(fromEmail.toLowerCase())) {
+              totalBlacklisted++;
+              logger.debug({ integrationId, from: fromEmail }, 'Skipping blacklisted sender');
+              continue;
+            }
+          }
+
+          filteredMessageIds.push(header.id);
+        }
+
+        if (filteredMessageIds.length < chunkMessageIds.length) {
+          logger.info(
+            { integrationId, original: chunkMessageIds.length, filtered: filteredMessageIds.length, blacklisted: chunkMessageIds.length - filteredMessageIds.length },
+            'Filtered blacklisted messages before fetching content'
+          );
+        }
+      }
+
+      // Phase 2: Fetch full content only for non-blacklisted messages
+      if (filteredMessageIds.length === 0) {
+        // All messages were blacklisted, still checkpoint
+        if (highestHistoryId) {
+          await this.integrationClient.updateRunState(integrationId, {
+            lastRunToken: highestHistoryId,
+            lastRunAt: new Date(),
+          });
+        }
+        totalProcessed += chunkMessageIds.length;
+        continue;
+      }
+
+      const messages = await this.gmailService.batchGetMessages(tenantId, filteredMessageIds);
 
       if (messages.length === 0) continue;
 
@@ -167,8 +223,8 @@ export class SyncService {
         return historyA - historyB;
       });
 
-      // Parse and save to DB (with blacklist filtering)
-      const emailCollections = this.emailParser.parseMessages(messages, 'gmail', { blacklistEmails });
+      // Parse and save to DB
+      const emailCollections = this.emailParser.parseMessages(messages, 'gmail');
       const result = await this.emailClient.bulkInsertWithThreads(
         tenantId,
         integrationId,
@@ -176,15 +232,19 @@ export class SyncService {
         runId
       );
 
-      totalProcessed += messages.length;
+      totalProcessed += chunkMessageIds.length; // Count original chunk size
       totalInserted += result.insertedCount || 0;
       totalSkipped += result.skippedCount || 0;
 
-      // Checkpoint with last message's historyId
+      // Checkpoint with highest historyId (from headers or messages)
       const lastMessage = messages[messages.length - 1];
-      if (lastMessage.historyId) {
+      const checkpointHistoryId = highestHistoryId && parseInt(highestHistoryId, 10) > parseInt(lastMessage.historyId || '0', 10)
+        ? highestHistoryId
+        : lastMessage.historyId;
+
+      if (checkpointHistoryId) {
         await this.integrationClient.updateRunState(integrationId, {
-          lastRunToken: lastMessage.historyId,
+          lastRunToken: checkpointHistoryId,
           lastRunAt: new Date(),
         });
       }
@@ -196,7 +256,31 @@ export class SyncService {
       });
     }
 
+    if (totalBlacklisted > 0) {
+      logger.info({ integrationId, totalBlacklisted }, 'Total messages skipped due to blacklist');
+    }
+
     return { processed: totalProcessed, inserted: totalInserted, skipped: totalSkipped };
+  }
+
+  /**
+   * Extract email address from a From header value
+   * Handles formats like "Name <email@example.com>" or just "email@example.com"
+   */
+  private extractEmailFromHeader(fromHeader: string): string | null {
+    // Try to match email in angle brackets: "Name <email@example.com>"
+    const bracketMatch = fromHeader.match(/<([^>]+)>/);
+    if (bracketMatch) {
+      return bracketMatch[1].trim();
+    }
+
+    // Otherwise, assume the whole thing is an email
+    const trimmed = fromHeader.trim();
+    if (trimmed.includes('@')) {
+      return trimmed;
+    }
+
+    return null;
   }
 
   /**
