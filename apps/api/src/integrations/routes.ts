@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { IntegrationService } from './service';
 import type { IntegrationSource } from './schema';
-import { updateRunStateSchema, updateAccessTokenSchema, updateWatchExpirySchema, updateParametersSchema } from '@crm/clients';
+import { updateRunStateSchema, updateAccessTokenSchema, updateWatchExpirySchema, updateParametersRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 
 const app = new Hono();
@@ -332,7 +332,7 @@ app.patch('/:integrationId/parameters', async (c) => {
   const integrationService = container.resolve(IntegrationService);
 
   try {
-    const data = updateParametersSchema.parse(body);
+    const data = updateParametersRequestSchema.parse(body);
     await integrationService.updateParameters(integrationId, data.parameters);
     return c.json({ success: true });
   } catch (error: any) {
