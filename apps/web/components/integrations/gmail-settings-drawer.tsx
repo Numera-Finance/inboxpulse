@@ -55,6 +55,22 @@ function validateEmails(input: string): ValidationResult {
   return { valid, invalid }
 }
 
+/**
+ * Safely get blacklist emails as an array
+ * Handles case where it might be stored as non-array
+ */
+function getBlacklistArray(credentials: Record<string, any> | null): string[] {
+  if (!credentials?.blacklistEmails) return []
+  if (Array.isArray(credentials.blacklistEmails)) {
+    return credentials.blacklistEmails
+  }
+  // If it's a string, split by comma
+  if (typeof credentials.blacklistEmails === 'string') {
+    return credentials.blacklistEmails.split(',').map((e: string) => e.trim()).filter(Boolean)
+  }
+  return []
+}
+
 export function GmailSettingsDrawer({
   integration,
   tenantId,
@@ -76,25 +92,23 @@ export function GmailSettingsDrawer({
 
   // Initialize email text when credentials load
   React.useEffect(() => {
-    if (credentials?.blacklistEmails) {
-      setEmailText(credentials.blacklistEmails.join(", "))
+    const blacklist = getBlacklistArray(credentials)
+    if (blacklist.length > 0) {
+      setEmailText(blacklist.join(", "))
       setValidationErrors([])
       setHasChanges(false)
     }
-  }, [credentials?.blacklistEmails])
+  }, [credentials])
 
   // Reset state when drawer closes
   React.useEffect(() => {
     if (!open) {
-      if (credentials?.blacklistEmails) {
-        setEmailText(credentials.blacklistEmails.join(", "))
-      } else {
-        setEmailText("")
-      }
+      const blacklist = getBlacklistArray(credentials)
+      setEmailText(blacklist.length > 0 ? blacklist.join(", ") : "")
       setValidationErrors([])
       setHasChanges(false)
     }
-  }, [open, credentials?.blacklistEmails])
+  }, [open, credentials])
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setEmailText(e.target.value)
@@ -157,8 +171,7 @@ export function GmailSettingsDrawer({
                   placeholder="email1@example.com, email2@example.com"
                   value={emailText}
                   onChange={handleTextChange}
-                  rows={10}
-                  className={validationErrors.length > 0 ? "border-destructive" : ""}
+                  className={validationErrors.length > 0 ? "border-destructive min-h-[240px]" : "min-h-[240px]"}
                 />
 
                 {validationErrors.length > 0 && (
