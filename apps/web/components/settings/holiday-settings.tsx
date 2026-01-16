@@ -116,7 +116,7 @@ async function deleteHoliday(id: string): Promise<void> {
 
 export function HolidaySettings() {
   const queryClient = useQueryClient()
-  const [selectedTimezone, setSelectedTimezone] = React.useState<string>("")
+  const [selectedTimezone, setSelectedTimezone] = React.useState<string>("all")
   const [isAddDialogOpen, setIsAddDialogOpen] = React.useState(false)
   const [newHoliday, setNewHoliday] = React.useState({
     date: "",
@@ -137,7 +137,7 @@ export function HolidaySettings() {
     error,
   } = useQuery({
     queryKey: ["holidays", selectedTimezone],
-    queryFn: () => fetchHolidays(selectedTimezone || undefined),
+    queryFn: () => fetchHolidays(selectedTimezone === "all" ? undefined : selectedTimezone),
   })
 
   // Create holiday mutation
@@ -288,7 +288,7 @@ export function HolidaySettings() {
                 <SelectValue placeholder="All timezones" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All timezones</SelectItem>
+                <SelectItem value="all">All timezones</SelectItem>
                 {allTimezones.map((tz) => (
                   <SelectItem key={tz} value={tz}>
                     {tz}
@@ -312,7 +312,7 @@ export function HolidaySettings() {
           ) : holidays.length === 0 ? (
             <div className="text-center text-muted-foreground py-8">
               No holidays configured
-              {selectedTimezone && ` for ${selectedTimezone}`}
+              {selectedTimezone !== "all" && ` for ${selectedTimezone}`}
             </div>
           ) : (
             <Table>
