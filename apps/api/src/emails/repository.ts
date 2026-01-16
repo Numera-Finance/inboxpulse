@@ -1,26 +1,14 @@
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
 import type { Database } from '@crm/database';
-import { isAdmin, type RequestHeader, Signal, getSentimentFromSignals } from '@crm/shared';
+import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
 import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from './schema';
 import { eq, and, desc, sql, inArray, or, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
-/**
- * TAT metric row for dashboard
- */
-export interface TATMetricRow {
-  customerId: string;
-  customerName: string;
-  controllerId: string | null;
-  controllerName: string | null;
-  onePlusDays: number;
-  twoPlusDays: number;
-  threePlusDays: number;
-  fivePlusDays: number;
-  sixPlusDays: number;
-}
+// Re-export TATMetricRow from shared
+export type { TATMetricRow } from '@crm/shared';
 
 // Helper to build signal containment condition
 // PostgreSQL: signals @> ARRAY[signalValue]
@@ -1380,7 +1368,7 @@ export class EmailRepository extends ScopedRepository {
     // 6. Aggregate by customer and controller
     const query = sql`
       WITH customer_emails AS (
-        -- Get customer emails (not from tenant domain) with their customer link
+        -- Get customer emails (marked during ingestion) with their customer link
         SELECT DISTINCT ON (e.id)
           e.id AS email_id,
           e.tenant_id,
@@ -1392,10 +1380,9 @@ export class EmailRepository extends ScopedRepository {
         FROM emails e
         INNER JOIN email_participants ep ON e.id = ep.email_id AND ep.customer_id IS NOT NULL
         INNER JOIN customers c ON ep.customer_id = c.id
-        INNER JOIN tenants t ON e.tenant_id = t.id
         WHERE e.tenant_id = ${header.tenantId}
-          -- Only customer emails (fromEmail domain not matching tenant domain)
-          AND e.from_email NOT LIKE '%@' || t.domain
+          -- Only customer emails (classified during email ingestion)
+          AND e.is_customer_email = true
           ${sql.raw(filterClause)}
       ),
       email_with_controller AS (
@@ -1462,17 +1449,18 @@ export class EmailRepository extends ScopedRepository {
    * @param threadId - Thread ID
    * @param replyEmailId - ID of the reply email
    * @param replyReceivedAt - Timestamp of when the reply was received
-   * @param tenantDomain - Tenant's email domain (e.g., 'acme.com')
+   * @param _tenantDomain - Unused (kept for backwards compatibility)
    */
   async updateFirstReplyForThread(
     tenantId: string,
     threadId: string,
     replyEmailId: string,
     replyReceivedAt: Date,
-    tenantDomain: string
+    _tenantDomain: string
   ): Promise<number> {
     // Update customer emails in this thread that don't have a firstReplyAt yet
     // and were received before this reply
+    // Uses is_customer_email column set during ingestion
     const result = await this.db.execute(sql`
       UPDATE emails
       SET
@@ -1483,7 +1471,7 @@ export class EmailRepository extends ScopedRepository {
         AND thread_id = ${threadId}
         AND first_reply_at IS NULL
         AND received_at < ${replyReceivedAt}
-        AND from_email NOT LIKE '%@' || ${tenantDomain}
+        AND is_customer_email = true
     `);
 
     const rowCount = (result as any).rowCount || 0;

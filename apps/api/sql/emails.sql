@@ -41,6 +41,17 @@ CREATE TABLE IF NOT EXISTS emails (
     signals INTEGER[] NOT NULL DEFAULT '{}',
     analysis_status SMALLINT NOT NULL DEFAULT 1, -- 1=pending, 2=processing, 3=completed, 4=failed
 
+    -- TAT (Turn Around Time) tracking - populated for customer emails
+    -- is_customer_email: true if email is from customer (fromEmail domain != tenant domain)
+    -- Set during email ingestion to avoid expensive domain matching in queries
+    is_customer_email BOOLEAN,
+
+    -- firstReplyEmailId: ID of the first reply email from tenant domain
+    -- firstReplyAt: Timestamp when the first reply was sent
+    -- These are populated during email sync when a reply is detected
+    first_reply_email_id UUID,
+    first_reply_at TIMESTAMP,
+
     -- Tracking
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -58,3 +69,6 @@ CREATE INDEX idx_emails_integration ON emails(integration_id);
 
 -- GIN index for efficient signal array queries: WHERE signals @> ARRAY[1]
 CREATE INDEX idx_emails_signals ON emails USING GIN(signals);
+
+-- Index for TAT metrics queries (customer emails only)
+CREATE INDEX idx_emails_tenant_customer ON emails(tenant_id, is_customer_email);

@@ -69,7 +69,8 @@ export class EmailService {
       const result = await this.saveThreadWithEmailsTransactionally(
         tenantId,
         integrationId,
-        collection
+        collection,
+        tenantDomain
       );
 
       threadsCreated += result.threadCreated ? 1 : 0;
@@ -341,7 +342,8 @@ export class EmailService {
   private async saveThreadWithEmailsTransactionally(
     tenantId: string,
     integrationId: string,
-    collection: EmailCollection
+    collection: EmailCollection,
+    tenantDomain: string | null
   ): Promise<{
     threadId: string;
     threadCreated: boolean;
@@ -376,8 +378,9 @@ export class EmailService {
       const threadCreated = threadResult.length > 0;
 
       // Step 2: Convert emails to database format with thread ID
+      // Pass tenant domain for TAT classification (isCustomerEmail)
       const emailsDb: NewEmail[] = collection.emails.map((email) =>
-        emailToDb(email, tenantId, threadId, integrationId)
+        emailToDb(email, tenantId, threadId, integrationId, tenantDomain)
       );
 
       // Step 3: Check existing emails before insert/update (for change detection)

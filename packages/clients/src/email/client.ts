@@ -1,4 +1,4 @@
-import type { EmailCollection, ApiResponse } from '@crm/shared';
+import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
 
 /**
@@ -300,17 +300,5 @@ export class EmailClient extends BaseClient {
   }
 }
 
-/**
- * TAT metric row for dashboard
- */
-export interface TATMetricRow {
-  customerId: string;
-  customerName: string;
-  controllerId: string | null;
-  controllerName: string | null;
-  onePlusDays: number;
-  twoPlusDays: number;
-  threePlusDays: number;
-  fivePlusDays: number;
-  sixPlusDays: number;
-}
+// Re-export TATMetricRow from shared package
+export type { TATMetricRow } from '@crm/shared';
