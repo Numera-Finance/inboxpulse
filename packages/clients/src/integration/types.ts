@@ -92,3 +92,13 @@ export const updateWatchExpirySchema = z.object({
 });
 
 export type UpdateWatchExpiry = z.infer<typeof updateWatchExpirySchema>;
+
+/**
+ * Zod schema for updating integration parameters
+ * Used for settings like blacklist emails, etc.
+ */
+export const updateParametersRequestSchema = z.object({
+  parameters: z.record(z.string(), z.any()),
+});
+
+export type UpdateParametersRequest = z.infer<typeof updateParametersRequestSchema>;

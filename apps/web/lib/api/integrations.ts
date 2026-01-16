@@ -22,3 +22,25 @@ export async function disconnectIntegration(
   const client = getIntegrationClient();
   return client.disconnect(tenantId, source);
 }
+
+/**
+ * Update integration parameters (settings like blacklist emails)
+ */
+export async function updateIntegrationParameters(
+  integrationId: string,
+  parameters: Record<string, any>
+): Promise<void> {
+  const client = getIntegrationClient();
+  return client.updateParameters(integrationId, parameters);
+}
+
+/**
+ * Get integration credentials (for reading settings like blacklist)
+ */
+export async function getIntegrationCredentials(
+  tenantId: string,
+  source: IntegrationSource
+): Promise<Record<string, any> | null> {
+  const client = getIntegrationClient();
+  return client.getCredentials(tenantId, source);
+}

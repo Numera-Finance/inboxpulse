@@ -1,12 +1,14 @@
 "use client"
 
+import * as React from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, CheckCircle2, ExternalLink, Unplug } from "lucide-react"
+import { Loader2, CheckCircle2, ExternalLink, Unplug, Pencil } from "lucide-react"
 import { GMAIL_SCOPE_DESCRIPTIONS } from "@crm/shared"
 import type { Integration } from "@/lib/api"
 import { API_BASE_URL } from "@/lib/api"
+import { GmailSettingsDrawer } from "./gmail-settings-drawer"
 
 // Gmail logo SVG - official Google colors
 function GmailLogo({ className }: { className?: string }) {
@@ -40,6 +42,7 @@ export function GmailIntegrationCard({
   onConnect,
   onDisconnect
 }: GmailIntegrationCardProps) {
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
   const isConnected = integration?.isActive === true
 
   const handleConnect = () => {
@@ -90,8 +93,18 @@ export function GmailIntegrationCard({
             <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white border shadow-sm">
               <GmailLogo className="h-7 w-7" />
             </div>
-            <div>
+            <div className="flex items-center gap-2">
               <CardTitle className="text-lg">Gmail</CardTitle>
+              {isConnected && (
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="Configure Gmail settings"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
           {isConnected ? (
@@ -148,7 +161,6 @@ export function GmailIntegrationCard({
               </Button>
               <Button
                 variant="destructive"
-                className="flex-1"
                 onClick={onDisconnect}
                 disabled={isDisconnecting}
               >
@@ -186,6 +198,16 @@ export function GmailIntegrationCard({
           </div>
         )}
       </CardContent>
+
+      {/* Settings Drawer */}
+      {integration && (
+        <GmailSettingsDrawer
+          integration={integration}
+          tenantId={tenantId}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+        />
+      )}
     </Card>
   )
 }

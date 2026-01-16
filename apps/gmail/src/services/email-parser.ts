@@ -1,6 +1,11 @@
 import { gmail_v1 } from 'googleapis';
 import type { Email, EmailThread, EmailCollection, EmailProvider } from '@crm/shared';
 
+export interface ParseOptions {
+  /** List of email addresses to blacklist (filter out) */
+  blacklistEmails?: string[];
+}
+
 export class EmailParserService {
   /**
    * Parse Gmail messages to provider-agnostic format
@@ -8,11 +13,17 @@ export class EmailParserService {
    */
   parseMessages(
     messages: gmail_v1.Schema$Message[],
-    provider: EmailProvider = 'gmail'
+    provider: EmailProvider = 'gmail',
+    options: ParseOptions = {}
   ): EmailCollection[] {
+    const { blacklistEmails = [] } = options;
+
+    // Normalize blacklist emails to lowercase for case-insensitive matching
+    const normalizedBlacklist = new Set(blacklistEmails.map(email => email.toLowerCase()));
+
     // Group messages by thread
     const threadMap = new Map<string, gmail_v1.Schema$Message[]>();
-    
+
     for (const message of messages) {
       const threadId = message.threadId!;
       if (!threadMap.has(threadId)) {
@@ -44,6 +55,14 @@ export class EmailParserService {
           const labels = email.labels || [];
           if (labels.includes('DRAFT') || labels.includes('SPAM')) {
             return false;
+          }
+
+          // Filter out blacklisted senders
+          if (normalizedBlacklist.size > 0 && email.from?.email) {
+            const fromEmail = email.from.email.toLowerCase();
+            if (normalizedBlacklist.has(fromEmail)) {
+              return false;
+            }
           }
 
           return true;
