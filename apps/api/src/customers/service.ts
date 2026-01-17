@@ -5,10 +5,13 @@ import type { Database } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
 import { EmailRepository } from '../emails/repository';
+import { UserRepository } from '../users/repository';
+import { inngest } from '../inngest/instance';
 import { logger } from '../utils/logger';
 import { customers, customerDomains } from './schema';
 import type { Customer, NewCustomer } from './schema';
 import type { Customer as ClientCustomer, CreateCustomerRequest } from '@crm/clients';
+import type { CustomerImportResult, CustomerExportData } from './import-export';
 
 /**
  * Convert internal Customer (from database) to client-facing Customer
@@ -32,6 +35,7 @@ function toClientCustomerWithDomains(
     website: customer.website,
     industry: customer.industry,
     labels: customer.labels || [],
+    externalId: customer.externalId,
     metadata: customer.metadata,
     createdAt: customer.createdAt,
     updatedAt: customer.updatedAt,
@@ -66,6 +70,7 @@ export class CustomerService {
   constructor(
     @inject(CustomerRepository) private customerRepository: CustomerRepository,
     @inject(EmailRepository) private emailRepository: EmailRepository,
+    @inject(UserRepository) private userRepository: UserRepository,
     @inject('Database') private db: Database
   ) {}
 
@@ -453,6 +458,7 @@ export class CustomerService {
         name: customerWithDomains.name,
         website: customerWithDomains.website,
         industry: customerWithDomains.industry,
+        externalId: customerWithDomains.externalId,
         metadata: customerWithDomains.metadata,
         createdAt: customerWithDomains.createdAt,
         updatedAt: customerWithDomains.updatedAt,
@@ -470,6 +476,181 @@ export class CustomerService {
     } catch (error: any) {
       logger.error({ error, id }, 'Failed to update customer');
       throw error;
+    }
+  }
+
+  // ===========================================================================
+  // Import/Export
+  // ===========================================================================
+
+  /**
+   * Import customers and team assignments from Excel file
+   *
+   * - Finds existing customers by externalId or creates new ones
+   * - Updates all fields (name, website, domains)
+   * - Replaces all team assignments
+   * - Returns errors for unknown user emails
+   */
+  async importCustomers(tenantId: string, fileBuffer: Buffer): Promise<CustomerImportResult> {
+    const { parseCustomerImport } = await import('./import-export');
+    const importRows = parseCustomerImport(fileBuffer);
+
+    const result: CustomerImportResult = {
+      imported: 0,
+      updated: 0,
+      errors: [],
+      warnings: [],
+    };
+
+    // First pass: validate all user emails exist
+    const allEmails = new Set<string>();
+    for (const row of importRows) {
+      for (const assignment of row.teamAssignments) {
+        allEmails.add(assignment.email);
+      }
+    }
+
+    // Look up all users by email
+    const usersByEmail = await this.userRepository.findByEmails(tenantId, Array.from(allEmails));
+
+    // Process each row
+    for (const row of importRows) {
+      try {
+        // Validate required fields
+        if (!row.externalId) {
+          result.errors.push({
+            row: row.rowNumber,
+            externalId: '',
+            error: 'Client ID is required',
+          });
+          continue;
+        }
+
+        if (row.domains.length === 0) {
+          result.errors.push({
+            row: row.rowNumber,
+            externalId: row.externalId,
+            error: 'At least one domain is required',
+          });
+          continue;
+        }
+
+        // Validate team assignment emails
+        const validAssignments: Array<{ userId: string; roleId: string }> = [];
+        for (const assignment of row.teamAssignments) {
+          const user = usersByEmail.get(assignment.email);
+          if (user) {
+            validAssignments.push({
+              userId: user.id,
+              roleId: assignment.roleId,
+            });
+          } else {
+            result.warnings.push({
+              row: row.rowNumber,
+              externalId: row.externalId,
+              warning: `User not found: ${assignment.email} (${assignment.columnName})`,
+            });
+          }
+        }
+
+        // Check if customer exists
+        const existing = await this.customerRepository.findByExternalId(tenantId, row.externalId);
+
+        // Upsert customer
+        const customer = await this.customerRepository.upsertByExternalId({
+          tenantId,
+          externalId: row.externalId,
+          name: row.name || undefined,
+          website: row.website || undefined,
+          domains: row.domains,
+        });
+
+        // Replace team assignments
+        await this.userRepository.setTeamAssignmentsForCustomer(customer.id, validAssignments);
+
+        if (existing) {
+          result.updated++;
+        } else {
+          result.imported++;
+        }
+
+        logger.info(
+          { tenantId, customerId: customer.id, externalId: row.externalId, teamCount: validAssignments.length },
+          'Imported customer'
+        );
+      } catch (error: any) {
+        logger.error({ error, row: row.rowNumber, externalId: row.externalId }, 'Failed to import customer row');
+        result.errors.push({
+          row: row.rowNumber,
+          externalId: row.externalId,
+          error: error.message || 'Unknown error',
+        });
+      }
+    }
+
+    // Queue access rebuild if any customers were imported/updated
+    if (result.imported > 0 || result.updated > 0) {
+      await this.queueAccessRebuild(tenantId);
+    }
+
+    logger.info(
+      { tenantId, imported: result.imported, updated: result.updated, errors: result.errors.length, warnings: result.warnings.length },
+      'Completed customer import'
+    );
+
+    return result;
+  }
+
+  /**
+   * Export all customers and their team assignments to Excel format
+   */
+  async exportCustomers(tenantId: string): Promise<Buffer> {
+    const { generateCustomerExport } = await import('./import-export');
+
+    // Get all customers with domains
+    const customersWithDomains = await this.customerRepository.findAllWithDomains(tenantId);
+
+    // Build export data with team assignments
+    const exportData: CustomerExportData[] = [];
+
+    for (const customer of customersWithDomains) {
+      // Get team assignments
+      const teamAssignments = await this.userRepository.getTeamAssignmentsForCustomer(customer.id);
+
+      exportData.push({
+        externalId: customer.externalId,
+        name: customer.name,
+        domains: customer.domains,
+        website: customer.website,
+        teamAssignments,
+      });
+    }
+
+    logger.info({ tenantId, customerCount: exportData.length }, 'Exporting customers');
+
+    return generateCustomerExport(exportData);
+  }
+
+  /**
+   * Generate template Excel file for customer import
+   */
+  async getImportTemplate(): Promise<Buffer> {
+    const { generateCustomerTemplate } = await import('./import-export');
+    return generateCustomerTemplate();
+  }
+
+  /**
+   * Queue access rebuild after import changes
+   */
+  private async queueAccessRebuild(tenantId: string): Promise<void> {
+    try {
+      await inngest.send({
+        name: 'user/access.rebuild',
+        data: { tenantId },
+      });
+      logger.debug({ tenantId }, 'Queued access rebuild');
+    } catch (error) {
+      logger.warn({ error, tenantId }, 'Failed to queue access rebuild');
     }
   }
 }

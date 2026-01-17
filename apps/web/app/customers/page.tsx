@@ -13,9 +13,8 @@ import { ImportDialog } from "@/components/import-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ExportButton } from "@/components/ui/export-button"
-import { createXlsxBlob } from "@/lib/utils/export"
 import { CustomerTableSkeleton } from "@/components/ui/table-skeleton"
-import { useCustomers, useCustomer, useUpsertCustomer } from "@/lib/hooks"
+import { useCustomers, useCustomer, useUpsertCustomer, useImportCustomers, useExportCustomers } from "@/lib/hooks"
 import { type Customer, mapApiCustomerToCustomer } from "@/lib/types"
 import { SearchOperator } from "@crm/shared"
 import { toast } from "sonner"
@@ -74,6 +73,8 @@ export default function CustomersPage() {
 
   // Mutations
   const upsertCustomer = useUpsertCustomer()
+  const importCustomers = useImportCustomers()
+  const exportCustomers = useExportCustomers()
 
   // Map API response to Customer type
   const customers: Customer[] = React.useMemo(() => {
@@ -134,30 +135,52 @@ export default function CustomersPage() {
     }
   }
 
-  const handleImport = async (records: Record<string, string>[]) => {
-    console.log("Import records:", records)
-    toast.info("Import functionality coming soon")
-    setImportDialogOpen(false)
+  const handleImportFile = async (file: File) => {
+    try {
+      const result = await importCustomers.mutateAsync(file)
+
+      // Show summary of import results
+      const messages: string[] = []
+      if (result.imported > 0) {
+        messages.push(`${result.imported} customer(s) created`)
+      }
+      if (result.updated > 0) {
+        messages.push(`${result.updated} customer(s) updated`)
+      }
+
+      if (messages.length > 0) {
+        toast.success(messages.join(", "))
+      }
+
+      // Show warnings if any
+      if (result.warnings.length > 0) {
+        const warningCount = result.warnings.length
+        toast.warning(`${warningCount} warning(s): Some users not found. Check console for details.`)
+        console.warn("Import warnings:", result.warnings)
+      }
+
+      // Show errors if any
+      if (result.errors.length > 0) {
+        const errorCount = result.errors.length
+        toast.error(`${errorCount} row(s) failed to import. Check console for details.`)
+        console.error("Import errors:", result.errors)
+      }
+
+      setImportDialogOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to import customers")
+    }
   }
 
   const handleExport = React.useCallback(async () => {
-    const exportData = customers.map(customer => ({
-      name: customer.name,
-      domains: customer.domains.join("; "),
-      industry: customer.industry || "",
-      website: customer.website || "",
-    }))
-
-    return createXlsxBlob(exportData, {
-      columns: [
-        { key: "name", header: "Name", width: 30 },
-        { key: "domains", header: "Domains", width: 40 },
-        { key: "industry", header: "Industry", width: 20 },
-        { key: "website", header: "Website", width: 40 },
-      ],
-      sheetName: "Customers",
-    })
-  }, [customers])
+    try {
+      const blob = await exportCustomers.mutateAsync()
+      return blob
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to export customers")
+      throw err
+    }
+  }, [exportCustomers])
 
   return (
     <AppShell>
@@ -271,8 +294,9 @@ export default function CustomersPage() {
         <ImportDialog
           open={importDialogOpen}
           onClose={() => setImportDialogOpen(false)}
-          onImport={handleImport}
+          onImportFile={handleImportFile}
           entityType="customers"
+          isLoading={importCustomers.isPending}
         />
       </div>
     </AppShell>

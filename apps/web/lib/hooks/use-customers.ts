@@ -127,3 +127,36 @@ export function useUpdateCustomer() {
     },
   });
 }
+
+/**
+ * Hook to import customers from Excel file
+ */
+export function useImportCustomers() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (file: File) => api.importCustomers(file),
+    onSuccess: () => {
+      // Invalidate all customer queries to refetch fresh data
+      queryClient.invalidateQueries({ queryKey: customerKeys.all });
+    },
+  });
+}
+
+/**
+ * Hook to export customers to Excel file
+ */
+export function useExportCustomers() {
+  return useMutation({
+    mutationFn: () => api.exportCustomers(),
+  });
+}
+
+/**
+ * Hook to download import template
+ */
+export function useImportTemplate() {
+  return useMutation({
+    mutationFn: () => api.getImportTemplate(),
+  });
+}

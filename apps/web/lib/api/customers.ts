@@ -1,6 +1,6 @@
 import { getCustomerClient } from './clients';
 import type { SearchRequest, SearchResponse } from '@crm/shared';
-import type { Customer, CreateCustomerRequest } from '@crm/clients';
+import type { Customer, CreateCustomerRequest, CustomerImportResult } from '@crm/clients';
 
 /**
  * Get a customer by ID
@@ -65,4 +65,28 @@ export async function updateCustomer(
   signal?: AbortSignal
 ): Promise<Customer> {
   return getCustomerClient().updateCustomer(id, data, signal);
+}
+
+/**
+ * Import customers from Excel file
+ */
+export async function importCustomers(
+  file: File,
+  signal?: AbortSignal
+): Promise<CustomerImportResult> {
+  return getCustomerClient().importCustomers(file, signal);
+}
+
+/**
+ * Export all customers to Excel file
+ */
+export async function exportCustomers(signal?: AbortSignal): Promise<Blob> {
+  return getCustomerClient().exportCustomers(signal);
+}
+
+/**
+ * Download import template
+ */
+export async function getImportTemplate(signal?: AbortSignal): Promise<Blob> {
+  return getCustomerClient().getImportTemplate(signal);
 }

@@ -24,6 +24,9 @@ export {
   useCustomerByDomain,
   useUpsertCustomer,
   useUpdateCustomer,
+  useImportCustomers,
+  useExportCustomers,
+  useImportTemplate,
   customerKeys,
 } from './use-customers';
 

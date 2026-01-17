@@ -89,4 +89,58 @@ export class CustomerClient extends BaseClient {
 
     return response.data;
   }
+
+  /**
+   * Import customers from Excel file
+   */
+  async importCustomers(file: File, signal?: AbortSignal): Promise<CustomerImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await this.postFormData<ApiResponse<CustomerImportResult>>(
+      '/api/customers/import',
+      formData,
+      signal
+    );
+
+    if (!response?.data) {
+      throw new Error('Invalid API response: missing data');
+    }
+
+    return response.data;
+  }
+
+  /**
+   * Export all customers to Excel file
+   * Returns a Blob that can be downloaded
+   */
+  async exportCustomers(signal?: AbortSignal): Promise<Blob> {
+    return this.getBlob('/api/customers/export', signal);
+  }
+
+  /**
+   * Download import template
+   * Returns a Blob that can be downloaded
+   */
+  async getImportTemplate(signal?: AbortSignal): Promise<Blob> {
+    return this.getBlob('/api/customers/import/template', signal);
+  }
+}
+
+/**
+ * Result of customer import operation
+ */
+export interface CustomerImportResult {
+  imported: number;
+  updated: number;
+  errors: Array<{
+    row: number;
+    externalId: string;
+    error: string;
+  }>;
+  warnings: Array<{
+    row: number;
+    externalId: string;
+    warning: string;
+  }>;
 }

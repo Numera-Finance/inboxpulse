@@ -622,4 +622,54 @@ export class UserRepository extends ScopedRepository {
       durationMs,
     };
   }
+
+  // ===========================================================================
+  // Customer-centric Team Assignment Methods (for import)
+  // ===========================================================================
+
+  /**
+   * Replace all team assignments for a customer
+   * Used during import to fully replace team members for a customer
+   */
+  async setTeamAssignmentsForCustomer(
+    customerId: string,
+    assignments: Array<{ userId: string; roleId?: string }>
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      // Delete all existing assignments for this customer
+      await tx
+        .delete(userCustomers)
+        .where(eq(userCustomers.customerId, customerId));
+
+      // Insert new assignments
+      if (assignments.length > 0) {
+        await tx.insert(userCustomers).values(
+          assignments.map(a => ({
+            userId: a.userId,
+            customerId,
+            roleId: a.roleId,
+          }))
+        );
+      }
+
+      logger.debug({ customerId, assignmentCount: assignments.length }, 'Replaced team assignments for customer');
+    });
+  }
+
+  /**
+   * Get all team assignments for a customer (for export)
+   * Returns user email and role ID
+   */
+  async getTeamAssignmentsForCustomer(customerId: string): Promise<Array<{ email: string; roleId: string | null }>> {
+    const result = await this.db
+      .select({
+        email: users.email,
+        roleId: userCustomers.roleId,
+      })
+      .from(userCustomers)
+      .innerJoin(users, eq(users.id, userCustomers.userId))
+      .where(eq(userCustomers.customerId, customerId));
+
+    return result;
+  }
 }
