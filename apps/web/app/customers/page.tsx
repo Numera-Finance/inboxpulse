@@ -47,17 +47,25 @@ export default function CustomersPage() {
   const [addDrawerOpen, setAddDrawerOpen] = React.useState(false)
   const [importDialogOpen, setImportDialogOpen] = React.useState(false)
 
+  // Pagination state
+  const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
+
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
-  // Fetch customers using React Query
+  // Reset pagination when search changes
+  React.useEffect(() => {
+    setPagination(prev => ({ ...prev, pageIndex: 0 }))
+  }, [debouncedSearch])
+
+  // Fetch customers using React Query with server-side pagination
   const { data, isLoading, isError, error } = useCustomers({
     queries: debouncedSearch
       ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
       : [],
     sortOrder: 'asc',
-    limit: 100,
-    offset: 0,
+    limit: pagination.pageSize,
+    offset: pagination.pageIndex * pagination.pageSize,
     include: ['emailCount', 'lastContactDate', 'sentiment', 'escalationCount', 'upsellCount', 'churnCount', 'positiveCount'],
   })
 
@@ -85,17 +93,8 @@ export default function CustomersPage() {
     return null
   }, [customerId, customers, singleCustomerData])
 
-  // Client-side filtering for immediate feedback
-  const filteredCustomers = React.useMemo(() => {
-    if (!searchQuery || searchQuery === debouncedSearch) {
-      return customers
-    }
-    const query = searchQuery.toLowerCase()
-    return customers.filter((customer) =>
-      customer.name.toLowerCase().includes(query) ||
-      customer.domains.some((d) => d.toLowerCase().includes(query))
-    )
-  }, [customers, searchQuery, debouncedSearch])
+  // Total count from server for pagination
+  const totalCount = data?.total ?? 0
 
   const handleSelectCustomer = (customer: Customer) => {
     navigate(`/customers/${customer.id}/emails`)
@@ -142,7 +141,7 @@ export default function CustomersPage() {
   }
 
   const handleExport = React.useCallback(async () => {
-    const exportData = filteredCustomers.map(customer => ({
+    const exportData = customers.map(customer => ({
       name: customer.name,
       domains: customer.domains.join("; "),
       industry: customer.industry || "",
@@ -158,14 +157,19 @@ export default function CustomersPage() {
       ],
       sheetName: "Customers",
     })
-  }, [filteredCustomers])
+  }, [customers])
 
   return (
     <AppShell>
       <div className="p-6 space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              Customers
+              {data?.total !== undefined && (
+                <span className="ml-2 text-base font-normal text-muted-foreground">({data.total})</span>
+              )}
+            </h1>
             <p className="text-muted-foreground">Manage and monitor all customer accounts</p>
           </div>
           <div className="flex items-center gap-2">
@@ -178,7 +182,7 @@ export default function CustomersPage() {
             <ExportButton
               onExport={handleExport}
               filename="customers.xlsx"
-              disabled={filteredCustomers.length === 0}
+              disabled={customers.length === 0}
             />
             <PermissionGate permission={Permission.CUSTOMER_ADD}>
               <Button onClick={() => setAddDrawerOpen(true)}>
@@ -224,15 +228,21 @@ export default function CustomersPage() {
           <>
             {view === "grid" ? (
               <div className="grid gap-4 md:grid-cols-2">
-                {filteredCustomers.map((customer) => (
+                {customers.map((customer) => (
                   <CustomerCard key={customer.id} customer={customer} onClick={() => handleSelectCustomer(customer)} />
                 ))}
               </div>
             ) : (
-              <CustomerTable customers={filteredCustomers} onSelect={handleSelectCustomer} />
+              <CustomerTable
+                customers={customers}
+                onSelect={handleSelectCustomer}
+                pagination={pagination}
+                onPaginationChange={setPagination}
+                totalCount={totalCount}
+              />
             )}
 
-            {filteredCustomers.length === 0 && (
+            {customers.length === 0 && (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">No customers found matching your search.</p>
               </div>

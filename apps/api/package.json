@@ -28,6 +28,7 @@
     "reflect-metadata": "catalog:",
     "talonjs": "^1.0.28",
     "tsyringe": "catalog:",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.12"
   },
   "devDependencies": {

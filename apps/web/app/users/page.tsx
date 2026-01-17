@@ -48,17 +48,25 @@ export default function UsersPage() {
   const [addDrawerOpen, setAddDrawerOpen] = React.useState(false)
   const [importDialogOpen, setImportDialogOpen] = React.useState(false)
 
+  // Pagination state
+  const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
+
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
-  // Fetch users using React Query
+  // Reset pagination when search changes
+  React.useEffect(() => {
+    setPagination(prev => ({ ...prev, pageIndex: 0 }))
+  }, [debouncedSearch])
+
+  // Fetch users using React Query with server-side pagination
   const { data, isLoading, isError, error } = useUsers({
     queries: debouncedSearch
       ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
       : [],
     sortOrder: 'asc',
-    limit: 100,
-    offset: 0,
+    limit: pagination.pageSize,
+    offset: pagination.pageIndex * pagination.pageSize,
     include: ['customerAssignments'],
   })
 
@@ -81,20 +89,8 @@ export default function UsersPage() {
     return users.find((u) => u.id === userId) ?? null
   }, [userId, users])
 
-  // Client-side filtering for immediate feedback while debounced search loads
-  const filteredUsers = React.useMemo(() => {
-    if (!searchQuery || searchQuery === debouncedSearch) {
-      return users
-    }
-    // Do client-side filtering while waiting for API
-    const query = searchQuery.toLowerCase()
-    return users.filter((user) =>
-      user.name.toLowerCase().includes(query) ||
-      user.email.toLowerCase().includes(query) ||
-      (user.role?.toLowerCase().includes(query) ?? false) ||
-      (user.department?.toLowerCase().includes(query) ?? false)
-    )
-  }, [users, searchQuery, debouncedSearch])
+  // Total count from server for pagination
+  const totalCount = data?.total ?? 0
 
   const handleSelectUser = (user: User) => {
     navigate(`/users/${user.id}`)
@@ -162,16 +158,22 @@ export default function UsersPage() {
     }
   }
 
-  const handleImport = async (records: Record<string, string>[]) => {
-    // Convert records to a file-like object for the API
-    // For now, we'll log and show a message
-    console.log("Import records:", records)
-    toast.info("Import functionality coming soon")
-    setImportDialogOpen(false)
+  const handleImportFile = async (file: File) => {
+    try {
+      const result = await importUsers.mutateAsync(file)
+      if (result.errors.length > 0) {
+        toast.warning(`Imported ${result.imported} users with ${result.errors.length} errors`)
+        console.log("Import errors:", result.errors)
+      } else {
+        toast.success(`Successfully imported ${result.imported} users`)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to import users")
+    }
   }
 
   const handleExport = React.useCallback(async () => {
-    const exportData = filteredUsers.map(user => ({
+    const exportData = users.map(user => ({
       name: user.name,
       email: user.email,
       role: user.role || "",
@@ -189,14 +191,19 @@ export default function UsersPage() {
       ],
       sheetName: "Users",
     })
-  }, [filteredUsers])
+  }, [users])
 
   return (
     <AppShell>
       <div className="p-6 space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Users</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              Users
+              {data?.total !== undefined && (
+                <span className="ml-2 text-base font-normal text-muted-foreground">({data.total})</span>
+              )}
+            </h1>
             <p className="text-muted-foreground">Manage user access and reporting structure</p>
           </div>
           <div className="flex items-center gap-2">
@@ -209,7 +216,7 @@ export default function UsersPage() {
             <ExportButton
               onExport={handleExport}
               filename="users.xlsx"
-              disabled={filteredUsers.length === 0}
+              disabled={users.length === 0}
             />
             <PermissionGate permission={Permission.USER_ADD}>
               <Button onClick={() => setAddDrawerOpen(true)}>
@@ -255,15 +262,21 @@ export default function UsersPage() {
           <>
             {view === "grid" ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredUsers.map((user) => (
+                {users.map((user) => (
                   <UserCard key={user.id} user={user} onClick={() => handleSelectUser(user)} />
                 ))}
               </div>
             ) : (
-              <UserTable users={filteredUsers} onSelect={handleSelectUser} />
+              <UserTable
+                users={users}
+                onSelect={handleSelectUser}
+                pagination={pagination}
+                onPaginationChange={setPagination}
+                totalCount={totalCount}
+              />
             )}
 
-            {filteredUsers.length === 0 && (
+            {users.length === 0 && (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">No users found matching your search.</p>
               </div>
@@ -288,8 +301,9 @@ export default function UsersPage() {
         <ImportDialog
           open={importDialogOpen}
           onClose={() => setImportDialogOpen(false)}
-          onImport={handleImport}
+          onImportFile={handleImportFile}
           entityType="users"
+          isLoading={importUsers.isPending}
         />
       </div>
     </AppShell>

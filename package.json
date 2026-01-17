@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "CRM TypeScript React monorepo with Drizzle, Hono, and Turbo",
-    "scripts": {
+  "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
     "test": "turbo test",
@@ -19,7 +19,8 @@
     "pg": "^8.16.3",
     "tsx": "^4.20.6",
     "turbo": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "xlsx": "^0.18.5"
   },
   "engines": {
     "node": ">=20.0.0",

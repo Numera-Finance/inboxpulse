@@ -398,7 +398,7 @@ userRoutes.put('/:id/customers', requirePermission(Permission.USER_CUSTOMER_MANA
 });
 
 /**
- * POST /api/users/import - Import users from CSV
+ * POST /api/users/import - Import users from CSV or Excel
  * Requires USER_ADD permission
  */
 userRoutes.post('/import', requirePermission(Permission.USER_ADD), async (c) => {
@@ -412,11 +412,8 @@ userRoutes.post('/import', requirePermission(Permission.USER_ADD), async (c) => 
     throw new ValidationError('File is required');
   }
 
-  // Read file content
-  const content = await file.text();
-
   const service = container.resolve(UserService);
-  const result = await service.importUsers(requestHeader.tenantId, content);
+  const result = await service.importUsersFromFile(requestHeader.tenantId, file);
 
   return c.json<ApiResponse<typeof result>>({
     success: true,

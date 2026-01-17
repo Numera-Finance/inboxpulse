@@ -132,7 +132,7 @@ export async function setUserCustomerAssignments(
 export async function importUsers(
   file: File,
   signal?: AbortSignal
-): Promise<{ imported: number; errors: number }> {
+): Promise<import('@crm/shared').ImportResponse> {
   return getUserClient().import(file, signal);
 }
 

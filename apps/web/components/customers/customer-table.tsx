@@ -21,10 +21,16 @@ import { TablePagination } from "@/components/ui/table-pagination"
 interface CustomerTableProps {
   customers: Customer[]
   onSelect: (customer: Customer) => void
+  pagination?: { pageIndex: number; pageSize: number }
+  onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
+  totalCount?: number
 }
 
-export function CustomerTable({ customers, onSelect }: CustomerTableProps) {
+export function CustomerTable({ customers, onSelect, pagination, onPaginationChange, totalCount }: CustomerTableProps) {
   const [sorting, setSorting] = useState<SortingState>([])
+
+  // Use server-side pagination if props are provided
+  const isServerSide = pagination !== undefined && onPaginationChange !== undefined
 
   const columns: ColumnDef<Customer>[] = [
     {
@@ -183,14 +189,31 @@ export function CustomerTable({ customers, onSelect }: CustomerTableProps) {
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
-    state: {
-      sorting,
-    },
-    initialState: {
-      pagination: {
-        pageSize: 10,
-      },
-    },
+    ...(isServerSide
+      ? {
+          manualPagination: true,
+          pageCount: Math.ceil((totalCount ?? 0) / (pagination?.pageSize ?? 50)),
+          state: {
+            sorting,
+            pagination: pagination ?? { pageIndex: 0, pageSize: 50 },
+          },
+          onPaginationChange: (updater) => {
+            if (onPaginationChange) {
+              const newPagination = typeof updater === 'function'
+                ? updater(pagination ?? { pageIndex: 0, pageSize: 50 })
+                : updater
+              onPaginationChange(newPagination)
+            }
+          },
+        }
+      : {
+          state: { sorting },
+          initialState: {
+            pagination: {
+              pageSize: 50,
+            },
+          },
+        }),
   })
 
   return (

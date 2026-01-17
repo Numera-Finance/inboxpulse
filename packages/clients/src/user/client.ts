@@ -1,5 +1,5 @@
 import { BaseClient } from '../base-client';
-import type { ApiResponse, SearchRequest, SearchResponse } from '@crm/shared';
+import type { ApiResponse, SearchRequest, SearchResponse, ImportResponse } from '@crm/shared';
 import type {
   UserResponse,
   UserWithRelationsResponse,
@@ -164,21 +164,24 @@ export class UserClient extends BaseClient {
   /**
    * Import users from CSV/Excel
    */
-  async import(file: File, signal?: AbortSignal): Promise<{ imported: number; errors: number }> {
+  async import(file: File, signal?: AbortSignal): Promise<ImportResponse> {
     const formData = new FormData();
     formData.append('file', file);
-    
+
     const response = await fetch(`${this.baseUrl}/api/users/import`, {
       method: 'POST',
       body: formData,
+      credentials: 'include', // Include cookies for auth
       signal,
     });
 
     if (!response.ok) {
-      throw new Error(`Import failed: ${response.statusText}`);
+      const errorBody = await response.json().catch(() => ({})) as { message?: string; error?: string };
+      const message = errorBody.error || errorBody.message || `Import failed: ${response.statusText}`;
+      throw new Error(message);
     }
 
-    const result = await response.json() as ApiResponse<{ imported: number; errors: number }>;
+    const result = await response.json() as ApiResponse<ImportResponse>;
     if (!result.data) {
       throw new Error('Invalid API response: missing data');
     }

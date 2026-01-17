@@ -3,7 +3,7 @@ import { CustomerRepository } from '../customers/repository';
 import { TenantRepository } from '../tenants/repository';
 import { RoleRepository } from '../roles/repository';
 import { sql, desc, asc, and, isNull } from 'drizzle-orm';
-import { NotFoundError, type SearchRequest, type SearchResponse, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
+import { NotFoundError, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
 import { scopedSearch } from '@crm/database';
 import type { Database } from '@crm/database';
 import { UserRepository } from './repository';
@@ -525,12 +525,12 @@ export class UserService {
   async importUsers(
     tenantId: string,
     csvContent: string
-  ): Promise<{ imported: number; errors: Array<{ row: number; email: string; error: string }> }> {
+  ): Promise<ImportResponse> {
     const { parseCSV, parseManagerEmails, groupImportRows } = await import('./import-export');
     const rows = parseCSV(csvContent);
     const grouped = groupImportRows(rows);
 
-    const errors: Array<{ row: number; email: string; error: string }> = [];
+    const errors: ImportError[] = [];
     let imported = 0;
 
     for (const [email, userRows] of grouped.entries()) {
@@ -621,6 +621,168 @@ export class UserService {
     await this.queueAccessRebuild(tenantId);
 
     return { imported, errors };
+  }
+
+  /**
+   * Import users from a file (CSV or Excel)
+   * Supports simple format: name, email, role, department
+   */
+  async importUsersFromFile(
+    tenantId: string,
+    file: File
+  ): Promise<ImportResponse> {
+    const errors: ImportError[] = [];
+    let imported = 0;
+
+    logger.info({ fileName: file.name, fileSize: file.size }, 'Starting user import');
+
+    // Parse file based on type
+    let records: Array<Record<string, any>>;
+
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+
+    if (isExcel) {
+      // Parse Excel file
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      records = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+      logger.info({ sheetName: firstSheetName, recordCount: records.length }, 'Parsed Excel file');
+      if (records.length > 0) {
+        logger.info({ columns: Object.keys(records[0]) }, 'Excel columns found');
+      }
+    } else {
+      // Parse CSV file
+      const content = await file.text();
+      const lines = content.split('\n').filter(line => line.trim() !== '');
+      if (lines.length < 2) {
+        return { imported: 0, errors: [{ row: 0, email: '', error: 'File is empty or has no data rows' }] };
+      }
+
+      // Parse header
+      const headers = this.parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
+
+      // Parse data rows
+      records = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = this.parseCSVLine(lines[i]);
+        const record: Record<string, string> = {};
+        headers.forEach((header, index) => {
+          record[header] = values[index]?.trim() || '';
+        });
+        records.push(record);
+      }
+    }
+
+    // Normalize column names (handle case variations)
+    records = records.map(record => {
+      const normalized: Record<string, any> = {};
+      for (const [key, value] of Object.entries(record)) {
+        normalized[key.toLowerCase().trim()] = value;
+      }
+      return normalized;
+    });
+
+    logger.info({ recordCount: records.length }, 'Processing records');
+
+    // Process records
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      const rowNum = i + 2; // +2 for 1-based index and header row
+
+      try {
+        // Get email (required)
+        const email = String(record.email || '').trim().toLowerCase();
+        if (!email) {
+          errors.push({ row: rowNum, email: '', error: 'Email is required' });
+          continue;
+        }
+
+        // Parse name into first and last name
+        const fullName = String(record.name || '').trim();
+        if (!fullName) {
+          errors.push({ row: rowNum, email, error: 'Name is required' });
+          continue;
+        }
+
+        const nameParts = fullName.split(/\s+/);
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+
+        // Look up role by name if provided
+        let roleId: string | undefined;
+        const roleName = String(record.role || '').trim();
+        if (roleName) {
+          const role = await this.roleRepository.findByName(tenantId, roleName);
+          if (role) {
+            roleId = role.id;
+          } else {
+            // Role not found - log warning but continue import
+            logger.warn({ roleName, email, row: rowNum }, 'Role not found, skipping role assignment');
+          }
+        }
+
+        // Upsert user
+        await this.userRepository.upsert({
+          tenantId,
+          firstName,
+          lastName,
+          email,
+          roleId,
+          rowStatus: RowStatus.ACTIVE,
+        });
+
+        imported++;
+      } catch (error: any) {
+        logger.error({ error: error.message, row: rowNum }, 'Error importing user');
+        errors.push({
+          row: rowNum,
+          email: String(record.email || ''),
+          error: error.message || 'Unknown error',
+        });
+      }
+    }
+
+    // Queue rebuild after import
+    if (imported > 0) {
+      await this.queueAccessRebuild(tenantId);
+    }
+
+    logger.info({ imported, errorCount: errors.length }, 'User import completed');
+    return { imported, errors };
+  }
+
+  /**
+   * Parse a single CSV line, handling quoted fields
+   */
+  private parseCSVLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const nextChar = line[i + 1];
+
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+
+    result.push(current.trim());
+    return result;
   }
 
   async exportUsers(tenantId: string): Promise<string> {

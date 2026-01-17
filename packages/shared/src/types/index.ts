@@ -21,6 +21,23 @@ export interface ApiResponse<T> {
   error?: StructuredError;
 }
 
+/**
+ * Import error detail for a single row
+ */
+export interface ImportError {
+  row: number;
+  email: string;
+  error: string;
+}
+
+/**
+ * Standard response for import operations
+ */
+export interface ImportResponse {
+  imported: number;
+  errors: ImportError[];
+}
+
 export * from './email';
 export * from './analysis';
 export * from './customer-roles';

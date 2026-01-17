@@ -10,8 +10,10 @@ import { cn } from "@/lib/utils"
 interface ImportDialogProps {
   open: boolean
   onClose: () => void
-  onImport: (data: Record<string, string>[]) => void
+  onImport?: (data: Record<string, string>[]) => void
+  onImportFile?: (file: File) => Promise<void>
   entityType: "customers" | "users" | "employees" // "employees" kept for backwards compatibility
+  isLoading?: boolean
 }
 
 const templateColumns = {
@@ -109,12 +111,21 @@ function parseXLSX(buffer: ArrayBuffer): Record<string, string>[] {
   return XLSX.utils.sheet_to_json<Record<string, string>>(worksheet, { defval: "" })
 }
 
-export function ImportDialog({ open, onClose, onImport, entityType }: ImportDialogProps) {
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function ImportDialog({ open, onClose, onImport, onImportFile, entityType, isLoading }: ImportDialogProps) {
   const [isDragging, setIsDragging] = React.useState(false)
   const [file, setFile] = React.useState<File | null>(null)
   const [parsedData, setParsedData] = React.useState<Record<string, string>[]>([])
   const [error, setError] = React.useState<string | null>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  // Determine if we should parse the file (only for legacy onImport mode)
+  const shouldParseFile = !onImportFile && onImport
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -142,25 +153,33 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
     }
   }
 
-  const processFile = async (file: File) => {
+  const processFile = async (selectedFile: File) => {
     setError(null)
 
-    const isCSV = file.name.endsWith(".csv")
-    const isXLS = file.name.endsWith(".xls") || file.name.endsWith(".xlsx")
+    const isCSV = selectedFile.name.endsWith(".csv")
+    const isXLS = selectedFile.name.endsWith(".xls") || selectedFile.name.endsWith(".xlsx")
 
     if (!isCSV && !isXLS) {
       setError("Please upload a CSV or Excel file")
       return
     }
 
+    // For file upload mode, just set the file without parsing
+    if (onImportFile) {
+      setFile(selectedFile)
+      setParsedData([])
+      return
+    }
+
+    // For legacy mode, parse the file
     try {
       let data: Record<string, string>[]
 
       if (isCSV) {
-        const text = await file.text()
+        const text = await selectedFile.text()
         data = parseCSV(text)
       } else {
-        const buffer = await file.arrayBuffer()
+        const buffer = await selectedFile.arrayBuffer()
         data = parseXLSX(buffer)
       }
 
@@ -169,7 +188,7 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
         return
       }
 
-      setFile(file)
+      setFile(selectedFile)
       setParsedData(data)
     } catch (err) {
       setError("Failed to parse the file")
@@ -187,8 +206,12 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
     URL.revokeObjectURL(url)
   }
 
-  const handleImport = () => {
-    onImport(parsedData)
+  const handleImport = async () => {
+    if (onImportFile && file) {
+      await onImportFile(file)
+    } else if (onImport) {
+      onImport(parsedData)
+    }
     handleClose()
   }
 
@@ -250,18 +273,21 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
                   <div>
                     <p className="text-sm font-medium">{file.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {parsedData.length} record{parsedData.length !== 1 ? "s" : ""} found
+                      {shouldParseFile
+                        ? `${parsedData.length} record${parsedData.length !== 1 ? "s" : ""} found`
+                        : formatFileSize(file.size)
+                      }
                     </p>
                   </div>
                 </div>
-                <Button variant="ghost" size="icon" onClick={handleRemoveFile}>
+                <Button variant="ghost" size="icon" onClick={handleRemoveFile} disabled={isLoading}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
 
               <div className="mt-3 flex items-center gap-2 text-sm text-green-600">
                 <CheckCircle2 className="h-4 w-4" />
-                <span>File parsed successfully</span>
+                <span>Ready to import</span>
               </div>
             </div>
           )}
@@ -274,11 +300,14 @@ export function ImportDialog({ open, onClose, onImport, entityType }: ImportDial
           )}
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={handleClose}>
+            <Button variant="outline" onClick={handleClose} disabled={isLoading}>
               Cancel
             </Button>
-            <Button onClick={handleImport} disabled={parsedData.length === 0}>
-              Import {parsedData.length > 0 && `(${parsedData.length})`}
+            <Button
+              onClick={handleImport}
+              disabled={!file || (shouldParseFile && parsedData.length === 0) || isLoading}
+            >
+              {isLoading ? "Importing..." : "Import"}
             </Button>
           </div>
         </div>

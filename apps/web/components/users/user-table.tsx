@@ -30,10 +30,16 @@ import { TablePagination } from "@/components/ui/table-pagination"
 interface UserTableProps {
   users: User[]
   onSelect: (user: User) => void
+  pagination?: { pageIndex: number; pageSize: number }
+  onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
+  totalCount?: number
 }
 
-export function UserTable({ users, onSelect }: UserTableProps) {
+export function UserTable({ users, onSelect, pagination, onPaginationChange, totalCount }: UserTableProps) {
   const [sorting, setSorting] = React.useState<SortingState>([])
+
+  // Use server-side pagination if props are provided
+  const isServerSide = pagination !== undefined && onPaginationChange !== undefined
 
   const statusStyles: Record<string, string> = {
     Active: "bg-green-500/10 text-green-600 dark:text-green-400",
@@ -207,12 +213,31 @@ export function UserTable({ users, onSelect }: UserTableProps) {
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
-    state: { sorting },
-    initialState: {
-      pagination: {
-        pageSize: 10,
-      },
-    },
+    ...(isServerSide
+      ? {
+          manualPagination: true,
+          pageCount: Math.ceil((totalCount ?? 0) / (pagination?.pageSize ?? 50)),
+          state: {
+            sorting,
+            pagination: pagination ?? { pageIndex: 0, pageSize: 50 },
+          },
+          onPaginationChange: (updater) => {
+            if (onPaginationChange) {
+              const newPagination = typeof updater === 'function'
+                ? updater(pagination ?? { pageIndex: 0, pageSize: 50 })
+                : updater
+              onPaginationChange(newPagination)
+            }
+          },
+        }
+      : {
+          state: { sorting },
+          initialState: {
+            pagination: {
+              pageSize: 50,
+            },
+          },
+        }),
   })
 
   return (
