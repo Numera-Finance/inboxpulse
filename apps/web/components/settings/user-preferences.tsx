@@ -83,22 +83,37 @@ export function UserPreferences() {
           }))
         }
 
-        // Fetch notification preferences from notifications service
-        const notificationsClient = getNotificationsClient()
+        // Fetch notification preferences from notifications service (optional - service may not be running)
+        try {
+          const notificationsClient = getNotificationsClient()
 
-        // Fetch task.assigned preference
-        const taskPref = await notificationsClient.getPreference('task.assigned')
+          // Fetch task.assigned preference
+          const taskPref = await notificationsClient.getPreference('task.assigned')
 
-        // Fetch escalation.summary preference
-        const escalationPref = await notificationsClient.getPreference('escalation.summary')
+          // Fetch escalation.summary preference
+          const escalationPref = await notificationsClient.getPreference('escalation.summary')
 
-        setPreferences(prev => ({
-          ...prev,
-          notifyTaskAssigned: taskPref.enabled,
-          escalationSummaryFrequency: preferenceToFrequency(escalationPref),
-        }))
+          setPreferences(prev => ({
+            ...prev,
+            notifyTaskAssigned: taskPref.enabled,
+            escalationSummaryFrequency: preferenceToFrequency(escalationPref),
+          }))
+        } catch (notifError) {
+          // Notifications service may not be running - show warning
+          console.warn('Notifications service unavailable, using default preferences')
+          toast({
+            title: "Warning",
+            description: "Notifications service unavailable. Notification preferences may not be accurate.",
+            variant: "destructive",
+          })
+        }
       } catch (error) {
         console.error('Failed to fetch preferences:', error)
+        toast({
+          title: "Error",
+          description: "Failed to load preferences.",
+          variant: "destructive",
+        })
       } finally {
         setLoading(false)
       }
@@ -118,17 +133,28 @@ export function UserPreferences() {
         timezone: preferences.timezone || undefined,
       })
 
-      // Save notification preferences to notifications service
-      const notificationsClient = getNotificationsClient()
+      // Save notification preferences to notifications service (optional - service may not be running)
+      try {
+        const notificationsClient = getNotificationsClient()
 
-      // Update task.assigned preference
-      await notificationsClient.updatePreference('task.assigned', {
-        enabled: preferences.notifyTaskAssigned,
-      })
+        // Update task.assigned preference
+        await notificationsClient.updatePreference('task.assigned', {
+          enabled: preferences.notifyTaskAssigned,
+        })
 
-      // Update escalation.summary preference
-      const escalationPref = frequencyToPreference(preferences.escalationSummaryFrequency)
-      await notificationsClient.updatePreference('escalation.summary', escalationPref)
+        // Update escalation.summary preference
+        const escalationPref = frequencyToPreference(preferences.escalationSummaryFrequency)
+        await notificationsClient.updatePreference('escalation.summary', escalationPref)
+      } catch (notifError) {
+        // Notifications service may not be running - show warning but continue
+        console.warn('Notifications service unavailable, notification preferences not saved')
+        toast({
+          title: "Partial save",
+          description: "Timezone saved, but notification preferences could not be saved (service unavailable).",
+          variant: "destructive",
+        })
+        return
+      }
 
       toast({
         title: "Preferences saved",

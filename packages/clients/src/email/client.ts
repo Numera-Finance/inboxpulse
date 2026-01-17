@@ -1,4 +1,4 @@
-import type { EmailCollection, ApiResponse } from '@crm/shared';
+import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
 
 /**
@@ -275,4 +275,30 @@ export class EmailClient extends BaseClient {
 
     return response?.data ?? [];
   }
+
+  /**
+   * Get TAT (Turn Around Time) metrics for dashboard
+   * Returns SLA breach counts grouped by customer and controller
+   */
+  async getTATMetrics(
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<TATMetricRow[]> {
+    const params = new URLSearchParams();
+    if (filters?.customerId) params.set('customerId', filters.customerId);
+    if (filters?.dateFrom) params.set('from', filters.dateFrom);
+    if (filters?.dateTo) params.set('to', filters.dateTo);
+
+    const queryString = params.toString();
+    const url = queryString ? `/api/emails/tat-metrics?${queryString}` : '/api/emails/tat-metrics';
+    const response = await this.get<ApiResponse<TATMetricRow[]>>(url);
+
+    return response?.data ?? [];
+  }
 }
+
+// Re-export TATMetricRow from shared package
+export type { TATMetricRow } from '@crm/shared';

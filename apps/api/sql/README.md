@@ -27,7 +27,7 @@ Execute files in the following order to set up the database from scratch:
 
 ## File Structure
 
-- `tenants.sql` - Tenants table
+- `tenants.sql` - Tenants table (includes account_manager_role_id for TAT metrics)
 - `users.sql` - Users table
 - `integrations.sql` - Integrations table + integration enums (integration_source, integration_auth_type)
 - `customers.sql` - Customers table (references tenants, domain info stored in customer_domains table)
@@ -35,10 +35,23 @@ Execute files in the following order to set up the database from scratch:
 - `contacts.sql` - Contacts table (references tenants and customers, unique constraint on tenant_id + email)
 - `email_threads.sql` - Email threads table (provider-agnostic, references tenants and integrations)
 - `thread_analyses.sql` - Thread analyses table (thread-level summaries for each analysis type, references email_threads)
-- `emails.sql` - Emails table (provider-agnostic, references email_threads, with unique constraint on tenant_id + provider + message_id)
+- `emails.sql` - Emails table (provider-agnostic, references email_threads, with TAT tracking columns and unique constraint on tenant_id + provider + message_id)
 - `email_analyses.sql` - Email analyses table (stores analysis results for emails, references emails and tenants, unique constraint on email_id + analysis_type)
 - `runs.sql` - Runs table + run enums (run_status, run_type) with foreign key to integrations
 - `better_auth_tables.sql` - Better-auth tables for authentication
+- `holiday_calendars.sql` - Holiday calendars for TAT business days calculation (references tenants)
+- `migrations/` - Directory containing incremental migration scripts for existing databases
+
+## Migrations
+
+For existing databases, use the migration scripts in the `migrations/` directory:
+
+```bash
+# Apply TAT metrics migration (adds TAT tracking columns, holiday_calendars table)
+psql $DATABASE_URL -f apps/api/sql/migrations/001_tat_metrics.sql
+```
+
+Migration files are idempotent (safe to run multiple times).
 
 ## Notes
 

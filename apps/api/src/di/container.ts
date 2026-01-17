@@ -1,7 +1,7 @@
 import { container } from 'tsyringe';
 import { createDatabase, type Database } from '@crm/database';
 // Import schemas from API modules (co-located with their code)
-import { users, userManagers, userCustomers, userAccessibleCustomers, tenants, integrations, emailThreads, emails, emailAnalyses, threadAnalyses, runs, customers, contacts, roles, tasks, taskComments, userSubordinates, dashboards } from '../schemas';
+import { users, userManagers, userCustomers, userAccessibleCustomers, tenants, integrations, emailThreads, emails, emailAnalyses, threadAnalyses, runs, customers, contacts, roles, tasks, taskComments, userSubordinates, dashboards, holidayCalendars } from '../schemas';
 // Notification schemas removed - notifications is now a standalone app
 // Import better-auth schemas
 import { betterAuthUser, betterAuthSession, betterAuthAccount, betterAuthVerification } from '../auth/better-auth-schema';
@@ -32,6 +32,8 @@ import { TaskRepository } from '../tasks/repository';
 import { TaskService } from '../tasks/service';
 import { DashboardRepository } from '../dashboards/repository';
 import { DashboardService } from '../dashboards/service';
+import { HolidayRepository } from '../holidays/repository';
+import { HolidayService } from '../holidays/service';
 import { BetterAuthUserService } from '../auth/better-auth-user-service';
 
 export function setupContainer() {
@@ -56,6 +58,7 @@ export function setupContainer() {
     taskComments,
     userSubordinates,
     dashboards,
+    holidayCalendars,
     // Better-auth schemas
     betterAuthUser,
     betterAuthSession,
@@ -83,6 +86,7 @@ export function setupContainer() {
   container.register(RoleRepository, { useClass: RoleRepository });
   container.register(TaskRepository, { useClass: TaskRepository });
   container.register(DashboardRepository, { useClass: DashboardRepository });
+  container.register(HolidayRepository, { useClass: HolidayRepository });
 
   // Register services (order matters - dependencies must be registered first)
   container.register(UserService, { useClass: UserService });
@@ -93,6 +97,7 @@ export function setupContainer() {
   container.register(ContactService, { useClass: ContactService });
   container.register(TaskService, { useClass: TaskService });
   container.register(DashboardService, { useClass: DashboardService });
+  container.register(HolidayService, { useClass: HolidayService });
 
   // Register services with more dependencies (after their dependencies)
   container.register(ThreadAnalysisService, { useClass: ThreadAnalysisService });

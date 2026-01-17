@@ -1,7 +1,7 @@
 import { getEmailClient } from './clients';
-import type { EmailsByCustomerResponse, EmailResponse } from '@crm/clients';
+import type { EmailsByCustomerResponse, EmailResponse, TATMetricRow } from '@crm/clients';
 
-export type { EmailsByCustomerResponse, EmailResponse };
+export type { EmailsByCustomerResponse, EmailResponse, TATMetricRow };
 
 /**
  * Get emails for a customer (via domain matching)
@@ -105,5 +105,19 @@ export async function getDashboardEmailVolumeTrend(
   }
 ): Promise<DashboardEmailVolumeTrendData[]> {
   return getEmailClient().getEmailVolumeTrend(filters);
+}
+
+/**
+ * Get TAT (Turn Around Time) metrics for dashboard
+ * Returns SLA breach counts grouped by customer and controller
+ */
+export async function getDashboardTATMetrics(
+  filters?: {
+    customerId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+): Promise<TATMetricRow[]> {
+  return getEmailClient().getTATMetrics(filters);
 }
 

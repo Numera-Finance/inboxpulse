@@ -248,6 +248,36 @@ app.get('/upsell-count', async (c) => {
 });
 
 /**
+ * GET /api/emails/tat-metrics - Get TAT (Turn Around Time) metrics for dashboard
+ * Returns SLA breach counts grouped by customer and controller
+ *
+ * TAT buckets:
+ *   - 1+ Days: 1-2 business days
+ *   - 2+ Days: 2-3 business days
+ *   - 3+ Days: 3-5 business days
+ *   - 5+ Days: 5-6 business days
+ *   - 6+ Days: 6+ business days
+ *
+ * Query params:
+ *   - customerId: string (optional) - filter by customer
+ *   - from: string (optional) - start date ISO string
+ *   - to: string (optional) - end date ISO string
+ */
+app.get('/tat-metrics', async (c) => {
+  return handleGetRequest(c, async (requestHeader: RequestHeader) => {
+    const customerId = c.req.query('customerId');
+    const dateFrom = c.req.query('from');
+    const dateTo = c.req.query('to');
+    const service = container.resolve(EmailService);
+    return await service.getTATMetrics(requestHeader, {
+      customerId: customerId || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    });
+  });
+});
+
+/**
  * GET /api/emails/customer/:customerId - Get emails by customer (with access control)
  * Query params:
  *   - limit: number (default 50)

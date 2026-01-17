@@ -23,13 +23,21 @@ export function threadToDb(
 
 /**
  * Convert email to database insert type
+ * @param tenantDomain - Tenant's email domain (e.g., 'acme.com') for TAT classification
  */
 export function emailToDb(
   email: Email,
   tenantId: string,
   threadId: string,
-  integrationId?: string
+  integrationId?: string,
+  tenantDomain?: string | null
 ): NewEmail {
+  // Determine if this is a customer email (not from tenant domain)
+  // Used for TAT metrics - only customer emails are tracked
+  const isCustomerEmail = tenantDomain
+    ? !email.from.email.toLowerCase().endsWith(`@${tenantDomain.toLowerCase()}`)
+    : null; // null if tenant domain not configured
+
   return {
     tenantId,
     threadId,
@@ -47,6 +55,7 @@ export function emailToDb(
     labels: email.labels,
     receivedAt: email.receivedAt,
     metadata: email.metadata,
+    isCustomerEmail,
   };
 }
 

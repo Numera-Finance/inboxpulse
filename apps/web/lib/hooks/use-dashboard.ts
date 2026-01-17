@@ -14,6 +14,7 @@ export const dashboardKeys = {
   sentiment: (filters?: TileFilters) => [...dashboardKeys.all, 'sentiment', filters] as const,
   sentimentTrend: (filters?: TileFilters) => [...dashboardKeys.all, 'sentimentTrend', filters] as const,
   emailVolumeTrend: (filters?: TileFilters) => [...dashboardKeys.all, 'emailVolumeTrend', filters] as const,
+  tatMetrics: (filters?: TileFilters) => [...dashboardKeys.all, 'tatMetrics', filters] as const,
 };
 
 // Shared query options for dashboard tiles
@@ -291,6 +292,24 @@ export function useDashboardEscalationsTable(filters?: TileFilters) {
 
       const result = await api.searchTasks(request);
       return result.items;
+    },
+    ...DASHBOARD_QUERY_OPTIONS,
+  });
+}
+
+/**
+ * Hook for TAT (Turn Around Time) metrics dashboard tile
+ * Returns SLA breach counts grouped by customer and controller
+ */
+export function useDashboardTATMetrics(filters?: TileFilters) {
+  return useQuery({
+    queryKey: dashboardKeys.tatMetrics(filters),
+    queryFn: async () => {
+      return api.getDashboardTATMetrics({
+        customerId: filters?.customerId,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
+      });
     },
     ...DASHBOARD_QUERY_OPTIONS,
   });

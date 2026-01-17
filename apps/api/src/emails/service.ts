@@ -1,6 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import { EmailRepository } from './repository';
 import { EmailThreadRepository } from './thread-repository';
+import { TenantRepository } from '../tenants/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
 import { threadToDb, emailToDb } from './converter';
@@ -16,6 +17,7 @@ export class EmailService {
   constructor(
     @inject(EmailRepository) private emailRepo: EmailRepository,
     @inject(EmailThreadRepository) private threadRepo: EmailThreadRepository,
+    @inject(TenantRepository) private tenantRepo: TenantRepository,
     @inject('Database') private db: Database
   ) {}
 
@@ -46,10 +48,20 @@ export class EmailService {
       }
     }
 
+    // Fetch tenant domain for TAT tracking (firstReplyAt updates)
+    const tenant = await this.tenantRepo.findById(tenantId);
+    const tenantDomain = tenant?.domain || null;
+
     let totalInserted = 0;
     let totalSkipped = 0;
     let threadsCreated = 0;
     const emailsToAnalyze: Array<{ emailId: string; threadId: string }> = [];
+    const replyEmailsToProcess: Array<{
+      threadId: string;
+      emailId: string;
+      fromEmail: string;
+      receivedAt: Date;
+    }> = [];
 
     for (const collection of emailCollections) {
       // Save thread and emails transactionally
@@ -57,7 +69,8 @@ export class EmailService {
       const result = await this.saveThreadWithEmailsTransactionally(
         tenantId,
         integrationId,
-        collection
+        collection,
+        tenantDomain
       );
 
       threadsCreated += result.threadCreated ? 1 : 0;
@@ -70,6 +83,50 @@ export class EmailService {
           emailId,
           threadId: result.threadId,
         });
+      }
+
+      // Collect reply emails for TAT tracking (emails from tenant domain)
+      if (tenantDomain) {
+        for (const insertedEmail of result.insertedEmails) {
+          const originalEmail = collection.emails.find(
+            (e) => e.messageId === insertedEmail.messageId
+          );
+          if (originalEmail && originalEmail.from.email.toLowerCase().endsWith(`@${tenantDomain.toLowerCase()}`)) {
+            replyEmailsToProcess.push({
+              threadId: result.threadId,
+              emailId: insertedEmail.id,
+              fromEmail: originalEmail.from.email,
+              receivedAt: new Date(originalEmail.receivedAt),
+            });
+          }
+        }
+      }
+    }
+
+    // Update firstReplyAt for customer emails in threads with replies (outside transaction)
+    // This populates TAT tracking data
+    if (tenantDomain && replyEmailsToProcess.length > 0) {
+      for (const reply of replyEmailsToProcess) {
+        try {
+          await this.emailRepo.updateFirstReplyForThread(
+            tenantId,
+            reply.threadId,
+            reply.emailId,
+            reply.receivedAt,
+            tenantDomain
+          );
+        } catch (error) {
+          // Log but don't fail - TAT data is not critical
+          logger.warn(
+            {
+              tenantId,
+              threadId: reply.threadId,
+              emailId: reply.emailId,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            },
+            'Failed to update firstReplyAt for customer emails'
+          );
+        }
       }
     }
 
@@ -285,13 +342,15 @@ export class EmailService {
   private async saveThreadWithEmailsTransactionally(
     tenantId: string,
     integrationId: string,
-    collection: EmailCollection
+    collection: EmailCollection,
+    tenantDomain: string | null
   ): Promise<{
     threadId: string;
     threadCreated: boolean;
     insertedCount: number;
     skippedCount: number;
     emailsToAnalyze: string[]; // Email IDs that need analysis
+    insertedEmails: Array<{ id: string; messageId: string }>; // For TAT tracking
   }> {
     const threadDb = threadToDb(collection.thread, tenantId, integrationId);
 
@@ -319,8 +378,9 @@ export class EmailService {
       const threadCreated = threadResult.length > 0;
 
       // Step 2: Convert emails to database format with thread ID
+      // Pass tenant domain for TAT classification (isCustomerEmail)
       const emailsDb: NewEmail[] = collection.emails.map((email) =>
-        emailToDb(email, tenantId, threadId, integrationId)
+        emailToDb(email, tenantId, threadId, integrationId, tenantDomain)
       );
 
       // Step 3: Check existing emails before insert/update (for change detection)
@@ -420,6 +480,7 @@ export class EmailService {
         insertedCount,
         skippedCount,
         emailsToAnalyze,
+        insertedEmails, // For TAT tracking
       };
     });
   }
@@ -600,5 +661,20 @@ export class EmailService {
     }
   ) {
     return this.emailRepo.getEmailVolumeTrendScoped(requestHeader, filters);
+  }
+
+  /**
+   * Get TAT metrics for dashboard
+   * Returns SLA breach counts grouped by customer and controller
+   */
+  async getTATMetrics(
+    requestHeader: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ) {
+    return this.emailRepo.getTATMetricsScoped(requestHeader, filters);
   }
 }

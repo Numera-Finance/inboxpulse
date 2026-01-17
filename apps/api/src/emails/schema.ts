@@ -88,6 +88,17 @@ export const emails = pgTable('emails', {
   signals: integer('signals').array().default([]),
   analysisStatus: smallint('analysis_status'), // 1=pending, 2=processing, 3=completed, 4=failed
 
+  // TAT (Turn Around Time) tracking - populated for customer emails
+  // isCustomerEmail: true if email is from customer (fromEmail domain != tenant domain)
+  // Set during email ingestion to avoid expensive domain matching in queries
+  isCustomerEmail: boolean('is_customer_email'),
+
+  // firstReplyEmailId: ID of the first reply email from tenant domain
+  // firstReplyAt: Timestamp when the first reply was sent
+  // These are populated during email sync when a reply is detected
+  firstReplyEmailId: uuid('first_reply_email_id'),
+  firstReplyAt: timestamp('first_reply_at'),
+
   // Tracking
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -102,6 +113,8 @@ export const emails = pgTable('emails', {
     table.provider,
     table.messageId
   ),
+  // Index for TAT metrics queries (customer emails only)
+  tenantCustomerEmailIdx: index('idx_emails_tenant_customer').on(table.tenantId, table.isCustomerEmail),
   // GIN index for efficient array containment queries: WHERE signals @> ARRAY[1]
   // Note: Drizzle doesn't support GIN indexes directly, add via SQL migration
 }));
