@@ -261,6 +261,19 @@ export class CustomerService {
           positiveCount: positiveCounts[customer.id] || 0,
         }));
       }
+
+      // Fetch average TAT (Turn Around Time) if requested
+      if (includes.includes('averageTat')) {
+        const averageTats = await this.emailRepository.getAverageTatByCustomerIdsScoped(
+          requestHeader,
+          customerIds
+        );
+
+        clientCustomers = clientCustomers.map(customer => ({
+          ...customer,
+          averageTat: averageTats[customer.id] ?? null,
+        }));
+      }
     }
 
     return {

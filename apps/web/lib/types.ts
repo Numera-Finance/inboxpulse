@@ -140,6 +140,28 @@ function capitalizeSentiment(value?: string): Customer['sentiment'] {
 }
 
 /**
+ * Format TAT (Turn Around Time) in hours to a human-readable string
+ * Examples: "2.5h", "1d 4h", "3d"
+ */
+function formatTat(hours: number | null | undefined): string {
+  if (hours === null || hours === undefined) return '—';
+
+  if (hours < 24) {
+    // Less than a day - show hours
+    return `${hours.toFixed(1)}h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  const remainingHours = Math.round(hours % 24);
+
+  if (remainingHours === 0) {
+    return `${days}d`;
+  }
+
+  return `${days}d ${remainingHours}h`;
+}
+
+/**
  * Map ApiCustomer to Customer
  */
 export function mapApiCustomerToCustomer(customer: ApiCustomer): Customer {
@@ -150,7 +172,7 @@ export function mapApiCustomerToCustomer(customer: ApiCustomer): Customer {
     tier: 'Standard', // TODO: Add tier to customer API
     labels: customer.labels || [],
     totalEmails: customer.emailCount ?? 0,
-    avgTAT: '—',
+    avgTAT: formatTat(customer.averageTat),
     escalations: customer.escalationCount ?? 0,
     upsellCount: customer.upsellCount ?? 0,
     churnCount: customer.churnCount ?? 0,

@@ -66,7 +66,7 @@ export default function CustomersPage() {
     sortOrder: 'asc',
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
-    include: ['emailCount', 'lastContactDate', 'sentiment', 'escalationCount', 'upsellCount', 'churnCount', 'positiveCount'],
+    include: ['emailCount', 'lastContactDate', 'sentiment', 'escalationCount', 'upsellCount', 'churnCount', 'positiveCount', 'averageTat'],
   })
 
   // Fetch single customer when customerId is in URL (for direct link access)

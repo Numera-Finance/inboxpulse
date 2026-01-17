@@ -1013,6 +1013,58 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Get average TAT (Turn Around Time) by customer IDs (with access control)
+   * TAT is calculated as the average hours between received_at and first_reply_at
+   * for customer emails that have been replied to
+   */
+  async getAverageTatByCustomerIdsScoped(
+    header: RequestHeader,
+    customerIds: string[]
+  ): Promise<Record<string, number | null>> {
+    if (customerIds.length === 0) {
+      return {};
+    }
+
+    const accessible = isAdmin(header.permissions)
+      ? customerIds
+      : await this.getAccessibleCustomerIds(header, customerIds);
+
+    if (accessible.length === 0) {
+      return {};
+    }
+
+    // Calculate average TAT in hours for customer emails with a reply
+    const result = await this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        avgTatHours: sql<number>`AVG(EXTRACT(EPOCH FROM (${emails.firstReplyAt} - ${emails.receivedAt})) / 3600)::numeric(10,1)`,
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(
+        and(
+          eq(emails.tenantId, header.tenantId),
+          inArray(emailParticipants.customerId, accessible),
+          eq(emails.isCustomerEmail, true),
+          sql`${emails.firstReplyAt} IS NOT NULL`
+        )
+      )
+      .groupBy(emailParticipants.customerId);
+
+    const avgTats: Record<string, number | null> = {};
+    for (const customerId of customerIds) {
+      avgTats[customerId] = null;
+    }
+    for (const row of result) {
+      if (row.customerId) {
+        avgTats[row.customerId] = row.avgTatHours;
+      }
+    }
+
+    return avgTats;
+  }
+
+  /**
    * Helper: Get accessible customer IDs from provided list
    */
   private async getAccessibleCustomerIds(

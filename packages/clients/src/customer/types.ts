@@ -47,6 +47,7 @@ export const customerSchema = z.object({
     value: z.enum(['positive', 'negative', 'neutral']),
     confidence: z.number().min(0).max(1),
   }).optional(),
+  averageTat: z.number().nullable().optional(), // Average TAT in hours
 });
 
 export type Customer = z.infer<typeof customerSchema>;
