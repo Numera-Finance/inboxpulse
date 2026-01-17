@@ -17,15 +17,15 @@ interface ImportDialogProps {
 }
 
 const templateColumns = {
-  customers: ["name", "domains", "serviceType", "labels"],
+  customers: ["Client ID", "Client Name", "Bookkeeper", "Accountant", "Controller", "Sr. Controller", "Account manager", "Sales rep", "Domain", "Website"],
   users: ["name", "email", "role", "department"],
   employees: ["name", "email", "role", "department"], // Deprecated, use "users"
 }
 
 const templateExamples = {
   customers: [
-    { name: "Acme Corp", domains: "acme.com,acme.io", serviceType: "Retainer", labels: "Premier,Enterprise" },
-    { name: "TechStart", domains: "techstart.io", serviceType: "Time & Material", labels: "Subscription" },
+    { "Client ID": "CLIENT-001", "Client Name": "Acme Corporation", "Bookkeeper": "john@example.com", "Accountant": "", "Controller": "", "Sr. Controller": "", "Account manager": "alice@example.com", "Sales rep": "", "Domain": "acme.com, acme.io", "Website": "https://acme.com" },
+    { "Client ID": "CLIENT-002", "Client Name": "TechStart Inc", "Bookkeeper": "", "Accountant": "", "Controller": "bob@example.com", "Sr. Controller": "", "Account manager": "", "Sales rep": "carol@example.com", "Domain": "techstart.io", "Website": "https://techstart.io" },
   ],
   users: [
     { name: "John Doe", email: "john@company.com", role: "Account Manager", department: "Sales" },
@@ -87,16 +87,42 @@ function generateTemplateXLSX(entityType: "customers" | "users" | "employees"): 
   const columns = templateColumns[normalizedType as keyof typeof templateColumns] || templateColumns.users
   const examples = templateExamples[normalizedType as keyof typeof templateExamples] || templateExamples.users
 
-  // Convert examples to array of objects with proper column names
-  const data = examples.map((ex) => {
-    const row: Record<string, string> = {}
-    columns.forEach((col) => {
-      row[col] = ex[col as keyof typeof ex] || ""
+  // For customers, examples already have proper column names
+  // For other types, convert examples to array of objects with proper column names
+  let data: Record<string, string>[]
+  if (normalizedType === "customers") {
+    data = examples as Record<string, string>[]
+  } else {
+    data = examples.map((ex) => {
+      const row: Record<string, string> = {}
+      columns.forEach((col) => {
+        row[col] = (ex as Record<string, string>)[col] || ""
+      })
+      return row
     })
-    return row
-  })
+  }
 
-  const worksheet = XLSX.utils.json_to_sheet(data)
+  // Create worksheet with proper column order
+  const header = columns
+  const dataRows = data.map(row => columns.map(col => row[col] || ""))
+  const worksheet = XLSX.utils.aoa_to_sheet([header, ...dataRows])
+
+  // Set column widths for customers
+  if (normalizedType === "customers") {
+    worksheet["!cols"] = [
+      { wch: 15 }, // Client ID
+      { wch: 30 }, // Client Name
+      { wch: 25 }, // Bookkeeper
+      { wch: 25 }, // Accountant
+      { wch: 25 }, // Controller
+      { wch: 25 }, // Sr. Controller
+      { wch: 25 }, // Account manager
+      { wch: 25 }, // Sales rep
+      { wch: 35 }, // Domain
+      { wch: 35 }, // Website
+    ]
+  }
+
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, "Template")
 

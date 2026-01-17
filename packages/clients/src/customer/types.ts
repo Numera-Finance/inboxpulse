@@ -13,6 +13,7 @@ export const createCustomerRequestSchema = z.object({
   name: z.string().optional(),
   website: z.string().url().optional(),
   industry: z.string().max(100).optional(),
+  externalId: z.string().max(255).optional(), // External system identifier (e.g., Client ID)
   metadata: z.record(z.string(), z.any()).optional(),
 });
 
@@ -32,6 +33,7 @@ export const customerSchema = z.object({
   website: z.string().nullable().optional(),
   industry: z.string().nullable().optional(),
   labels: z.array(z.string()).optional(), // Customer labels/tags
+  externalId: z.string().nullable().optional(), // External system identifier (e.g., Client ID)
   metadata: z.record(z.string(), z.any()).nullable().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),

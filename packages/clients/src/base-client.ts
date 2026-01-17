@@ -179,4 +179,71 @@ export class BaseClient {
   protected async delete<T>(url: string, signal?: AbortSignal): Promise<T> {
     return this.request<T>(url, { method: 'DELETE', signal });
   }
+
+  /**
+   * POST request with FormData (for file uploads)
+   */
+  protected async postFormData<T>(url: string, formData: FormData, signal?: AbortSignal): Promise<T> {
+    // Make request without Content-Type header (browser sets it automatically with boundary)
+    const response = await fetch(`${this.baseUrl}${url}`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        ...(this.sessionToken && { Authorization: `Bearer ${this.sessionToken}` }),
+        ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+      },
+      credentials: 'include',
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({})) as { message?: string; error?: string | { message?: string; code?: string } };
+      let message: string;
+      if (typeof errorBody.error === 'object' && errorBody.error?.message) {
+        message = errorBody.error.message;
+      } else if (typeof errorBody.error === 'string') {
+        message = errorBody.error;
+      } else if (errorBody.message) {
+        message = errorBody.message;
+      } else {
+        message = `Request failed: ${response.statusText}`;
+      }
+
+      if (response.status === 404) {
+        throw new NotFoundError(message);
+      }
+
+      throw new HttpError(message, response.status);
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  /**
+   * GET request that returns a Blob (for file downloads)
+   */
+  protected async getBlob(url: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}${url}`, {
+      method: 'GET',
+      headers: {
+        ...(this.sessionToken && { Authorization: `Bearer ${this.sessionToken}` }),
+        ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+      },
+      credentials: 'include',
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({})) as { message?: string; error?: string };
+      const message = errorBody.message || errorBody.error || `Request failed: ${response.statusText}`;
+
+      if (response.status === 404) {
+        throw new NotFoundError(message);
+      }
+
+      throw new HttpError(message, response.status);
+    }
+
+    return response.blob();
+  }
 }

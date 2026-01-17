@@ -46,6 +46,7 @@ export class CustomerRepository extends ScopedRepository {
         website: customers.website,
         industry: customers.industry,
         labels: customers.labels,
+        externalId: customers.externalId,
         metadata: customers.metadata,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
@@ -378,6 +379,7 @@ export class CustomerRepository extends ScopedRepository {
         website: customers.website,
         industry: customers.industry,
         labels: customers.labels,
+        externalId: customers.externalId,
         metadata: customers.metadata,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
@@ -401,5 +403,163 @@ export class CustomerRepository extends ScopedRepository {
    */
   async checkAccess(header: RequestHeader, customerId: string): Promise<boolean> {
     return this.hasCustomerAccess(header, customerId);
+  }
+
+  // ===========================================================================
+  // Import/Export Support Methods
+  // ===========================================================================
+
+  /**
+   * Find customer by externalId within a tenant
+   */
+  async findByExternalId(tenantId: string, externalId: string): Promise<Customer | undefined> {
+    if (!externalId) return undefined;
+
+    const result = await this.db
+      .select()
+      .from(customers)
+      .where(
+        and(
+          eq(customers.tenantId, tenantId),
+          eq(customers.externalId, externalId)
+        )
+      )
+      .limit(1);
+
+    return result[0];
+  }
+
+  /**
+   * Replace all domains for a customer (delete existing, add new)
+   * Used during import to fully replace domain list
+   */
+  async replaceDomains(customerId: string, tenantId: string, domains: string[]): Promise<void> {
+    if (domains.length === 0) {
+      throw new Error('At least one domain is required');
+    }
+
+    await this.db.transaction(async (tx) => {
+      // Delete all existing domains for this customer
+      await tx
+        .delete(customerDomains)
+        .where(eq(customerDomains.customerId, customerId));
+
+      // Insert new domains
+      for (const domain of domains) {
+        await tx.insert(customerDomains).values({
+          customerId,
+          tenantId,
+          domain: domain.toLowerCase(),
+          verified: false,
+        });
+      }
+
+      logger.debug({ customerId, domainCount: domains.length }, 'Replaced customer domains');
+    });
+  }
+
+  /**
+   * Upsert customer by externalId
+   * If customer with externalId exists, update it; otherwise create new
+   * Returns customer with domains array
+   */
+  async upsertByExternalId(
+    data: {
+      tenantId: string;
+      externalId: string;
+      name?: string;
+      website?: string;
+      domains: string[];
+    }
+  ): Promise<Customer & { domains: string[] }> {
+    return await this.db.transaction(async (tx) => {
+      // Check if customer with externalId exists
+      const existing = await tx
+        .select()
+        .from(customers)
+        .where(
+          and(
+            eq(customers.tenantId, data.tenantId),
+            eq(customers.externalId, data.externalId)
+          )
+        )
+        .limit(1);
+
+      let customer: Customer;
+
+      if (existing.length > 0) {
+        // Update existing customer
+        const updated = await tx
+          .update(customers)
+          .set({
+            name: data.name,
+            website: data.website,
+            updatedAt: new Date(),
+          })
+          .where(eq(customers.id, existing[0].id))
+          .returning();
+
+        customer = updated[0];
+        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Updated customer by externalId');
+      } else {
+        // Create new customer
+        const created = await tx
+          .insert(customers)
+          .values({
+            tenantId: data.tenantId,
+            externalId: data.externalId,
+            name: data.name,
+            website: data.website,
+          })
+          .returning();
+
+        customer = created[0];
+        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Created customer with externalId');
+      }
+
+      // Replace domains
+      // First delete existing domains
+      await tx
+        .delete(customerDomains)
+        .where(eq(customerDomains.customerId, customer.id));
+
+      // Then insert new domains
+      for (const domain of data.domains) {
+        await tx.insert(customerDomains).values({
+          customerId: customer.id,
+          tenantId: data.tenantId,
+          domain: domain.toLowerCase(),
+          verified: false,
+        });
+      }
+
+      return {
+        ...customer,
+        domains: data.domains.map(d => d.toLowerCase()),
+      };
+    });
+  }
+
+  /**
+   * Get all customers for a tenant with their domains (for export)
+   */
+  async findAllWithDomains(tenantId: string): Promise<Array<Customer & { domains: string[] }>> {
+    const customerList = await this.db
+      .select()
+      .from(customers)
+      .where(eq(customers.tenantId, tenantId))
+      .orderBy(customers.name);
+
+    if (customerList.length === 0) {
+      return [];
+    }
+
+    const customerIds = customerList.map(c => c.id);
+    const domainsMap = await this.getDomainsBatch(customerIds);
+
+    return customerList.map(customer => ({
+      ...customer,
+      domains: domainsMap.get(customer.id) || [],
+    }));
   }
 }

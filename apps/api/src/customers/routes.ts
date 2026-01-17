@@ -1,12 +1,14 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
-import { NotFoundError, searchRequestSchema, Permission } from '@crm/shared';
+import { NotFoundError, searchRequestSchema, Permission, ValidationError } from '@crm/shared';
 import { CustomerService } from './service';
 import type { ApiResponse, RequestHeader } from '@crm/shared';
 import { createCustomerRequestSchema, type CreateCustomerRequest } from '@crm/clients';
 import { requirePermission } from '../middleware/require-permission';
 import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
+import { getRequestHeader } from '../utils/request-header';
 import { z } from 'zod';
+import type { CustomerImportResult } from './import-export';
 
 // Schema for updating customer fields
 const updateCustomerSchema = z.object({
@@ -80,6 +82,72 @@ customerRoutes.get('/domain/:domain', async (c) => {
       return customer;
     }
   );
+});
+
+/**
+ * POST /api/customers/import - Import customers from Excel file
+ * Requires CUSTOMER_ADD permission
+ *
+ * Accepts multipart form data with 'file' field containing Excel file
+ * Returns import results including counts and any errors/warnings
+ */
+customerRoutes.post('/import', requirePermission(Permission.CUSTOMER_ADD), async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const formData = await c.req.formData();
+  const file = formData.get('file') as File;
+
+  if (!file) {
+    throw new ValidationError('File is required');
+  }
+
+  // Validate file type
+  const fileName = file.name.toLowerCase();
+  if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls')) {
+    throw new ValidationError('File must be an Excel file (.xlsx or .xls)');
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  const service = container.resolve(CustomerService);
+  const result = await service.importCustomers(requestHeader.tenantId, buffer);
+
+  return c.json<ApiResponse<CustomerImportResult>>({
+    success: true,
+    data: result,
+  });
+});
+
+/**
+ * GET /api/customers/export - Export all customers to Excel file
+ * Returns Excel file as download
+ */
+customerRoutes.get('/export', async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const service = container.resolve(CustomerService);
+
+  const buffer = await service.exportCustomers(requestHeader.tenantId);
+
+  c.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  c.header('Content-Disposition', 'attachment; filename="customers.xlsx"');
+
+  // Convert Node.js Buffer to Uint8Array for Hono
+  return c.body(new Uint8Array(buffer));
+});
+
+/**
+ * GET /api/customers/import/template - Download import template
+ * Returns Excel template file with example data
+ */
+customerRoutes.get('/import/template', async (c) => {
+  const service = container.resolve(CustomerService);
+  const buffer = await service.getImportTemplate();
+
+  c.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  c.header('Content-Disposition', 'attachment; filename="customer-import-template.xlsx"');
+
+  // Convert Node.js Buffer to Uint8Array for Hono
+  return c.body(new Uint8Array(buffer));
 });
 
 /**
