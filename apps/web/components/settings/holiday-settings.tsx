@@ -32,18 +32,9 @@ import {
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Plus, Trash2 } from "lucide-react"
-import { API_BASE_URL } from "@/lib/api/clients"
+import { getHolidayClient } from "@/lib/api/clients"
 import { format } from "date-fns"
-
-// Holiday type
-interface Holiday {
-  id: string
-  date: string
-  timezone: string
-  name: string
-  createdAt: string
-  updatedAt: string
-}
+import type { Holiday } from "@crm/clients"
 
 // Common timezones for selection
 const COMMON_TIMEZONES = [
@@ -63,28 +54,15 @@ const COMMON_TIMEZONES = [
   "UTC",
 ]
 
-// API functions
+// API functions using HolidayClient
 async function fetchHolidays(timezone?: string): Promise<Holiday[]> {
-  const params = new URLSearchParams()
-  if (timezone) params.set("timezone", timezone)
-  const queryString = params.toString()
-  const url = queryString
-    ? `${API_BASE_URL}/api/holidays?${queryString}`
-    : `${API_BASE_URL}/api/holidays`
-
-  const response = await fetch(url, { credentials: "include" })
-  if (!response.ok) throw new Error("Failed to fetch holidays")
-  const data = await response.json()
-  return data.data || []
+  const client = getHolidayClient()
+  return client.getHolidays(timezone)
 }
 
 async function fetchTimezones(): Promise<string[]> {
-  const response = await fetch(`${API_BASE_URL}/api/holidays/timezones`, {
-    credentials: "include",
-  })
-  if (!response.ok) throw new Error("Failed to fetch timezones")
-  const data = await response.json()
-  return data.data?.timezones || []
+  const client = getHolidayClient()
+  return client.getTimezones()
 }
 
 async function createHoliday(holiday: {
@@ -92,26 +70,13 @@ async function createHoliday(holiday: {
   timezone: string
   name: string
 }): Promise<Holiday> {
-  const response = await fetch(`${API_BASE_URL}/api/holidays`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(holiday),
-  })
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.error?.message || "Failed to create holiday")
-  }
-  const data = await response.json()
-  return data.data
+  const client = getHolidayClient()
+  return client.create(holiday)
 }
 
 async function deleteHoliday(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/holidays/${id}`, {
-    method: "DELETE",
-    credentials: "include",
-  })
-  if (!response.ok) throw new Error("Failed to delete holiday")
+  const client = getHolidayClient()
+  return client.deleteHoliday(id)
 }
 
 export function HolidaySettings() {

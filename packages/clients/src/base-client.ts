@@ -31,10 +31,40 @@ export class NotFoundError extends HttpError {
 const isBrowser = typeof globalThis !== 'undefined' && 'window' in globalThis;
 
 /**
- * Base HTTP client with session token management
- * Supports both browser (cookies) and API clients (Authorization header)
+ * Parse error response body into a message
  */
-export class BaseClient {
+function parseErrorMessage(
+  errorBody: { message?: string; error?: string | { message?: string; code?: string } },
+  statusText: string
+): string {
+  if (typeof errorBody.error === 'object' && errorBody.error?.message) {
+    return errorBody.error.message;
+  } else if (typeof errorBody.error === 'string') {
+    return errorBody.error;
+  } else if (errorBody.message) {
+    return errorBody.message;
+  }
+  return `Request failed: ${statusText}`;
+}
+
+/**
+ * Context for internal service calls that require explicit tenant/user headers
+ */
+export interface ServiceContext {
+  tenantId: string;
+  userId: string;
+}
+
+// =============================================================================
+// AuthBaseClient - For main API calls with cookie/session-based authentication
+// =============================================================================
+
+/**
+ * Base HTTP client for main API calls with session token management.
+ * Supports both browser (cookies) and API clients (Authorization header).
+ * Handles 401 errors by redirecting to login in browser.
+ */
+export class AuthBaseClient {
   protected baseUrl: string;
 
   private sessionToken: string | null = null;
@@ -75,8 +105,7 @@ export class BaseClient {
    * Make HTTP request with session token management
    */
   protected async request<T>(url: string, options: RequestOptions = {}): Promise<T> {
-    // Make request with session token or internal API key
-    let response = await fetch(`${this.baseUrl}${url}`, {
+    const response = await fetch(`${this.baseUrl}${url}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -91,25 +120,13 @@ export class BaseClient {
     // Check if session was refreshed (sliding window)
     const refreshedToken = response.headers.get('X-Session-Refreshed');
     if (refreshedToken && this.sessionToken) {
-      // Update stored token for API clients
       this.sessionToken = refreshedToken;
     }
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({})) as { message?: string; error?: string | { message?: string; code?: string } };
-      // Handle both string errors and structured error objects
-      let message: string;
-      if (typeof errorBody.error === 'object' && errorBody.error?.message) {
-        message = errorBody.error.message;
-      } else if (typeof errorBody.error === 'string') {
-        message = errorBody.error;
-      } else if (errorBody.message) {
-        message = errorBody.message;
-      } else {
-        message = `Request failed: ${response.statusText}`;
-      }
+      const message = parseErrorMessage(errorBody, response.statusText);
 
-      // Throw specific error types for common status codes
       if (response.status === 404) {
         throw new NotFoundError(message);
       }
@@ -178,68 +195,9 @@ export class BaseClient {
   }
 
   /**
-   * Context for requests to services that require explicit tenant/user headers
-   * (e.g., notifications service)
-   */
-  protected buildContextHeaders(ctx: { tenantId: string; userId: string }): Record<string, string> {
-    return {
-      'x-tenant-id': ctx.tenantId,
-      'x-user-id': ctx.userId,
-    };
-  }
-
-  /**
-   * GET request with tenant/user context headers
-   */
-  protected async getWithContext<T>(
-    url: string,
-    ctx: { tenantId: string; userId: string },
-    signal?: AbortSignal
-  ): Promise<T> {
-    return this.request<T>(url, {
-      method: 'GET',
-      signal,
-      headers: this.buildContextHeaders(ctx),
-    });
-  }
-
-  /**
-   * PUT request with tenant/user context headers
-   */
-  protected async putWithContext<T>(
-    url: string,
-    data: any,
-    ctx: { tenantId: string; userId: string },
-    signal?: AbortSignal
-  ): Promise<T> {
-    return this.request<T>(url, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-      signal,
-      headers: this.buildContextHeaders(ctx),
-    });
-  }
-
-  /**
-   * DELETE request with tenant/user context headers
-   */
-  protected async deleteWithContext<T>(
-    url: string,
-    ctx: { tenantId: string; userId: string },
-    signal?: AbortSignal
-  ): Promise<T> {
-    return this.request<T>(url, {
-      method: 'DELETE',
-      signal,
-      headers: this.buildContextHeaders(ctx),
-    });
-  }
-
-  /**
    * POST request with FormData (for file uploads)
    */
   protected async postFormData<T>(url: string, formData: FormData, signal?: AbortSignal): Promise<T> {
-    // Make request without Content-Type header (browser sets it automatically with boundary)
     const response = await fetch(`${this.baseUrl}${url}`, {
       method: 'POST',
       body: formData,
@@ -253,16 +211,7 @@ export class BaseClient {
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({})) as { message?: string; error?: string | { message?: string; code?: string } };
-      let message: string;
-      if (typeof errorBody.error === 'object' && errorBody.error?.message) {
-        message = errorBody.error.message;
-      } else if (typeof errorBody.error === 'string') {
-        message = errorBody.error;
-      } else if (errorBody.message) {
-        message = errorBody.message;
-      } else {
-        message = `Request failed: ${response.statusText}`;
-      }
+      const message = parseErrorMessage(errorBody, response.statusText);
 
       if (response.status === 404) {
         throw new NotFoundError(message);
@@ -302,3 +251,104 @@ export class BaseClient {
     return response.blob();
   }
 }
+
+// =============================================================================
+// InternalBaseClient - For internal service calls requiring explicit context
+// =============================================================================
+
+/**
+ * Base HTTP client for internal service calls that require explicit tenant/user context.
+ * Used for services like notifications that don't share session validation with main API.
+ * All requests require a ServiceContext with tenantId and userId.
+ */
+export class InternalBaseClient {
+  protected baseUrl: string;
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl;
+  }
+
+  /**
+   * Build context headers from ServiceContext
+   */
+  private buildContextHeaders(ctx: ServiceContext): Record<string, string> {
+    return {
+      'x-tenant-id': ctx.tenantId,
+      'x-user-id': ctx.userId,
+    };
+  }
+
+  /**
+   * Make HTTP request with context headers
+   */
+  protected async request<T>(url: string, ctx: ServiceContext, options: RequestOptions = {}): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${url}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...this.buildContextHeaders(ctx),
+        ...options.headers,
+      },
+      credentials: 'include',
+      signal: options.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({})) as { message?: string; error?: string | { message?: string; code?: string } };
+      const message = parseErrorMessage(errorBody, response.statusText);
+
+      if (response.status === 404) {
+        throw new NotFoundError(message);
+      }
+
+      throw new HttpError(message, response.status);
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  /**
+   * GET request with context
+   */
+  protected async get<T>(url: string, ctx: ServiceContext, signal?: AbortSignal): Promise<T> {
+    return this.request<T>(url, ctx, { method: 'GET', signal });
+  }
+
+  /**
+   * POST request with context
+   */
+  protected async post<T>(url: string, ctx: ServiceContext, data?: any, signal?: AbortSignal): Promise<T> {
+    return this.request<T>(url, ctx, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      signal,
+    });
+  }
+
+  /**
+   * PUT request with context
+   */
+  protected async put<T>(url: string, ctx: ServiceContext, data?: any, signal?: AbortSignal): Promise<T> {
+    return this.request<T>(url, ctx, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+      signal,
+    });
+  }
+
+  /**
+   * DELETE request with context
+   */
+  protected async delete<T>(url: string, ctx: ServiceContext, signal?: AbortSignal): Promise<T> {
+    return this.request<T>(url, ctx, { method: 'DELETE', signal });
+  }
+}
+
+// =============================================================================
+// Backwards compatibility alias
+// =============================================================================
+
+/**
+ * @deprecated Use AuthBaseClient instead
+ */
+export const BaseClient = AuthBaseClient;

@@ -11,3 +11,4 @@ export * from './role';
 export * from './task';
 export * from './notification';
 export * from './dashboard';
+export * from './holiday';

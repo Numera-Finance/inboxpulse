@@ -2,7 +2,7 @@
  * Notifications client for interacting with the notifications service
  */
 
-import { BaseClient } from '../base-client';
+import { InternalBaseClient, ServiceContext } from '../base-client';
 import type { ApiResponse } from '@crm/shared';
 import type {
   NotificationPreference,
@@ -10,18 +10,14 @@ import type {
   PreferenceCheck,
 } from './types';
 
-/**
- * Context for notification requests (required by notifications service)
- */
-export interface NotificationContext {
-  tenantId: string;
-  userId: string;
-}
+// Re-export ServiceContext as NotificationContext for backwards compatibility
+export type NotificationContext = ServiceContext;
 
 /**
- * Client for notification-related API operations
+ * Client for notification-related API operations.
+ * Uses InternalBaseClient because notifications service requires explicit tenant/user context.
  */
-export class NotificationsClient extends BaseClient {
+export class NotificationsClient extends InternalBaseClient {
   /**
    * Get user's preference for a notification type by name
    * @param typeName - e.g., 'task.assigned', 'escalation.summary'
@@ -29,10 +25,10 @@ export class NotificationsClient extends BaseClient {
    */
   async getPreference(
     typeName: string,
-    ctx: NotificationContext,
+    ctx: ServiceContext,
     signal?: AbortSignal
   ): Promise<NotificationPreference> {
-    const response = await this.getWithContext<ApiResponse<NotificationPreference>>(
+    const response = await this.get<ApiResponse<NotificationPreference>>(
       `/api/notifications/preferences/by-name/${typeName}`,
       ctx,
       signal
@@ -53,13 +49,13 @@ export class NotificationsClient extends BaseClient {
   async updatePreference(
     typeName: string,
     data: UpdatePreference,
-    ctx: NotificationContext,
+    ctx: ServiceContext,
     signal?: AbortSignal
   ): Promise<NotificationPreference> {
-    const response = await this.putWithContext<ApiResponse<NotificationPreference>>(
+    const response = await this.put<ApiResponse<NotificationPreference>>(
       `/api/notifications/preferences/by-name/${typeName}`,
-      data,
       ctx,
+      data,
       signal
     );
     if (!response?.data) {
@@ -75,10 +71,10 @@ export class NotificationsClient extends BaseClient {
    */
   async deletePreference(
     typeName: string,
-    ctx: NotificationContext,
+    ctx: ServiceContext,
     signal?: AbortSignal
   ): Promise<void> {
-    await this.deleteWithContext<ApiResponse<void>>(
+    await this.delete<ApiResponse<void>>(
       `/api/notifications/preferences/by-name/${typeName}`,
       ctx,
       signal
@@ -90,10 +86,17 @@ export class NotificationsClient extends BaseClient {
    * Used by API service before sending notifications
    * @param typeName - e.g., 'task.assigned'
    * @param userId - The user to check
+   * @param ctx - Tenant/user context (required)
    */
-  async isEnabled(typeName: string, userId: string, signal?: AbortSignal): Promise<boolean> {
+  async isEnabled(
+    typeName: string,
+    userId: string,
+    ctx: ServiceContext,
+    signal?: AbortSignal
+  ): Promise<boolean> {
     const response = await this.get<ApiResponse<PreferenceCheck>>(
       `/api/notifications/preferences/by-name/${typeName}/user/${userId}`,
+      ctx,
       signal
     );
     return response?.data?.enabled ?? true;
@@ -102,14 +105,17 @@ export class NotificationsClient extends BaseClient {
   /**
    * Get full preference check for a user (enabled + frequency)
    * Used by cron jobs for batched notifications
+   * @param ctx - Tenant/user context (required)
    */
   async getPreferenceCheck(
     typeName: string,
     userId: string,
+    ctx: ServiceContext,
     signal?: AbortSignal
   ): Promise<PreferenceCheck> {
     const response = await this.get<ApiResponse<PreferenceCheck>>(
       `/api/notifications/preferences/by-name/${typeName}/user/${userId}`,
+      ctx,
       signal
     );
     return response?.data ?? { enabled: true };
