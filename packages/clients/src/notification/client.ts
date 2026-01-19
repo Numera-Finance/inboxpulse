@@ -11,16 +11,30 @@ import type {
 } from './types';
 
 /**
+ * Context for notification requests (required by notifications service)
+ */
+export interface NotificationContext {
+  tenantId: string;
+  userId: string;
+}
+
+/**
  * Client for notification-related API operations
  */
 export class NotificationsClient extends BaseClient {
   /**
    * Get user's preference for a notification type by name
    * @param typeName - e.g., 'task.assigned', 'escalation.summary'
+   * @param ctx - Tenant/user context (required)
    */
-  async getPreference(typeName: string, signal?: AbortSignal): Promise<NotificationPreference> {
-    const response = await this.get<ApiResponse<NotificationPreference>>(
+  async getPreference(
+    typeName: string,
+    ctx: NotificationContext,
+    signal?: AbortSignal
+  ): Promise<NotificationPreference> {
+    const response = await this.getWithContext<ApiResponse<NotificationPreference>>(
       `/api/notifications/preferences/by-name/${typeName}`,
+      ctx,
       signal
     );
     // Return defaults if no data
@@ -33,15 +47,19 @@ export class NotificationsClient extends BaseClient {
   /**
    * Update user's preference for a notification type by name
    * @param typeName - e.g., 'task.assigned', 'escalation.summary'
+   * @param data - Preference data to update
+   * @param ctx - Tenant/user context (required)
    */
   async updatePreference(
     typeName: string,
     data: UpdatePreference,
+    ctx: NotificationContext,
     signal?: AbortSignal
   ): Promise<NotificationPreference> {
-    const response = await this.put<ApiResponse<NotificationPreference>>(
+    const response = await this.putWithContext<ApiResponse<NotificationPreference>>(
       `/api/notifications/preferences/by-name/${typeName}`,
       data,
+      ctx,
       signal
     );
     if (!response?.data) {
@@ -53,10 +71,16 @@ export class NotificationsClient extends BaseClient {
   /**
    * Delete user's preference for a notification type (revert to defaults)
    * @param typeName - e.g., 'task.assigned'
+   * @param ctx - Tenant/user context (required)
    */
-  async deletePreference(typeName: string, signal?: AbortSignal): Promise<void> {
-    await this.delete<ApiResponse<void>>(
+  async deletePreference(
+    typeName: string,
+    ctx: NotificationContext,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.deleteWithContext<ApiResponse<void>>(
       `/api/notifications/preferences/by-name/${typeName}`,
+      ctx,
       signal
     );
   }

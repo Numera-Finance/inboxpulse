@@ -11,7 +11,7 @@ import { useAuth } from "@/src/contexts/AuthContext"
 import { useToast } from "@/components/ui/use-toast"
 import { getSupportedTimezones } from "@/lib/constants/timezones"
 import { getUserClient, getNotificationsClient } from "@/lib/api/clients"
-import type { NotificationPreference, BatchInterval } from "@crm/clients"
+import type { NotificationPreference, BatchInterval, NotificationContext } from "@crm/clients"
 import { Loader2 } from "lucide-react"
 
 type EscalationFrequency = 'none' | 'daily' | 'every_4_hours' | 'every_8_hours'
@@ -64,6 +64,8 @@ export function UserPreferences() {
     notifyTaskAssigned: true,
     escalationSummaryFrequency: 'daily',
   })
+  // Store the actual user data with UUID (from /api/users/me)
+  const [userContext, setUserContext] = useState<NotificationContext | null>(null)
 
   // Get all supported timezones from browser's Intl API
   const timezones = useMemo(() => getSupportedTimezones(), [])
@@ -81,31 +83,35 @@ export function UserPreferences() {
             ...prev,
             timezone: userData.timezone || 'Asia/Kolkata',
           }))
-        }
 
-        // Fetch notification preferences from notifications service (optional - service may not be running)
-        try {
-          const notificationsClient = getNotificationsClient()
+          // Store the actual user context (UUID from users table, not better-auth session ID)
+          const ctx: NotificationContext = { tenantId: userData.tenantId, userId: userData.id }
+          setUserContext(ctx)
 
-          // Fetch task.assigned preference
-          const taskPref = await notificationsClient.getPreference('task.assigned')
+          // Fetch notification preferences from notifications service (optional - service may not be running)
+          try {
+            const notificationsClient = getNotificationsClient()
 
-          // Fetch escalation.summary preference
-          const escalationPref = await notificationsClient.getPreference('escalation.summary')
+            // Fetch task.assigned preference
+            const taskPref = await notificationsClient.getPreference('task.assigned', ctx)
 
-          setPreferences(prev => ({
-            ...prev,
-            notifyTaskAssigned: taskPref.enabled,
-            escalationSummaryFrequency: preferenceToFrequency(escalationPref),
-          }))
-        } catch (notifError) {
-          // Notifications service may not be running - show warning
-          console.warn('Notifications service unavailable, using default preferences')
-          toast({
-            title: "Warning",
-            description: "Notifications service unavailable. Notification preferences may not be accurate.",
-            variant: "destructive",
-          })
+            // Fetch escalation.summary preference
+            const escalationPref = await notificationsClient.getPreference('escalation.summary', ctx)
+
+            setPreferences(prev => ({
+              ...prev,
+              notifyTaskAssigned: taskPref.enabled,
+              escalationSummaryFrequency: preferenceToFrequency(escalationPref),
+            }))
+          } catch (notifError) {
+            // Notifications service may not be running - show warning
+            console.warn('Notifications service unavailable, using default preferences')
+            toast({
+              title: "Warning",
+              description: "Notifications service unavailable. Notification preferences may not be accurate.",
+              variant: "destructive",
+            })
+          }
         }
       } catch (error) {
         console.error('Failed to fetch preferences:', error)
@@ -134,26 +140,28 @@ export function UserPreferences() {
       })
 
       // Save notification preferences to notifications service (optional - service may not be running)
-      try {
-        const notificationsClient = getNotificationsClient()
+      if (userContext) {
+        try {
+          const notificationsClient = getNotificationsClient()
 
-        // Update task.assigned preference
-        await notificationsClient.updatePreference('task.assigned', {
-          enabled: preferences.notifyTaskAssigned,
-        })
+          // Update task.assigned preference
+          await notificationsClient.updatePreference('task.assigned', {
+            enabled: preferences.notifyTaskAssigned,
+          }, userContext)
 
-        // Update escalation.summary preference
-        const escalationPref = frequencyToPreference(preferences.escalationSummaryFrequency)
-        await notificationsClient.updatePreference('escalation.summary', escalationPref)
-      } catch (notifError) {
-        // Notifications service may not be running - show warning but continue
-        console.warn('Notifications service unavailable, notification preferences not saved')
-        toast({
-          title: "Partial save",
-          description: "Timezone saved, but notification preferences could not be saved (service unavailable).",
-          variant: "destructive",
-        })
-        return
+          // Update escalation.summary preference
+          const escalationPref = frequencyToPreference(preferences.escalationSummaryFrequency)
+          await notificationsClient.updatePreference('escalation.summary', escalationPref, userContext)
+        } catch (notifError) {
+          // Notifications service may not be running - show warning but continue
+          console.warn('Notifications service unavailable, notification preferences not saved')
+          toast({
+            title: "Partial save",
+            description: "Timezone saved, but notification preferences could not be saved (service unavailable).",
+            variant: "destructive",
+          })
+          return
+        }
       }
 
       toast({

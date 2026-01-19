@@ -116,13 +116,10 @@ export class BaseClient {
 
       // Handle 401 Unauthorized - redirect to login in browser
       if (response.status === 401 && isBrowser) {
-        console.log('Session expired. Redirecting to login.');
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const win = globalThis as any;
         if (win.location?.pathname !== '/login') {
           win.location.href = '/login';
-          // Return a never-resolving promise to prevent further execution
-          // while the browser navigates to login
           return new Promise(() => {}) as T;
         }
       }
@@ -178,6 +175,64 @@ export class BaseClient {
    */
   protected async delete<T>(url: string, signal?: AbortSignal): Promise<T> {
     return this.request<T>(url, { method: 'DELETE', signal });
+  }
+
+  /**
+   * Context for requests to services that require explicit tenant/user headers
+   * (e.g., notifications service)
+   */
+  protected buildContextHeaders(ctx: { tenantId: string; userId: string }): Record<string, string> {
+    return {
+      'x-tenant-id': ctx.tenantId,
+      'x-user-id': ctx.userId,
+    };
+  }
+
+  /**
+   * GET request with tenant/user context headers
+   */
+  protected async getWithContext<T>(
+    url: string,
+    ctx: { tenantId: string; userId: string },
+    signal?: AbortSignal
+  ): Promise<T> {
+    return this.request<T>(url, {
+      method: 'GET',
+      signal,
+      headers: this.buildContextHeaders(ctx),
+    });
+  }
+
+  /**
+   * PUT request with tenant/user context headers
+   */
+  protected async putWithContext<T>(
+    url: string,
+    data: any,
+    ctx: { tenantId: string; userId: string },
+    signal?: AbortSignal
+  ): Promise<T> {
+    return this.request<T>(url, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+      signal,
+      headers: this.buildContextHeaders(ctx),
+    });
+  }
+
+  /**
+   * DELETE request with tenant/user context headers
+   */
+  protected async deleteWithContext<T>(
+    url: string,
+    ctx: { tenantId: string; userId: string },
+    signal?: AbortSignal
+  ): Promise<T> {
+    return this.request<T>(url, {
+      method: 'DELETE',
+      signal,
+      headers: this.buildContextHeaders(ctx),
+    });
   }
 
   /**
