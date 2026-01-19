@@ -57,18 +57,10 @@ function validateEmails(input: string): ValidationResult {
 
 /**
  * Safely get blacklist emails as an array
- * Handles case where it might be stored as non-array
  */
 function getBlacklistArray(credentials: Record<string, any> | null | undefined): string[] {
   if (!credentials?.blacklistEmails) return []
-  if (Array.isArray(credentials.blacklistEmails)) {
-    return credentials.blacklistEmails
-  }
-  // If it's a string, split by comma
-  if (typeof credentials.blacklistEmails === 'string') {
-    return credentials.blacklistEmails.split(',').map((e: string) => e.trim()).filter(Boolean)
-  }
-  return []
+  return Array.isArray(credentials.blacklistEmails) ? credentials.blacklistEmails : []
 }
 
 export function GmailSettingsDrawer({

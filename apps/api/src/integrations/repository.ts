@@ -32,28 +32,38 @@ export interface IntegrationKeys {
 
 /**
  * Convert key-value array to object
- * Also handles legacy object format
+ * Handles both legacy string values and native JSON values
  */
-function parametersToObject(params: IntegrationParameters | Record<string, any>): Record<string, string> {
+function parametersToObject(params: IntegrationParameters | Record<string, any>): Record<string, any> {
   // If it's already an object (legacy format), return as-is
   if (!Array.isArray(params)) {
-    return params as Record<string, string>;
+    return params as Record<string, any>;
   }
 
   // Convert array format to object
-  return params.reduce((acc: Record<string, string>, { key, value }: { key: string; value: string }) => {
-    acc[key] = value;
+  return params.reduce((acc: Record<string, any>, { key, value }: { key: string; value: any }) => {
+    // Handle legacy string values that look like JSON arrays/objects
+    if (typeof value === 'string' && value && (value.startsWith('[') || value.startsWith('{'))) {
+      try {
+        acc[key] = JSON.parse(value);
+      } catch {
+        acc[key] = value;
+      }
+    } else {
+      acc[key] = value;
+    }
     return acc;
-  }, {} as Record<string, string>);
+  }, {} as Record<string, any>);
 }
 
 /**
  * Convert object to key-value array
+ * Values are stored as native JSON (arrays, objects, strings, etc.)
  */
 function objectToParameters(obj: Record<string, any>): IntegrationParameters {
   return Object.entries(obj).map(([key, value]: [string, any]) => ({
     key,
-    value: String(value),
+    value, // Store native JSON value directly
   }));
 }
 

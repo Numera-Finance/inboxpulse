@@ -145,7 +145,7 @@ export class SyncService {
 
     // Fetch integration credentials to get blacklist emails
     const credentials = await this.integrationClient.getCredentials(tenantId, 'gmail');
-    const blacklistEmails: string[] = credentials?.blacklistEmails || [];
+    const blacklistEmails: string[] = Array.isArray(credentials?.blacklistEmails) ? credentials.blacklistEmails : [];
     const normalizedBlacklist = new Set(blacklistEmails.map(email => email.toLowerCase()));
 
     if (blacklistEmails.length > 0) {

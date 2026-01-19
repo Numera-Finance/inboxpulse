@@ -18,7 +18,7 @@ export const integrationAuthTypeEnum = pgEnum('integration_auth_type', [
 export const integrationParametersSchema = z.array(
   z.object({
     key: z.string(),
-    value: z.string(),
+    value: z.any(), // Can be string, array, object, number, boolean
   })
 );
 
