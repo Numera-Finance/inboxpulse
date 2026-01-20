@@ -41,10 +41,32 @@ export class EmailService {
 
     // Validate all email collections
     for (let i = 0; i < emailCollections.length; i++) {
-      try {
-        emailCollectionSchema.parse(emailCollections[i]);
-      } catch (error: any) {
-        throw new Error(`Invalid email collection at index ${i}: ${error.message}`);
+      const result = emailCollectionSchema.safeParse(emailCollections[i]);
+      if (!result.success) {
+        // Log the validation error with the actual data for debugging
+        const errorDetails = result.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+          code: issue.code,
+        }));
+
+        // Extract the failing value from the path
+        let failingValue: unknown = emailCollections[i];
+        for (const pathPart of result.error.issues[0]?.path || []) {
+          if (failingValue && typeof failingValue === 'object' && (typeof pathPart === 'string' || typeof pathPart === 'number')) {
+            failingValue = (failingValue as Record<string | number, unknown>)[pathPart];
+          }
+        }
+
+        logger.error({
+          index: i,
+          errors: errorDetails,
+          failingValue,
+          threadId: emailCollections[i]?.thread?.threadId,
+          emailCount: emailCollections[i]?.emails?.length,
+        }, 'Email collection validation failed');
+
+        throw new Error(`Invalid email collection at index ${i}: ${result.error.message}`);
       }
     }
 
