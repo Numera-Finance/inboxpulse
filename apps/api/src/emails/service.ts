@@ -316,7 +316,7 @@ export class EmailService {
   /**
    * Get emails by customer with access control
    * Uses email_participants for efficient access-controlled queries
-   * Supports filtering by sentiment, escalation, upsell, and churn signals
+   * Supports filtering by sentiment, escalation, upsell, churn signals, and date range
    */
   async findByCustomerScoped(
     requestHeader: RequestHeader,
@@ -328,6 +328,8 @@ export class EmailService {
       escalation?: boolean;
       signal?: 'upsell' | 'churn';
       tatViolation?: boolean;
+      dateFrom?: string;
+      dateTo?: string;
     }
   ) {
     if (!customerId) {
@@ -341,6 +343,8 @@ export class EmailService {
       escalation: options?.escalation,
       signal: options?.signal,
       tatViolation: options?.tatViolation,
+      dateFrom: options?.dateFrom,
+      dateTo: options?.dateTo,
     };
 
     const [emails, total] = await Promise.all([

@@ -13,13 +13,15 @@ export const emailKeys = {
       sentiment?: 'positive' | 'negative' | 'neutral';
       signal?: 'upsell' | 'churn';
       tatViolation?: boolean;
+      dateFrom?: string;
+      dateTo?: string;
     }
   ) => [...emailKeys.all, 'customer', tenantId, customerId, options] as const,
 };
 
 /**
  * Hook to get emails for a customer (via domain matching)
- * Supports filtering by sentiment, signal (upsell/churn), and TAT violations
+ * Supports filtering by sentiment, signal (upsell/churn), TAT violations, and date range
  */
 export function useEmailsByCustomer(
   tenantId: string,
@@ -30,6 +32,8 @@ export function useEmailsByCustomer(
     sentiment?: 'positive' | 'negative' | 'neutral';
     signal?: 'upsell' | 'churn';
     tatViolation?: boolean;
+    dateFrom?: string;
+    dateTo?: string;
   }
 ) {
   return useQuery({

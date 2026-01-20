@@ -94,13 +94,11 @@ export type EmailCollection = z.infer<typeof emailCollectionSchema>;
 
 /**
  * TAT (Turn Around Time) metric row for dashboard
- * Represents SLA breach counts for a customer-controller pair
+ * Represents SLA breach counts grouped by customer
  */
 export const tatMetricRowSchema = z.object({
   customerId: z.string().uuid(),
   customerName: z.string(),
-  controllerId: z.string().uuid().nullable(),
-  controllerName: z.string().nullable(),
   onePlusDays: z.number().int().min(0),
   twoPlusDays: z.number().int().min(0),
   threePlusDays: z.number().int().min(0),

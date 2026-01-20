@@ -454,6 +454,8 @@ export class EmailRepository extends ScopedRepository {
       escalation?: boolean;
       signal?: 'upsell' | 'churn';
       tatViolation?: boolean;
+      dateFrom?: string;
+      dateTo?: string;
     }
   ) {
     const limit = options?.limit || 50;
@@ -469,6 +471,11 @@ export class EmailRepository extends ScopedRepository {
       eq(emails.tenantId, header.tenantId),
       eq(emailParticipants.customerId, customerId),
     ];
+
+    // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
+    if (options?.tatViolation) {
+      conditions.push(sql`${emails.id} IN (${this.getTATViolationSubquery(header, customerId, options.dateFrom, options.dateTo)})`);
+    }
 
     // Add sentiment filter using signals array
     if (options?.sentiment) {
@@ -491,37 +498,34 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(signalOverlaps([Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL]));
     }
 
-    // Add TAT violation filter - customer emails with response time > 1 day
-    if (options?.tatViolation) {
-      conditions.push(eq(emails.isCustomerEmail, true));
-      // Either: no reply yet and waiting > 1 day, OR reply took > 1 day
-      conditions.push(
-        sql`(
-          (${emails.firstReplyAt} IS NULL AND ${emails.receivedAt} < NOW() - INTERVAL '1 day')
-          OR
-          (${emails.firstReplyAt} IS NOT NULL AND EXTRACT(EPOCH FROM (${emails.firstReplyAt} - ${emails.receivedAt})) > 86400)
-        )`
-      );
-    }
-
     // Build query
     const query = this.db
       .selectDistinct({ emails })
       .from(emails)
       .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId));
 
-    return query
+    const rows = await query
       .where(and(...conditions))
       .orderBy(desc(emails.receivedAt))
       .limit(limit)
-      .offset(offset)
-      .then(rows => rows.map(r => r.emails));
+      .offset(offset);
+
+    logger.info({
+      customerId,
+      tenantId: header.tenantId,
+      limit,
+      offset,
+      rowCount: rows.length,
+      firstRowKeys: rows[0] ? Object.keys(rows[0]) : [],
+    }, 'findByCustomerScoped query result');
+
+    return rows.map(r => r.emails);
   }
 
   /**
    * Count emails by customer with access control
    * Uses email_participants table
-   * Supports filtering by sentiment, escalation, upsell, and churn signals
+   * Supports filtering by sentiment, escalation, upsell, churn signals, and date range
    */
   async countByCustomerScoped(
     header: RequestHeader,
@@ -531,6 +535,8 @@ export class EmailRepository extends ScopedRepository {
       escalation?: boolean;
       signal?: 'upsell' | 'churn';
       tatViolation?: boolean;
+      dateFrom?: string;
+      dateTo?: string;
     }
   ): Promise<number> {
     const hasAccess = await this.hasCustomerAccess(header, customerId);
@@ -543,6 +549,11 @@ export class EmailRepository extends ScopedRepository {
       eq(emails.tenantId, header.tenantId),
       eq(emailParticipants.customerId, customerId),
     ];
+
+    // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
+    if (filters?.tatViolation) {
+      conditions.push(sql`${emails.id} IN (${this.getTATViolationSubquery(header, customerId, filters.dateFrom, filters.dateTo)})`);
+    }
 
     // Add sentiment filter using signals array
     if (filters?.sentiment) {
@@ -563,18 +574,6 @@ export class EmailRepository extends ScopedRepository {
     } else if (filters?.signal === 'churn') {
       // Any churn level
       conditions.push(signalOverlaps([Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL]));
-    }
-
-    // Add TAT violation filter - customer emails with response time > 1 day
-    if (filters?.tatViolation) {
-      conditions.push(eq(emails.isCustomerEmail, true));
-      conditions.push(
-        sql`(
-          (${emails.firstReplyAt} IS NULL AND ${emails.receivedAt} < NOW() - INTERVAL '1 day')
-          OR
-          (${emails.firstReplyAt} IS NOT NULL AND EXTRACT(EPOCH FROM (${emails.firstReplyAt} - ${emails.receivedAt})) > 86400)
-        )`
-      );
     }
 
     // Build query
@@ -1407,25 +1406,28 @@ export class EmailRepository extends ScopedRepository {
   // ===========================================================================
 
   /**
-   * Get TAT metrics for dashboard with access control
-   * Returns counts of SLA breaches (1+, 2+, 3+, 5+, 6+ business days) grouped by customer and controller
+   * Build the base TAT CTE that calculates business days for each email-customer pair.
+   * This is the SINGLE SOURCE OF TRUTH for all TAT calculations.
+   *
+   * The CTE produces rows with: email_id, customer_id, customer_name, business_days
    *
    * Business days = Mon-Fri, excluding holidays from holiday_calendars
+   * TAT is calculated from email receivedAt to firstReplyAt (or NOW() if no reply)
    *
-   * Only tracks customer emails (fromEmail domain ≠ tenant domain)
-   * TAT is calculated from email receivedAt to firstReplyAt (or now() if no reply)
+   * @param tenantId - Tenant ID for filtering
+   * @param filters - Optional filters for customerId, dateFrom, dateTo
+   * @returns Raw SQL string for the CTE (to be used with sql.raw())
    */
-  async getTATMetricsScoped(
-    header: RequestHeader,
+  private buildTATBaseCTE(
+    tenantId: string,
     filters?: {
       customerId?: string;
       dateFrom?: string;
       dateTo?: string;
     }
-  ): Promise<TATMetricRow[]> {
-    // Build filter conditions for customer emails
+  ): string {
+    // Build filter conditions
     const filterConditions: string[] = [];
-
     if (filters?.customerId) {
       filterConditions.push(`AND ep.customer_id = '${filters.customerId}'`);
     }
@@ -1435,89 +1437,126 @@ export class EmailRepository extends ScopedRepository {
     if (filters?.dateTo) {
       filterConditions.push(`AND e.received_at <= '${filters.dateTo}'::timestamp`);
     }
-
     const filterClause = filterConditions.join(' ');
 
-    // Complex SQL query to calculate TAT metrics
-    // 1. Get customer emails (fromEmail domain ≠ tenant domain)
-    // 2. Link to customers via email_participants
-    // 3. Get account manager via user_customers with tenant's accountManagerRoleId
-    // 4. Calculate business days using generate_series, excluding weekends and holidays
-    // 5. Bucket into 1+, 2+, 3+, 5+, 6+ days
-    // 6. Aggregate by customer and account manager
-    const query = sql`
+    // Note: DISTINCT ON (e.id, ep.customer_id) ensures each email is counted once per customer
+    // (an email can be linked to multiple customers via participants)
+    return `
       WITH customer_emails AS (
-        -- Get customer emails (marked during ingestion) with their customer link
-        SELECT DISTINCT ON (e.id)
+        SELECT DISTINCT ON (e.id, ep.customer_id)
           e.id AS email_id,
           e.tenant_id,
           e.received_at,
           e.first_reply_at,
-          e.from_email,
           ep.customer_id,
           c.name AS customer_name
         FROM emails e
         INNER JOIN email_participants ep ON e.id = ep.email_id AND ep.customer_id IS NOT NULL
         INNER JOIN customers c ON ep.customer_id = c.id
-        WHERE e.tenant_id = ${header.tenantId}
-          -- Only customer emails (classified during email ingestion)
+        WHERE e.tenant_id = '${tenantId}'
           AND e.is_customer_email = true
-          ${sql.raw(filterClause)}
+          ${filterClause}
       ),
-      email_with_account_manager AS (
-        -- Join with user_customers to get account manager for each customer
+      email_with_timezone AS (
         SELECT
           ce.*,
-          uc.user_id AS account_manager_id,
-          CONCAT(u.first_name, ' ', u.last_name) AS account_manager_name,
-          COALESCE(u.timezone, 'UTC') AS account_manager_timezone
+          COALESCE(
+            (SELECT u.timezone
+             FROM tenants t
+             LEFT JOIN user_customers uc ON ce.customer_id = uc.customer_id
+               AND uc.role_id = t.account_manager_role_id
+             LEFT JOIN users u ON uc.user_id = u.id
+             WHERE t.id = ce.tenant_id
+             LIMIT 1),
+            'UTC'
+          ) AS account_manager_timezone
         FROM customer_emails ce
-        LEFT JOIN tenants t ON ce.tenant_id = t.id
-        LEFT JOIN user_customers uc ON ce.customer_id = uc.customer_id
-          AND uc.role_id = t.account_manager_role_id
-        LEFT JOIN users u ON uc.user_id = u.id
       ),
       email_with_business_days AS (
-        -- Calculate business days for each email
         SELECT
-          ewam.*,
+          ewt.email_id,
+          ewt.customer_id,
+          ewt.customer_name,
           (
             SELECT GREATEST(0, COUNT(*) - 1)::int
             FROM generate_series(
-              (ewam.received_at AT TIME ZONE ewam.account_manager_timezone)::date,
-              (COALESCE(ewam.first_reply_at, NOW()) AT TIME ZONE ewam.account_manager_timezone)::date,
+              (ewt.received_at AT TIME ZONE ewt.account_manager_timezone)::date,
+              (COALESCE(ewt.first_reply_at, NOW()) AT TIME ZONE ewt.account_manager_timezone)::date,
               '1 day'::interval
             ) d
-            WHERE EXTRACT(dow FROM d) BETWEEN 1 AND 5  -- Mon(1) to Fri(5)
+            WHERE EXTRACT(dow FROM d) BETWEEN 1 AND 5
               AND d::date NOT IN (
                 SELECT h.date::date
                 FROM holiday_calendars h
-                WHERE h.tenant_id = ewam.tenant_id
-                  AND h.timezone = ewam.account_manager_timezone
+                WHERE h.tenant_id = ewt.tenant_id
+                  AND h.timezone = ewt.account_manager_timezone
               )
           ) AS business_days
-        FROM email_with_account_manager ewam
+        FROM email_with_timezone ewt
       )
-      -- Aggregate by customer and account manager, bucket into TAT categories
+    `;
+  }
+
+  /**
+   * Get TAT metrics for dashboard with access control
+   * Returns counts of SLA breaches (1+, 2+, 3+, 5+, 6+ business days) grouped by customer
+   *
+   * Uses buildTATBaseCTE for consistent business days calculation.
+   */
+  async getTATMetricsScoped(
+    header: RequestHeader,
+    filters?: {
+      customerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): Promise<TATMetricRow[]> {
+    const baseCTE = this.buildTATBaseCTE(header.tenantId, filters);
+
+    const query = sql`
+      ${sql.raw(baseCTE)}
       SELECT
         customer_id AS "customerId",
         customer_name AS "customerName",
-        account_manager_id AS "controllerId",
-        account_manager_name AS "controllerName",
         COUNT(*) FILTER (WHERE business_days >= 1 AND business_days < 2)::int AS "onePlusDays",
         COUNT(*) FILTER (WHERE business_days >= 2 AND business_days < 3)::int AS "twoPlusDays",
         COUNT(*) FILTER (WHERE business_days >= 3 AND business_days < 5)::int AS "threePlusDays",
         COUNT(*) FILTER (WHERE business_days >= 5 AND business_days < 6)::int AS "fivePlusDays",
         COUNT(*) FILTER (WHERE business_days >= 6)::int AS "sixPlusDays"
       FROM email_with_business_days
-      WHERE business_days >= 1  -- Only SLA breaches (1+ business days)
-      GROUP BY customer_id, customer_name, account_manager_id, account_manager_name
-      ORDER BY customer_name, account_manager_name
+      WHERE business_days >= 1
+      GROUP BY customer_id, customer_name
+      ORDER BY customer_name
     `;
 
     const result = await this.db.execute(query);
-
     return result as unknown as TATMetricRow[];
+  }
+
+  /**
+   * Get TAT violation email IDs as a SQL subquery (not executed)
+   * Used for adding TAT filter to existing queries via WHERE id IN (subquery)
+   *
+   * Uses buildTATBaseCTE for consistent business days calculation.
+   */
+  private getTATViolationSubquery(
+    header: RequestHeader,
+    customerId: string,
+    dateFrom?: string,
+    dateTo?: string
+  ): ReturnType<typeof sql> {
+    const baseCTE = this.buildTATBaseCTE(header.tenantId, {
+      customerId,
+      dateFrom,
+      dateTo,
+    });
+
+    return sql`
+      ${sql.raw(baseCTE)}
+      SELECT email_id
+      FROM email_with_business_days
+      WHERE business_days >= 1
+    `;
   }
 
   /**
@@ -1542,6 +1581,8 @@ export class EmailRepository extends ScopedRepository {
     // Uses is_customer_email column set during ingestion
     // Convert Date to ISO string for SQL compatibility
     const replyReceivedAtStr = replyReceivedAt.toISOString();
+
+    // Update first_reply_at for customer emails in the thread that haven't been replied to yet
     const result = await this.db.execute(sql`
       UPDATE emails
       SET

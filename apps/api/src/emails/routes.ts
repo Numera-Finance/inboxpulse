@@ -286,6 +286,8 @@ app.get('/tat-metrics', async (c) => {
  *   - escalation: 'true' (filter for escalated emails only)
  *   - signal: 'upsell' | 'churn' (filter by specific signal)
  *   - tatViolation: 'true' (filter for emails with TAT/SLA violations > 1 day)
+ *   - dateFrom: ISO date string (filter for TAT violations)
+ *   - dateTo: ISO date string (filter for TAT violations)
  */
 app.get('/customer/:customerId', async (c) => {
   return handleGetRequestWithParams(
@@ -298,6 +300,8 @@ app.get('/customer/:customerId', async (c) => {
       const escalation = c.req.query('escalation') === 'true';
       const signal = c.req.query('signal') as 'upsell' | 'churn' | undefined;
       const tatViolation = c.req.query('tatViolation') === 'true';
+      const dateFrom = c.req.query('dateFrom') || undefined;
+      const dateTo = c.req.query('dateTo') || undefined;
       const service = container.resolve(EmailService);
       return await service.findByCustomerScoped(requestHeader, params.customerId, {
         limit,
@@ -306,6 +310,8 @@ app.get('/customer/:customerId', async (c) => {
         escalation,
         signal,
         tatViolation,
+        dateFrom,
+        dateTo,
       });
     }
   );

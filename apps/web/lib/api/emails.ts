@@ -5,7 +5,7 @@ export type { EmailsByCustomerResponse, EmailResponse, TATMetricRow };
 
 /**
  * Get emails for a customer (via domain matching)
- * Supports filtering by sentiment, signal (upsell/churn), and TAT violations
+ * Supports filtering by sentiment, signal (upsell/churn), TAT violations, and date range
  */
 export async function getEmailsByCustomer(
   tenantId: string,
@@ -16,6 +16,8 @@ export async function getEmailsByCustomer(
     sentiment?: 'positive' | 'negative' | 'neutral';
     signal?: 'upsell' | 'churn';
     tatViolation?: boolean;
+    dateFrom?: string;
+    dateTo?: string;
   }
 ): Promise<EmailsByCustomerResponse> {
   return getEmailClient().getByCustomer(tenantId, customerId, options);

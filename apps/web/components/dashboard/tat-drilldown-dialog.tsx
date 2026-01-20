@@ -20,6 +20,7 @@ import {
   type InboxItemContent,
 } from "@/components/inbox"
 import type { TATMetricRow } from "@/lib/api"
+import type { TileFilters } from "./tiles"
 import { useEmailsByCustomer } from "@/lib/hooks"
 import { authService } from "@/lib/auth/auth-service"
 import { cn } from "@/lib/utils"
@@ -28,6 +29,7 @@ interface TATDrilldownDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   tatRow: TATMetricRow | null
+  filters?: TileFilters
 }
 
 /**
@@ -60,14 +62,21 @@ export function TATDrilldownDialog({
   open,
   onOpenChange,
   tatRow,
+  filters,
 }: TATDrilldownDialogProps) {
   const tenantId = authService.getTenantId() || ""
 
   // Fetch emails for customer with TAT violations only
+  // Pass same date filters as TAT metrics table for consistent counts
   const {
     data: emailsData,
     isLoading: isLoadingEmails,
-  } = useEmailsByCustomer(tenantId, tatRow?.customerId || "", { limit: 10000, tatViolation: true })
+  } = useEmailsByCustomer(tenantId, tatRow?.customerId || "", {
+    limit: 10000,
+    tatViolation: true,
+    dateFrom: filters?.dateFrom,
+    dateTo: filters?.dateTo,
+  })
 
   // Get emails array with fallback
   const emails = React.useMemo(() => {
@@ -125,26 +134,17 @@ export function TATDrilldownDialog({
 
   const severity = getSeverityLevel(tatRow)
   const { variant, label } = getSeverityBadge(severity)
-  const totalBreaches = tatRow.onePlusDays
+  // Sum all TAT buckets to get total breaches (each bucket is exclusive, not cumulative)
+  const totalBreaches = tatRow.onePlusDays + tatRow.twoPlusDays + tatRow.threePlusDays + tatRow.fivePlusDays + tatRow.sixPlusDays
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!w-[95vw] !max-w-[95vw] h-[85vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 py-4 border-b flex-shrink-0">
           <div className="flex items-start justify-between pr-8">
-            <div className="space-y-1">
-              <DialogTitle className="text-xl">
-                {tatRow.customerName}
-              </DialogTitle>
-              <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                {tatRow.controllerName && (
-                  <span>Controller: {tatRow.controllerName}</span>
-                )}
-                {!tatRow.controllerName && (
-                  <span className="text-yellow-600">Unassigned</span>
-                )}
-              </div>
-            </div>
+            <DialogTitle className="text-xl">
+              {tatRow.customerName}
+            </DialogTitle>
             <Badge variant={variant} className="ml-4">
               <AlertTriangle className="h-3 w-3 mr-1" />
               {label}

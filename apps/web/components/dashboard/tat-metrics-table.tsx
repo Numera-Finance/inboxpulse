@@ -60,7 +60,6 @@ export function TATMetricsTable({ filters }: TATMetricsTableProps) {
               <thead className="sticky top-0 bg-card">
                 <tr className="border-b text-left text-muted-foreground">
                   <th className="pb-2 font-medium">Customer</th>
-                  <th className="pb-2 font-medium">Controller</th>
                   <th className="pb-2 font-medium text-center">1+ Days</th>
                   <th className="pb-2 font-medium text-center">2+ Days</th>
                   <th className="pb-2 font-medium text-center">3+ Days</th>
@@ -71,21 +70,15 @@ export function TATMetricsTable({ filters }: TATMetricsTableProps) {
               <tbody>
                 {metrics.map((row: TATMetricRow, index: number) => (
                   <tr
-                    key={`${row.customerId}-${row.controllerId || 'none'}-${index}`}
+                    key={`${row.customerId}-${index}`}
                     className="border-b border-border/50 hover:bg-muted/50 cursor-pointer"
                     onClick={() => handleRowClick(row)}
                   >
                     <td
-                      className="py-2 pr-2 truncate max-w-[120px]"
+                      className="py-2 pr-2 truncate max-w-[150px]"
                       title={row.customerName}
                     >
                       {row.customerName || "—"}
-                    </td>
-                    <td
-                      className="py-2 pr-2 truncate max-w-[100px]"
-                      title={row.controllerName || undefined}
-                    >
-                      {row.controllerName || "Unassigned"}
                     </td>
                     <td className={cn("py-2 text-center font-medium", getCountColor(row.onePlusDays))}>
                       {row.onePlusDays}
@@ -114,6 +107,7 @@ export function TATMetricsTable({ filters }: TATMetricsTableProps) {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         tatRow={selectedRow}
+        filters={filters}
       />
     </Card>
   )
