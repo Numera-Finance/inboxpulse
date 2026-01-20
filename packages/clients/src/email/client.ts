@@ -141,7 +141,7 @@ export class EmailClient extends BaseClient {
 
   /**
    * Get emails by customer (via domain matching)
-   * Supports filtering by sentiment and signal (upsell/churn)
+   * Supports filtering by sentiment, signal (upsell/churn), and TAT violations
    */
   async getByCustomer(
     tenantId: string,
@@ -151,6 +151,7 @@ export class EmailClient extends BaseClient {
       offset?: number;
       sentiment?: 'positive' | 'negative' | 'neutral';
       signal?: 'upsell' | 'churn';
+      tatViolation?: boolean;
     }
   ): Promise<EmailsByCustomerResponse> {
     const params = new URLSearchParams({ tenantId });
@@ -158,6 +159,7 @@ export class EmailClient extends BaseClient {
     if (options?.offset) params.set('offset', options.offset.toString());
     if (options?.sentiment) params.set('sentiment', options.sentiment);
     if (options?.signal) params.set('signal', options.signal);
+    if (options?.tatViolation) params.set('tatViolation', 'true');
 
     const response = await this.get<ApiResponse<EmailsByCustomerResponse>>(
       `/api/emails/customer/${encodeURIComponent(customerId)}?${params.toString()}`

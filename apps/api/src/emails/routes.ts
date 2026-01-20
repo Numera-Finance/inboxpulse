@@ -285,6 +285,7 @@ app.get('/tat-metrics', async (c) => {
  *   - sentiment: 'positive' | 'negative' | 'neutral' (filter by sentiment)
  *   - escalation: 'true' (filter for escalated emails only)
  *   - signal: 'upsell' | 'churn' (filter by specific signal)
+ *   - tatViolation: 'true' (filter for emails with TAT/SLA violations > 1 day)
  */
 app.get('/customer/:customerId', async (c) => {
   return handleGetRequestWithParams(
@@ -296,6 +297,7 @@ app.get('/customer/:customerId', async (c) => {
       const sentiment = c.req.query('sentiment') as 'positive' | 'negative' | 'neutral' | undefined;
       const escalation = c.req.query('escalation') === 'true';
       const signal = c.req.query('signal') as 'upsell' | 'churn' | undefined;
+      const tatViolation = c.req.query('tatViolation') === 'true';
       const service = container.resolve(EmailService);
       return await service.findByCustomerScoped(requestHeader, params.customerId, {
         limit,
@@ -303,6 +305,7 @@ app.get('/customer/:customerId', async (c) => {
         sentiment,
         escalation,
         signal,
+        tatViolation,
       });
     }
   );

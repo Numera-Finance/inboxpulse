@@ -1,11 +1,13 @@
 "use client"
 
+import * as React from "react"
 import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDashboardTATMetrics } from "@/lib/hooks"
 import type { TileFilters } from "./tiles"
 import type { TATMetricRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { TATDrilldownDialog } from "./tat-drilldown-dialog"
 
 interface TATMetricsTableProps {
   filters?: TileFilters
@@ -24,6 +26,13 @@ function getCountColor(count: number): string {
 
 export function TATMetricsTable({ filters }: TATMetricsTableProps) {
   const { data: metrics, isLoading, error } = useDashboardTATMetrics(filters)
+  const [selectedRow, setSelectedRow] = React.useState<TATMetricRow | null>(null)
+  const [dialogOpen, setDialogOpen] = React.useState(false)
+
+  const handleRowClick = (row: TATMetricRow) => {
+    setSelectedRow(row)
+    setDialogOpen(true)
+  }
 
   return (
     <Card className="tile-drag-handle h-full flex flex-col cursor-move p-4">
@@ -63,7 +72,8 @@ export function TATMetricsTable({ filters }: TATMetricsTableProps) {
                 {metrics.map((row: TATMetricRow, index: number) => (
                   <tr
                     key={`${row.customerId}-${row.controllerId || 'none'}-${index}`}
-                    className="border-b border-border/50 hover:bg-muted/50"
+                    className="border-b border-border/50 hover:bg-muted/50 cursor-pointer"
+                    onClick={() => handleRowClick(row)}
                   >
                     <td
                       className="py-2 pr-2 truncate max-w-[120px]"
@@ -99,6 +109,12 @@ export function TATMetricsTable({ filters }: TATMetricsTableProps) {
           </div>
         )}
       </div>
+
+      <TATDrilldownDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        tatRow={selectedRow}
+      />
     </Card>
   )
 }

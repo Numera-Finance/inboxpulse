@@ -327,6 +327,7 @@ export class EmailService {
       sentiment?: 'positive' | 'negative' | 'neutral';
       escalation?: boolean;
       signal?: 'upsell' | 'churn';
+      tatViolation?: boolean;
     }
   ) {
     if (!customerId) {
@@ -339,6 +340,7 @@ export class EmailService {
       sentiment: options?.sentiment,
       escalation: options?.escalation,
       signal: options?.signal,
+      tatViolation: options?.tatViolation,
     };
 
     const [emails, total] = await Promise.all([

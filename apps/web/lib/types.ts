@@ -143,16 +143,20 @@ function capitalizeSentiment(value?: string): Customer['sentiment'] {
  * Format TAT (Turn Around Time) in hours to a human-readable string
  * Examples: "2.5h", "1d 4h", "3d"
  */
-function formatTat(hours: number | null | undefined): string {
+function formatTat(hours: number | string | null | undefined): string {
   if (hours === null || hours === undefined) return '—';
 
-  if (hours < 24) {
+  // Coerce to number in case it comes as a string from the API
+  const numHours = typeof hours === 'string' ? parseFloat(hours) : hours;
+  if (isNaN(numHours)) return '—';
+
+  if (numHours < 24) {
     // Less than a day - show hours
-    return `${hours.toFixed(1)}h`;
+    return `${numHours.toFixed(1)}h`;
   }
 
-  const days = Math.floor(hours / 24);
-  const remainingHours = Math.round(hours % 24);
+  const days = Math.floor(numHours / 24);
+  const remainingHours = Math.round(numHours % 24);
 
   if (remainingHours === 0) {
     return `${days}d`;

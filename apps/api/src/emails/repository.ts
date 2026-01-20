@@ -453,6 +453,7 @@ export class EmailRepository extends ScopedRepository {
       sentiment?: 'positive' | 'negative' | 'neutral';
       escalation?: boolean;
       signal?: 'upsell' | 'churn';
+      tatViolation?: boolean;
     }
   ) {
     const limit = options?.limit || 50;
@@ -490,6 +491,19 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(signalOverlaps([Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL]));
     }
 
+    // Add TAT violation filter - customer emails with response time > 1 day
+    if (options?.tatViolation) {
+      conditions.push(eq(emails.isCustomerEmail, true));
+      // Either: no reply yet and waiting > 1 day, OR reply took > 1 day
+      conditions.push(
+        sql`(
+          (${emails.firstReplyAt} IS NULL AND ${emails.receivedAt} < NOW() - INTERVAL '1 day')
+          OR
+          (${emails.firstReplyAt} IS NOT NULL AND EXTRACT(EPOCH FROM (${emails.firstReplyAt} - ${emails.receivedAt})) > 86400)
+        )`
+      );
+    }
+
     // Build query
     const query = this.db
       .selectDistinct({ emails })
@@ -516,6 +530,7 @@ export class EmailRepository extends ScopedRepository {
       sentiment?: 'positive' | 'negative' | 'neutral';
       escalation?: boolean;
       signal?: 'upsell' | 'churn';
+      tatViolation?: boolean;
     }
   ): Promise<number> {
     const hasAccess = await this.hasCustomerAccess(header, customerId);
@@ -548,6 +563,18 @@ export class EmailRepository extends ScopedRepository {
     } else if (filters?.signal === 'churn') {
       // Any churn level
       conditions.push(signalOverlaps([Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL]));
+    }
+
+    // Add TAT violation filter - customer emails with response time > 1 day
+    if (filters?.tatViolation) {
+      conditions.push(eq(emails.isCustomerEmail, true));
+      conditions.push(
+        sql`(
+          (${emails.firstReplyAt} IS NULL AND ${emails.receivedAt} < NOW() - INTERVAL '1 day')
+          OR
+          (${emails.firstReplyAt} IS NOT NULL AND EXTRACT(EPOCH FROM (${emails.firstReplyAt} - ${emails.receivedAt})) > 86400)
+        )`
+      );
     }
 
     // Build query

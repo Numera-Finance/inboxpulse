@@ -104,7 +104,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const [editingRoleId, setEditingRoleId] = React.useState<string | null>(null)
 
   // Email filter state - lifted from InboxView to enable server-side filtering
-  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'all'>('all')
+  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all'>('all')
 
   // Get tenantId from auth service
   const tenantId = authService.getTenantId() || ""
@@ -116,12 +116,15 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       limit: number;
       sentiment?: 'positive' | 'negative' | 'neutral';
       signal?: 'upsell' | 'churn';
+      tatViolation?: boolean;
     } = { limit: 10000 };
 
     if (emailSentimentFilter && emailSentimentFilter !== 'all') {
       // Map to appropriate filter field
       if (emailSentimentFilter === 'upsell' || emailSentimentFilter === 'churn') {
         options.signal = emailSentimentFilter;
+      } else if (emailSentimentFilter === 'tat') {
+        options.tatViolation = true;
       } else {
         options.sentiment = emailSentimentFilter;
       }

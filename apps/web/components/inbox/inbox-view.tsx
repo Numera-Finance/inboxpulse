@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, RefreshCw, Archive, Inbox, AlertTriangle, Loader2, ChevronLeft, ChevronRight, GripVertical, Smile, Frown, Meh, TrendingUp, TrendingDown } from "lucide-react"
+import { Search, RefreshCw, Archive, Inbox, AlertTriangle, Loader2, ChevronLeft, ChevronRight, GripVertical, Smile, Frown, Meh, TrendingUp, TrendingDown, Clock } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -495,6 +495,12 @@ export function InboxView({
                   <span className="flex items-center gap-2">
                     <TrendingDown className="h-3.5 w-3.5 text-orange-500" />
                     Churn Risk
+                  </span>
+                </SelectItem>
+                <SelectItem value="tat">
+                  <span className="flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5 text-red-500" />
+                    TAT Breach
                   </span>
                 </SelectItem>
               </SelectContent>
