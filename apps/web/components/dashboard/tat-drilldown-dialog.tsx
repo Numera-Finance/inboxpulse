@@ -129,7 +129,7 @@ export function TATDrilldownDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[95vw] max-w-[95vw] h-[85vh] flex flex-col p-0 gap-0">
+      <DialogContent className="!w-[95vw] !max-w-[95vw] h-[85vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 py-4 border-b flex-shrink-0">
           <div className="flex items-start justify-between pr-8">
             <div className="space-y-1">
