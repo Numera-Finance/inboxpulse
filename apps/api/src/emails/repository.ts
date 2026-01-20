@@ -1513,16 +1513,18 @@ export class EmailRepository extends ScopedRepository {
     // Update customer emails in this thread that don't have a firstReplyAt yet
     // and were received before this reply
     // Uses is_customer_email column set during ingestion
+    // Convert Date to ISO string for SQL compatibility
+    const replyReceivedAtStr = replyReceivedAt.toISOString();
     const result = await this.db.execute(sql`
       UPDATE emails
       SET
         first_reply_email_id = ${replyEmailId},
-        first_reply_at = ${replyReceivedAt},
+        first_reply_at = ${replyReceivedAtStr}::timestamp,
         updated_at = NOW()
       WHERE tenant_id = ${tenantId}
         AND thread_id = ${threadId}
         AND first_reply_at IS NULL
-        AND received_at < ${replyReceivedAt}
+        AND received_at < ${replyReceivedAtStr}::timestamp
         AND is_customer_email = true
     `);
 
