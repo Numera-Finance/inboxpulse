@@ -26,6 +26,7 @@ import { logger as honoLogger } from 'hono/logger';
 import { setupContainer } from './di/container';
 import { logger } from './utils/logger';
 import { requestHeaderMiddleware } from './middleware/request-header';
+import { verifyServiceApiKey } from './middleware/internal-auth';
 import { toStructuredError, sanitizeErrorForClient } from '@crm/shared';
 import type { ApiResponse } from '@crm/shared';
 
@@ -86,7 +87,7 @@ app.use('*', cors({
   },
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-tenant-id', 'x-user-id', 'x-permissions'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-tenant-id', 'x-user-id', 'x-permissions', 'x-internal-api-key'],
 }));
 
 // Health check (no auth required)
@@ -98,7 +99,12 @@ app.get('/health', (c) => {
   });
 });
 
-// Protected routes (auth required)
+// Internal routes - require service API key (service-to-service only)
+// These routes should only be called by other services, not browsers
+app.use('/api/notifications/send', verifyServiceApiKey);
+app.use('/api/notifications/simulate/*', verifyServiceApiKey);
+
+// All API routes require request header (tenant/user context)
 app.use('/api/*', requestHeaderMiddleware);
 app.route('/api/notifications', notificationsRoutes);
 

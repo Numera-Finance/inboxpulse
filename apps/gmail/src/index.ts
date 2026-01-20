@@ -31,6 +31,7 @@ import { logger } from './utils/logger';
 import webhooksRoutes from './routes/webhooks';
 import syncRoutes from './routes/sync';
 import watchRenewalRoutes from './routes/watch-renewal';
+import { verifyServiceApiKey } from './middleware/internal-auth';
 
 const app = new Hono();
 
@@ -49,7 +50,11 @@ app.get('/health', (c) => {
 
 // API Routes (with error handling for route setup)
 try {
+  // Webhooks - protected by Pub/Sub token verification (handled in route)
   app.route('/webhooks', webhooksRoutes);
+
+  // Internal API routes - protected by service API key
+  app.use('/api/*', verifyServiceApiKey);
   app.route('/api/sync', syncRoutes);
   app.route('/api/watch', watchRenewalRoutes);
   logger.info('Routes registered successfully');

@@ -22,10 +22,10 @@ export class CrmUserResolver implements UserResolver {
   constructor(@inject('ApiBaseUrl') apiBaseUrl: string) {
     this.userClient = new UserClient(apiBaseUrl);
 
-    // Set internal API key for service-to-service calls
-    const internalApiKey = process.env.INTERNAL_API_KEY;
-    if (internalApiKey) {
-      this.userClient.setInternalApiKey(internalApiKey);
+    // Set service API key for service-to-service calls
+    const serviceApiKey = process.env.SERVICE_API_KEY;
+    if (serviceApiKey) {
+      this.userClient.setServiceApiKey(serviceApiKey);
     }
   }
 

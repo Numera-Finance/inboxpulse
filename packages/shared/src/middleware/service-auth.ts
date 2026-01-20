@@ -1,19 +1,25 @@
 import type { Context, Next } from 'hono';
 
 /**
+ * Internal API key header name
+ * Used for service-to-service authentication
+ */
+export const INTERNAL_API_KEY_HEADER = 'x-internal-api-key';
+
+/**
  * Middleware for service-to-service authentication
  *
  * Used to protect internal API endpoints that are called by other services
  * (e.g., Notifications service calling API service, or API calling Notifications).
  *
- * Requires the `x-service-api-key` header to match the SERVICE_API_KEY env var.
+ * Requires the `x-internal-api-key` header to match the INTERNAL_API_KEY env var.
  *
  * Usage:
  *   app.get('/internal/endpoint', requireServiceAuth(), async (c) => { ... })
  */
 export function requireServiceAuth() {
   return async (c: Context, next: Next) => {
-    const serviceApiKey = c.req.header('x-service-api-key');
+    const apiKey = c.req.header(INTERNAL_API_KEY_HEADER);
     const expectedKey = process.env.SERVICE_API_KEY;
 
     if (!expectedKey) {
@@ -25,16 +31,16 @@ export function requireServiceAuth() {
       );
     }
 
-    if (!serviceApiKey) {
+    if (!apiKey) {
       return c.json(
-        { success: false, error: 'Missing service API key' },
+        { success: false, error: 'Missing internal API key' },
         401
       );
     }
 
-    if (serviceApiKey !== expectedKey) {
+    if (apiKey !== expectedKey) {
       return c.json(
-        { success: false, error: 'Invalid service API key' },
+        { success: false, error: 'Invalid internal API key' },
         401
       );
     }
@@ -52,14 +58,14 @@ export function requireServiceAuth() {
  *   }
  */
 export function hasServiceAuth(c: Context): boolean {
-  const serviceApiKey = c.req.header('x-service-api-key');
+  const apiKey = c.req.header(INTERNAL_API_KEY_HEADER);
   const expectedKey = process.env.SERVICE_API_KEY;
 
-  if (!expectedKey || !serviceApiKey) {
+  if (!expectedKey || !apiKey) {
     return false;
   }
 
-  return serviceApiKey === expectedKey;
+  return apiKey === expectedKey;
 }
 
 /**
@@ -74,14 +80,14 @@ export function hasServiceAuth(c: Context): boolean {
  *   });
  */
 export function getServiceAuthHeaders(): Record<string, string> {
-  const serviceApiKey = process.env.SERVICE_API_KEY;
+  const apiKey = process.env.SERVICE_API_KEY;
 
-  if (!serviceApiKey) {
+  if (!apiKey) {
     console.warn('SERVICE_API_KEY not configured for service-to-service calls');
     return {};
   }
 
   return {
-    'x-service-api-key': serviceApiKey,
+    [INTERNAL_API_KEY_HEADER]: apiKey,
   };
 }

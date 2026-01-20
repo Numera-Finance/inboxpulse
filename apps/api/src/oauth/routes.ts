@@ -4,6 +4,7 @@ import { container } from 'tsyringe';
 import { GMAIL_SCOPE_URLS } from '@crm/shared';
 import { IntegrationService } from '../integrations/service';
 import { logger } from '../utils/logger';
+import { internalFetch } from '../utils/internal-fetch';
 
 const app = new Hono();
 
@@ -228,7 +229,7 @@ app.get('/gmail/callback', async (c) => {
     // Setup Gmail watch automatically
     try {
       const gmailServiceUrl = process.env.SERVICE_GMAIL_URL!;
-      const watchResponse = await fetch(`${gmailServiceUrl}/api/watch?tenantId=${tenantId}`, {
+      const watchResponse = await internalFetch(`${gmailServiceUrl}/api/watch?tenantId=${tenantId}`, {
         method: 'POST',
       });
 
@@ -256,7 +257,7 @@ app.get('/gmail/callback', async (c) => {
     // Trigger initial sync to fetch historical emails (last 30 days)
     try {
       const gmailServiceUrl = process.env.SERVICE_GMAIL_URL!;
-      const syncResponse = await fetch(`${gmailServiceUrl}/api/sync/${tenantId}/initial`, {
+      const syncResponse = await internalFetch(`${gmailServiceUrl}/api/sync/${tenantId}/initial`, {
         method: 'POST',
       });
 

@@ -1,5 +1,6 @@
 import { Inngest } from 'inngest';
 import { logger } from '../../utils/logger';
+import { internalFetch } from '../../utils/internal-fetch';
 
 /**
  * Creates the Inngest cron function to renew Gmail watches before they expire.
@@ -29,11 +30,8 @@ export const createGmailWatchRenewalCronFunction = (inngest: Inngest) => {
       const result = await step.run('renew-expiring-watches', async () => {
         logger.info('Starting Gmail watch renewal cron');
 
-        const response = await fetch(`${gmailServiceUrl}/api/watch/renew-expiring`, {
+        const response = await internalFetch(`${gmailServiceUrl}/api/watch/renew-expiring`, {
           method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
         });
 
         if (!response.ok) {

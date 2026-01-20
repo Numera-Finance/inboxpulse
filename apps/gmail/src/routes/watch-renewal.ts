@@ -17,9 +17,9 @@ function getInternalHeaders(): HeadersInit {
     'Content-Type': 'application/json',
   };
 
-  const apiKey = process.env.INTERNAL_API_KEY;
+  const apiKey = process.env.SERVICE_API_KEY;
   if (apiKey) {
-    headers['X-Internal-Api-Key'] = apiKey;
+    headers['x-internal-api-key'] = apiKey;
   }
 
   return headers;

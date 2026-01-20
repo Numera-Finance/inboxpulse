@@ -74,8 +74,8 @@ export class AuthBaseClient {
     this.baseUrl = baseUrl || (isBrowser ? '' : 'http://localhost:4001');
 
     // Auto-set internal API key from environment (for service-to-service calls)
-    if (!isBrowser && typeof process !== 'undefined' && process.env?.INTERNAL_API_KEY) {
-      this.internalApiKey = process.env.INTERNAL_API_KEY;
+    if (!isBrowser && typeof process !== 'undefined' && process.env?.SERVICE_API_KEY) {
+      this.internalApiKey = process.env.SERVICE_API_KEY;
     }
   }
 
@@ -97,7 +97,7 @@ export class AuthBaseClient {
   /**
    * Set internal API key (for service-to-service calls)
    */
-  setInternalApiKey(key: string): void {
+  setServiceApiKey(key: string): void {
     this.internalApiKey = key;
   }
 
@@ -110,7 +110,7 @@ export class AuthBaseClient {
       headers: {
         'Content-Type': 'application/json',
         ...(this.sessionToken && { Authorization: `Bearer ${this.sessionToken}` }),
-        ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+        ...(this.internalApiKey && { 'x-internal-api-key': this.internalApiKey }),
         ...options.headers,
       },
       credentials: 'include', // Include cookies for browser clients
@@ -203,7 +203,7 @@ export class AuthBaseClient {
       body: formData,
       headers: {
         ...(this.sessionToken && { Authorization: `Bearer ${this.sessionToken}` }),
-        ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+        ...(this.internalApiKey && { 'x-internal-api-key': this.internalApiKey }),
       },
       credentials: 'include',
       signal,
@@ -231,7 +231,7 @@ export class AuthBaseClient {
       method: 'GET',
       headers: {
         ...(this.sessionToken && { Authorization: `Bearer ${this.sessionToken}` }),
-        ...(this.internalApiKey && { 'X-Internal-Api-Key': this.internalApiKey }),
+        ...(this.internalApiKey && { 'x-internal-api-key': this.internalApiKey }),
       },
       credentials: 'include',
       signal,
@@ -263,19 +263,39 @@ export class AuthBaseClient {
  */
 export class InternalBaseClient {
   protected baseUrl: string;
+  private internalApiKey: string | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+
+    // Auto-set internal API key from environment (for service-to-service calls)
+    if (!isBrowser && typeof process !== 'undefined' && process.env?.SERVICE_API_KEY) {
+      this.internalApiKey = process.env.SERVICE_API_KEY;
+    }
+  }
+
+  /**
+   * Set internal API key (for service-to-service calls)
+   */
+  setServiceApiKey(key: string): void {
+    this.internalApiKey = key;
   }
 
   /**
    * Build context headers from ServiceContext
    */
   private buildContextHeaders(ctx: ServiceContext): Record<string, string> {
-    return {
+    const headers: Record<string, string> = {
       'x-tenant-id': ctx.tenantId,
       'x-user-id': ctx.userId,
     };
+
+    // Add internal API key if available (for server-side calls)
+    if (this.internalApiKey) {
+      headers['x-internal-api-key'] = this.internalApiKey;
+    }
+
+    return headers;
   }
 
   /**
