@@ -219,7 +219,13 @@ export class EmailParserService {
     // Split by comma, but not commas within quotes
     const parts = addresses.match(/(?:[^,"]|"(?:\\.|[^"])*")+/g) || [];
 
-    return parts.map((part) => this.parseAddress(part.trim())).filter((addr) => addr.email);
+    return parts
+      .map((part) => this.parseAddress(part.trim()))
+      .filter((addr) => {
+        // Must have an email containing '@' to be valid
+        // Filters out things like "undisclosed-recipients:;" or empty strings
+        return addr.email && addr.email.includes('@');
+      });
   }
 
   private parsePriority(headers: Map<string, string>): string {
