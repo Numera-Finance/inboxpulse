@@ -493,6 +493,47 @@ export class CustomerService {
   }
 
   // ===========================================================================
+  // Internal Methods (for email mapping - no ClientCustomer conversion)
+  // ===========================================================================
+
+  /**
+   * Find customer by domain (internal use)
+   * Returns raw Customer entity or undefined
+   */
+  async findByDomain(tenantId: string, domain: string): Promise<Customer | undefined> {
+    return this.customerRepository.findByDomain(tenantId, domain);
+  }
+
+  /**
+   * Create customer from a single domain (internal use)
+   * Used during email analysis to auto-create customers
+   * Returns raw Customer entity
+   */
+  async createFromDomain(tenantId: string, name: string, domain: string): Promise<Customer> {
+    const normalizedDomain = domain.toLowerCase();
+
+    // Create customer with domain (repository handles both in a transaction)
+    const customer = await this.customerRepository.create({
+      tenantId,
+      name,
+      domain: normalizedDomain,
+    });
+
+    logger.info(
+      {
+        tenantId,
+        customerId: customer.id,
+        domain: normalizedDomain,
+        name,
+        logType: 'CUSTOMER_CREATED_FROM_DOMAIN',
+      },
+      'Created customer from domain'
+    );
+
+    return customer;
+  }
+
+  // ===========================================================================
   // Import/Export
   // ===========================================================================
 

@@ -9,15 +9,47 @@ import type { Email, AnalysisType } from '@crm/shared';
 import { Signal } from '@crm/shared';
 import type { AnalysisType as EmailAnalysisType } from './analysis-schema';
 import { EmailAnalysisStatus, type NewEmailParticipant } from './schema';
-import { UserRepository } from '../users/repository';
 import { UserService } from '../users/service';
-import { ContactRepository } from '../contacts/repository';
 import { ContactService, type SignatureData } from '../contacts/service';
-import { CustomerRepository } from '../customers/repository';
+import { CustomerService } from '../customers/service';
 import { TaskService } from '../tasks/service';
 import { TenantService } from '../tenants/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply, hasAnalyzableSignatureContent } from './extraction/extractor';
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/**
+ * Personal email providers to exclude from customer creation
+ * Contacts from these domains are created but not linked to customers
+ */
+const PERSONAL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'yahoo.co.uk',
+  'yahoo.co.in',
+  'ymail.com',
+  'aol.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'protonmail.com',
+  'proton.me',
+  'zoho.com',
+  'mail.com',
+  'gmx.com',
+  'gmx.net',
+  'fastmail.com',
+  'tutanota.com',
+  'hey.com',
+]);
 
 // =============================================================================
 // Types
@@ -98,6 +130,7 @@ export class EmailAnalysisService {
     private threadAnalysisService: ThreadAnalysisService,
     private userService: UserService,
     private contactService: ContactService,
+    private customerService: CustomerService,
     private taskService: TaskService,
     private tenantService: TenantService
   ) { }
@@ -511,7 +544,10 @@ export class EmailAnalysisService {
   }
 
   /**
-   * Ensure contacts exist for all email participants (within transaction)
+   * Ensure contacts exist for all email participants
+   * Maps emails to customers using: 1) domain lookup, 2) existing contact's customer, 3) create new
+   *
+   * This is the single source of truth for email → customer mapping logic.
    */
   private async ensureContactsInTransaction(
     tx: any,
@@ -519,10 +555,223 @@ export class EmailAnalysisService {
     email: Email,
     participantsToEnsure: Array<{ email: string; name?: string }>
   ): Promise<Array<{ id: string; email: string; name?: string; customerId?: string; created: boolean }>> {
-    // Use ContactService but pass the transaction
-    // For now, we'll use the existing method which has its own upsert logic
-    // TODO: Refactor ContactService to accept transaction
-    return await this.contactService.ensureContactsFromEmail(tenantId, email);
+    const results: Array<{ id: string; email: string; name?: string; customerId?: string; created: boolean }> = [];
+
+    // Collect all unique email addresses from the email
+    const participants = new Map<string, { email: string; name?: string }>();
+
+    // From sender
+    if (email.from?.email) {
+      participants.set(email.from.email.toLowerCase(), {
+        email: email.from.email,
+        name: email.from.name,
+      });
+    }
+
+    // To recipients
+    for (const addr of email.tos || []) {
+      if (addr.email && !participants.has(addr.email.toLowerCase())) {
+        participants.set(addr.email.toLowerCase(), {
+          email: addr.email,
+          name: addr.name,
+        });
+      }
+    }
+
+    // CC recipients
+    for (const addr of email.ccs || []) {
+      if (addr.email && !participants.has(addr.email.toLowerCase())) {
+        participants.set(addr.email.toLowerCase(), {
+          email: addr.email,
+          name: addr.name,
+        });
+      }
+    }
+
+    // BCC recipients
+    for (const addr of email.bccs || []) {
+      if (addr.email && !participants.has(addr.email.toLowerCase())) {
+        participants.set(addr.email.toLowerCase(), {
+          email: addr.email,
+          name: addr.name,
+        });
+      }
+    }
+
+    logger.info(
+      {
+        tenantId,
+        emailId: email.messageId,
+        participantsCount: participants.size,
+        logType: 'CONTACT_ENSURE_START',
+      },
+      'Ensuring contacts for all email participants'
+    );
+
+    // Process each participant
+    for (const [emailLower, participant] of participants) {
+      try {
+        // Extract domain from email
+        const domain = this.extractDomain(participant.email);
+        let customerId: string | undefined;
+
+        // Check if contact already exists (needed for fallback customer lookup)
+        let contact = await this.contactService.findByEmail(tenantId, emailLower);
+        let created = false;
+
+        // Find customer for this participant
+        // Priority: 1) Domain lookup, 2) Existing contact's customer, 3) Create new
+        if (domain && !PERSONAL_DOMAINS.has(domain)) {
+          try {
+            // First try to find existing customer by domain
+            let customer = await this.customerService.findByDomain(tenantId, domain);
+
+            if (!customer && contact?.customerId) {
+              // Fallback: Use existing contact's customer link
+              // Handles cases where contact was manually linked to a customer
+              // whose domain doesn't match (e.g., consultant with personal email)
+              customerId = contact.customerId;
+              logger.info(
+                {
+                  tenantId,
+                  contactId: contact.id,
+                  email: emailLower,
+                  customerId,
+                  domain,
+                  logType: 'CUSTOMER_FROM_EXISTING_CONTACT',
+                },
+                'Using customer from existing contact (domain lookup found no match)'
+              );
+            } else if (!customer) {
+              // Create new customer for this domain
+              const inferredName = this.inferCustomerName(domain);
+              customer = await this.customerService.createFromDomain(tenantId, inferredName, domain);
+              customerId = customer.id;
+            } else {
+              customerId = customer.id;
+            }
+          } catch (customerError: any) {
+            // If customer creation fails (e.g., unique constraint), try to find it again
+            if (customerError.code === '23505') {
+              const existingCustomer = await this.customerService.findByDomain(tenantId, domain);
+              customerId = existingCustomer?.id;
+            } else {
+              logger.warn(
+                {
+                  tenantId,
+                  domain,
+                  error: customerError.message,
+                },
+                'Failed to create customer for domain, contact will be created without customer link'
+              );
+            }
+          }
+        } else if (contact?.customerId) {
+          // Personal email domain but contact has a customer link - use it
+          customerId = contact.customerId;
+        }
+
+        if (!contact) {
+          // Create new contact
+          contact = await this.contactService.create({
+            tenantId,
+            email: participant.email,
+            name: participant.name,
+            customerId: customerId || null,
+          });
+          created = true;
+
+          logger.info(
+            {
+              tenantId,
+              contactId: contact.id,
+              email: participant.email,
+              name: participant.name,
+              customerId,
+              logType: 'CONTACT_CREATED_FROM_EMAIL',
+            },
+            'Created new contact from email participant'
+          );
+        } else if (!contact.customerId && customerId) {
+          // Update existing contact with customer ID if it doesn't have one
+          contact = await this.contactService.update(contact.id, { customerId }) || contact;
+
+          logger.info(
+            {
+              tenantId,
+              contactId: contact.id,
+              email: participant.email,
+              customerId,
+              logType: 'CONTACT_LINKED_TO_CUSTOMER',
+            },
+            'Linked existing contact to customer'
+          );
+        }
+
+        results.push({
+          id: contact.id,
+          email: contact.email,
+          name: contact.name || undefined,
+          customerId: contact.customerId || undefined,
+          created,
+        });
+      } catch (error: any) {
+        logger.error(
+          {
+            tenantId,
+            email: participant.email,
+            error: error.message,
+          },
+          'Failed to ensure contact for email participant'
+        );
+        // Continue with other participants
+      }
+    }
+
+    logger.info(
+      {
+        tenantId,
+        emailId: email.messageId,
+        totalParticipants: participants.size,
+        contactsCreated: results.filter(r => r.created).length,
+        contactsExisting: results.filter(r => !r.created).length,
+        logType: 'CONTACT_ENSURE_COMPLETE',
+      },
+      'Completed ensuring contacts for all email participants'
+    );
+
+    return results;
+  }
+
+  /**
+   * Extract domain from email address
+   * Returns top-level domain (e.g., subdomain.example.com -> example.com)
+   */
+  private extractDomain(email: string): string | null {
+    try {
+      const domain = email.split('@')[1]?.toLowerCase();
+      if (!domain) return null;
+
+      const parts = domain.split('.');
+      if (parts.length >= 2) {
+        return parts.slice(-2).join('.');
+      }
+      return domain;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Infer customer name from domain
+   * e.g., "acme-corp" -> "Acme Corp"
+   */
+  private inferCustomerName(domain: string): string {
+    const namePart = domain.split('.')[0];
+    return namePart
+      .split('-')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
   }
 
   /**
