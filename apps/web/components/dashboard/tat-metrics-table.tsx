@@ -80,20 +80,20 @@ export function TATMetricsTable({ filters }: TATMetricsTableProps) {
                     >
                       {row.customerName || "—"}
                     </td>
-                    <td className={cn("py-2 text-center font-medium", getCountColor(row.onePlusDays))}>
-                      {row.onePlusDays}
-                    </td>
-                    <td className={cn("py-2 text-center font-medium", getCountColor(row.twoPlusDays))}>
-                      {row.twoPlusDays}
-                    </td>
-                    <td className={cn("py-2 text-center font-medium", getCountColor(row.threePlusDays))}>
-                      {row.threePlusDays}
+                    <td className={cn("py-2 text-center font-medium", getCountColor(row.sixPlusDays))}>
+                      {row.sixPlusDays}
                     </td>
                     <td className={cn("py-2 text-center font-medium", getCountColor(row.fivePlusDays))}>
                       {row.fivePlusDays}
                     </td>
-                    <td className={cn("py-2 text-center font-medium", getCountColor(row.sixPlusDays))}>
-                      {row.sixPlusDays}
+                    <td className={cn("py-2 text-center font-medium", getCountColor(row.threePlusDays))}>
+                      {row.threePlusDays}
+                    </td>
+                    <td className={cn("py-2 text-center font-medium", getCountColor(row.twoPlusDays))}>
+                      {row.twoPlusDays}
+                    </td>
+                    <td className={cn("py-2 text-center font-medium", getCountColor(row.onePlusDays))}>
+                      {row.onePlusDays}
                     </td>
                   </tr>
                 ))}
