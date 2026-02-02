@@ -1526,7 +1526,7 @@ export class EmailRepository extends ScopedRepository {
       FROM email_with_business_days
       WHERE business_days >= 1
       GROUP BY customer_id, customer_name
-      ORDER BY customer_name
+      ORDER BY "onePlusDays" DESC, "twoPlusDays" DESC, "threePlusDays" DESC, "fivePlusDays" DESC, "sixPlusDays" DESC
     `;
 
     const result = await this.db.execute(query);
