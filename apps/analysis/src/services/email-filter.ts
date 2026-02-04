@@ -115,6 +115,82 @@ export class EmailFilterService {
     'sendinblue.com',
   ];
 
+  // Social site notification domains
+  private static readonly SOCIAL_NOTIFICATION_DOMAINS = [
+    // Social networks
+    'facebookmail.com',
+    'facebook.com',
+    'linkedin.com',
+    'twitter.com',
+    'x.com',
+    'instagram.com',
+    'quora.com',
+    'reddit.com',
+    'pinterest.com',
+    'tiktok.com',
+    'snapchat.com',
+    'medium.com',
+    'substack.com',
+    // Developer/productivity tools
+    'github.com',
+    'gitlab.com',
+    'bitbucket.org',
+    'slack.com',
+    'notion.so',
+    'figma.com',
+    'asana.com',
+    'trello.com',
+    'jira.atlassian.com',
+    'monday.com',
+    'clickup.com',
+    'linear.app',
+    // Chat/messaging platforms
+    'chat.google.com',
+    'teams.microsoft.com',
+    'discordapp.com',
+    'discord.com',
+    'whatsapp.com',
+    'telegram.org',
+    'webex.com',
+    'ringcentral.com',
+    'gotomeeting.com',
+  ];
+
+  // Calendar notification senders
+  private static readonly CALENDAR_SENDERS = [
+    'calendar-notification@google.com',
+    'noreply@calendar.google.com',
+    'calendar-noreply@google.com',
+    'outlook.office365.com',
+    'noreply@microsoft.com',
+    'calendly.com',
+    'zoom.us',
+    'meetings.zoom.us',
+  ];
+
+  // Chat/messaging notification senders
+  private static readonly CHAT_NOTIFICATION_SENDERS = [
+    // Google Chat
+    'chat-noreply@google.com',
+    'workspace-noreply@google.com',
+    '@chat.google.com',
+    // Microsoft Teams
+    'noreply@email.teams.microsoft.com',
+    '@teams.microsoft.com',
+    // Slack (in addition to domain check)
+    'notification@slack.com',
+    'feedback@slack.com',
+    // Discord
+    'noreply@discord.com',
+    // Zoom chat
+    'noreply@zoom.us',
+    // WebEx
+    'messenger@webex.com',
+  ];
+
+  // ICS calendar format marker - highly reliable indicator of calendar invite
+  private static readonly ICS_PATTERN = /BEGIN:VCALENDAR/i;
+
   // HuggingFace API settings
   private static readonly HF_API_URL = 'https://api-inference.huggingface.co/models';
   private static readonly HF_SPAM_MODEL = 'mshenoda/roberta-spam'; // Email spam detection
@@ -324,6 +400,16 @@ export class EmailFilterService {
       };
     }
 
+    // Check for ICS calendar content (BEGIN:VCALENDAR marker)
+    if (EmailFilterService.ICS_PATTERN.test(content)) {
+      return {
+        category: 'automated',
+        confidence: EmailFilterService.PATTERN_HIGH_CONFIDENCE,
+        stage: 'pattern',
+        reasoning: 'Contains ICS calendar data (BEGIN:VCALENDAR)',
+      };
+    }
+
     // Single pattern matches with lower confidence
     if (spamMatches.length === 1) {
       return {
@@ -373,6 +459,36 @@ export class EmailFilterService {
         confidence: EmailFilterService.PATTERN_HIGH_CONFIDENCE,
         stage: 'sender',
         reasoning: `Sender domain is a known marketing service: ${senderDomain}`,
+      };
+    }
+
+    // Check for social notification domains
+    if (senderDomain && EmailFilterService.SOCIAL_NOTIFICATION_DOMAINS.some((d) => senderDomain.includes(d))) {
+      return {
+        category: 'automated',
+        confidence: EmailFilterService.PATTERN_HIGH_CONFIDENCE,
+        stage: 'sender',
+        reasoning: `Sender domain is a known notification service: ${senderDomain}`,
+      };
+    }
+
+    // Check for calendar notification senders
+    if (EmailFilterService.CALENDAR_SENDERS.some((s) => senderEmail.includes(s))) {
+      return {
+        category: 'automated',
+        confidence: EmailFilterService.PATTERN_HIGH_CONFIDENCE,
+        stage: 'sender',
+        reasoning: `Sender is a known calendar service: ${senderEmail}`,
+      };
+    }
+
+    // Check for chat/messaging notification senders
+    if (EmailFilterService.CHAT_NOTIFICATION_SENDERS.some((s) => senderEmail.includes(s))) {
+      return {
+        category: 'automated',
+        confidence: EmailFilterService.PATTERN_HIGH_CONFIDENCE,
+        stage: 'sender',
+        reasoning: `Sender is a known chat/messaging service: ${senderEmail}`,
       };
     }
 
