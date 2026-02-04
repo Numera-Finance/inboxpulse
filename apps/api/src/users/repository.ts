@@ -591,7 +591,7 @@ export class UserRepository extends ScopedRepository {
             AND u.row_status = ${RowStatus.ACTIVE}
         )
         INSERT INTO user_accessible_customers (user_id, customer_id, rebuilt_at)
-        SELECT DISTINCT h.ancestor_id, uc.customer_id, ${rebuiltAt}
+        SELECT DISTINCT h.ancestor_id, uc.customer_id, ${rebuiltAt}::timestamptz
         FROM hierarchy h
         JOIN user_customers uc ON uc.user_id = h.descendant_id
       `);
@@ -618,7 +618,7 @@ export class UserRepository extends ScopedRepository {
             AND u.row_status = ${RowStatus.ACTIVE}
         )
         INSERT INTO user_subordinates (user_id, subordinate_id, rebuilt_at)
-        SELECT DISTINCT ancestor_id, descendant_id, ${rebuiltAt}
+        SELECT DISTINCT ancestor_id, descendant_id, ${rebuiltAt}::timestamptz
         FROM hierarchy
         WHERE ancestor_id != descendant_id  -- Exclude self
       `);
