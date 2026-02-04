@@ -17,7 +17,7 @@ export const createRebuildAccessibleCustomersFunction = (inngest: Inngest) => {
       name: 'Rebuild User Accessible Customers',
       debounce: {
         key: 'event.data.tenantId',
-        period: '5m', // Batch all changes within 5 minutes
+        period: '10s', // Short debounce for batching rapid changes
       },
       retries: 3,
     },

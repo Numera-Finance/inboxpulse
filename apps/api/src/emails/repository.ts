@@ -401,13 +401,34 @@ export class EmailRepository extends ScopedRepository {
   /**
    * Returns SQL for filtering emails by user's accessible customers.
    * Uses email_participants table to join emails to customers.
+   * Admins bypass this filter.
    *
    * Query pattern:
    * - Joins emails → email_participants → user_accessible_customers
    * - Only returns emails where at least one participant is from an accessible customer
    */
   private emailAccessSubquery(header: RequestHeader): ReturnType<typeof sql> {
+    if (isAdmin(header.permissions)) {
+      return sql`true`;
+    }
     return sql`${emails.id} IN (
+      SELECT DISTINCT ep.email_id
+      FROM email_participants ep
+      INNER JOIN user_accessible_customers uac ON ep.customer_id = uac.customer_id
+      WHERE uac.user_id = ${header.userId}
+    )`;
+  }
+
+  /**
+   * Returns SQL for filtering email_analyses by user's accessible customers.
+   * Uses email_participants table to join via emailId.
+   * Admins bypass this filter.
+   */
+  private emailAnalysesAccessFilter(header: RequestHeader): ReturnType<typeof sql> {
+    if (isAdmin(header.permissions)) {
+      return sql`true`;
+    }
+    return sql`${emailAnalyses.emailId} IN (
       SELECT DISTINCT ep.email_id
       FROM email_participants ep
       INNER JOIN user_accessible_customers uac ON ep.customer_id = uac.customer_id
@@ -1128,6 +1149,7 @@ export class EmailRepository extends ScopedRepository {
   ): Promise<{ total: number; analyzed: number }> {
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
+      this.emailAccessSubquery(header),
     ];
 
     // Add customer filter via email_participants
@@ -1180,6 +1202,7 @@ export class EmailRepository extends ScopedRepository {
     const conditions: SQL[] = [
       eq(emailAnalyses.tenantId, header.tenantId),
       eq(emailAnalyses.analysisType, 'sentiment'),
+      this.emailAnalysesAccessFilter(header),
     ];
 
     // Add customer filter via email_participants
@@ -1247,6 +1270,7 @@ export class EmailRepository extends ScopedRepository {
     const conditions: SQL[] = [
       eq(emailAnalyses.tenantId, header.tenantId),
       eq(emailAnalyses.analysisType, 'sentiment'),
+      this.emailAnalysesAccessFilter(header),
       // Filter to last 6 months
       sql`${emailAnalyses.createdAt} >= date_trunc('month', now() - interval '5 months')`,
     ];
@@ -1308,6 +1332,7 @@ export class EmailRepository extends ScopedRepository {
   ): Promise<Array<{ week: string; totalEmails: number; escalations: number }>> {
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
+      this.emailAccessSubquery(header),
       // Filter to last 4 weeks
       sql`${emails.receivedAt} >= date_trunc('week', now() - interval '3 weeks')`,
     ];
@@ -1414,12 +1439,12 @@ export class EmailRepository extends ScopedRepository {
    * Business days = Mon-Fri, excluding holidays from holiday_calendars
    * TAT is calculated from email receivedAt to firstReplyAt (or NOW() if no reply)
    *
-   * @param tenantId - Tenant ID for filtering
+   * @param header - Request header for access control
    * @param filters - Optional filters for customerId, dateFrom, dateTo
    * @returns Raw SQL string for the CTE (to be used with sql.raw())
    */
   private buildTATBaseCTE(
-    tenantId: string,
+    header: RequestHeader,
     filters?: {
       customerId?: string;
       dateFrom?: string;
@@ -1437,6 +1462,15 @@ export class EmailRepository extends ScopedRepository {
     if (filters?.dateTo) {
       filterConditions.push(`AND e.received_at <= '${filters.dateTo}'::timestamp`);
     }
+
+    // Add customer access filter for non-admin users
+    if (!isAdmin(header.permissions)) {
+      filterConditions.push(`AND ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = '${header.userId}'
+      )`);
+    }
+
     const filterClause = filterConditions.join(' ');
 
     // Note: DISTINCT ON (e.id, ep.customer_id) ensures each email is counted once per customer
@@ -1453,7 +1487,7 @@ export class EmailRepository extends ScopedRepository {
         FROM emails e
         INNER JOIN email_participants ep ON e.id = ep.email_id AND ep.customer_id IS NOT NULL
         INNER JOIN customers c ON ep.customer_id = c.id
-        WHERE e.tenant_id = '${tenantId}'
+        WHERE e.tenant_id = '${header.tenantId}'
           AND e.is_customer_email = true
           ${filterClause}
       ),
@@ -1511,7 +1545,7 @@ export class EmailRepository extends ScopedRepository {
       dateTo?: string;
     }
   ): Promise<TATMetricRow[]> {
-    const baseCTE = this.buildTATBaseCTE(header.tenantId, filters);
+    const baseCTE = this.buildTATBaseCTE(header, filters);
 
     const query = sql`
       ${sql.raw(baseCTE)}
@@ -1545,7 +1579,7 @@ export class EmailRepository extends ScopedRepository {
     dateFrom?: string,
     dateTo?: string
   ): ReturnType<typeof sql> {
-    const baseCTE = this.buildTATBaseCTE(header.tenantId, {
+    const baseCTE = this.buildTATBaseCTE(header, {
       customerId,
       dateFrom,
       dateTo,

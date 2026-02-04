@@ -81,6 +81,7 @@ export class TaskRepository extends ScopedRepository {
     const conditions: SQL[] = [
       this.tenantFilter(tasks.tenantId, header),
       this.userAccessFilter(tasks.assignedToId, header),
+      this.customerAccessFilter(tasks.customerId, header),
     ];
 
     if (options.status !== undefined) {
@@ -322,6 +323,7 @@ export class TaskRepository extends ScopedRepository {
   }>> {
     const conditions: SQL[] = [
       this.tenantFilter(tasks.tenantId, header),
+      this.customerAccessFilter(tasks.customerId, header),
       eq(tasks.status, TaskStatus.OPEN),
     ];
 

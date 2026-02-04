@@ -7,7 +7,6 @@ import { Separator } from "@/components/ui/separator"
 import {
   SettingsNav,
   UserPreferences,
-  CompanyPreferences,
   IntegrationsSettings,
   HolidaySettings,
   type SettingsTab,
@@ -21,7 +20,7 @@ export default function SettingsPage() {
 
   // Get active tab from URL or default to 'user'
   const tabParam = searchParams.get('tab') as SettingsTab | null
-  const activeTab: SettingsTab = tabParam && ['user', 'company', 'integrations', 'holidays'].includes(tabParam)
+  const activeTab: SettingsTab = tabParam && ['user', 'integrations', 'holidays'].includes(tabParam)
     ? tabParam
     : 'user'
 
@@ -58,7 +57,6 @@ export default function SettingsPage() {
 
           <div className="flex-1 max-w-3xl">
             {activeTab === 'user' && <UserPreferences />}
-            {activeTab === 'company' && <CompanyPreferences />}
             {activeTab === 'holidays' && isAdmin && <HolidaySettings />}
             {activeTab === 'integrations' && isAdmin && <IntegrationsSettings />}
           </div>

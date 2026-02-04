@@ -975,12 +975,12 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                 <div className="flex-1 overflow-auto p-4 space-y-4">
                   {/* Team Members Table */}
                   <div className="rounded-lg border border-border">
-                    <Table>
+                    <Table className="table-fixed">
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Role</TableHead>
-                          <TableHead className="w-[100px]">
+                          <TableHead className="w-[50%]">Name</TableHead>
+                          <TableHead className="w-[30%]">Role</TableHead>
+                          <TableHead className="w-[20%]">
                             <span className="sr-only">Actions</span>
                           </TableHead>
                         </TableRow>
@@ -989,7 +989,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                         {/* Add new team member row */}
                         {addingTeamMember && (
                           <TableRow className="bg-primary/5">
-                            <TableCell>
+                            <TableCell className="overflow-hidden">
                               <UserAutocomplete
                                 value={newTeamMember.userId}
                                 onChange={(userId, userName, userEmail) => {

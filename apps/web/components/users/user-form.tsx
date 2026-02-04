@@ -1,5 +1,5 @@
 import * as React from "react"
-import { X, ChevronsUpDown, Plus, Trash2 } from "lucide-react"
+import { X, ChevronsUpDown, Plus, Trash2, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -355,6 +355,7 @@ export function UserForm({
           Cancel
         </Button>
         <Button type="submit" disabled={isLoading}>
+          {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           {isLoading ? "Saving..." : mode === "add" ? "Add User" : "Save Changes"}
         </Button>
       </div>

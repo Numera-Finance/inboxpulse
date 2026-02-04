@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
-import { ConflictError, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
+import { ConflictError, isAdmin, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
@@ -124,8 +124,19 @@ export class CustomerService {
       .applyQueries(otherQueries)
       .build();
 
-    // Build conditions including freeform search
+    // Build conditions including freeform search and customer access control
     const conditions = [scopedWhere];
+
+    // Add customer access filter (admins see all, others only see assigned customers)
+    if (!isAdmin(requestHeader.permissions)) {
+      conditions.push(
+        sql`${customers.id} IN (
+          SELECT uac.customer_id
+          FROM user_accessible_customers uac
+          WHERE uac.user_id = ${requestHeader.userId}
+        )`
+      );
+    }
     for (const query of searchQueries) {
       if (typeof query.value === 'string') {
         const freeformCondition = this.customerRepository.buildFreeformSearch(query.value);

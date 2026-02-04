@@ -184,17 +184,9 @@ export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
                   )}
                 >
                   <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
-                    {user.image ? (
-                      <img
-                        src={user.image}
-                        alt={user.name || "User"}
-                        className="h-8 w-8 rounded-full shrink-0"
-                      />
-                    ) : (
-                      <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium shrink-0">
-                        {user.email?.[0]?.toUpperCase() || "U"}
-                      </div>
-                    )}
+                    <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium shrink-0">
+                      {user.name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || "U"}
+                    </div>
                     {!collapsed && (
                       <>
                         <div className="flex-1 min-w-0 text-left">
