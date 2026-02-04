@@ -376,7 +376,7 @@ userRoutes.delete('/:id/customers/:customerId', requirePermission(Permission.USE
 const setCustomerAssignmentsSchema = z.object({
   assignments: z.array(z.object({
     customerId: z.string().uuid(),
-    roleId: z.string().uuid().optional(),
+    roleId: z.string().uuid({ message: 'Role is required for customer assignment' }),
   })),
 });
 

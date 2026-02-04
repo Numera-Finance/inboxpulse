@@ -102,6 +102,8 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   }>({ userId: null, userName: '', userEmail: '', roleId: null })
   const [editingTeamMember, setEditingTeamMember] = React.useState<string | null>(null)
   const [editingRoleId, setEditingRoleId] = React.useState<string | null>(null)
+  const [teamMemberError, setTeamMemberError] = React.useState<string | null>(null)
+  const [editTeamMemberError, setEditTeamMemberError] = React.useState<string | null>(null)
 
   // Email filter state - lifted from InboxView to enable server-side filtering
   const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all'>('all')
@@ -529,10 +531,17 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const handleCancelAddTeamMember = () => {
     setAddingTeamMember(false)
     setNewTeamMember({ userId: null, userName: '', userEmail: '', roleId: null })
+    setTeamMemberError(null)
   }
 
   const handleSaveTeamMember = async () => {
     if (!customer || !newTeamMember.userId) return
+
+    // Validate role is selected
+    if (!newTeamMember.roleId) {
+      setTeamMemberError("Role is required")
+      return
+    }
 
     try {
       // The API needs domain, not customerId - get domain from customer
@@ -545,7 +554,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       await addCustomerToUser.mutateAsync({
         userId: newTeamMember.userId,
         customerDomain: domain,
-        roleId: newTeamMember.roleId || undefined,
+        roleId: newTeamMember.roleId,
       })
 
       // Invalidate team members query to refetch
@@ -553,6 +562,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
 
       setAddingTeamMember(false)
       setNewTeamMember({ userId: null, userName: '', userEmail: '', roleId: null })
+      setTeamMemberError(null)
     } catch (error) {
       console.error("Failed to add team member:", error)
     }
@@ -582,10 +592,17 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const handleCancelEditTeamMember = () => {
     setEditingTeamMember(null)
     setEditingRoleId(null)
+    setEditTeamMemberError(null)
   }
 
   const handleSaveEditTeamMember = async () => {
     if (!customer || !editingTeamMember) return
+
+    // Validate role is selected
+    if (!editingRoleId) {
+      setEditTeamMemberError("Role is required")
+      return
+    }
 
     try {
       const domain = customer.domains[0]
@@ -598,7 +615,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       await addCustomerToUser.mutateAsync({
         userId: editingTeamMember,
         customerDomain: domain,
-        roleId: editingRoleId || undefined,
+        roleId: editingRoleId,
       })
 
       // Invalidate team members query to refetch
@@ -606,6 +623,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
 
       setEditingTeamMember(null)
       setEditingRoleId(null)
+      setEditTeamMemberError(null)
     } catch (error) {
       console.error("Failed to update team member role:", error)
     }
@@ -978,11 +996,8 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                     <Table className="table-fixed">
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="w-[50%]">Name</TableHead>
-                          <TableHead className="w-[30%]">Role</TableHead>
-                          <TableHead className="w-[20%]">
-                            <span className="sr-only">Actions</span>
-                          </TableHead>
+                          <TableHead className="w-[40%]">Name</TableHead>
+                          <TableHead className="w-[60%]">Role</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1006,36 +1021,42 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                               />
                             </TableCell>
                             <TableCell>
-                              <RoleSelect
-                                value={newTeamMember.roleId}
-                                onChange={(roleId) => setNewTeamMember({ ...newTeamMember, roleId })}
-                                placeholder="Select role..."
-                                className="w-40"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={handleCancelAddTeamMember}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-green-600 hover:text-green-600"
-                                  onClick={handleSaveTeamMember}
-                                  disabled={!newTeamMember.userId || addCustomerToUser.isPending}
-                                >
-                                  {addCustomerToUser.isPending ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Check className="h-4 w-4" />
-                                  )}
-                                </Button>
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <RoleSelect
+                                    value={newTeamMember.roleId}
+                                    onChange={(roleId) => {
+                                      setNewTeamMember({ ...newTeamMember, roleId })
+                                      if (roleId) setTeamMemberError(null)
+                                    }}
+                                    placeholder="Select role..."
+                                    className={`w-40 ${teamMemberError ? 'border-destructive ring-destructive' : ''}`}
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={handleCancelAddTeamMember}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={handleSaveTeamMember}
+                                    disabled={!newTeamMember.userId || addCustomerToUser.isPending}
+                                  >
+                                    {addCustomerToUser.isPending ? (
+                                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                    ) : (
+                                      <Check className="h-4 w-4 mr-1" />
+                                    )}
+                                    Save
+                                  </Button>
+                                </div>
+                                {teamMemberError && (
+                                  <p className="text-sm text-destructive">{teamMemberError}</p>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1057,77 +1078,78 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                                 </TableCell>
                                 <TableCell>
                                   {isEditing ? (
-                                    <RoleSelect
-                                      value={editingRoleId}
-                                      onChange={setEditingRoleId}
-                                      placeholder="Select role..."
-                                      className="w-40"
-                                    />
-                                  ) : (
-                                    <Badge variant="secondary">
-                                      {getCustomerRoleName(member.roleId) || 'No role'}
-                                    </Badge>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex items-center gap-1">
-                                    {isEditing ? (
-                                      <>
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <RoleSelect
+                                          value={editingRoleId}
+                                          onChange={(roleId) => {
+                                            setEditingRoleId(roleId)
+                                            if (roleId) setEditTeamMemberError(null)
+                                          }}
+                                          placeholder="Select role..."
+                                          className={`w-40 ${editTeamMemberError ? 'border-destructive ring-destructive' : ''}`}
+                                        />
                                         <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-8 w-8"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-8"
                                           onClick={handleCancelEditTeamMember}
                                         >
-                                          <X className="h-4 w-4" />
+                                          Cancel
                                         </Button>
                                         <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-8 w-8 text-green-600 hover:text-green-600"
+                                          size="sm"
+                                          className="h-8"
                                           onClick={handleSaveEditTeamMember}
                                           disabled={addCustomerToUser.isPending}
                                         >
                                           {addCustomerToUser.isPending ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                                           ) : (
-                                            <Check className="h-4 w-4" />
+                                            <Check className="h-4 w-4 mr-1" />
                                           )}
+                                          Save
                                         </Button>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-8 w-8"
-                                          onClick={() => handleStartEditTeamMember(member.id, member.roleId)}
-                                        >
-                                          <Pencil className="h-4 w-4" />
-                                        </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-8 w-8 text-destructive hover:text-destructive"
-                                          onClick={() => handleRemoveTeamMember(member.id)}
-                                          disabled={removeCustomerFromUser.isPending}
-                                        >
-                                          {removeCustomerFromUser.isPending ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                          ) : (
-                                            <Trash2 className="h-4 w-4" />
-                                          )}
-                                        </Button>
-                                      </>
-                                    )}
-                                  </div>
+                                      </div>
+                                      {editTeamMemberError && (
+                                        <p className="text-sm text-destructive">{editTeamMemberError}</p>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant="secondary">
+                                        {getCustomerRoleName(member.roleId) || 'No role'}
+                                      </Badge>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => handleStartEditTeamMember(member.id, member.roleId)}
+                                      >
+                                        <Pencil className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-destructive hover:text-destructive"
+                                        onClick={() => handleRemoveTeamMember(member.id)}
+                                        disabled={removeCustomerFromUser.isPending}
+                                      >
+                                        {removeCustomerFromUser.isPending ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="h-4 w-4" />
+                                        )}
+                                      </Button>
+                                    </div>
+                                  )}
                                 </TableCell>
                               </TableRow>
                             )
                           })
                         ) : !addingTeamMember ? (
                           <TableRow>
-                            <TableCell colSpan={3} className="h-24 text-center">
+                            <TableCell colSpan={2} className="h-24 text-center">
                               No team members assigned.
                             </TableCell>
                           </TableRow>

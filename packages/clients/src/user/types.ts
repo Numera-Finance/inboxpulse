@@ -6,7 +6,7 @@ import { roleResponseSchema } from '../role/types';
  */
 export const customerAssignmentRequestSchema = z.object({
   customerId: z.string().uuid(),
-  roleId: z.string().uuid().optional(),
+  roleId: z.string().uuid({ message: 'Role is required for customer assignment' }),
 });
 
 export type CustomerAssignmentRequest = z.infer<typeof customerAssignmentRequestSchema>;

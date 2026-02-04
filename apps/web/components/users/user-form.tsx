@@ -1,5 +1,6 @@
 import * as React from "react"
 import { X, ChevronsUpDown, Plus, Trash2, Loader2 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -69,6 +70,8 @@ export function UserForm({
   )
 
   const [managerPopoverOpen, setManagerPopoverOpen] = React.useState(false)
+  // Track validation errors for customer assignment rows (keyed by row id)
+  const [assignmentErrors, setAssignmentErrors] = React.useState<Record<string, string>>({})
 
   // Fetch users for manager selection
   const { data: usersData } = useUsers({
@@ -93,8 +96,26 @@ export function UserForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    // Filter out empty rows
+
+    // Filter out empty rows (no customer selected)
     const validAssignments = customerAssignments.filter(a => a.customerId)
+
+    // Validate that all assignments with a customer also have a role
+    const errors: Record<string, string> = {}
+    validAssignments.forEach(a => {
+      if (a.customerId && !a.roleId) {
+        errors[a.id] = "Role is required"
+      }
+    })
+
+    if (Object.keys(errors).length > 0) {
+      setAssignmentErrors(errors)
+      return
+    }
+
+    // Clear any previous errors
+    setAssignmentErrors({})
+
     onSave({
       firstName,
       lastName,
@@ -135,6 +156,13 @@ export function UserForm({
     setCustomerAssignments(prev =>
       prev.map(a => a.id === id ? { ...a, ...updates } : a)
     )
+    // Clear error for this row if roleId is being set
+    if (updates.roleId) {
+      setAssignmentErrors(prev => {
+        const { [id]: _, ...rest } = prev
+        return rest
+      })
+    }
   }
 
   // Get excludeIds for a specific row (exclude all selected except current)
@@ -296,41 +324,53 @@ export function UserForm({
             {/* Customer assignment rows */}
             <div className="space-y-2">
               {customerAssignments.map((assignment) => (
-                <div key={assignment.id} className="flex items-center gap-2">
-                  {/* Customer selector */}
-                  <CustomerAutocomplete
-                    value={assignment.customerId}
-                    onChange={(customerId, customerName, customerDomain) => {
-                      updateCustomerAssignment(assignment.id, {
-                        customerId,
-                        customerName: customerName || '',
-                        customerDomain: customerDomain || '',
-                      })
-                    }}
-                    excludeIds={getExcludeIds(assignment.customerId)}
-                    disabled={isLoading}
-                    className="flex-1"
-                  />
+                <div key={assignment.id} className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    {/* Customer selector - fixed width */}
+                    <div className="w-[390px] shrink-0">
+                      <CustomerAutocomplete
+                        value={assignment.customerId}
+                        onChange={(customerId, customerName, customerDomain) => {
+                          updateCustomerAssignment(assignment.id, {
+                            customerId,
+                            customerName: customerName || '',
+                            customerDomain: customerDomain || '',
+                          })
+                        }}
+                        excludeIds={getExcludeIds(assignment.customerId)}
+                        disabled={isLoading}
+                        className="w-full"
+                      />
+                    </div>
 
-                  {/* Role selector */}
-                  <RoleSelect
-                    value={assignment.roleId}
-                    onChange={(roleId) => updateCustomerAssignment(assignment.id, { roleId })}
-                    disabled={isLoading}
-                    className="w-48"
-                  />
+                    {/* Role selector - fixed width */}
+                    <div className="w-[180px] shrink-0">
+                      <RoleSelect
+                        value={assignment.roleId}
+                        onChange={(roleId) => updateCustomerAssignment(assignment.id, { roleId })}
+                        disabled={isLoading}
+                        className={cn("w-full", assignmentErrors[assignment.id] && "border-destructive ring-destructive")}
+                      />
+                    </div>
 
-                  {/* Remove button */}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    onClick={() => removeCustomerAssignment(assignment.id)}
-                    disabled={isLoading}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                    {/* Remove button */}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      onClick={() => removeCustomerAssignment(assignment.id)}
+                      disabled={isLoading}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {/* Error message */}
+                  {assignmentErrors[assignment.id] && (
+                    <p className="text-sm text-destructive pl-[398px]">
+                      {assignmentErrors[assignment.id]}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

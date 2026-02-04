@@ -289,6 +289,7 @@ export default function UsersPage() {
           open={drawerOpen}
           onClose={handleCloseDrawer}
           onSave={handleEditUser}
+          isLoading={updateUser.isPending || setCustomerAssignments.isPending}
         />
 
         <AddUserDrawer

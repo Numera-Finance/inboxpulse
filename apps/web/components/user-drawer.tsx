@@ -37,7 +37,7 @@ export function UserDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onClose}>
-      <SheetContent className="w-full sm:max-w-lg p-0 flex flex-col">
+      <SheetContent className="w-full sm:max-w-2xl p-0 flex flex-col">
         <SheetHeader className="p-6 pb-4 border-b border-border shrink-0">
           <div className="flex items-center gap-4">
             <Avatar className="h-12 w-12">
