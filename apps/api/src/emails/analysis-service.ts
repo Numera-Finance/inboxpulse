@@ -403,10 +403,10 @@ export class EmailAnalysisService {
       const response = await this.analysisClient.analyze(ctx.tenantId, ctx.email, {
         threadContext: ctx.threadContext,
         analysisTypes: analysisTypes,
-        // Enable classification but don't filter (empty filterCategories = classify all, skip none)
+        // Enable classification and skip AI analysis for non-business emails
         filter: {
           enabled: true,
-          filterCategories: [],
+          filterCategories: ['spam', 'marketing', 'transactional', 'automated'],
         },
       });
 
@@ -1074,8 +1074,8 @@ export class EmailAnalysisService {
         return;
       }
 
-      // Check if email is spam, marketing, or automated
-      const skipCategories = ['spam', 'marketing', 'automated'];
+      // Check if email is spam, marketing, transactional, or automated
+      const skipCategories = ['spam', 'marketing', 'transactional', 'automated'];
       if (classificationResult?.category && skipCategories.includes(classificationResult.category)) {
         logger.debug(
           {

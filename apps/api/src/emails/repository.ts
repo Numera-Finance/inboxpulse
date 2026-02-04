@@ -1475,6 +1475,14 @@ export class EmailRepository extends ScopedRepository {
 
     // Note: DISTINCT ON (e.id, ep.customer_id) ensures each email is counted once per customer
     // (an email can be linked to multiple customers via participants)
+    // Exclude non-business emails (spam, marketing, transactional, automated) from TAT calculation
+    const excludedSignals = [
+      Signal.CLASSIFICATION_SPAM,
+      Signal.CLASSIFICATION_MARKETING,
+      Signal.CLASSIFICATION_TRANSACTIONAL,
+      Signal.CLASSIFICATION_AUTOMATED,
+    ].join(', ');
+
     return `
       WITH customer_emails AS (
         SELECT DISTINCT ON (e.id, ep.customer_id)
@@ -1489,6 +1497,7 @@ export class EmailRepository extends ScopedRepository {
         INNER JOIN customers c ON ep.customer_id = c.id
         WHERE e.tenant_id = '${header.tenantId}'
           AND e.is_customer_email = true
+          AND NOT (e.signals && ARRAY[${excludedSignals}]::integer[])
           ${filterClause}
       ),
       email_with_timezone AS (
