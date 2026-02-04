@@ -29,7 +29,8 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
       name: 'Analyze Email After Insertion',
       retries: 9, // Retry up to 9 times with exponential backoff
       // Idempotency: normal events dedupe on emailId, retry events include retryKey to bypass
-      idempotency: 'event.data.emailId + (event.data.retryKey ?? "")',
+      // CEL syntax: has() checks field existence, ternary provides default
+      idempotency: 'event.data.emailId + (has(event.data.retryKey) ? event.data.retryKey : "")',
     },
     { event: 'email/inserted' },
     async ({ event, step }: { event: any; step: any }) => {
