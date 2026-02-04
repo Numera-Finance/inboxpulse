@@ -520,8 +520,37 @@ export class UserRepository extends ScopedRepository {
     let accessibleCustomersCount = 0;
     let subordinatesCount = 0;
 
+    logger.info({ tenantId }, 'Starting rebuildAccessibleCustomers');
+
+    // Log diagnostic info before rebuild
+    const activeUsersResult = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.rowStatus, RowStatus.ACTIVE)));
+    const activeUsersCount = Number(activeUsersResult[0]?.count ?? 0);
+
+    const userCustomersResult = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(userCustomers)
+      .innerJoin(users, eq(users.id, userCustomers.userId))
+      .where(eq(users.tenantId, tenantId));
+    const userCustomersCount = Number(userCustomersResult[0]?.count ?? 0);
+
+    logger.info(
+      { tenantId, activeUsersCount, userCustomersCount },
+      'Rebuild diagnostics: source data counts'
+    );
+
+    if (userCustomersCount === 0) {
+      logger.warn(
+        { tenantId },
+        'No user_customers entries found for tenant - user_accessible_customers will be empty'
+      );
+    }
+
     await this.db.transaction(async (tx) => {
       // Delete existing rows for this tenant
+      logger.info({ tenantId }, 'Deleting existing user_accessible_customers');
       await tx.execute(sql`
         DELETE FROM user_accessible_customers
         WHERE user_id IN (
@@ -529,6 +558,7 @@ export class UserRepository extends ScopedRepository {
         )
       `);
 
+      logger.info({ tenantId }, 'Deleting existing user_subordinates');
       await tx.execute(sql`
         DELETE FROM user_subordinates
         WHERE user_id IN (
@@ -540,6 +570,7 @@ export class UserRepository extends ScopedRepository {
       // 1. Start with each active user as their own "ancestor"
       // 2. Recursively follow manager relationships to find all descendants
       // 3. For each ancestor, collect all customers assigned to any descendant
+      logger.info({ tenantId }, 'Inserting into user_accessible_customers');
       await tx.execute(sql`
         WITH RECURSIVE hierarchy AS (
           -- Base case: each active user is their own ancestor
@@ -567,6 +598,7 @@ export class UserRepository extends ScopedRepository {
 
       // Rebuild user_subordinates using the same hierarchy logic
       // This stores which users are subordinates of each user (excluding self)
+      logger.info({ tenantId }, 'Inserting into user_subordinates');
       await tx.execute(sql`
         WITH RECURSIVE hierarchy AS (
           -- Base case: each active user is their own ancestor

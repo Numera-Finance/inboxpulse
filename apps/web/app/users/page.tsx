@@ -102,12 +102,12 @@ export default function UsersPage() {
 
   const handleAddUser = async (data: UserFormData) => {
     try {
-      // Extract customer assignments with roles
+      // Extract customer assignments with roles (roleId is required)
       const customerAssignments = (data.customerAssignments || [])
-        .filter(a => a.customerId)
+        .filter(a => a.customerId && a.roleId)
         .map(a => ({
           customerId: a.customerId!,
-          roleId: a.roleId || undefined,
+          roleId: a.roleId!,
         }))
 
       await createUser.mutateAsync({
@@ -138,12 +138,12 @@ export default function UsersPage() {
         },
       })
 
-      // Update customer assignments
+      // Update customer assignments (roleId is required)
       const customerAssignments = (data.customerAssignments || [])
-        .filter(a => a.customerId)
+        .filter(a => a.customerId && a.roleId)
         .map(a => ({
           customerId: a.customerId!,
-          roleId: a.roleId || undefined,
+          roleId: a.roleId!,
         }))
 
       await setCustomerAssignments.mutateAsync({
