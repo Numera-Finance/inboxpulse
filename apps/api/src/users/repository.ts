@@ -515,7 +515,7 @@ export class UserRepository extends ScopedRepository {
    */
   async rebuildAccessibleCustomers(tenantId: string): Promise<RebuildResult> {
     const start = Date.now();
-    const rebuiltAt = new Date();
+    const rebuiltAt = new Date().toISOString();
 
     let accessibleCustomersCount = 0;
     let subordinatesCount = 0;
