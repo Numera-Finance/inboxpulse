@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Upload, FileText, X, Download, AlertCircle, CheckCircle2 } from "lucide-react"
+import { Upload, FileText, X, Download, AlertCircle, CheckCircle2, Loader2 } from "lucide-react"
 import * as XLSX from "xlsx"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -333,7 +333,14 @@ export function ImportDialog({ open, onClose, onImport, onImportFile, entityType
               onClick={handleImport}
               disabled={!file || (shouldParseFile && parsedData.length === 0) || isLoading}
             >
-              {isLoading ? "Importing..." : "Import"}
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                "Import"
+              )}
             </Button>
           </div>
         </div>

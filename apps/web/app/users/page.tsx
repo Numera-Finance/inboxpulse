@@ -11,6 +11,7 @@ import { UserDrawer } from "@/components/user-drawer"
 import { AddUserDrawer } from "@/components/add-user-drawer"
 import { type UserFormData } from "@/components/users/user-form"
 import { ImportDialog } from "@/components/import-dialog"
+import { ImportResultsDialog, type ImportResults } from "@/components/import-results-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ExportButton } from "@/components/ui/export-button"
@@ -47,6 +48,8 @@ export default function UsersPage() {
   const [searchQuery, setSearchQuery] = React.useState("")
   const [addDrawerOpen, setAddDrawerOpen] = React.useState(false)
   const [importDialogOpen, setImportDialogOpen] = React.useState(false)
+  const [importResults, setImportResults] = React.useState<ImportResults | null>(null)
+  const [importResultsOpen, setImportResultsOpen] = React.useState(false)
 
   // Pagination state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
@@ -161,10 +164,15 @@ export default function UsersPage() {
   const handleImportFile = async (file: File) => {
     try {
       const result = await importUsers.mutateAsync(file)
+
+      setImportDialogOpen(false)
+
+      // If there are errors, show the results dialog
       if (result.errors.length > 0) {
-        toast.warning(`Imported ${result.imported} users with ${result.errors.length} errors`)
-        console.log("Import errors:", result.errors)
+        setImportResults(result)
+        setImportResultsOpen(true)
       } else {
+        // Only show success toast if no issues
         toast.success(`Successfully imported ${result.imported} users`)
       }
     } catch (err) {
@@ -305,6 +313,13 @@ export default function UsersPage() {
           onImportFile={handleImportFile}
           entityType="users"
           isLoading={importUsers.isPending}
+        />
+
+        <ImportResultsDialog
+          open={importResultsOpen}
+          onClose={() => setImportResultsOpen(false)}
+          results={importResults}
+          entityType="users"
         />
       </div>
     </AppShell>

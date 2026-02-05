@@ -10,6 +10,7 @@ import { CustomerTable } from "@/components/customers/customer-table"
 import { CustomerDrawer } from "@/components/customer-drawer"
 import { AddCustomerDrawer, type CustomerFormData } from "@/components/add-customer-drawer"
 import { ImportDialog } from "@/components/import-dialog"
+import { ImportResultsDialog, type ImportResults } from "@/components/import-results-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ExportButton } from "@/components/ui/export-button"
@@ -45,6 +46,8 @@ export default function CustomersPage() {
   const [searchQuery, setSearchQuery] = React.useState("")
   const [addDrawerOpen, setAddDrawerOpen] = React.useState(false)
   const [importDialogOpen, setImportDialogOpen] = React.useState(false)
+  const [importResults, setImportResults] = React.useState<ImportResults | null>(null)
+  const [importResultsOpen, setImportResultsOpen] = React.useState(false)
 
   // Pagination state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
@@ -139,34 +142,25 @@ export default function CustomersPage() {
     try {
       const result = await importCustomers.mutateAsync(file)
 
-      // Show summary of import results
-      const messages: string[] = []
-      if (result.imported > 0) {
-        messages.push(`${result.imported} customer(s) created`)
-      }
-      if (result.updated > 0) {
-        messages.push(`${result.updated} customer(s) updated`)
-      }
-
-      if (messages.length > 0) {
-        toast.success(messages.join(", "))
-      }
-
-      // Show warnings if any
-      if (result.warnings.length > 0) {
-        const warningCount = result.warnings.length
-        toast.warning(`${warningCount} warning(s): Some users not found. Check console for details.`)
-        console.warn("Import warnings:", result.warnings)
-      }
-
-      // Show errors if any
-      if (result.errors.length > 0) {
-        const errorCount = result.errors.length
-        toast.error(`${errorCount} row(s) failed to import. Check console for details.`)
-        console.error("Import errors:", result.errors)
-      }
-
       setImportDialogOpen(false)
+
+      // If there are errors or warnings, show the results dialog
+      if (result.errors.length > 0 || result.warnings.length > 0) {
+        setImportResults(result)
+        setImportResultsOpen(true)
+      } else {
+        // Only show success toast if no issues
+        const messages: string[] = []
+        if (result.imported > 0) {
+          messages.push(`${result.imported} customer(s) created`)
+        }
+        if (result.updated > 0) {
+          messages.push(`${result.updated} customer(s) updated`)
+        }
+        if (messages.length > 0) {
+          toast.success(messages.join(", "))
+        }
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to import customers")
     }
@@ -297,6 +291,13 @@ export default function CustomersPage() {
           onImportFile={handleImportFile}
           entityType="customers"
           isLoading={importCustomers.isPending}
+        />
+
+        <ImportResultsDialog
+          open={importResultsOpen}
+          onClose={() => setImportResultsOpen(false)}
+          results={importResults}
+          entityType="customers"
         />
       </div>
     </AppShell>

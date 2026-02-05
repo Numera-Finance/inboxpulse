@@ -85,10 +85,10 @@ customerRoutes.get('/domain/:domain', async (c) => {
 });
 
 /**
- * POST /api/customers/import - Import customers from Excel file
+ * POST /api/customers/import - Import customers from Excel/CSV file
  * Requires CUSTOMER_ADD permission
  *
- * Accepts multipart form data with 'file' field containing Excel file
+ * Accepts multipart form data with 'file' field containing Excel or CSV file
  * Returns import results including counts and any errors/warnings
  */
 customerRoutes.post('/import', requirePermission(Permission.CUSTOMER_ADD), async (c) => {
@@ -100,10 +100,11 @@ customerRoutes.post('/import', requirePermission(Permission.CUSTOMER_ADD), async
     throw new ValidationError('File is required');
   }
 
-  // Validate file type
+  // Validate file type - accept Excel and CSV formats
   const fileName = file.name.toLowerCase();
-  if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls')) {
-    throw new ValidationError('File must be an Excel file (.xlsx or .xls)');
+  const validExtensions = ['.xlsx', '.xls', '.csv'];
+  if (!validExtensions.some(ext => fileName.endsWith(ext))) {
+    throw new ValidationError('File must be an Excel (.xlsx, .xls) or CSV (.csv) file');
   }
 
   const arrayBuffer = await file.arrayBuffer();

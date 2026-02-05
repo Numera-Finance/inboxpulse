@@ -600,12 +600,13 @@ export class CustomerService {
           continue;
         }
 
-        // Validate team assignment emails
-        const validAssignments: Array<{ userId: string; roleId: string }> = [];
+        // Validate team assignment emails and deduplicate by userId
+        // If same user appears multiple times (different roles), keep the last one
+        const assignmentsByUserId = new Map<string, { userId: string; roleId: string }>();
         for (const assignment of row.teamAssignments) {
           const user = usersByEmail.get(assignment.email);
           if (user) {
-            validAssignments.push({
+            assignmentsByUserId.set(user.id, {
               userId: user.id,
               roleId: assignment.roleId,
             });
@@ -617,9 +618,27 @@ export class CustomerService {
             });
           }
         }
+        const validAssignments = Array.from(assignmentsByUserId.values());
 
         // Check if customer exists
         const existing = await this.customerRepository.findByExternalId(tenantId, row.externalId);
+
+        // Check for domain conflicts (domain belongs to different customer)
+        for (const domain of row.domains) {
+          const domainOwner = await this.customerRepository.findByDomain(tenantId, domain);
+          if (domainOwner && (!existing || domainOwner.id !== existing.id)) {
+            result.errors.push({
+              row: row.rowNumber,
+              externalId: row.externalId,
+              error: `Domain "${domain}" is already assigned to another customer`,
+            });
+            continue;
+          }
+        }
+        // Skip if any domain conflict was found
+        if (result.errors.some(e => e.row === row.rowNumber)) {
+          continue;
+        }
 
         // Upsert customer
         const customer = await this.customerRepository.upsertByExternalId({
@@ -651,6 +670,28 @@ export class CustomerService {
           error: error.message || 'Unknown error',
         });
       }
+    }
+
+    // Log detailed error summary for debugging
+    if (result.errors.length > 0) {
+      // Group errors by type for better logging
+      const errorsByType: Record<string, number> = {};
+      for (const err of result.errors) {
+        const errorType = err.error.includes('Client ID') ? 'missing_client_id' :
+                         err.error.includes('domain') ? 'missing_domain' :
+                         err.error.includes('not found') ? 'user_not_found' : 'other';
+        errorsByType[errorType] = (errorsByType[errorType] || 0) + 1;
+      }
+
+      logger.warn(
+        {
+          tenantId,
+          totalErrors: result.errors.length,
+          errorsByType,
+          sampleErrors: result.errors.slice(0, 5).map(e => ({ row: e.row, error: e.error })),
+        },
+        'Customer import completed with errors'
+      );
     }
 
     // Queue access rebuild if any customers were imported/updated
