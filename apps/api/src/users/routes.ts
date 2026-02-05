@@ -412,6 +412,13 @@ userRoutes.post('/import', requirePermission(Permission.USER_ADD), async (c) => 
     throw new ValidationError('File is required');
   }
 
+  // Validate file type - accept Excel and CSV formats
+  const fileName = file.name.toLowerCase();
+  const validExtensions = ['.xlsx', '.xls', '.csv'];
+  if (!validExtensions.some(ext => fileName.endsWith(ext))) {
+    throw new ValidationError('File must be an Excel (.xlsx, .xls) or CSV (.csv) file');
+  }
+
   const service = container.resolve(UserService);
   const result = await service.importUsersFromFile(requestHeader.tenantId, file);
 
