@@ -30,9 +30,6 @@ export {
   customerKeys,
 } from './use-customers';
 
-// Theme hooks
-export { useThemeColors } from './use-theme-colors';
-
 // Integration hooks
 export { useGmailIntegration, useDisconnectIntegration, integrationKeys } from './use-integrations';
 
