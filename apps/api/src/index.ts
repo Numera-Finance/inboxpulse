@@ -34,6 +34,7 @@ import { createServer } from 'http';
 import { setupContainer } from './di/container';
 import { logger } from './utils/logger';
 import { requestHeaderMiddleware, betterAuthRequestHeaderMiddleware } from './middleware/requestHeader';
+import { requireInternalAuth } from '@crm/shared';
 import { toStructuredError, sanitizeErrorForClient } from '@crm/shared';
 import type { ApiResponse } from '@crm/shared';
 import type { HonoEnv } from './types/hono';
@@ -248,6 +249,14 @@ app.on(['POST', 'GET', 'OPTIONS'], '/api/auth/*', async (c) => {
 app.route('/api/auth/legacy', authRoutes);
 app.route('/oauth', oauthRoutes);
 app.route('/', inngestRoutes); // Inngest webhook handler at /api/inngest/*
+
+// Internal service-to-service routes (validated by SERVICE_API_KEY, no session needed)
+app.use('/api/internal/*', requireInternalAuth());
+app.route('/api/internal/integrations', integrationsRoutes);
+app.route('/api/internal/runs', runsRoutes);
+app.route('/api/internal/emails', emailsRoutes);
+app.route('/api/internal/customers', customerRoutes);
+app.route('/api/internal/contacts', contactRoutes);
 
 // Protected routes (auth required)
 // Use better-auth middleware chain (tries better-auth first, falls back to legacy in dev)

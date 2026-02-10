@@ -20,12 +20,12 @@ app.post('/:tenantId', async (c) => {
   logger.info({ tenantId }, 'Triggering incremental sync');
 
   try {
-    const integrationClient = new IntegrationClient(apiBaseUrl);
-    const runClient = new RunClient(apiBaseUrl);
+    const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
+    const runClient = new RunClient(apiBaseUrl, { internal: true });
     const gmailClientFactory = new GmailClientFactory(integrationClient);
     const gmailService = new GmailService(gmailClientFactory);
     const emailParser = new EmailParserService();
-    const emailClient = new EmailClient(apiBaseUrl);
+    const emailClient = new EmailClient(apiBaseUrl, { internal: true });
     const syncService = new SyncService(
       integrationClient,
       runClient,
@@ -87,12 +87,12 @@ app.post('/:tenantId/initial', async (c) => {
   logger.info({ tenantId }, 'Triggering initial sync');
 
   try {
-    const integrationClient = new IntegrationClient(apiBaseUrl);
-    const runClient = new RunClient(apiBaseUrl);
+    const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
+    const runClient = new RunClient(apiBaseUrl, { internal: true });
     const gmailClientFactory = new GmailClientFactory(integrationClient);
     const gmailService = new GmailService(gmailClientFactory);
     const emailParser = new EmailParserService();
-    const emailClient = new EmailClient(apiBaseUrl);
+    const emailClient = new EmailClient(apiBaseUrl, { internal: true });
     const syncService = new SyncService(
       integrationClient,
       runClient,
@@ -168,8 +168,8 @@ app.post('/:tenantId/historical', async (c) => {
 app.get('/:tenantId/status', async (c) => {
   const tenantId = c.req.param('tenantId');
 
-  const integrationClient = new IntegrationClient(apiBaseUrl);
-  const runClient = new RunClient(apiBaseUrl);
+  const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
+  const runClient = new RunClient(apiBaseUrl, { internal: true });
 
   const [runs, integration] = await Promise.all([
     runClient.findByTenant(tenantId, 10),
@@ -192,7 +192,7 @@ app.get('/:tenantId/status', async (c) => {
 app.get('/:tenantId/runs/:runId', async (c) => {
   const runId = c.req.param('runId');
 
-  const runClient = new RunClient(apiBaseUrl);
+  const runClient = new RunClient(apiBaseUrl, { internal: true });
   const run = await runClient.getById(runId);
 
   if (!run) {

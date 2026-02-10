@@ -18,7 +18,7 @@ export class ContactExtractionService {
   private contactClient: ContactClient;
 
   constructor() {
-    this.contactClient = new ContactClient(apiBaseUrl);
+    this.contactClient = new ContactClient(apiBaseUrl, { internal: true });
   }
 
   /**

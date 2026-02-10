@@ -1,4 +1,6 @@
 import type { Context, Next } from 'hono';
+import type { RequestHeader } from '../types';
+import { ALL_PERMISSIONS } from '../types/rbac';
 
 /**
  * Internal API key header name
@@ -66,6 +68,61 @@ export function hasServiceAuth(c: Context): boolean {
   }
 
   return apiKey === expectedKey;
+}
+
+/**
+ * Middleware for authenticating internal service-to-service calls on /api/internal/* routes.
+ *
+ * Validates x-internal-api-key header against SERVICE_API_KEY env var (simple string comparison).
+ * When x-tenant-id and x-user-id headers are present, constructs a requestHeader with
+ * ADMIN permissions so requirePermission() checks pass naturally for internal calls.
+ *
+ * Usage:
+ *   app.use('/api/internal/*', requireInternalAuth())
+ */
+export function requireInternalAuth() {
+  return async (c: Context, next: Next) => {
+    const apiKey = c.req.header(INTERNAL_API_KEY_HEADER);
+    const expectedKey = process.env.SERVICE_API_KEY;
+
+    if (!expectedKey) {
+      return c.json(
+        { success: false, error: 'Service authentication not configured' },
+        500
+      );
+    }
+
+    if (!apiKey) {
+      return c.json(
+        { success: false, error: 'Missing internal API key' },
+        401
+      );
+    }
+
+    if (apiKey !== expectedKey) {
+      return c.json(
+        { success: false, error: 'Invalid internal API key' },
+        401
+      );
+    }
+
+    c.set('isInternalCall', true);
+
+    // Construct requestHeader from tenant/user headers if provided
+    const tenantId = c.req.header('x-tenant-id');
+    const userId = c.req.header('x-user-id');
+
+    if (tenantId && userId) {
+      const requestHeader: RequestHeader = {
+        tenantId,
+        userId,
+        permissions: [...ALL_PERMISSIONS],
+      };
+      c.set('requestHeader', requestHeader);
+    }
+
+    await next();
+  };
 }
 
 /**
