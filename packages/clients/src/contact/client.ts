@@ -10,7 +10,7 @@ export class ContactClient extends BaseClient {
    * Create or update a contact
    */
   async upsertContact(data: CreateContactRequest, signal?: AbortSignal): Promise<Contact> {
-    const response = await this.post<ApiResponse<Contact>>('/api/contacts', data, signal);
+    const response = await this.post<ApiResponse<Contact>>('/api/contacts', data, signal, data.tenantId);
     if (!response || !response.data) {
       throw new Error('Invalid API response: missing data');
     }
@@ -24,7 +24,7 @@ export class ContactClient extends BaseClient {
   async getContactByEmail(tenantId: string, email: string, signal?: AbortSignal): Promise<Contact | null> {
     try {
       const encodedEmail = encodeURIComponent(email);
-      const response = await this.get<ApiResponse<Contact>>(`/api/contacts/email/${tenantId}/${encodedEmail}`, signal);
+      const response = await this.get<ApiResponse<Contact>>(`/api/contacts/email/${tenantId}/${encodedEmail}`, signal, tenantId);
       return response?.data || null;
     } catch (error) {
       if (error instanceof NotFoundError) {
@@ -54,7 +54,7 @@ export class ContactClient extends BaseClient {
    * Get all contacts for a tenant
    */
   async getContactsByTenant(tenantId: string, signal?: AbortSignal): Promise<Contact[]> {
-    const response = await this.get<ApiResponse<Contact[]>>(`/api/contacts/tenant/${tenantId}`, signal);
+    const response = await this.get<ApiResponse<Contact[]>>(`/api/contacts/tenant/${tenantId}`, signal, tenantId);
     return response?.data || [];
   }
 
@@ -70,7 +70,7 @@ export class ContactClient extends BaseClient {
    * Update a contact
    */
   async updateContact(id: string, data: Partial<CreateContactRequest>, signal?: AbortSignal): Promise<Contact> {
-    const response = await this.patch<ApiResponse<Contact>>(`/api/contacts/${id}`, data, signal);
+    const response = await this.patch<ApiResponse<Contact>>(`/api/contacts/${id}`, data, signal, data.tenantId);
     if (!response || !response.data) {
       throw new Error('Invalid API response: missing data');
     }

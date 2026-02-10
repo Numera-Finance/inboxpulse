@@ -10,7 +10,7 @@ export class CustomerClient extends BaseClient {
    * Create or update a customer
    */
   async upsertCustomer(data: CreateCustomerRequest, signal?: AbortSignal): Promise<Customer> {
-    const response = await this.post<ApiResponse<Customer>>('/api/customers', data, signal);
+    const response = await this.post<ApiResponse<Customer>>('/api/customers', data, signal, data.tenantId);
     if (!response) {
       throw new Error('Invalid API response: response is null');
     }
@@ -29,7 +29,7 @@ export class CustomerClient extends BaseClient {
    */
   async getCustomerByDomain(tenantId: string, domain: string, signal?: AbortSignal): Promise<Customer | null> {
     const encodedDomain = encodeURIComponent(domain);
-    const response = await this.get<ApiResponse<Customer>>(`/api/customers/domain/${tenantId}/${encodedDomain}`, signal);
+    const response = await this.get<ApiResponse<Customer>>(`/api/customers/domain/${tenantId}/${encodedDomain}`, signal, tenantId);
     return response?.data || null;
   }
 
@@ -45,7 +45,7 @@ export class CustomerClient extends BaseClient {
    * Get all customers for a tenant
    */
   async getCustomersByTenant(tenantId: string, signal?: AbortSignal): Promise<Customer[]> {
-    const response = await this.get<ApiResponse<Customer[]>>(`/api/customers/tenant/${tenantId}`, signal);
+    const response = await this.get<ApiResponse<Customer[]>>(`/api/customers/tenant/${tenantId}`, signal, tenantId);
     return response?.data || [];
   }
 

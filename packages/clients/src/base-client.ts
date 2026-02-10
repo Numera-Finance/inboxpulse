@@ -168,48 +168,59 @@ export class AuthBaseClient {
   /**
    * GET request
    */
-  protected async get<T>(url: string, signal?: AbortSignal): Promise<T> {
-    return this.request<T>(url, { method: 'GET', signal });
+  protected async get<T>(url: string, signal?: AbortSignal, tenantId?: string): Promise<T> {
+    return this.request<T>(url, {
+      method: 'GET',
+      signal,
+      headers: tenantId ? { 'x-tenant-id': tenantId } : undefined,
+    });
   }
 
   /**
    * POST request
    */
-  protected async post<T>(url: string, data?: any, signal?: AbortSignal): Promise<T> {
+  protected async post<T>(url: string, data?: any, signal?: AbortSignal, tenantId?: string): Promise<T> {
     return this.request<T>(url, {
       method: 'POST',
       body: JSON.stringify(data),
       signal,
+      headers: tenantId ? { 'x-tenant-id': tenantId } : undefined,
     });
   }
 
   /**
    * PATCH request
    */
-  protected async patch<T>(url: string, data?: any, signal?: AbortSignal): Promise<T> {
+  protected async patch<T>(url: string, data?: any, signal?: AbortSignal, tenantId?: string): Promise<T> {
     return this.request<T>(url, {
       method: 'PATCH',
       body: JSON.stringify(data),
       signal,
+      headers: tenantId ? { 'x-tenant-id': tenantId } : undefined,
     });
   }
 
   /**
    * PUT request
    */
-  protected async put<T>(url: string, data?: any, signal?: AbortSignal): Promise<T> {
+  protected async put<T>(url: string, data?: any, signal?: AbortSignal, tenantId?: string): Promise<T> {
     return this.request<T>(url, {
       method: 'PUT',
       body: JSON.stringify(data),
       signal,
+      headers: tenantId ? { 'x-tenant-id': tenantId } : undefined,
     });
   }
 
   /**
    * DELETE request
    */
-  protected async delete<T>(url: string, signal?: AbortSignal): Promise<T> {
-    return this.request<T>(url, { method: 'DELETE', signal });
+  protected async delete<T>(url: string, signal?: AbortSignal, tenantId?: string): Promise<T> {
+    return this.request<T>(url, {
+      method: 'DELETE',
+      signal,
+      headers: tenantId ? { 'x-tenant-id': tenantId } : undefined,
+    });
   }
 
   /**
