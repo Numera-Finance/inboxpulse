@@ -44,7 +44,6 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={chartData}
-              stackOffset="expand"
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
             >
               <XAxis
@@ -54,14 +53,14 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
               />
               <YAxis
-                tickFormatter={(value) => `${Math.round(value * 100)}`}
+                tickFormatter={(value) => `${value}`}
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
                 width={30}
               />
               <Tooltip
-                formatter={(value: number) => [`${Math.round(value * 100)}%`, '']}
+                formatter={(value: number) => [`${value}%`, '']}
                 contentStyle={{
                   backgroundColor: "hsl(var(--card))",
                   border: "1px solid hsl(var(--border))",
