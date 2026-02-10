@@ -426,7 +426,7 @@ app.post('/:emailId/analyze', async (c) => {
       threadContext: threadContext.threadContext, // Fallback if no summaries exist
       persist,
       analysisTypes,
-      useThreadSummaries: true, // Use thread summaries as context
+      useThreadSummaries: false, // Disabled - thread summaries not used in UI yet
     });
 
     return c.json({

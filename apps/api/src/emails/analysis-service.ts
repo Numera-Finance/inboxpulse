@@ -1164,7 +1164,7 @@ export class EmailAnalysisService {
       threadId: options.threadId,
       persist: options.persist ?? false,
       analysisTypes: options.analysisTypes,
-      useThreadSummaries: options.useThreadSummaries ?? true,
+      useThreadSummaries: options.useThreadSummaries ?? false,
       result: {},
     };
   }

@@ -159,7 +159,7 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
           threadId,
           threadContext: threadContext.threadContext, // Fallback if no summaries exist
           persist: true, // Always persist in Inngest
-          useThreadSummaries: true, // Use thread summaries as context
+          useThreadSummaries: false, // Disabled - thread summaries not used in UI yet
         });
 
         const executionEndTime = Date.now();
