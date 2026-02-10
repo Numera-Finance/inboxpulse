@@ -424,7 +424,7 @@ Return only the updated summary text, no JSON, no markdown.`;
 
     try {
       // Use analysis client's summarize method
-      const result = await this.analysisClient.summarizeThread(analysisType, prompt, 'gpt-4o-mini');
+      const result = await this.analysisClient.summarizeThread(analysisType, prompt, 'gemini-2.0-flash');
 
       return {
         summary: result.summary,
