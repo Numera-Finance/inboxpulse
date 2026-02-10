@@ -11,9 +11,6 @@ import {
   LogOut,
   SlidersHorizontal,
   ChevronsUpDown,
-  Moon,
-  Sun,
-  SunMoon,
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -28,7 +25,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useAuth, Permission, type PermissionType } from "@/src/contexts/AuthContext"
-import { useTheme } from "@/components/theme-provider"
 
 interface NavItem {
   name: string
@@ -62,34 +58,6 @@ export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, signOut, hasPermission, isAdmin } = useAuth()
-  const { theme, mode, setMode } = useTheme()
-
-  // Cycle through modes: auto → light → dark → auto
-  const cycleMode = () => {
-    if (mode === 'auto') {
-      setMode('light')
-    } else if (mode === 'light') {
-      setMode('dark')
-    } else {
-      setMode('auto')
-    }
-  }
-
-  const getThemeIcon = () => {
-    if (mode === 'auto') return SunMoon
-    if (theme === 'dark') return Moon
-    return Sun
-  }
-
-  const getThemeLabel = () => {
-    switch (mode) {
-      case 'auto': return 'Theme: Auto'
-      case 'light': return 'Theme: Light'
-      case 'dark': return 'Theme: Dark'
-    }
-  }
-
-  const ThemeIcon = getThemeIcon()
 
   // Filter navigation items based on permissions
   const visibleNavigation = navigation.filter((item) => {
@@ -203,10 +171,6 @@ export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
                 <DropdownMenuItem onClick={() => navigate("/settings")}>
                   <SlidersHorizontal className="mr-2 h-4 w-4" />
                   Preferences
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={cycleMode}>
-                  <ThemeIcon className="mr-2 h-4 w-4" />
-                  {getThemeLabel()}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive">

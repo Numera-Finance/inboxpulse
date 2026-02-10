@@ -1,35 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Dark mode via class (set by ThemeProvider based on system preference) */
-@custom-variant dark (&:is(.dark *));
-
-/*
- * ===========================================
- * THEME CUSTOMIZATION GUIDE
- * ===========================================
- *
- * This app uses oklch colors for a perceptually uniform color system.
- * oklch(Lightness Chroma Hue) where:
- *   - Lightness: 0-1 (0=black, 1=white)
- *   - Chroma: 0-0.4 (0=gray, higher=more saturated)
- *   - Hue: 0-360 (color wheel position)
- *
- * To change the brand color:
- *   1. Find the --primary variable below
- *   2. Change the hue (third number) to your desired color:
- *      - 0-30: Red     - 150-210: Green/Cyan
- *      - 30-90: Orange - 210-270: Blue
- *      - 90-150: Yellow - 270-330: Purple
- *
- * Example: Change --primary from blue (250) to purple (300):
- *   Before: --primary: oklch(0.55 0.2 250);
- *   After:  --primary: oklch(0.55 0.2 300);
- *
- * See lib/theme-config.ts for preset themes and utilities.
- * ===========================================
- */
-
 :root {
   --background: oklch(0.985 0 0);
   --foreground: oklch(0.145 0 0);
@@ -68,45 +39,6 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.91 0 0);
   --sidebar-ring: oklch(0.55 0.2 250);
-}
-
-.dark {
-  --background: oklch(0.12 0 0);
-  --foreground: oklch(0.95 0 0);
-  --card: oklch(0.16 0 0);
-  --card-foreground: oklch(0.95 0 0);
-  --popover: oklch(0.16 0 0);
-  --popover-foreground: oklch(0.95 0 0);
-  --primary: oklch(0.65 0.2 250);
-  --primary-foreground: oklch(0.12 0 0);
-  --secondary: oklch(0.22 0 0);
-  --secondary-foreground: oklch(0.95 0 0);
-  --muted: oklch(0.22 0 0);
-  --muted-foreground: oklch(0.65 0 0);
-  --accent: oklch(0.22 0 0);
-  --accent-foreground: oklch(0.95 0 0);
-  --destructive: oklch(0.55 0.22 25);
-  --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.65 0.2 145);
-  --success-foreground: oklch(0.12 0 0);
-  --warning: oklch(0.75 0.18 80);
-  --warning-foreground: oklch(0.12 0 0);
-  --border: oklch(0.26 0 0);
-  --input: oklch(0.26 0 0);
-  --ring: oklch(0.65 0.2 250);
-  --chart-1: oklch(0.65 0.2 250);
-  --chart-2: oklch(0.65 0.2 145);
-  --chart-3: oklch(0.75 0.18 80);
-  --chart-4: oklch(0.55 0.22 25);
-  --chart-5: oklch(0.6 0.15 300);
-  --sidebar: oklch(0.14 0 0);
-  --sidebar-foreground: oklch(0.95 0 0);
-  --sidebar-primary: oklch(0.65 0.2 250);
-  --sidebar-primary-foreground: oklch(0.12 0 0);
-  --sidebar-accent: oklch(0.22 0 0);
-  --sidebar-accent-foreground: oklch(0.95 0 0);
-  --sidebar-border: oklch(0.26 0 0);
-  --sidebar-ring: oklch(0.65 0.2 250);
 }
 
 @theme inline {
