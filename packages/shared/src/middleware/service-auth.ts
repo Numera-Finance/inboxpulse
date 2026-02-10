@@ -112,10 +112,10 @@ export function requireInternalAuth() {
     const tenantId = c.req.header('x-tenant-id');
     const userId = c.req.header('x-user-id');
 
-    if (tenantId && userId) {
+    if (tenantId) {
       const requestHeader: RequestHeader = {
         tenantId,
-        userId,
+        userId: userId || 'internal-service',
         permissions: [...ALL_PERMISSIONS],
       };
       c.set('requestHeader', requestHeader);

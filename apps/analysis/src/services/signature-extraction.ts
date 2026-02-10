@@ -413,7 +413,7 @@ Extract the signature information now and return it as valid JSON.`;
         'SIGNATURE ENRICHMENT: Updating contact with signature data'
       );
 
-      await this.contactClient.updateContact(contact.id, updateData);
+      await this.contactClient.updateContact(contact.id, { ...updateData, tenantId });
 
       logger.info(
         {
