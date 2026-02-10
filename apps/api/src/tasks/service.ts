@@ -373,22 +373,32 @@ export class TaskService {
       }
     }
 
-    // Group tasks by customer and collect managers
+    // Batch-fetch managers and account owners for all customers in 2 queries
     const customerIds = [...new Set(escalationTasks.map(t => t.task.customerId))];
+    const [managersMap, accountOwnersMap] = await Promise.all([
+      this.userRepository.getAllManagersForCustomers(customerIds),
+      this.userRepository.getAccountOwnersForCustomers(customerIds),
+    ]);
+
+    // Group tasks by customer
+    const tasksByCustomer = new Map<string, typeof escalationTasks>();
+    for (const entry of escalationTasks) {
+      const existing = tasksByCustomer.get(entry.task.customerId) || [];
+      existing.push(entry);
+      tasksByCustomer.set(entry.task.customerId, existing);
+    }
+
+    // Build manager escalation map
     const managerEscalationMap = new Map<string, ManagerEscalationData>();
 
     for (const customerId of customerIds) {
-      // Get all managers in the hierarchy for this customer
-      const managers = await this.userRepository.getAllManagersForCustomer(customerId);
-
-      // Get account owner
-      const accountOwner = await this.userRepository.getAccountOwner(customerId);
+      const managers = managersMap.get(customerId) || [];
+      const accountOwner = accountOwnersMap.get(customerId);
       const accountOwnerName = accountOwner
         ? `${accountOwner.firstName} ${accountOwner.lastName}`
         : 'Not assigned';
 
-      // Get tasks for this customer
-      const customerTasks = escalationTasks.filter(t => t.task.customerId === customerId);
+      const customerTasks = tasksByCustomer.get(customerId) || [];
 
       for (const manager of managers) {
         if (!managerEscalationMap.has(manager.id)) {
@@ -407,7 +417,6 @@ export class TaskService {
 
         const managerData = managerEscalationMap.get(manager.id)!;
 
-        // Add escalations for this customer
         for (const { task, customerName, assignedToFirstName, assignedToLastName } of customerTasks) {
           const assignedToName = assignedToFirstName && assignedToLastName
             ? `${assignedToFirstName} ${assignedToLastName}`

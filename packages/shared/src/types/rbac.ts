@@ -79,7 +79,9 @@ export const DEFAULT_ROLES = {
   USER: {
     name: 'User',
     description: 'Basic view access',
-    permissions: [] as number[],
+    permissions: [
+      Permission.TASK_EDIT,
+    ] as number[],
   },
   MANAGER: {
     name: 'Manager',

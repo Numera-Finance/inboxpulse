@@ -1,6 +1,7 @@
 import { eq, and } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import type { Database } from '@crm/database';
+import { DEFAULT_ROLES } from '@crm/shared';
 import { roles, type Role, type NewRole } from './schema';
 import { logger } from '../utils/logger';
 
@@ -92,29 +93,13 @@ export class RoleRepository {
    * Called when a new tenant is created
    */
   async seedDefaultRoles(tenantId: string): Promise<Role[]> {
-    const defaultRoles: NewRole[] = [
-      {
-        tenantId,
-        name: 'User',
-        description: 'Basic view access',
-        permissions: [],
-        isSystem: true,
-      },
-      {
-        tenantId,
-        name: 'Manager',
-        description: 'Full management within scope',
-        permissions: [1, 2, 3, 4, 5, 6, 7], // All except ADMIN
-        isSystem: true,
-      },
-      {
-        tenantId,
-        name: 'Administrator',
-        description: 'Full admin access',
-        permissions: [1, 2, 3, 4, 5, 6, 7, 8], // All including ADMIN
-        isSystem: true,
-      },
-    ];
+    const defaultRoles: NewRole[] = Object.values(DEFAULT_ROLES).map((role) => ({
+      tenantId,
+      name: role.name,
+      description: role.description,
+      permissions: [...role.permissions],
+      isSystem: true,
+    }));
 
     const createdRoles: Role[] = [];
 

@@ -406,6 +406,110 @@ export class UserRepository extends ScopedRepository {
   }
 
   /**
+   * Get ALL managers for multiple customers in a single query.
+   * Returns a Map of customerId -> User[] (managers).
+   * Uses recursive CTE to traverse up the manager chain for all customers at once.
+   */
+  async getAllManagersForCustomers(customerIds: string[]): Promise<Map<string, User[]>> {
+    if (customerIds.length === 0) return new Map();
+
+    const result = await this.db.execute<{
+      customer_id: string;
+      id: string;
+      tenant_id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      role_id: string | null;
+      api_key_hash: string | null;
+      can_login: boolean;
+      timezone: string | null;
+      row_status: number;
+      created_at: Date;
+      updated_at: Date;
+      last_login_at: Date | null;
+    }>(sql`
+      WITH RECURSIVE manager_chain AS (
+        -- Base case: direct managers of users assigned to any of the customers
+        SELECT DISTINCT uc.customer_id, um.manager_id
+        FROM user_customers uc
+        JOIN user_managers um ON um.user_id = uc.user_id
+        WHERE uc.customer_id = ANY(${customerIds})
+
+        UNION
+
+        -- Recursive case: managers of managers (carry customer_id forward)
+        SELECT mc.customer_id, um2.manager_id
+        FROM manager_chain mc
+        JOIN user_managers um2 ON um2.user_id = mc.manager_id
+      )
+      SELECT mc.customer_id, u.id, u.tenant_id, u.first_name, u.last_name, u.email,
+             u.role_id, u.api_key_hash, u.can_login, u.timezone,
+             u.row_status, u.created_at, u.updated_at, u.last_login_at
+      FROM manager_chain mc
+      JOIN users u ON u.id = mc.manager_id
+      WHERE u.row_status = ${RowStatus.ACTIVE}
+    `);
+
+    const map = new Map<string, User[]>();
+    for (const row of result) {
+      const user: User = {
+        id: row.id,
+        tenantId: row.tenant_id,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        email: row.email,
+        roleId: row.role_id,
+        apiKeyHash: row.api_key_hash,
+        canLogin: row.can_login,
+        timezone: row.timezone,
+        rowStatus: row.row_status,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        lastLoginAt: row.last_login_at,
+      };
+      const existing = map.get(row.customer_id) || [];
+      // Deduplicate by manager ID within each customer
+      if (!existing.some(u => u.id === user.id)) {
+        existing.push(user);
+      }
+      map.set(row.customer_id, existing);
+    }
+    return map;
+  }
+
+  /**
+   * Get account owners for multiple customers in a single query.
+   * Returns a Map of customerId -> User (account owner).
+   */
+  async getAccountOwnersForCustomers(customerIds: string[]): Promise<Map<string, User>> {
+    if (customerIds.length === 0) return new Map();
+
+    const ACCOUNT_MANAGER_ROLE_ID = '550e8400-e29b-41d4-a716-446655440001';
+    const result = await this.db
+      .select({
+        customerId: userCustomers.customerId,
+        user: users,
+      })
+      .from(userCustomers)
+      .innerJoin(users, eq(users.id, userCustomers.userId))
+      .where(
+        and(
+          sql`${userCustomers.customerId} = ANY(${customerIds})`,
+          eq(userCustomers.roleId, ACCOUNT_MANAGER_ROLE_ID)
+        )
+      );
+
+    const map = new Map<string, User>();
+    for (const row of result) {
+      if (!map.has(row.customerId)) {
+        map.set(row.customerId, row.user);
+      }
+    }
+    return map;
+  }
+
+  /**
    * Find active users who can login (for dropdowns)
    */
   async findLoginableByTenantId(tenantId: string): Promise<User[]> {

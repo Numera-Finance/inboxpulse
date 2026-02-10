@@ -8,6 +8,11 @@ import { logger } from '../../utils/logger';
  * Creates the Inngest cron function to send escalation batch notifications.
  * Runs every hour and checks if it's the right time to send notifications
  * based on each user's timezone and notification preferences.
+ *
+ * Processing flow:
+ * 1. Fetch all tenants
+ * 2. Process all tenants in parallel (batch DB queries per tenant)
+ * 3. Send notifications in parallel per manager
  */
 export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
   return inngest.createFunction(
@@ -21,49 +26,66 @@ export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
       const tenantRepository = container.resolve(TenantRepository);
       const taskService = container.resolve(TaskService);
 
-      // Get all active tenants
+      // Step 1: Get all active tenants
       const tenants = await step.run('get-tenants', async () => {
         return tenantRepository.findAll();
       });
 
-      const results: { tenantId: string; notificationsSent: number }[] = [];
+      // Step 2: Process all tenants in parallel — each tenant does batched DB queries
+      // and sends notifications concurrently
+      const results = await step.run('process-all-tenants', async () => {
+        const tenantResults = await Promise.all(
+          tenants.map(async (tenant) => {
+            try {
+              // getEscalationDataForTenant now uses batch queries (2 queries total)
+              const managerEscalationMap = await taskService.getEscalationDataForTenant(tenant.id);
 
-      for (const tenant of tenants) {
-        const notificationsSent = await step.run(`process-tenant-${tenant.id}`, async () => {
-          // Get escalation data grouped by manager
-          const managerEscalationMap = await taskService.getEscalationDataForTenant(tenant.id);
-
-          if (managerEscalationMap.size === 0) {
-            return 0;
-          }
-
-          let sentCount = 0;
-
-          // Check each manager and send if it's the right time
-          for (const [managerId, data] of managerEscalationMap) {
-            const shouldSend = taskService.shouldSendNotification(data.manager.timezone);
-
-            if (shouldSend && data.escalations.length > 0) {
-              const success = await taskService.sendEscalationNotification(tenant.id, data);
-              if (success) {
-                sentCount++;
+              if (managerEscalationMap.size === 0) {
+                return { tenantId: tenant.id, notificationsSent: 0 };
               }
+
+              // Filter managers who should receive notifications now (timezone check)
+              const managersToNotify = [...managerEscalationMap.entries()].filter(
+                ([, data]) =>
+                  data.escalations.length > 0 &&
+                  taskService.shouldSendNotification(data.manager.timezone)
+              );
+
+              if (managersToNotify.length === 0) {
+                return { tenantId: tenant.id, notificationsSent: 0 };
+              }
+
+              // Send all notifications for this tenant in parallel
+              const sendResults = await Promise.all(
+                managersToNotify.map(([, data]) =>
+                  taskService.sendEscalationNotification(tenant.id, data)
+                )
+              );
+
+              const notificationsSent = sendResults.filter(Boolean).length;
+              return { tenantId: tenant.id, notificationsSent };
+            } catch (error) {
+              logger.error(
+                { tenantId: tenant.id, error },
+                'Failed to process tenant escalations'
+              );
+              return { tenantId: tenant.id, notificationsSent: 0 };
             }
-          }
+          })
+        );
 
-          return sentCount;
-        });
+        return tenantResults;
+      });
 
-        results.push({ tenantId: tenant.id, notificationsSent });
-      }
-
+      const totalSent = results.reduce((sum, r) => sum + r.notificationsSent, 0);
       logger.info(
-        { tenantsProcessed: tenants.length, results },
+        { tenantsProcessed: tenants.length, totalNotificationsSent: totalSent, results },
         'Completed escalation notification cron'
       );
 
       return {
         tenantsProcessed: tenants.length,
+        totalNotificationsSent: totalSent,
         results,
       };
     }
