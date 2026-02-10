@@ -119,8 +119,7 @@ jobs:
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300 \
-            --update-env-vars NODE_ENV=production,DATABASE_URL=${{ secrets.DATABASE_URL }},WEB_URL=https://crm-web-505023465535.us-central1.run.app,INTERNAL_API_KEY=${{ secrets.INTERNAL_API_KEY }}
+            --timeout 300
 
       - name: Get Cloud Run URL
         id: get-url
@@ -181,8 +180,7 @@ jobs:
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300 \
-            --update-env-vars NODE_ENV=production,SERVICE_API_URL=https://crm-api-505023465535.us-central1.run.app,GOOGLE_CLOUD_PROJECT_ID=${{ env.PROJECT_ID }}
+            --timeout 300
 
       - name: Get Cloud Run URL
         id: get-url
@@ -244,8 +242,7 @@ jobs:
             --max-instances 10 \
             --memory 256Mi \
             --cpu 1 \
-            --timeout 300 \
-            --update-env-vars NODE_ENV=production,VITE_API_URL=https://crm-api-505023465535.us-central1.run.app
+            --timeout 300
 
       - name: Get Cloud Run URL
         id: get-url
@@ -307,8 +304,7 @@ jobs:
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300 \
-            --update-env-vars NODE_ENV=production,SERVICE_API_URL=https://crm-api-505023465535.us-central1.run.app,DATABASE_URL=${{ secrets.DATABASE_URL }},INTERNAL_API_KEY=${{ secrets.INTERNAL_API_KEY }}
+            --timeout 300
 
       - name: Get Cloud Run URL
         id: get-url
@@ -370,8 +366,7 @@ jobs:
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300 \
-            --update-env-vars NODE_ENV=production,DATABASE_URL=${{ secrets.DATABASE_URL }},SERVICE_API_URL=https://crm-api-505023465535.us-central1.run.app
+            --timeout 300
 
       - name: Get Cloud Run URL
         id: get-url
