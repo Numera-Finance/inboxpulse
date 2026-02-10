@@ -48,7 +48,7 @@ app.post('/pubsub', async (c) => {
     logger.info({ emailAddress, historyId }, 'Received webhook for email');
 
     // Find integration by email address - returns full integration with ID
-    const integrationClient = new IntegrationClient(apiBaseUrl);
+    const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
     const integration = await integrationClient.findByEmail(emailAddress, 'gmail');
 
     if (!integration) {
@@ -59,7 +59,7 @@ app.post('/pubsub', async (c) => {
     logger.info({ integrationId: integration.id, tenantId: integration.tenantId }, 'Found integration');
 
     // Create sync run for tracking
-    const runClient = new RunClient(apiBaseUrl);
+    const runClient = new RunClient(apiBaseUrl, { internal: true });
     const run = await runClient.create({
       integrationId: integration.id,
       tenantId: integration.tenantId,
@@ -73,7 +73,7 @@ app.post('/pubsub', async (c) => {
     const gmailClientFactory = new GmailClientFactory(integrationClient);
     const gmailService = new GmailService(gmailClientFactory);
     const emailParser = new EmailParserService();
-    const emailClient = new EmailClient(apiBaseUrl);
+    const emailClient = new EmailClient(apiBaseUrl, { internal: true });
     const syncService = new SyncService(
       integrationClient,
       runClient,

@@ -70,7 +70,7 @@ export class SignatureExtractionService {
   constructor(
     @inject(AIService) private aiService: AIService
   ) {
-    this.contactClient = new ContactClient(apiBaseUrl);
+    this.contactClient = new ContactClient(apiBaseUrl, { internal: true });
   }
 
   /**

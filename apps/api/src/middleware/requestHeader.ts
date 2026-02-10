@@ -1,17 +1,13 @@
 import { Context, Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { createHash } from 'crypto';
-import { container } from 'tsyringe';
 import { UnauthorizedError } from '@crm/shared';
-import type { RequestHeader, PermissionType } from '@crm/shared';
+import type { RequestHeader } from '@crm/shared';
 import {
   verifySessionToken,
   refreshSessionToken,
   shouldRefreshSession,
   getSessionDurationSeconds,
 } from '../auth/session';
-import { UserRepository } from '../users/repository';
-import { logger } from '../utils/logger';
 
 // Import middleware chain components
 import { betterAuthSessionMiddleware } from './better-auth-session';
@@ -90,60 +86,13 @@ export async function requestHeaderMiddleware(c: Context, next: Next) {
 }
 
 /**
- * Get API key from request header
- */
-function getApiKey(c: Context): string | undefined {
-  return c.req.header('X-Internal-Api-Key');
-}
-
-/**
- * Hash API key using SHA-256
- */
-function hashApiKey(apiKey: string): string {
-  return createHash('sha256').update(apiKey).digest('hex');
-}
-
-/**
  * Combined middleware chain for better-auth (recommended)
  * Chains: betterAuthSessionMiddleware → tenantResolutionMiddleware → userContextMiddleware
  *
- * Also supports internal service-to-service calls via X-Internal-Api-Key header
+ * For internal service-to-service calls, use /api/internal/* routes instead
+ * (protected by requireInternalAuth middleware).
  */
 export async function betterAuthRequestHeaderMiddleware(c: Context, next: Next) {
-  // Check for internal service-to-service call first
-  const apiKey = getApiKey(c);
-  if (apiKey) {
-    // Hash the API key and look up the service user
-    const apiKeyHash = hashApiKey(apiKey);
-    const userRepo = container.resolve(UserRepository);
-    const result = await userRepo.findByApiKeyHash(apiKeyHash);
-
-    if (result) {
-      const requestHeader: RequestHeader = {
-        tenantId: result.user.tenantId,
-        userId: result.user.id,
-        permissions: result.permissions as PermissionType[],
-      };
-      c.set('requestHeader', requestHeader);
-      c.set('isInternalCall', true);
-
-      logger.debug(
-        { userId: result.user.id, tenantId: result.user.tenantId },
-        'Internal API call authenticated'
-      );
-
-      await next();
-      return;
-    } else {
-      logger.warn(
-        { hashPrefix: apiKeyHash.substring(0, 12) },
-        'Invalid internal API key provided - hash not found in database'
-      );
-      throw new UnauthorizedError('Invalid API key');
-    }
-  }
-
-  // Normal user authentication flow
   await betterAuthSessionMiddleware(c, async () => {
     await tenantResolutionMiddleware(c, async () => {
       await userContextMiddleware(c, next);

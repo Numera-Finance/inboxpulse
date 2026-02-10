@@ -43,7 +43,7 @@ export class DomainExtractionService {
   private customerClient: CustomerClient;
 
   constructor() {
-    this.customerClient = new CustomerClient(apiBaseUrl);
+    this.customerClient = new CustomerClient(apiBaseUrl, { internal: true });
   }
 
   /**

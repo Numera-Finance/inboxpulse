@@ -64,14 +64,21 @@ export interface ServiceContext {
  * Supports both browser (cookies) and API clients (Authorization header).
  * Handles 401 errors by redirecting to login in browser.
  */
+export interface AuthBaseClientOptions {
+  /** When true, rewrites /api/* paths to /api/internal/* for service-to-service calls */
+  internal?: boolean;
+}
+
 export class AuthBaseClient {
   protected baseUrl: string;
+  private useInternalPaths: boolean;
 
   private sessionToken: string | null = null;
   private internalApiKey: string | null = null;
 
-  constructor(baseUrl: string = '') {
+  constructor(baseUrl: string = '', options?: AuthBaseClientOptions) {
     this.baseUrl = baseUrl || (isBrowser ? '' : 'http://localhost:4001');
+    this.useInternalPaths = options?.internal ?? false;
 
     // Auto-set internal API key from environment (for service-to-service calls)
     if (!isBrowser && typeof process !== 'undefined' && process.env?.SERVICE_API_KEY) {
@@ -102,10 +109,21 @@ export class AuthBaseClient {
   }
 
   /**
+   * Rewrite URL for internal service-to-service calls: /api/foo -> /api/internal/foo
+   */
+  private rewriteUrl(url: string): string {
+    if (this.useInternalPaths && url.startsWith('/api/')) {
+      return `/api/internal/${url.slice(5)}`;
+    }
+    return url;
+  }
+
+  /**
    * Make HTTP request with session token management
    */
   protected async request<T>(url: string, options: RequestOptions = {}): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${url}`, {
+    const finalUrl = this.rewriteUrl(url);
+    const response = await fetch(`${this.baseUrl}${finalUrl}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -198,7 +216,8 @@ export class AuthBaseClient {
    * POST request with FormData (for file uploads)
    */
   protected async postFormData<T>(url: string, formData: FormData, signal?: AbortSignal): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${url}`, {
+    const finalUrl = this.rewriteUrl(url);
+    const response = await fetch(`${this.baseUrl}${finalUrl}`, {
       method: 'POST',
       body: formData,
       headers: {
@@ -227,7 +246,8 @@ export class AuthBaseClient {
    * GET request that returns a Blob (for file downloads)
    */
   protected async getBlob(url: string, signal?: AbortSignal): Promise<Blob> {
-    const response = await fetch(`${this.baseUrl}${url}`, {
+    const finalUrl = this.rewriteUrl(url);
+    const response = await fetch(`${this.baseUrl}${finalUrl}`, {
       method: 'GET',
       headers: {
         ...(this.sessionToken && { Authorization: `Bearer ${this.sessionToken}` }),
