@@ -248,17 +248,21 @@ export function InboxView({
   }, [])
 
   // Auto-select item when items load - prefer initialSelectedId, then first item
+  // Only auto-select once to avoid overriding user clicks during loading transitions
+  const hasAutoSelectedRef = React.useRef(false)
   React.useEffect(() => {
-    if (items.length > 0 && !controlledSelectedItem && !internalSelectedItem) {
+    if (items.length > 0 && !controlledSelectedItem && !internalSelectedItem && !hasAutoSelectedRef.current) {
       // If initialSelectedId is provided, try to find and select that item
       if (initialSelectedId) {
         const targetItem = items.find(i => i.id === initialSelectedId)
         if (targetItem) {
+          hasAutoSelectedRef.current = true
           handleSelectItem(targetItem)
           return
         }
       }
       // Fall back to first item
+      hasAutoSelectedRef.current = true
       handleSelectItem(items[0])
     }
   }, [items, controlledSelectedItem, internalSelectedItem, handleSelectItem, initialSelectedId])
