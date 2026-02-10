@@ -192,7 +192,7 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'signature-extraction': true,   // Enable signature extraction
     'sentiment': true,               // Enable sentiment analysis
     'escalation': true,              // Enable escalation detection
-    'upsell': false,                  // Enable upsell detection
+    'upsell': true,                   // Enable upsell detection
     'churn': false,                   // Enable churn risk assessment
     'kudos': false,                   // Enable kudos detection
     'competitor': false,              // Enable competitor mentions
