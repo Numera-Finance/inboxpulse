@@ -235,6 +235,18 @@ userRoutes.patch('/:id', requirePermission(Permission.USER_EDIT), async (c) => {
         throw new NotFoundError('User', params.id);
       }
 
+      // Update managers if provided
+      if (request.managerEmails) {
+        const managerIds: string[] = [];
+        for (const email of request.managerEmails) {
+          const manager = await service.getByEmail(requestHeader.tenantId, email);
+          if (manager) {
+            managerIds.push(manager.id);
+          }
+        }
+        await service.setManagers(requestHeader.tenantId, params.id, managerIds);
+      }
+
       return user;
     }
   );

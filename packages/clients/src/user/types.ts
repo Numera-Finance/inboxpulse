@@ -35,6 +35,7 @@ export const updateUserRequestSchema = z.object({
   roleId: z.string().uuid().optional(), // RBAC system role
   canLogin: z.boolean().optional(), // Whether user can login to the application
   timezone: z.string().max(50).optional(), // IANA timezone (e.g., 'Asia/Kolkata')
+  managerEmails: z.array(z.string().email()).optional(),
 });
 
 export type UpdateUserRequest = z.infer<typeof updateUserRequestSchema>;
@@ -78,6 +79,12 @@ export const userResponseSchema = z.object({
   updatedAt: z.coerce.date(),
   lastLoginAt: z.coerce.date().nullable().optional(), // Last login timestamp
   customerAssignments: z.array(customerAssignmentResponseSchema).optional(),
+  managers: z.array(z.object({
+    id: z.string().uuid(),
+    email: z.string().email(),
+    firstName: z.string(),
+    lastName: z.string(),
+  })).optional(),
 });
 
 export type UserResponse = z.infer<typeof userResponseSchema>;
