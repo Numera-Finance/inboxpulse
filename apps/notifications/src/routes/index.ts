@@ -359,6 +359,78 @@ app.get('/unsubscribe', async (c) => {
 
 
 // =============================================================================
+// Send Routes (called by crm-api service)
+// =============================================================================
+
+/**
+ * Send escalation-batch notification
+ * POST /api/notifications/send/escalation-batch
+ *
+ * Body: {
+ *   escalations: [{ id, customer, subject, dateOpened, assignedTo, accountOwner, detailsUrl }],
+ *   metrics: { new, open1Day, open3Days, openMoreThan3Days },
+ *   recipientName?: string,
+ *   recipientEmail: string
+ * }
+ */
+app.post('/send/escalation-batch', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+
+  const { escalations, metrics, recipientName, recipientEmail } = body;
+
+  if (!escalations || !Array.isArray(escalations)) {
+    return c.json({ success: false, error: 'escalations array is required' }, 400);
+  }
+  if (!metrics) {
+    return c.json({ success: false, error: 'metrics object is required' }, 400);
+  }
+  if (!recipientEmail) {
+    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
+  }
+
+  try {
+    const html = await render(
+      EscalationBatchEmail({
+        escalations,
+        metrics,
+        recipientName: recipientName || 'Team',
+      })
+    );
+
+    const totalCount = metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
+    const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
+
+    const emailSender = getEmailSender();
+    const result = await emailSender.send({
+      channel: 'email',
+      to: recipientEmail,
+      subject,
+      html,
+    });
+
+    logger.info(
+      { recipient: recipientEmail, escalationCount: escalations.length, sent: result.sent },
+      'Sent escalation-batch notification'
+    );
+
+    return c.json({
+      success: result.sent,
+      data: {
+        template: 'escalation-batch',
+        recipient: recipientEmail,
+        subject,
+        messageId: result.messageId,
+        escalationCount: escalations.length,
+      },
+      error: result.error,
+    });
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to send escalation-batch notification');
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =============================================================================
 // Simulation Routes (for testing - caller must provide all data)
 // =============================================================================
 
