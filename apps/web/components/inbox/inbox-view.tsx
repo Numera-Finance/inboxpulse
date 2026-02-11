@@ -118,7 +118,7 @@ export function InboxView({
   const containerRef = React.useRef<HTMLDivElement>(null)
 
   // Items per page
-  const pageSize = 20
+  const pageSize = 50
 
   // Fetch items - uses callbacksRef to avoid depending on callbacks prop
   const fetchItems = React.useCallback(
