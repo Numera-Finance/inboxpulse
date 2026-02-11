@@ -126,6 +126,25 @@ export function TATDrilldownDialog({
     return pageCacheRef.current.get(getCacheKey(filter, startPage, pageSize))!;
   }, [tenantId, tatRow?.customerId, filters?.dateFrom, filters?.dateTo, getCacheKey])
 
+  // Evict pages outside the 3-page window [current-1, current, current+1]
+  const evictStalePages = React.useCallback((filter: InboxFilter, currentPage: number, limit: number) => {
+    const keepPages = new Set([currentPage - 1, currentPage, currentPage + 1]);
+    const keysToKeep = new Set(
+      [...keepPages].filter(p => p >= 1).map(p => getCacheKey(filter, p, limit))
+    );
+
+    for (const key of pageCacheRef.current.keys()) {
+      if (!keysToKeep.has(key)) {
+        pageCacheRef.current.delete(key);
+      }
+    }
+
+    emailCacheRef.current.clear();
+    for (const pageResult of pageCacheRef.current.values()) {
+      pageResult.emails.forEach(e => emailCacheRef.current.set(e.id, e));
+    }
+  }, [getCacheKey])
+
   // Email inbox callbacks for InboxView (server-side pagination)
   const emailCallbacks = React.useMemo(() => {
     if (!tatRow) return null
@@ -143,7 +162,10 @@ export function TATDrilldownDialog({
           result = await fetchAndCachePages(filter, page, limit);
         }
 
-        // Prefetch next 2 pages if next page isn't cached
+        // Evict pages outside [page-1, page, page+1]
+        evictStalePages(filter, page, limit);
+
+        // Ensure next page is prefetched
         if (result.hasMore) {
           const nextKey = getCacheKey(filter, page + 1, limit);
           if (!pageCacheRef.current.has(nextKey)) {
@@ -170,7 +192,7 @@ export function TATDrilldownDialog({
         // No-op for now - could be extended to show email details
       },
     }
-  }, [tatRow, fetchAndCachePages, getCacheKey])
+  }, [tatRow, fetchAndCachePages, getCacheKey, evictStalePages])
 
   if (!tatRow) return null
 

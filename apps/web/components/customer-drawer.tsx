@@ -271,6 +271,27 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     return pageCacheRef.current.get(getCacheKey(filter, startPage, pageSize))!;
   }, [tenantId, customer?.id, buildApiOptions, getCacheKey])
 
+  // Evict pages outside the 3-page window [current-1, current, current+1]
+  const evictStalePages = React.useCallback((filter: InboxFilter, currentPage: number, limit: number) => {
+    const keepPages = new Set([currentPage - 1, currentPage, currentPage + 1]);
+    const keysToKeep = new Set(
+      [...keepPages].filter(p => p >= 1).map(p => getCacheKey(filter, p, limit))
+    );
+
+    // Evict page entries outside the window
+    for (const key of pageCacheRef.current.keys()) {
+      if (!keysToKeep.has(key)) {
+        pageCacheRef.current.delete(key);
+      }
+    }
+
+    // Rebuild email cache from remaining pages only
+    emailCacheRef.current.clear();
+    for (const pageResult of pageCacheRef.current.values()) {
+      pageResult.emails.forEach(e => emailCacheRef.current.set(e.id, e));
+    }
+  }, [getCacheKey])
+
   // Email inbox callbacks for InboxView (server-side pagination)
   const emailCallbacks = React.useMemo(() => {
     if (!customer) return null
@@ -291,7 +312,10 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
           setEmailTotal(result.total);
         }
 
-        // Ensure next page is prefetched: if next page isn't cached, fetch it + one more
+        // Evict pages outside [page-1, page, page+1]
+        evictStalePages(filter, page, limit);
+
+        // Ensure next page is prefetched
         if (result.hasMore) {
           const nextKey = getCacheKey(filter, page + 1, limit);
           if (!pageCacheRef.current.has(nextKey)) {
@@ -348,7 +372,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         }
       },
     }
-  }, [customer, fetchAndCachePages, getCacheKey, onEmailSelect])
+  }, [customer, fetchAndCachePages, getCacheKey, evictStalePages, onEmailSelect])
 
   // Contact handlers - must be before contactColumns useMemo
   const handleStartEdit = (contact: ContactDisplay) => {
