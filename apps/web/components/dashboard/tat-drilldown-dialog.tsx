@@ -72,7 +72,7 @@ export function TATDrilldownDialog({
     data: emailsData,
     isLoading: isLoadingEmails,
   } = useEmailsByCustomer(tenantId, tatRow?.customerId || "", {
-    limit: 10000,
+    limit: 200,
     tatViolation: true,
     dateFrom: filters?.dateFrom,
     dateTo: filters?.dateTo,

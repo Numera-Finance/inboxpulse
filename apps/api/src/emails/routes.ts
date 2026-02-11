@@ -294,7 +294,7 @@ app.get('/customer/:customerId', async (c) => {
     c,
     z.object({ customerId: z.uuid() }),
     async (requestHeader: RequestHeader, params) => {
-      const limit = parseInt(c.req.query('limit') || '50');
+      const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200);
       const offset = parseInt(c.req.query('offset') || '0');
       const sentiment = c.req.query('sentiment') as 'positive' | 'negative' | 'neutral' | undefined;
       const escalation = c.req.query('escalation') === 'true';

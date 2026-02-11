@@ -119,7 +119,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       sentiment?: 'positive' | 'negative' | 'neutral';
       signal?: 'upsell' | 'churn';
       tatViolation?: boolean;
-    } = { limit: 10000 };
+    } = { limit: 200 };
 
     if (emailSentimentFilter && emailSentimentFilter !== 'all') {
       // Map to appropriate filter field
