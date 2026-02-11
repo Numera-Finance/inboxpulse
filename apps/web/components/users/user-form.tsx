@@ -219,47 +219,36 @@ export function UserForm({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="role">Role</Label>
-            <SystemRoleSelect
-              value={roleId}
-              onChange={setRoleId}
-              disabled={isLoading}
-              placeholder="Select role..."
-            />
-          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="role">Role</Label>
+              <SystemRoleSelect
+                value={roleId}
+                onChange={setRoleId}
+                disabled={isLoading}
+                placeholder="Select role..."
+              />
+            </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="timezone">Timezone</Label>
-            <Select
-              value={timezone}
-              onValueChange={setTimezone}
-              disabled={isLoading}
-            >
-              <SelectTrigger id="timezone">
-                <SelectValue placeholder="Select timezone..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Pacific/Honolulu">Hawaii (HST)</SelectItem>
-                <SelectItem value="America/Anchorage">Alaska (AKST)</SelectItem>
-                <SelectItem value="America/Los_Angeles">Pacific (PST)</SelectItem>
-                <SelectItem value="America/Denver">Mountain (MST)</SelectItem>
-                <SelectItem value="America/Chicago">Central (CST)</SelectItem>
-                <SelectItem value="America/New_York">Eastern (EST)</SelectItem>
-                <SelectItem value="America/Sao_Paulo">Brasilia (BRT)</SelectItem>
-                <SelectItem value="Europe/London">London (GMT)</SelectItem>
-                <SelectItem value="Europe/Paris">Central Europe (CET)</SelectItem>
-                <SelectItem value="Europe/Helsinki">Eastern Europe (EET)</SelectItem>
-                <SelectItem value="Asia/Dubai">Dubai (GST)</SelectItem>
-                <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
-                <SelectItem value="Asia/Bangkok">Bangkok (ICT)</SelectItem>
-                <SelectItem value="Asia/Singapore">Singapore (SGT)</SelectItem>
-                <SelectItem value="Asia/Shanghai">China (CST)</SelectItem>
-                <SelectItem value="Asia/Tokyo">Japan (JST)</SelectItem>
-                <SelectItem value="Australia/Sydney">Sydney (AEST)</SelectItem>
-                <SelectItem value="Pacific/Auckland">New Zealand (NZST)</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="space-y-2">
+              <Label htmlFor="timezone">Timezone</Label>
+              <Select
+                value={timezone}
+                onValueChange={setTimezone}
+                disabled={isLoading}
+              >
+                <SelectTrigger id="timezone">
+                  <SelectValue placeholder="Select timezone..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
+                  <SelectItem value="America/New_York">US Eastern (EST)</SelectItem>
+                  <SelectItem value="America/Chicago">US Central (CST)</SelectItem>
+                  <SelectItem value="America/Denver">US Mountain (MST)</SelectItem>
+                  <SelectItem value="America/Los_Angeles">US Pacific (PST)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="flex items-center justify-between">
