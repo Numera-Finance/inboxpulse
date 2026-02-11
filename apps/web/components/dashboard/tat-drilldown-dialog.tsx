@@ -18,10 +18,12 @@ import {
   type InboxPagination,
   type InboxPage,
   type InboxItemContent,
+  type ApiEmailResponse,
 } from "@/components/inbox"
 import type { TATMetricRow } from "@/lib/api"
 import type { TileFilters } from "./tiles"
-import { useEmailsByCustomer } from "@/lib/hooks"
+import { getEmailsByCustomer } from "@/lib/api"
+import type { EmailsByCustomerResponse } from "@/lib/api"
 import { authService } from "@/lib/auth/auth-service"
 import { cn } from "@/lib/utils"
 
@@ -66,24 +68,102 @@ export function TATDrilldownDialog({
 }: TATDrilldownDialogProps) {
   const tenantId = authService.getTenantId() || ""
 
-  // Fetch emails for customer with TAT violations only
-  // Pass same date filters as TAT metrics table for consistent counts
-  const {
-    data: emailsData,
-    isLoading: isLoadingEmails,
-  } = useEmailsByCustomer(tenantId, tatRow?.customerId || "", {
-    limit: 10000,
-    tatViolation: true,
-    dateFrom: filters?.dateFrom,
-    dateTo: filters?.dateTo,
-  })
+  // Server-side pagination caches and in-flight tracking
+  const pageCacheRef = React.useRef<Map<string, EmailsByCustomerResponse>>(new Map())
+  const emailCacheRef = React.useRef<Map<string, ApiEmailResponse>>(new Map())
+  const inFlightRef = React.useRef<Map<string, Promise<EmailsByCustomerResponse>>>(new Map())
 
-  // Get emails array with fallback
-  const emails = React.useMemo(() => {
-    return emailsData?.emails || []
-  }, [emailsData])
+  // Clear caches when tatRow or filters change
+  React.useEffect(() => {
+    pageCacheRef.current.clear()
+    emailCacheRef.current.clear()
+    inFlightRef.current.clear()
+  }, [tatRow?.customerId, filters?.dateFrom, filters?.dateTo])
 
-  // Email inbox callbacks for InboxView (same pattern as CustomerDrawer)
+  // Cache key helper
+  const getCacheKey = React.useCallback((filter: InboxFilter, page: number, limit: number) => {
+    return `${page}_${limit}_${filter.query || ''}`;
+  }, [])
+
+  // Fetch 2 pages from API, deduplicating in-flight requests
+  const fetchAndCachePages = React.useCallback(async (filter: InboxFilter, startPage: number, pageSize: number) => {
+    const cacheKey = getCacheKey(filter, startPage, pageSize);
+    const cached = pageCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+
+    const inFlight = inFlightRef.current.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const promise = (async () => {
+      const offset = (startPage - 1) * pageSize;
+      const options: {
+        limit: number;
+        offset: number;
+        tatViolation: boolean;
+        dateFrom?: string;
+        dateTo?: string;
+        query?: string;
+      } = {
+        limit: pageSize * 2,
+        offset,
+        tatViolation: true,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
+      };
+      if (filter.query) options.query = filter.query;
+
+      const result = await getEmailsByCustomer(tenantId, tatRow?.customerId || "", options);
+
+      for (let i = 0; i < 2; i++) {
+        const pageEmails = result.emails.slice(i * pageSize, (i + 1) * pageSize);
+        if (pageEmails.length === 0) break;
+
+        const pageNum = startPage + i;
+        const pageOffset = offset + i * pageSize;
+        const pageResult: EmailsByCustomerResponse = {
+          emails: pageEmails,
+          total: result.total,
+          count: pageEmails.length,
+          limit: pageSize,
+          offset: pageOffset,
+          hasMore: pageOffset + pageEmails.length < result.total,
+        };
+
+        pageCacheRef.current.set(getCacheKey(filter, pageNum, pageSize), pageResult);
+        pageEmails.forEach(e => emailCacheRef.current.set(e.id, e));
+      }
+
+      return pageCacheRef.current.get(cacheKey)!;
+    })();
+
+    inFlightRef.current.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      inFlightRef.current.delete(cacheKey);
+    }
+  }, [tenantId, tatRow?.customerId, filters?.dateFrom, filters?.dateTo, getCacheKey])
+
+  // Evict pages outside the 3-page window [current-1, current, current+1]
+  const evictStalePages = React.useCallback((filter: InboxFilter, currentPage: number, limit: number) => {
+    const keepPages = new Set([currentPage - 1, currentPage, currentPage + 1]);
+    const keysToKeep = new Set(
+      [...keepPages].filter(p => p >= 1).map(p => getCacheKey(filter, p, limit))
+    );
+
+    for (const key of pageCacheRef.current.keys()) {
+      if (!keysToKeep.has(key)) {
+        pageCacheRef.current.delete(key);
+      }
+    }
+
+    emailCacheRef.current.clear();
+    for (const pageResult of pageCacheRef.current.values()) {
+      pageResult.emails.forEach(e => emailCacheRef.current.set(e.id, e));
+    }
+  }, [getCacheKey])
+
+  // Email inbox callbacks for InboxView (server-side pagination)
   const emailCallbacks = React.useMemo(() => {
     if (!tatRow) return null
 
@@ -92,33 +172,35 @@ export function TATDrilldownDialog({
         filter: InboxFilter,
         pagination: InboxPagination
       ): Promise<InboxPage<InboxItem>> => {
-        let filteredEmails = [...emails]
+        const { page, limit } = pagination;
+        const cacheKey = getCacheKey(filter, page, limit);
+        let result = pageCacheRef.current.get(cacheKey);
 
-        if (filter.query) {
-          const query = filter.query.toLowerCase()
-          filteredEmails = filteredEmails.filter(
-            (email) =>
-              email.fromEmail.toLowerCase().includes(query) ||
-              (email.fromName?.toLowerCase().includes(query) ?? false) ||
-              email.subject.toLowerCase().includes(query) ||
-              (email.body?.toLowerCase().includes(query) ?? false)
-          )
+        if (!result) {
+          result = await fetchAndCachePages(filter, page, limit);
         }
 
-        // Paginate
-        const start = (pagination.page - 1) * pagination.limit
-        const paginatedEmails = filteredEmails.slice(start, start + pagination.limit)
+        // Evict pages outside [page-1, page, page+1]
+        evictStalePages(filter, page, limit);
+
+        // Ensure next page is prefetched
+        if (result.hasMore) {
+          const nextKey = getCacheKey(filter, page + 1, limit);
+          if (!pageCacheRef.current.has(nextKey)) {
+            fetchAndCachePages(filter, page + 1, limit).catch(() => {});
+          }
+        }
 
         return {
-          items: paginatedEmails.map(apiEmailToInboxItem),
-          total: filteredEmails.length,
-          page: pagination.page,
-          limit: pagination.limit,
-          hasMore: start + pagination.limit < filteredEmails.length,
+          items: result.emails.map(apiEmailToInboxItem),
+          total: result.total,
+          page,
+          limit,
+          hasMore: result.hasMore,
         }
       },
       onFetchContent: async (itemId: string): Promise<InboxItemContent> => {
-        const email = emails.find((e) => e.id === itemId)
+        const email = emailCacheRef.current.get(itemId)
         if (!email) {
           throw new Error(`Email not found: ${itemId}`)
         }
@@ -128,7 +210,7 @@ export function TATDrilldownDialog({
         // No-op for now - could be extended to show email details
       },
     }
-  }, [tatRow, emails])
+  }, [tatRow, fetchAndCachePages, getCacheKey, evictStalePages])
 
   if (!tatRow) return null
 
@@ -172,11 +254,7 @@ export function TATDrilldownDialog({
 
         {/* Email List */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {isLoadingEmails ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : emailCallbacks ? (
+          {emailCallbacks ? (
             <InboxView
               key={`tat-inbox-${tatRow.customerId}`}
               className="h-full"

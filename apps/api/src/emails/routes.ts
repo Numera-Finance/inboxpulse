@@ -302,6 +302,7 @@ app.get('/customer/:customerId', async (c) => {
       const tatViolation = c.req.query('tatViolation') === 'true';
       const dateFrom = c.req.query('dateFrom') || undefined;
       const dateTo = c.req.query('dateTo') || undefined;
+      const query = c.req.query('query') || undefined;
       const service = container.resolve(EmailService);
       return await service.findByCustomerScoped(requestHeader, params.customerId, {
         limit,
@@ -312,6 +313,7 @@ app.get('/customer/:customerId', async (c) => {
         tatViolation,
         dateFrom,
         dateTo,
+        query,
       });
     }
   );

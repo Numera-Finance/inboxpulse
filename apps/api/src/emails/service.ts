@@ -330,6 +330,7 @@ export class EmailService {
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;
+      query?: string;
     }
   ) {
     if (!customerId) {
@@ -345,6 +346,7 @@ export class EmailService {
       tatViolation: options?.tatViolation,
       dateFrom: options?.dateFrom,
       dateTo: options?.dateTo,
+      query: options?.query,
     };
 
     const [emails, total] = await Promise.all([

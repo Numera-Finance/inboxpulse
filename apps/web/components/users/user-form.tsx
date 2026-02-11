@@ -242,7 +242,7 @@ export function UserForm({
 
           <div className="space-y-2">
             <Label>Reports To</Label>
-            <Popover open={managerPopoverOpen} onOpenChange={setManagerPopoverOpen}>
+            <Popover open={managerPopoverOpen} onOpenChange={setManagerPopoverOpen} modal>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
