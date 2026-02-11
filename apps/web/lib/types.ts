@@ -33,7 +33,7 @@ export interface User {
   role?: string;
   department?: string;
   avatar?: string;
-  reportsTo: string[]; // Array of user IDs (managers)
+  reportsTo: string[]; // Array of manager email addresses
   assignedCustomers: string[]; // Array of customer IDs (deprecated, use customerAssignments)
   customerAssignments: CustomerAssignment[]; // Customer assignments with roles
   status: 'Active' | 'Inactive' | 'On Leave';
@@ -72,7 +72,7 @@ export function mapUserToUser(user: UserResponse): User {
     role: user.role?.name, // RBAC role name from nested role object
     department: undefined, // TODO: Add department field to user API
     avatar: undefined,
-    reportsTo: [], // TODO: Load from user relations
+    reportsTo: (user.managers || []).map(m => m.email),
     assignedCustomers: customerAssignments.map(a => a.customerId),
     customerAssignments,
     status: statusMap[user.rowStatus] || 'Inactive',

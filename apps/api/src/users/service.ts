@@ -145,15 +145,21 @@ export class UserService {
 
     const total = Number(countResult[0]?.count ?? 0);
 
-    // Include customer assignments if requested
+    // Include relations if requested
     const includeCustomerAssignments = searchRequest.include?.includes('customerAssignments');
+    const includeManagers = searchRequest.include?.includes('managers');
     let items: UserWithRelations[] = userItems;
 
-    if (includeCustomerAssignments) {
+    if (includeCustomerAssignments || includeManagers) {
       items = await Promise.all(
         userItems.map(async (user) => ({
           ...user,
-          customerAssignments: await this.getCustomerAssignments(user.id),
+          ...(includeCustomerAssignments && {
+            customerAssignments: await this.getCustomerAssignments(user.id),
+          }),
+          ...(includeManagers && {
+            managers: await this.getManagers(user.id),
+          }),
         }))
       );
     }

@@ -70,7 +70,7 @@ export default function UsersPage() {
     sortOrder: 'asc',
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
-    include: ['customerAssignments'],
+    include: ['customerAssignments', 'managers'],
   })
 
   // Mutations
@@ -130,7 +130,7 @@ export default function UsersPage() {
 
   const handleEditUser = async (id: string, data: UserFormData) => {
     try {
-      // Update basic user info including roleId and canLogin
+      // Update basic user info including roleId, canLogin, and managers
       await updateUser.mutateAsync({
         id,
         data: {
@@ -138,6 +138,7 @@ export default function UsersPage() {
           lastName: data.lastName,
           roleId: data.roleId ?? undefined,
           canLogin: data.canLogin,
+          managerEmails: data.reportsTo || [],
         },
       })
 
