@@ -58,11 +58,12 @@ export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
                 'Checking timezone filter for managers'
               );
 
-              // TEMP: Only send to mbalsara@mystartupcfo.com every hour for testing
+              // TEMP: Only send to specific users every hour for testing
+              const testRecipients = ['mbalsara@mystartupcfo.com', 'vmohan@mystartupcfo.com'];
               const managersToNotify = [...managerEscalationMap.entries()].filter(
                 ([, data]) =>
                   data.escalations.length > 0 &&
-                  data.manager.email === 'mbalsara@mystartupcfo.com'
+                  testRecipients.includes(data.manager.email)
               );
 
               if (managersToNotify.length === 0) {

@@ -347,36 +347,13 @@ export class TaskService {
       'Found open escalation tasks'
     );
 
-    // Calculate date boundaries for metrics
+    // Calculate date boundaries for per-manager metrics
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
-
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-
     const threeDaysAgoStart = new Date(todayStart);
     threeDaysAgoStart.setDate(threeDaysAgoStart.getDate() - 3);
-
-    // Calculate metrics (no duplicates - mutually exclusive categories)
-    const metrics: EscalationMetrics = {
-      new: 0,
-      open1Day: 0,
-      open3Days: 0,
-      openMoreThan3Days: 0,
-    };
-
-    for (const { task } of escalationTasks) {
-      const createdAt = new Date(task.createdAt);
-      if (createdAt >= todayStart) {
-        metrics.new++;
-      } else if (createdAt >= yesterdayStart) {
-        metrics.open1Day++;
-      } else if (createdAt >= threeDaysAgoStart) {
-        metrics.open3Days++;
-      } else {
-        metrics.openMoreThan3Days++;
-      }
-    }
 
     // Batch-fetch managers and account owners for all customers in 2 queries
     const customerIds = [...new Set(escalationTasks.map(t => t.task.customerId))];
@@ -431,7 +408,7 @@ export class TaskService {
               timezone: manager.timezone,
             },
             escalations: [],
-            metrics: { ...metrics },
+            metrics: { new: 0, open1Day: 0, open3Days: 0, openMoreThan3Days: 0 },
           });
         }
 
@@ -451,6 +428,18 @@ export class TaskService {
             accountOwner: accountOwnerName,
             detailsUrl: `${process.env.APP_URL || 'http://localhost:3000'}/tasks/${task.id}`,
           });
+
+          // Categorize this task for per-manager metrics
+          const createdAt = new Date(task.createdAt);
+          if (createdAt >= todayStart) {
+            managerData.metrics.new++;
+          } else if (createdAt >= yesterdayStart) {
+            managerData.metrics.open1Day++;
+          } else if (createdAt >= threeDaysAgoStart) {
+            managerData.metrics.open3Days++;
+          } else {
+            managerData.metrics.openMoreThan3Days++;
+          }
         }
       }
     }
