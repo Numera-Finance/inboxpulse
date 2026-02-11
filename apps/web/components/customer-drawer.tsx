@@ -118,7 +118,6 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const pageCacheRef = React.useRef<Map<string, EmailsByCustomerResponse>>(new Map())
   const emailCacheRef = React.useRef<Map<string, ApiEmailResponse>>(new Map())
   const [emailTotal, setEmailTotal] = React.useState<number | null>(null)
-  const isLoadingEmails = emailTotal === null && !!customer
 
   // Clear caches when customer or filter changes
   React.useEffect(() => {
@@ -792,7 +791,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
             >
               <TabsList className="mx-6 mt-6 mb-0 flex-shrink-0">
                 <TabsTrigger value="emails">
-                  Emails {isLoadingEmails ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : `(${emailTotal ?? 0})`}
+                  Emails {emailTotal !== null ? `(${emailTotal})` : ''}
                 </TabsTrigger>
                 <TabsTrigger value="contacts">
                   Contacts {isLoadingContacts ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : `(${contacts.length})`}
@@ -974,11 +973,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
               </TabsContent>
 
               <TabsContent value="emails" className="flex-1 h-0 min-h-0 overflow-hidden mt-0">
-                {isLoadingEmails ? (
-                  <div className="flex items-center justify-center h-full">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                  </div>
-                ) : emailCallbacks && (
+                {emailCallbacks && (
                   <InboxView
                     key={`inbox-${customer.id}`}
                     className="h-full"
