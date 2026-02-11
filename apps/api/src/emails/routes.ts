@@ -294,7 +294,7 @@ app.get('/customer/:customerId', async (c) => {
     c,
     z.object({ customerId: z.uuid() }),
     async (requestHeader: RequestHeader, params) => {
-      const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200);
+      const limit = parseInt(c.req.query('limit') || '50');
       const offset = parseInt(c.req.query('offset') || '0');
       const sentiment = c.req.query('sentiment') as 'positive' | 'negative' | 'neutral' | undefined;
       const escalation = c.req.query('escalation') === 'true';
@@ -302,6 +302,7 @@ app.get('/customer/:customerId', async (c) => {
       const tatViolation = c.req.query('tatViolation') === 'true';
       const dateFrom = c.req.query('dateFrom') || undefined;
       const dateTo = c.req.query('dateTo') || undefined;
+      const query = c.req.query('query') || undefined;
       const service = container.resolve(EmailService);
       return await service.findByCustomerScoped(requestHeader, params.customerId, {
         limit,
@@ -312,6 +313,7 @@ app.get('/customer/:customerId', async (c) => {
         tatViolation,
         dateFrom,
         dateTo,
+        query,
       });
     }
   );

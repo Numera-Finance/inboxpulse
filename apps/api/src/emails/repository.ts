@@ -4,7 +4,7 @@ import type { Database } from '@crm/database';
 import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
 import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from './schema';
-import { eq, and, desc, sql, inArray, or, SQL } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, or, ilike, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
 // Re-export TATMetricRow from shared
@@ -477,6 +477,7 @@ export class EmailRepository extends ScopedRepository {
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;
+      query?: string;
     }
   ) {
     const limit = options?.limit || 50;
@@ -492,6 +493,16 @@ export class EmailRepository extends ScopedRepository {
       eq(emails.tenantId, header.tenantId),
       eq(emailParticipants.customerId, customerId),
     ];
+
+    // Add text search filter (ILIKE on subject, from name/email)
+    if (options?.query) {
+      const search = `%${options.query}%`;
+      conditions.push(or(
+        ilike(emails.subject, search),
+        ilike(emails.fromEmail, search),
+        ilike(emails.fromName, search),
+      )!);
+    }
 
     // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
     if (options?.tatViolation) {
@@ -558,6 +569,7 @@ export class EmailRepository extends ScopedRepository {
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;
+      query?: string;
     }
   ): Promise<number> {
     const hasAccess = await this.hasCustomerAccess(header, customerId);
@@ -570,6 +582,16 @@ export class EmailRepository extends ScopedRepository {
       eq(emails.tenantId, header.tenantId),
       eq(emailParticipants.customerId, customerId),
     ];
+
+    // Add text search filter (ILIKE on subject, from name/email)
+    if (filters?.query) {
+      const search = `%${filters.query}%`;
+      conditions.push(or(
+        ilike(emails.subject, search),
+        ilike(emails.fromEmail, search),
+        ilike(emails.fromName, search),
+      )!);
+    }
 
     // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
     if (filters?.tatViolation) {

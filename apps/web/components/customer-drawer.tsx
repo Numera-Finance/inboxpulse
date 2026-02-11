@@ -32,7 +32,9 @@ import {
 } from "@/components/inbox"
 import type { Customer, ContactDisplay, Email } from "@/lib/types"
 import { predefinedLabels, mapApiContactToContact } from "@/lib/types"
-import { useEmailsByCustomer, useContactsByCustomer, useUsersByCustomer, useAddCustomerToUser, useRemoveCustomerFromUser, userKeys, useUpdateCustomer, customerKeys } from "@/lib/hooks"
+import { useContactsByCustomer, useUsersByCustomer, useAddCustomerToUser, useRemoveCustomerFromUser, userKeys, useUpdateCustomer, customerKeys } from "@/lib/hooks"
+import { getEmailsByCustomer } from "@/lib/api"
+import type { EmailsByCustomerResponse } from "@/lib/api"
 import { authService } from "@/lib/auth/auth-service"
 import { getCustomerRoleName } from "@crm/shared"
 import { UserAutocomplete } from "@/components/ui/user-autocomplete"
@@ -112,35 +114,18 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const tenantId = authService.getTenantId() || ""
   const queryClient = useQueryClient()
 
-  // Build email query options based on filter
-  const emailQueryOptions = React.useMemo(() => {
-    const options: {
-      limit: number;
-      sentiment?: 'positive' | 'negative' | 'neutral';
-      signal?: 'upsell' | 'churn';
-      tatViolation?: boolean;
-    } = { limit: 200 };
+  // Server-side pagination: page cache and email cache for lookups
+  const pageCacheRef = React.useRef<Map<string, EmailsByCustomerResponse>>(new Map())
+  const emailCacheRef = React.useRef<Map<string, ApiEmailResponse>>(new Map())
+  const [emailTotal, setEmailTotal] = React.useState<number | null>(null)
+  const isLoadingEmails = emailTotal === null && !!customer
 
-    if (emailSentimentFilter && emailSentimentFilter !== 'all') {
-      // Map to appropriate filter field
-      if (emailSentimentFilter === 'upsell' || emailSentimentFilter === 'churn') {
-        options.signal = emailSentimentFilter;
-      } else if (emailSentimentFilter === 'tat') {
-        options.tatViolation = true;
-      } else {
-        options.sentiment = emailSentimentFilter;
-      }
-    }
-
-    return options;
-  }, [emailSentimentFilter])
-
-  // Fetch emails for customer from API with filter
-  const {
-    data: emailsData,
-    isLoading: isLoadingEmails,
-    error: emailsError,
-  } = useEmailsByCustomer(tenantId, customer?.id || "", emailQueryOptions)
+  // Clear caches when customer or filter changes
+  React.useEffect(() => {
+    pageCacheRef.current.clear()
+    emailCacheRef.current.clear()
+    setEmailTotal(null)
+  }, [customer?.id, emailSentimentFilter])
 
   // Fetch contacts for customer from API
   const {
@@ -222,10 +207,59 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     return new Set(teamMembers?.map(m => m.id) || [])
   }, [teamMembers])
 
-  // Get emails from API response
-  const emails: ApiEmailResponse[] = emailsData?.emails || []
+  // Helper: build API options from InboxFilter
+  const buildApiOptions = React.useCallback((filter: InboxFilter, limit: number, offset: number) => {
+    const options: {
+      limit: number;
+      offset: number;
+      sentiment?: 'positive' | 'negative' | 'neutral';
+      signal?: 'upsell' | 'churn';
+      tatViolation?: boolean;
+      query?: string;
+    } = { limit, offset };
 
-  // Email inbox callbacks for InboxView
+    const sentimentVal = filter.sentiment || emailSentimentFilter;
+    if (sentimentVal && sentimentVal !== 'all') {
+      if (sentimentVal === 'upsell' || sentimentVal === 'churn') {
+        options.signal = sentimentVal;
+      } else if (sentimentVal === 'tat') {
+        options.tatViolation = true;
+      } else {
+        options.sentiment = sentimentVal;
+      }
+    }
+
+    if (filter.query) {
+      options.query = filter.query;
+    }
+
+    return options;
+  }, [emailSentimentFilter])
+
+  // Helper: build cache key from filter + page
+  const getCacheKey = React.useCallback((filter: InboxFilter, page: number, limit: number) => {
+    const sentiment = filter.sentiment || emailSentimentFilter || 'all';
+    return `${page}_${limit}_${sentiment}_${filter.query || ''}`;
+  }, [emailSentimentFilter])
+
+  // Helper: fetch a page and cache it
+  const fetchPage = React.useCallback(async (filter: InboxFilter, page: number, limit: number) => {
+    const cacheKey = getCacheKey(filter, page, limit);
+    const cached = pageCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+
+    const offset = (page - 1) * limit;
+    const options = buildApiOptions(filter, limit, offset);
+    const result = await getEmailsByCustomer(tenantId, customer?.id || "", options);
+
+    // Cache page result and individual emails
+    pageCacheRef.current.set(cacheKey, result);
+    result.emails.forEach(e => emailCacheRef.current.set(e.id, e));
+
+    return result;
+  }, [tenantId, customer?.id, buildApiOptions, getCacheKey])
+
+  // Email inbox callbacks for InboxView (server-side pagination)
   const emailCallbacks = React.useMemo(() => {
     if (!customer) return null
 
@@ -234,49 +268,41 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         filter: InboxFilter,
         pagination: InboxPagination
       ): Promise<InboxPage<InboxItem>> => {
-        // Filter emails by search query and sentiment (client-side for now)
-        let filteredEmails = [...emails]
+        // Fetch current page from API (or cache)
+        const result = await fetchPage(filter, pagination.page, pagination.limit);
 
-        if (filter.query) {
-          const query = filter.query.toLowerCase()
-          filteredEmails = filteredEmails.filter(
-            (email) =>
-              email.fromEmail.toLowerCase().includes(query) ||
-              (email.fromName?.toLowerCase().includes(query) ?? false) ||
-              email.subject.toLowerCase().includes(query) ||
-              (email.body?.toLowerCase().includes(query) ?? false)
-          )
+        // Update total for tab header
+        setEmailTotal(result.total);
+
+        // Eagerly prefetch next page in background
+        if (result.hasMore) {
+          fetchPage(filter, pagination.page + 1, pagination.limit).catch(() => {});
+        }
+        // Eagerly prefetch previous page if not cached
+        if (pagination.page > 1) {
+          fetchPage(filter, pagination.page - 1, pagination.limit).catch(() => {});
         }
 
-        // Note: Sentiment filtering is done server-side via emailQueryOptions
-        // No client-side filtering needed here
-
-        // Paginate
-        const start = (pagination.page - 1) * pagination.limit
-        const paginatedEmails = filteredEmails.slice(start, start + pagination.limit)
-
         return {
-          items: paginatedEmails.map(apiEmailToInboxItem),
-          total: filteredEmails.length,
+          items: result.emails.map(apiEmailToInboxItem),
+          total: result.total,
           page: pagination.page,
           limit: pagination.limit,
-          hasMore: start + pagination.limit < filteredEmails.length,
+          hasMore: result.hasMore,
         }
       },
       onFetchContent: async (itemId: string): Promise<InboxItemContent> => {
-        const email = emails.find((e) => e.id === itemId)
+        const email = emailCacheRef.current.get(itemId)
         if (!email) {
           throw new Error(`Email not found: ${itemId}`)
         }
         return apiEmailToInboxContent(email)
       },
       onSelect: (item: InboxItem) => {
-        // Update URL when email is selected
         onEmailSelect?.(item.id)
       },
       onReply: (item: InboxItem) => {
-        // Convert API email to frontend Email type for the drawer
-        const apiEmail = emails.find((e) => e.id === item.id)
+        const apiEmail = emailCacheRef.current.get(item.id)
         if (apiEmail) {
           const email: Email = {
             id: apiEmail.id,
@@ -291,8 +317,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         }
       },
       onForward: (item: InboxItem) => {
-        // Convert API email to frontend Email type for the drawer
-        const apiEmail = emails.find((e) => e.id === item.id)
+        const apiEmail = emailCacheRef.current.get(item.id)
         if (apiEmail) {
           const email: Email = {
             id: apiEmail.id,
@@ -307,7 +332,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         }
       },
     }
-  }, [customer, emails, onEmailSelect])
+  }, [customer, fetchPage, onEmailSelect])
 
   // Contact handlers - must be before contactColumns useMemo
   const handleStartEdit = (contact: ContactDisplay) => {
@@ -767,7 +792,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
             >
               <TabsList className="mx-6 mt-6 mb-0 flex-shrink-0">
                 <TabsTrigger value="emails">
-                  Emails {isLoadingEmails ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : `(${emailsData?.total ?? 0})`}
+                  Emails {isLoadingEmails ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : `(${emailTotal ?? 0})`}
                 </TabsTrigger>
                 <TabsTrigger value="contacts">
                   Contacts {isLoadingContacts ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : `(${contacts.length})`}

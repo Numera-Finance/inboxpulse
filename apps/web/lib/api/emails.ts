@@ -18,6 +18,7 @@ export async function getEmailsByCustomer(
     tatViolation?: boolean;
     dateFrom?: string;
     dateTo?: string;
+    query?: string;
   }
 ): Promise<EmailsByCustomerResponse> {
   return getEmailClient().getByCustomer(tenantId, customerId, options);

@@ -154,6 +154,7 @@ export class EmailClient extends BaseClient {
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;
+      query?: string;
     }
   ): Promise<EmailsByCustomerResponse> {
     const params = new URLSearchParams({ tenantId });
@@ -164,6 +165,7 @@ export class EmailClient extends BaseClient {
     if (options?.tatViolation) params.set('tatViolation', 'true');
     if (options?.dateFrom) params.set('dateFrom', options.dateFrom);
     if (options?.dateTo) params.set('dateTo', options.dateTo);
+    if (options?.query) params.set('query', options.query);
 
     const response = await this.get<ApiResponse<EmailsByCustomerResponse>>(
       `/api/emails/customer/${encodeURIComponent(customerId)}?${params.toString()}`
