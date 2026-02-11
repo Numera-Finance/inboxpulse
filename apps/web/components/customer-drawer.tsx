@@ -114,15 +114,17 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const tenantId = authService.getTenantId() || ""
   const queryClient = useQueryClient()
 
-  // Server-side pagination: page cache and email cache for lookups
+  // Server-side pagination: page cache, email cache, and in-flight request tracking
   const pageCacheRef = React.useRef<Map<string, EmailsByCustomerResponse>>(new Map())
   const emailCacheRef = React.useRef<Map<string, ApiEmailResponse>>(new Map())
+  const inFlightRef = React.useRef<Map<string, Promise<EmailsByCustomerResponse>>>(new Map())
   const [emailTotal, setEmailTotal] = React.useState<number | null>(null)
 
   // Clear caches when customer or filter changes
   React.useEffect(() => {
     pageCacheRef.current.clear()
     emailCacheRef.current.clear()
+    inFlightRef.current.clear()
     setEmailTotal(null)
   }, [customer?.id, emailSentimentFilter])
 
@@ -241,34 +243,55 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     return `${page}_${limit}_${sentiment}_${filter.query || ''}`;
   }, [emailSentimentFilter])
 
-  // Fetch 2 pages from API starting at `startPage`, split and cache each page individually
+  // Fetch 2 pages from API starting at `startPage`, split and cache each page individually.
+  // Deduplicates in-flight requests: if a prefetch is already running for this page,
+  // awaits the existing promise instead of making a duplicate API call.
   const fetchAndCachePages = React.useCallback(async (filter: InboxFilter, startPage: number, pageSize: number) => {
-    const offset = (startPage - 1) * pageSize;
-    const options = buildApiOptions(filter, pageSize * 2, offset);
-    const result = await getEmailsByCustomer(tenantId, customer?.id || "", options);
+    // Return from cache if available
+    const cacheKey = getCacheKey(filter, startPage, pageSize);
+    const cached = pageCacheRef.current.get(cacheKey);
+    if (cached) return cached;
 
-    // Split into individual pages and cache each
-    for (let i = 0; i < 2; i++) {
-      const pageEmails = result.emails.slice(i * pageSize, (i + 1) * pageSize);
-      if (pageEmails.length === 0) break;
+    // Await existing in-flight request if prefetch is already running
+    const inFlight = inFlightRef.current.get(cacheKey);
+    if (inFlight) return inFlight;
 
-      const pageNum = startPage + i;
-      const pageOffset = offset + i * pageSize;
-      const pageResult: EmailsByCustomerResponse = {
-        emails: pageEmails,
-        total: result.total,
-        count: pageEmails.length,
-        limit: pageSize,
-        offset: pageOffset,
-        hasMore: pageOffset + pageEmails.length < result.total,
-      };
+    // Start new fetch and track it
+    const promise = (async () => {
+      const offset = (startPage - 1) * pageSize;
+      const options = buildApiOptions(filter, pageSize * 2, offset);
+      const result = await getEmailsByCustomer(tenantId, customer?.id || "", options);
 
-      pageCacheRef.current.set(getCacheKey(filter, pageNum, pageSize), pageResult);
-      pageEmails.forEach(e => emailCacheRef.current.set(e.id, e));
+      // Split into individual pages and cache each
+      for (let i = 0; i < 2; i++) {
+        const pageEmails = result.emails.slice(i * pageSize, (i + 1) * pageSize);
+        if (pageEmails.length === 0) break;
+
+        const pageNum = startPage + i;
+        const pageOffset = offset + i * pageSize;
+        const pageResult: EmailsByCustomerResponse = {
+          emails: pageEmails,
+          total: result.total,
+          count: pageEmails.length,
+          limit: pageSize,
+          offset: pageOffset,
+          hasMore: pageOffset + pageEmails.length < result.total,
+        };
+
+        pageCacheRef.current.set(getCacheKey(filter, pageNum, pageSize), pageResult);
+        pageEmails.forEach(e => emailCacheRef.current.set(e.id, e));
+      }
+
+      setEmailTotal(result.total);
+      return pageCacheRef.current.get(cacheKey)!;
+    })();
+
+    inFlightRef.current.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      inFlightRef.current.delete(cacheKey);
     }
-
-    setEmailTotal(result.total);
-    return pageCacheRef.current.get(getCacheKey(filter, startPage, pageSize))!;
   }, [tenantId, customer?.id, buildApiOptions, getCacheKey])
 
   // Evict pages outside the 3-page window [current-1, current, current+1]

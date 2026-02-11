@@ -68,14 +68,16 @@ export function TATDrilldownDialog({
 }: TATDrilldownDialogProps) {
   const tenantId = authService.getTenantId() || ""
 
-  // Server-side pagination caches
+  // Server-side pagination caches and in-flight tracking
   const pageCacheRef = React.useRef<Map<string, EmailsByCustomerResponse>>(new Map())
   const emailCacheRef = React.useRef<Map<string, ApiEmailResponse>>(new Map())
+  const inFlightRef = React.useRef<Map<string, Promise<EmailsByCustomerResponse>>>(new Map())
 
   // Clear caches when tatRow or filters change
   React.useEffect(() => {
     pageCacheRef.current.clear()
     emailCacheRef.current.clear()
+    inFlightRef.current.clear()
   }, [tatRow?.customerId, filters?.dateFrom, filters?.dateTo])
 
   // Cache key helper
@@ -83,47 +85,63 @@ export function TATDrilldownDialog({
     return `${page}_${limit}_${filter.query || ''}`;
   }, [])
 
-  // Fetch 2 pages from API starting at startPage, split and cache each
+  // Fetch 2 pages from API, deduplicating in-flight requests
   const fetchAndCachePages = React.useCallback(async (filter: InboxFilter, startPage: number, pageSize: number) => {
-    const offset = (startPage - 1) * pageSize;
-    const options: {
-      limit: number;
-      offset: number;
-      tatViolation: boolean;
-      dateFrom?: string;
-      dateTo?: string;
-      query?: string;
-    } = {
-      limit: pageSize * 2,
-      offset,
-      tatViolation: true,
-      dateFrom: filters?.dateFrom,
-      dateTo: filters?.dateTo,
-    };
-    if (filter.query) options.query = filter.query;
+    const cacheKey = getCacheKey(filter, startPage, pageSize);
+    const cached = pageCacheRef.current.get(cacheKey);
+    if (cached) return cached;
 
-    const result = await getEmailsByCustomer(tenantId, tatRow?.customerId || "", options);
+    const inFlight = inFlightRef.current.get(cacheKey);
+    if (inFlight) return inFlight;
 
-    for (let i = 0; i < 2; i++) {
-      const pageEmails = result.emails.slice(i * pageSize, (i + 1) * pageSize);
-      if (pageEmails.length === 0) break;
-
-      const pageNum = startPage + i;
-      const pageOffset = offset + i * pageSize;
-      const pageResult: EmailsByCustomerResponse = {
-        emails: pageEmails,
-        total: result.total,
-        count: pageEmails.length,
-        limit: pageSize,
-        offset: pageOffset,
-        hasMore: pageOffset + pageEmails.length < result.total,
+    const promise = (async () => {
+      const offset = (startPage - 1) * pageSize;
+      const options: {
+        limit: number;
+        offset: number;
+        tatViolation: boolean;
+        dateFrom?: string;
+        dateTo?: string;
+        query?: string;
+      } = {
+        limit: pageSize * 2,
+        offset,
+        tatViolation: true,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
       };
+      if (filter.query) options.query = filter.query;
 
-      pageCacheRef.current.set(getCacheKey(filter, pageNum, pageSize), pageResult);
-      pageEmails.forEach(e => emailCacheRef.current.set(e.id, e));
+      const result = await getEmailsByCustomer(tenantId, tatRow?.customerId || "", options);
+
+      for (let i = 0; i < 2; i++) {
+        const pageEmails = result.emails.slice(i * pageSize, (i + 1) * pageSize);
+        if (pageEmails.length === 0) break;
+
+        const pageNum = startPage + i;
+        const pageOffset = offset + i * pageSize;
+        const pageResult: EmailsByCustomerResponse = {
+          emails: pageEmails,
+          total: result.total,
+          count: pageEmails.length,
+          limit: pageSize,
+          offset: pageOffset,
+          hasMore: pageOffset + pageEmails.length < result.total,
+        };
+
+        pageCacheRef.current.set(getCacheKey(filter, pageNum, pageSize), pageResult);
+        pageEmails.forEach(e => emailCacheRef.current.set(e.id, e));
+      }
+
+      return pageCacheRef.current.get(cacheKey)!;
+    })();
+
+    inFlightRef.current.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      inFlightRef.current.delete(cacheKey);
     }
-
-    return pageCacheRef.current.get(getCacheKey(filter, startPage, pageSize))!;
   }, [tenantId, tatRow?.customerId, filters?.dateFrom, filters?.dateTo, getCacheKey])
 
   // Evict pages outside the 3-page window [current-1, current, current+1]
