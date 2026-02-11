@@ -338,9 +338,14 @@ export class TaskService {
       );
 
     if (escalationTasks.length === 0) {
-      logger.debug({ tenantId }, 'No open escalations found');
+      logger.info({ tenantId }, 'No open escalations found');
       return new Map();
     }
+
+    logger.info(
+      { tenantId, escalationTaskCount: escalationTasks.length },
+      'Found open escalation tasks'
+    );
 
     // Calculate date boundaries for metrics
     const todayStart = new Date(now);
@@ -375,10 +380,25 @@ export class TaskService {
 
     // Batch-fetch managers and account owners for all customers in 2 queries
     const customerIds = [...new Set(escalationTasks.map(t => t.task.customerId))];
+    logger.info(
+      { tenantId, customerIds, customerCount: customerIds.length },
+      'Fetching managers and account owners for escalation customers'
+    );
+
     const [managersMap, accountOwnersMap] = await Promise.all([
       this.userRepository.getAllManagersForCustomers(customerIds),
       this.userRepository.getAccountOwnersForCustomers(customerIds),
     ]);
+
+    logger.info(
+      {
+        tenantId,
+        managersFound: managersMap.size,
+        managerCustomerIds: [...managersMap.keys()],
+        accountOwnersFound: accountOwnersMap.size,
+      },
+      'Manager and account owner lookup results'
+    );
 
     // Group tasks by customer
     const tasksByCustomer = new Map<string, typeof escalationTasks>();

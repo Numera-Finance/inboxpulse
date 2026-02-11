@@ -41,8 +41,22 @@ export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
               const managerEscalationMap = await taskService.getEscalationDataForTenant(tenant.id);
 
               if (managerEscalationMap.size === 0) {
+                logger.info({ tenantId: tenant.id }, 'No managers with escalations found for tenant');
                 return { tenantId: tenant.id, notificationsSent: 0 };
               }
+
+              logger.info(
+                {
+                  tenantId: tenant.id,
+                  managersWithEscalations: managerEscalationMap.size,
+                  managers: [...managerEscalationMap.values()].map(d => ({
+                    email: d.manager.email,
+                    timezone: d.manager.timezone,
+                    escalationCount: d.escalations.length,
+                  })),
+                },
+                'Checking timezone filter for managers'
+              );
 
               // Filter managers who should receive notifications now (timezone check)
               const managersToNotify = [...managerEscalationMap.entries()].filter(
@@ -52,6 +66,13 @@ export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
               );
 
               if (managersToNotify.length === 0) {
+                logger.info(
+                  {
+                    tenantId: tenant.id,
+                    currentUtcHour: new Date().getUTCHours(),
+                  },
+                  'All managers filtered out by timezone check (not 8am local time)'
+                );
                 return { tenantId: tenant.id, notificationsSent: 0 };
               }
 
