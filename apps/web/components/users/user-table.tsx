@@ -67,6 +67,7 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
           .map((n) => n[0])
           .join("")
           .toUpperCase()
+          .slice(0, 2)
         return (
           <div className="flex items-center gap-3">
             <Avatar className="h-8 w-8">

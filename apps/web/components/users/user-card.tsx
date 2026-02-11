@@ -18,6 +18,7 @@ export function UserCard({ user, onClick }: UserCardProps) {
     .map((n) => n[0])
     .join("")
     .toUpperCase()
+    .slice(0, 2)
 
   const statusStyles = {
     Active: "bg-green-500/10 text-green-600 dark:text-green-400",
