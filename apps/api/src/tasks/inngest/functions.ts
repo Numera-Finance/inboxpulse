@@ -58,11 +58,11 @@ export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
                 'Checking timezone filter for managers'
               );
 
-              // Filter managers who should receive notifications now (timezone check)
+              // TEMP: Only send to mbalsara@mystartupcfo.com every hour for testing
               const managersToNotify = [...managerEscalationMap.entries()].filter(
                 ([, data]) =>
                   data.escalations.length > 0 &&
-                  taskService.shouldSendNotification(data.manager.timezone)
+                  data.manager.email === 'mbalsara@mystartupcfo.com'
               );
 
               if (managersToNotify.length === 0) {
@@ -71,7 +71,7 @@ export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
                     tenantId: tenant.id,
                     currentUtcHour: new Date().getUTCHours(),
                   },
-                  'All managers filtered out by timezone check (not 8am local time)'
+                  'No matching managers to notify'
                 );
                 return { tenantId: tenant.id, notificationsSent: 0 };
               }
