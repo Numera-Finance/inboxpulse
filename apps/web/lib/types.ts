@@ -37,6 +37,7 @@ export interface User {
   assignedCustomers: string[]; // Array of customer IDs (deprecated, use customerAssignments)
   customerAssignments: CustomerAssignment[]; // Customer assignments with roles
   status: 'Active' | 'Inactive' | 'On Leave';
+  timezone?: string | null; // IANA timezone
   canLogin: boolean; // Whether user can login to the application
   lastLoginAt?: string | null; // Last login timestamp
   joinedDate?: string;
@@ -72,6 +73,7 @@ export function mapUserToUser(user: UserResponse): User {
     role: user.role?.name, // RBAC role name from nested role object
     department: undefined, // TODO: Add department field to user API
     avatar: undefined,
+    timezone: user.timezone ?? null,
     reportsTo: (user.managers || []).map(m => m.email),
     assignedCustomers: customerAssignments.map(a => a.customerId),
     customerAssignments,

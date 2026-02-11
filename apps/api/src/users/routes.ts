@@ -178,6 +178,7 @@ userRoutes.post('/', requirePermission(Permission.USER_ADD), async (c) => {
         firstName: request.firstName,
         lastName: request.lastName,
         email: request.email,
+        timezone: request.timezone,
         rowStatus: 0, // Active by default
       });
 

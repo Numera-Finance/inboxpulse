@@ -19,6 +19,7 @@ export const createUserRequestSchema = z.object({
   lastName: z.string().min(1).max(60),
   email: z.string().email().max(255),
   roleId: z.string().uuid().optional(), // RBAC system role
+  timezone: z.string().max(50).optional(), // IANA timezone (e.g., 'Asia/Kolkata')
   managerEmails: z.array(z.string().email()).optional(),
   customerAssignments: z.array(customerAssignmentRequestSchema).optional(),
 });

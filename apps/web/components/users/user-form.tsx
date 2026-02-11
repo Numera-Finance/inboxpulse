@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RoleSelect } from "@/components/ui/role-select"
 import { SystemRoleSelect } from "@/components/ui/system-role-select"
 import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
@@ -31,6 +32,7 @@ export interface UserFormData {
   roleId?: string | null // RBAC system role
   role?: string
   department?: string
+  timezone?: string | null // IANA timezone
   canLogin?: boolean // Whether user can login
   reportsTo: string[] // Manager email addresses
   customerAssignments: CustomerAssignmentRow[] // Customer assignments with roles
@@ -63,6 +65,7 @@ export function UserForm({
   const [roleId, setRoleId] = React.useState<string | null>(initialData?.roleId ?? null)
   const [role, setRole] = React.useState(initialData?.role || "")
   const [department, setDepartment] = React.useState(initialData?.department || "")
+  const [timezone, setTimezone] = React.useState<string>(initialData?.timezone || "")
   const [canLogin, setCanLogin] = React.useState(initialData?.canLogin ?? true)
   const [managerEmails, setManagerEmails] = React.useState<string[]>(initialData?.reportsTo || [])
   const [customerAssignments, setCustomerAssignments] = React.useState<CustomerAssignmentRow[]>(
@@ -123,6 +126,7 @@ export function UserForm({
       roleId,
       role: role || undefined,
       department: department || undefined,
+      timezone: timezone || undefined,
       canLogin,
       reportsTo: managerEmails,
       customerAssignments: validAssignments,
@@ -223,6 +227,39 @@ export function UserForm({
               disabled={isLoading}
               placeholder="Select role..."
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="timezone">Timezone</Label>
+            <Select
+              value={timezone}
+              onValueChange={setTimezone}
+              disabled={isLoading}
+            >
+              <SelectTrigger id="timezone">
+                <SelectValue placeholder="Select timezone..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Pacific/Honolulu">Hawaii (HST)</SelectItem>
+                <SelectItem value="America/Anchorage">Alaska (AKST)</SelectItem>
+                <SelectItem value="America/Los_Angeles">Pacific (PST)</SelectItem>
+                <SelectItem value="America/Denver">Mountain (MST)</SelectItem>
+                <SelectItem value="America/Chicago">Central (CST)</SelectItem>
+                <SelectItem value="America/New_York">Eastern (EST)</SelectItem>
+                <SelectItem value="America/Sao_Paulo">Brasilia (BRT)</SelectItem>
+                <SelectItem value="Europe/London">London (GMT)</SelectItem>
+                <SelectItem value="Europe/Paris">Central Europe (CET)</SelectItem>
+                <SelectItem value="Europe/Helsinki">Eastern Europe (EET)</SelectItem>
+                <SelectItem value="Asia/Dubai">Dubai (GST)</SelectItem>
+                <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
+                <SelectItem value="Asia/Bangkok">Bangkok (ICT)</SelectItem>
+                <SelectItem value="Asia/Singapore">Singapore (SGT)</SelectItem>
+                <SelectItem value="Asia/Shanghai">China (CST)</SelectItem>
+                <SelectItem value="Asia/Tokyo">Japan (JST)</SelectItem>
+                <SelectItem value="Australia/Sydney">Sydney (AEST)</SelectItem>
+                <SelectItem value="Pacific/Auckland">New Zealand (NZST)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex items-center justify-between">

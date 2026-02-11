@@ -118,6 +118,7 @@ export default function UsersPage() {
         lastName: data.lastName,
         email: data.email,
         roleId: data.roleId ?? undefined,
+        timezone: data.timezone ?? undefined,
         managerEmails: data.reportsTo || [],
         customerAssignments,
       })
@@ -137,6 +138,7 @@ export default function UsersPage() {
           firstName: data.firstName,
           lastName: data.lastName,
           roleId: data.roleId ?? undefined,
+          timezone: data.timezone ?? undefined,
           canLogin: data.canLogin,
           managerEmails: data.reportsTo || [],
         },
