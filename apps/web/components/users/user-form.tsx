@@ -13,6 +13,7 @@ import { RoleSelect } from "@/components/ui/role-select"
 import { SystemRoleSelect } from "@/components/ui/system-role-select"
 import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
 import { useUsers } from "@/lib/hooks"
+import { SUPPORTED_TIMEZONES } from "@/lib/constants/timezones"
 
 /**
  * Customer assignment row with role
@@ -241,11 +242,11 @@ export function UserForm({
                   <SelectValue placeholder="Select timezone..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
-                  <SelectItem value="America/New_York">US Eastern (EST)</SelectItem>
-                  <SelectItem value="America/Chicago">US Central (CST)</SelectItem>
-                  <SelectItem value="America/Denver">US Mountain (MST)</SelectItem>
-                  <SelectItem value="America/Los_Angeles">US Pacific (PST)</SelectItem>
+                  {SUPPORTED_TIMEZONES.map((tz) => (
+                    <SelectItem key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { useToast } from "@/components/ui/use-toast"
-import { getSupportedTimezones } from "@/lib/constants/timezones"
+import { SUPPORTED_TIMEZONES } from "@/lib/constants/timezones"
 import { getUserClient, getNotificationsClient } from "@/lib/api/clients"
 import type { NotificationPreference, BatchInterval, NotificationContext } from "@crm/clients"
 import { Loader2 } from "lucide-react"
@@ -67,8 +67,6 @@ export function UserPreferences() {
   // Store the actual user data with UUID (from /api/users/me)
   const [userContext, setUserContext] = useState<NotificationContext | null>(null)
 
-  // Get all supported timezones from browser's Intl API
-  const timezones = useMemo(() => getSupportedTimezones(), [])
 
   // Fetch current user preferences on mount
   useEffect(() => {
@@ -223,9 +221,9 @@ export function UserPreferences() {
                 <SelectValue placeholder="Select timezone" />
               </SelectTrigger>
               <SelectContent>
-                {timezones.map((tz) => (
+                {SUPPORTED_TIMEZONES.map((tz) => (
                   <SelectItem key={tz.value} value={tz.value}>
-                    {tz.label} ({tz.offset})
+                    {tz.label}
                   </SelectItem>
                 ))}
               </SelectContent>
