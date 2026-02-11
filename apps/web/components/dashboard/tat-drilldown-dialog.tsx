@@ -78,13 +78,14 @@ export function TATDrilldownDialog({
     emailCacheRef.current.clear()
   }, [tatRow?.customerId, filters?.dateFrom, filters?.dateTo])
 
-  // Helper: fetch a page and cache it
-  const fetchPage = React.useCallback(async (filter: InboxFilter, page: number, limit: number) => {
-    const cacheKey = `${page}_${limit}_${filter.query || ''}`;
-    const cached = pageCacheRef.current.get(cacheKey);
-    if (cached) return cached;
+  // Cache key helper
+  const getCacheKey = React.useCallback((filter: InboxFilter, page: number, limit: number) => {
+    return `${page}_${limit}_${filter.query || ''}`;
+  }, [])
 
-    const offset = (page - 1) * limit;
+  // Fetch 2 pages from API starting at startPage, split and cache each
+  const fetchAndCachePages = React.useCallback(async (filter: InboxFilter, startPage: number, pageSize: number) => {
+    const offset = (startPage - 1) * pageSize;
     const options: {
       limit: number;
       offset: number;
@@ -93,7 +94,7 @@ export function TATDrilldownDialog({
       dateTo?: string;
       query?: string;
     } = {
-      limit,
+      limit: pageSize * 2,
       offset,
       tatViolation: true,
       dateFrom: filters?.dateFrom,
@@ -103,11 +104,27 @@ export function TATDrilldownDialog({
 
     const result = await getEmailsByCustomer(tenantId, tatRow?.customerId || "", options);
 
-    pageCacheRef.current.set(cacheKey, result);
-    result.emails.forEach(e => emailCacheRef.current.set(e.id, e));
+    for (let i = 0; i < 2; i++) {
+      const pageEmails = result.emails.slice(i * pageSize, (i + 1) * pageSize);
+      if (pageEmails.length === 0) break;
 
-    return result;
-  }, [tenantId, tatRow?.customerId, filters?.dateFrom, filters?.dateTo])
+      const pageNum = startPage + i;
+      const pageOffset = offset + i * pageSize;
+      const pageResult: EmailsByCustomerResponse = {
+        emails: pageEmails,
+        total: result.total,
+        count: pageEmails.length,
+        limit: pageSize,
+        offset: pageOffset,
+        hasMore: pageOffset + pageEmails.length < result.total,
+      };
+
+      pageCacheRef.current.set(getCacheKey(filter, pageNum, pageSize), pageResult);
+      pageEmails.forEach(e => emailCacheRef.current.set(e.id, e));
+    }
+
+    return pageCacheRef.current.get(getCacheKey(filter, startPage, pageSize))!;
+  }, [tenantId, tatRow?.customerId, filters?.dateFrom, filters?.dateTo, getCacheKey])
 
   // Email inbox callbacks for InboxView (server-side pagination)
   const emailCallbacks = React.useMemo(() => {
@@ -118,21 +135,27 @@ export function TATDrilldownDialog({
         filter: InboxFilter,
         pagination: InboxPagination
       ): Promise<InboxPage<InboxItem>> => {
-        const result = await fetchPage(filter, pagination.page, pagination.limit);
+        const { page, limit } = pagination;
+        const cacheKey = getCacheKey(filter, page, limit);
+        let result = pageCacheRef.current.get(cacheKey);
 
-        // Eagerly prefetch adjacent pages
-        if (result.hasMore) {
-          fetchPage(filter, pagination.page + 1, pagination.limit).catch(() => {});
+        if (!result) {
+          result = await fetchAndCachePages(filter, page, limit);
         }
-        if (pagination.page > 1) {
-          fetchPage(filter, pagination.page - 1, pagination.limit).catch(() => {});
+
+        // Prefetch next 2 pages if next page isn't cached
+        if (result.hasMore) {
+          const nextKey = getCacheKey(filter, page + 1, limit);
+          if (!pageCacheRef.current.has(nextKey)) {
+            fetchAndCachePages(filter, page + 1, limit).catch(() => {});
+          }
         }
 
         return {
           items: result.emails.map(apiEmailToInboxItem),
           total: result.total,
-          page: pagination.page,
-          limit: pagination.limit,
+          page,
+          limit,
           hasMore: result.hasMore,
         }
       },
@@ -147,7 +170,7 @@ export function TATDrilldownDialog({
         // No-op for now - could be extended to show email details
       },
     }
-  }, [tatRow, fetchPage])
+  }, [tatRow, fetchAndCachePages, getCacheKey])
 
   if (!tatRow) return null
 

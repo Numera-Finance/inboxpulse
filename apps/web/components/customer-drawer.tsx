@@ -241,21 +241,34 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     return `${page}_${limit}_${sentiment}_${filter.query || ''}`;
   }, [emailSentimentFilter])
 
-  // Helper: fetch a page and cache it
-  const fetchPage = React.useCallback(async (filter: InboxFilter, page: number, limit: number) => {
-    const cacheKey = getCacheKey(filter, page, limit);
-    const cached = pageCacheRef.current.get(cacheKey);
-    if (cached) return cached;
-
-    const offset = (page - 1) * limit;
-    const options = buildApiOptions(filter, limit, offset);
+  // Fetch 2 pages from API starting at `startPage`, split and cache each page individually
+  const fetchAndCachePages = React.useCallback(async (filter: InboxFilter, startPage: number, pageSize: number) => {
+    const offset = (startPage - 1) * pageSize;
+    const options = buildApiOptions(filter, pageSize * 2, offset);
     const result = await getEmailsByCustomer(tenantId, customer?.id || "", options);
 
-    // Cache page result and individual emails
-    pageCacheRef.current.set(cacheKey, result);
-    result.emails.forEach(e => emailCacheRef.current.set(e.id, e));
+    // Split into individual pages and cache each
+    for (let i = 0; i < 2; i++) {
+      const pageEmails = result.emails.slice(i * pageSize, (i + 1) * pageSize);
+      if (pageEmails.length === 0) break;
 
-    return result;
+      const pageNum = startPage + i;
+      const pageOffset = offset + i * pageSize;
+      const pageResult: EmailsByCustomerResponse = {
+        emails: pageEmails,
+        total: result.total,
+        count: pageEmails.length,
+        limit: pageSize,
+        offset: pageOffset,
+        hasMore: pageOffset + pageEmails.length < result.total,
+      };
+
+      pageCacheRef.current.set(getCacheKey(filter, pageNum, pageSize), pageResult);
+      pageEmails.forEach(e => emailCacheRef.current.set(e.id, e));
+    }
+
+    setEmailTotal(result.total);
+    return pageCacheRef.current.get(getCacheKey(filter, startPage, pageSize))!;
   }, [tenantId, customer?.id, buildApiOptions, getCacheKey])
 
   // Email inbox callbacks for InboxView (server-side pagination)
@@ -267,26 +280,30 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         filter: InboxFilter,
         pagination: InboxPagination
       ): Promise<InboxPage<InboxItem>> => {
-        // Fetch current page from API (or cache)
-        const result = await fetchPage(filter, pagination.page, pagination.limit);
+        const { page, limit } = pagination;
+        const cacheKey = getCacheKey(filter, page, limit);
+        let result = pageCacheRef.current.get(cacheKey);
 
-        // Update total for tab header
-        setEmailTotal(result.total);
-
-        // Eagerly prefetch next page in background
-        if (result.hasMore) {
-          fetchPage(filter, pagination.page + 1, pagination.limit).catch(() => {});
+        if (!result) {
+          // Cache miss: fetch current page + next page (2 pages)
+          result = await fetchAndCachePages(filter, page, limit);
+        } else {
+          setEmailTotal(result.total);
         }
-        // Eagerly prefetch previous page if not cached
-        if (pagination.page > 1) {
-          fetchPage(filter, pagination.page - 1, pagination.limit).catch(() => {});
+
+        // Ensure next page is prefetched: if next page isn't cached, fetch it + one more
+        if (result.hasMore) {
+          const nextKey = getCacheKey(filter, page + 1, limit);
+          if (!pageCacheRef.current.has(nextKey)) {
+            fetchAndCachePages(filter, page + 1, limit).catch(() => {});
+          }
         }
 
         return {
           items: result.emails.map(apiEmailToInboxItem),
           total: result.total,
-          page: pagination.page,
-          limit: pagination.limit,
+          page,
+          limit,
           hasMore: result.hasMore,
         }
       },
@@ -331,7 +348,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         }
       },
     }
-  }, [customer, fetchPage, onEmailSelect])
+  }, [customer, fetchAndCachePages, getCacheKey, onEmailSelect])
 
   // Contact handlers - must be before contactColumns useMemo
   const handleStartEdit = (contact: ContactDisplay) => {
