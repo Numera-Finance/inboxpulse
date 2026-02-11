@@ -1,4 +1,4 @@
-import { eq, and, sql, isNull, SQL } from 'drizzle-orm';
+import { eq, and, sql, isNull, inArray, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
 import type { Database } from '@crm/database';
@@ -434,7 +434,7 @@ export class UserRepository extends ScopedRepository {
         SELECT DISTINCT uc.customer_id, um.manager_id
         FROM user_customers uc
         JOIN user_managers um ON um.user_id = uc.user_id
-        WHERE uc.customer_id = ANY(${customerIds})
+        WHERE uc.customer_id IN (${sql.join(customerIds.map(id => sql`${id}`), sql`, `)})
 
         UNION
 
@@ -495,7 +495,7 @@ export class UserRepository extends ScopedRepository {
       .innerJoin(users, eq(users.id, userCustomers.userId))
       .where(
         and(
-          sql`${userCustomers.customerId} = ANY(${customerIds})`,
+          inArray(userCustomers.customerId, customerIds),
           eq(userCustomers.roleId, ACCOUNT_MANAGER_ROLE_ID)
         )
       );
