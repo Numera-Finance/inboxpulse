@@ -32,10 +32,6 @@ CREATE TABLE IF NOT EXISTS emails (
     -- Provider-specific data (store Gmail labels, Outlook categories, etc.)
     metadata JSONB,
 
-    -- Deduplication fields (for detecting forwarded copies of the same email)
-    rfc_message_id VARCHAR(500),   -- RFC 2822 Message-ID header (same across all recipients)
-    content_hash VARCHAR(64),       -- SHA-256 hex of from+subject+body+recipients
-
     -- Analysis signals (computed async) - array of Signal integers
     -- See @crm/shared Signal constants:
     --   1=SENTIMENT_POSITIVE, 2=SENTIMENT_NEGATIVE, 3=SENTIMENT_NEUTRAL
@@ -70,10 +66,6 @@ CREATE INDEX idx_emails_thread ON emails(thread_id, received_at DESC);
 CREATE INDEX idx_emails_from ON emails(tenant_id, from_email);
 CREATE INDEX idx_emails_provider_message ON emails(provider, message_id);
 CREATE INDEX idx_emails_integration ON emails(integration_id);
-
--- Dedup indexes
-CREATE INDEX idx_emails_rfc_message_id ON emails(tenant_id, rfc_message_id);
-CREATE INDEX idx_emails_content_hash ON emails(tenant_id, content_hash);
 
 -- GIN index for efficient signal array queries: WHERE signals @> ARRAY[1]
 CREATE INDEX idx_emails_signals ON emails USING GIN(signals);

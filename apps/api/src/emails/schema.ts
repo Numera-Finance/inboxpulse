@@ -83,10 +83,6 @@ export const emails = pgTable('emails', {
   // Provider-specific data (store Gmail labels, Outlook categories, etc.)
   metadata: jsonb('metadata').$type<Record<string, any>>(),
 
-  // Deduplication fields (for detecting forwarded copies of the same email)
-  rfcMessageId: varchar('rfc_message_id', { length: 500 }),  // RFC 2822 Message-ID header
-  contentHash: varchar('content_hash', { length: 64 }),       // SHA-256 hex of email content
-
   // Analysis signals (computed async) - array of Signal integers
   // See @crm/shared Signal constants for values (e.g., Signal.SENTIMENT_POSITIVE = 1)
   signals: integer('signals').array().default([]),
@@ -119,9 +115,6 @@ export const emails = pgTable('emails', {
   ),
   // Index for TAT metrics queries (customer emails only)
   tenantCustomerEmailIdx: index('idx_emails_tenant_customer').on(table.tenantId, table.isCustomerEmail),
-  // Dedup indexes
-  tenantRfcMessageIdIdx: index('idx_emails_rfc_message_id').on(table.tenantId, table.rfcMessageId),
-  tenantContentHashIdx: index('idx_emails_content_hash').on(table.tenantId, table.contentHash),
   // GIN index for efficient array containment queries: WHERE signals @> ARRAY[1]
   // Note: Drizzle doesn't support GIN indexes directly, add via SQL migration
 }));
