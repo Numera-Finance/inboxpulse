@@ -85,6 +85,11 @@ export class EmailService {
       receivedAt: Date;
     }> = [];
 
+    // Batch-level dedup sets — shared across all collections in this batch
+    // Catches forwarded copies that land in different Gmail threads
+    const batchSeenRfcIds = new Set<string>();
+    const batchSeenHashes = new Set<string>();
+
     for (const collection of emailCollections) {
       // Save thread and emails transactionally
       // Ensures data consistency: either both succeed or both fail
@@ -92,7 +97,9 @@ export class EmailService {
         tenantId,
         integrationId,
         collection,
-        tenantDomain
+        tenantDomain,
+        batchSeenRfcIds,
+        batchSeenHashes
       );
 
       threadsCreated += result.threadCreated ? 1 : 0;
@@ -373,7 +380,9 @@ export class EmailService {
     tenantId: string,
     integrationId: string,
     collection: EmailCollection,
-    tenantDomain: string | null
+    tenantDomain: string | null,
+    batchSeenRfcIds: Set<string>,
+    batchSeenHashes: Set<string>
   ): Promise<{
     threadId: string;
     threadCreated: boolean;
@@ -416,7 +425,8 @@ export class EmailService {
       // Step 2.5: Dedup check — filter out emails that are forwarded copies
       // Layer 1: Check by RFC 2822 Message-ID (exact match on original message)
       // Layer 2: Check by content hash (fallback for forwarded copies with new Message-ID)
-      const emailsDb = await this.filterDuplicateEmails(tx, tenantId, allEmailsDb);
+      // Checks both DB and batch-level in-memory sets (for cross-collection dedup)
+      const emailsDb = await this.filterDuplicateEmails(tx, tenantId, allEmailsDb, batchSeenRfcIds, batchSeenHashes);
       const dedupSkipped = allEmailsDb.length - emailsDb.length;
 
       if (dedupSkipped > 0) {
@@ -574,26 +584,36 @@ export class EmailService {
    *   Layer 1: RFC 2822 Message-ID match (same original email)
    *   Layer 2: Content hash match (same content, different Message-ID)
    *
+   * Checks against:
+   *   - Existing emails in the database
+   *   - Batch-level in-memory sets (forwarded copies across different collections/threads)
+   *
+   * Updates batchSeenRfcIds/batchSeenHashes with newly accepted emails so
+   * subsequent collections in the same batch are deduped without a DB round-trip.
+   *
    * Returns only the emails that are NOT duplicates.
    */
   private async filterDuplicateEmails(
     tx: any,
     tenantId: string,
-    emailsDb: NewEmail[]
+    emailsDb: NewEmail[],
+    batchSeenRfcIds: Set<string>,
+    batchSeenHashes: Set<string>
   ): Promise<NewEmail[]> {
     if (emailsDb.length === 0) return [];
 
-    // Collect rfcMessageIds and contentHashes to check
+    // Collect rfcMessageIds and contentHashes to check against DB
+    // Exclude ones already known as duplicates from batch-level sets
     const rfcMessageIds = emailsDb
       .map(e => e.rfcMessageId)
-      .filter((id): id is string => !!id);
+      .filter((id): id is string => !!id && !batchSeenRfcIds.has(id));
     const contentHashes = emailsDb
       .map(e => e.contentHash)
-      .filter((hash): hash is string => !!hash);
+      .filter((hash): hash is string => !!hash && !batchSeenHashes.has(hash));
 
-    // Batch query: find existing emails with matching rfcMessageId or contentHash
-    const existingRfcIds = new Set<string>();
-    const existingHashes = new Set<string>();
+    // Batch query: find existing emails in DB with matching rfcMessageId or contentHash
+    const dbRfcIds = new Set<string>();
+    const dbHashes = new Set<string>();
 
     if (rfcMessageIds.length > 0) {
       const existing = await tx
@@ -606,7 +626,7 @@ export class EmailService {
           )
         );
       for (const row of existing) {
-        if (row.rfcMessageId) existingRfcIds.add(row.rfcMessageId);
+        if (row.rfcMessageId) dbRfcIds.add(row.rfcMessageId);
       }
     }
 
@@ -621,55 +641,37 @@ export class EmailService {
           )
         );
       for (const row of existing) {
-        if (row.contentHash) existingHashes.add(row.contentHash);
+        if (row.contentHash) dbHashes.add(row.contentHash);
       }
     }
 
-    // Filter: keep only emails that don't match existing rfcMessageId or contentHash
-    // Also dedup within the batch itself (multiple forwarded copies can arrive together)
-    const seenRfcIds = new Set<string>();
-    const seenHashes = new Set<string>();
-
+    // Filter: keep only emails that don't match DB or batch-level sets
     return emailsDb.filter(email => {
-      // Layer 1: RFC Message-ID match (against DB)
-      if (email.rfcMessageId && existingRfcIds.has(email.rfcMessageId)) {
-        logger.debug(
-          { tenantId, messageId: email.messageId, rfcMessageId: email.rfcMessageId },
-          'Dedup: skipping email (RFC Message-ID match in DB)'
-        );
-        return false;
+      // Layer 1: RFC Message-ID match
+      if (email.rfcMessageId) {
+        if (dbRfcIds.has(email.rfcMessageId) || batchSeenRfcIds.has(email.rfcMessageId)) {
+          logger.debug(
+            { tenantId, messageId: email.messageId, rfcMessageId: email.rfcMessageId },
+            'Dedup: skipping email (RFC Message-ID match)'
+          );
+          return false;
+        }
       }
 
-      // Layer 1b: RFC Message-ID match (within batch)
-      if (email.rfcMessageId && seenRfcIds.has(email.rfcMessageId)) {
-        logger.debug(
-          { tenantId, messageId: email.messageId, rfcMessageId: email.rfcMessageId },
-          'Dedup: skipping email (RFC Message-ID match in batch)'
-        );
-        return false;
+      // Layer 2: Content hash match
+      if (email.contentHash) {
+        if (dbHashes.has(email.contentHash) || batchSeenHashes.has(email.contentHash)) {
+          logger.debug(
+            { tenantId, messageId: email.messageId, contentHash: email.contentHash },
+            'Dedup: skipping email (content hash match)'
+          );
+          return false;
+        }
       }
 
-      // Layer 2: Content hash match (against DB)
-      if (email.contentHash && existingHashes.has(email.contentHash)) {
-        logger.debug(
-          { tenantId, messageId: email.messageId, contentHash: email.contentHash },
-          'Dedup: skipping email (content hash match in DB)'
-        );
-        return false;
-      }
-
-      // Layer 2b: Content hash match (within batch)
-      if (email.contentHash && seenHashes.has(email.contentHash)) {
-        logger.debug(
-          { tenantId, messageId: email.messageId, contentHash: email.contentHash },
-          'Dedup: skipping email (content hash match in batch)'
-        );
-        return false;
-      }
-
-      // Track this email for intra-batch dedup
-      if (email.rfcMessageId) seenRfcIds.add(email.rfcMessageId);
-      if (email.contentHash) seenHashes.add(email.contentHash);
+      // Accept this email — track in batch sets for subsequent collections
+      if (email.rfcMessageId) batchSeenRfcIds.add(email.rfcMessageId);
+      if (email.contentHash) batchSeenHashes.add(email.contentHash);
 
       return true;
     });
