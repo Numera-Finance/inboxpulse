@@ -159,6 +159,25 @@ export class EmailService {
       }
     }
 
+    // Log batch-level dedup summary
+    const batchDedupTotal = batchSeenRfcIds.size + batchSeenHashes.size;
+    logger.info(
+      {
+        tenantId,
+        integrationId,
+        collections: emailCollections.length,
+        threadsCreated,
+        totalInserted,
+        totalSkipped,
+        analysisQueued: emailsToAnalyze.length,
+        dedupTracked: {
+          rfcMessageIds: batchSeenRfcIds.size,
+          contentHashes: batchSeenHashes.size,
+        },
+      },
+      'Email bulk insert complete'
+    );
+
     // Trigger analysis for emails that need it (outside transaction)
     // If Inngest event send fails, email is still saved and can be retried later
     for (const { emailId, threadId } of emailsToAnalyze) {
@@ -407,19 +426,22 @@ export class EmailService {
       );
       const dedupSkipped = collection.emails.length - dedupResult.emails.length;
 
-      if (dedupSkipped > 0) {
-        logger.info(
-          {
-            tenantId,
-            providerThreadId: collection.thread.threadId,
-            totalEmails: collection.emails.length,
-            dedupSkipped,
-            existingMessageUpdates: dedupResult.existingMessageIds.size,
-            remaining: dedupResult.emails.length,
-          },
-          'Dedup: skipped forwarded copies of existing emails'
-        );
-      }
+      // Log per-collection dedup results
+      logger.info(
+        {
+          tenantId,
+          providerThreadId: collection.thread.threadId,
+          totalEmails: collection.emails.length,
+          dedupSkipped,
+          existingMessageUpdates: dedupResult.existingMessageIds.size,
+          accepted: dedupResult.emails.length,
+          acceptedMessageIds: dedupResult.emails.map(e => e.messageId),
+          acceptedSubjects: dedupResult.emails.map(e => e.subject?.substring(0, 80)),
+        },
+        dedupSkipped > 0
+          ? 'Dedup: skipped forwarded copies of existing emails'
+          : 'Dedup: all emails accepted (no duplicates found)'
+      );
 
       // If all emails were deduped, return early
       if (dedupResult.emails.length === 0) {
@@ -686,6 +708,9 @@ export class EmailService {
     }
 
     // Filter: keep only emails that don't match DB or batch-level sets
+    const skippedByRfc: Array<{ messageId: string; rfcMessageId: string; source: string }> = [];
+    const skippedByHash: Array<{ messageId: string; contentHash: string; source: string }> = [];
+
     const filtered = candidates.filter(({ email, rfcMessageId, contentHash }) => {
       // Preserve existing provider message IDs so upsert can refresh metadata/labels/body.
       if (existingMessageIds.has(email.messageId)) {
@@ -695,10 +720,11 @@ export class EmailService {
       // Layer 1: RFC Message-ID match
       if (rfcMessageId) {
         if (dbRfcIds.has(rfcMessageId) || batchSeenRfcIds.has(rfcMessageId)) {
-          logger.debug(
-            { tenantId, messageId: email.messageId, rfcMessageId },
-            'Dedup: skipping email (RFC Message-ID match)'
-          );
+          skippedByRfc.push({
+            messageId: email.messageId,
+            rfcMessageId,
+            source: dbRfcIds.has(rfcMessageId) ? 'db' : 'batch',
+          });
           return false;
         }
       }
@@ -706,10 +732,11 @@ export class EmailService {
       // Layer 2: Content hash match (fallback only when RFC Message-ID missing)
       if (!rfcMessageId && contentHash) {
         if (dbHashes.has(contentHash) || batchSeenHashes.has(contentHash)) {
-          logger.debug(
-            { tenantId, messageId: email.messageId, contentHash },
-            'Dedup: skipping email (content hash match)'
-          );
+          skippedByHash.push({
+            messageId: email.messageId,
+            contentHash,
+            source: dbHashes.has(contentHash) ? 'db' : 'batch',
+          });
           return false;
         }
       }
@@ -720,6 +747,24 @@ export class EmailService {
 
       return true;
     });
+
+    // Log dedup decisions at info level for production visibility
+    if (skippedByRfc.length > 0 || skippedByHash.length > 0) {
+      logger.info(
+        {
+          tenantId,
+          provider,
+          incoming: incomingEmails.length,
+          accepted: filtered.length,
+          skippedByRfc: skippedByRfc.length,
+          skippedByHash: skippedByHash.length,
+          existingMessageUpdates: existingMessageIds.size,
+          rfcDetails: skippedByRfc,
+          hashDetails: skippedByHash,
+        },
+        'Dedup: filtered duplicate emails'
+      );
+    }
 
     return {
       emails: filtered.map(c => c.email),
