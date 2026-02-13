@@ -409,13 +409,44 @@ export class EmailService {
 
       // Step 2: Convert emails to database format with thread ID
       // Pass tenant domain for TAT classification (isCustomerEmail)
-      const emailsDb: NewEmail[] = collection.emails.map((email) =>
+      const allEmailsDb: NewEmail[] = collection.emails.map((email) =>
         emailToDb(email, tenantId, threadId, integrationId, tenantDomain)
       );
 
+      // Step 2.5: Dedup check — filter out emails that are forwarded copies
+      // Layer 1: Check by RFC 2822 Message-ID (exact match on original message)
+      // Layer 2: Check by content hash (fallback for forwarded copies with new Message-ID)
+      const emailsDb = await this.filterDuplicateEmails(tx, tenantId, allEmailsDb);
+      const dedupSkipped = allEmailsDb.length - emailsDb.length;
+
+      if (dedupSkipped > 0) {
+        logger.info(
+          {
+            tenantId,
+            threadId,
+            totalEmails: allEmailsDb.length,
+            dedupSkipped,
+            remaining: emailsDb.length,
+          },
+          'Dedup: skipped forwarded copies of existing emails'
+        );
+      }
+
+      // If all emails were deduped, return early
+      if (emailsDb.length === 0) {
+        return {
+          threadId,
+          threadCreated,
+          insertedCount: 0,
+          skippedCount: allEmailsDb.length,
+          emailsToAnalyze: [],
+          insertedEmails: [],
+        };
+      }
+
       // Step 3: Check existing emails before insert/update (for change detection)
       const existingEmailsMap = new Map<string, { id: string; body: string | null; analysisStatus: EmailAnalysisStatus | null }>();
-      
+
       if (emailsDb.length > 0) {
         const messageIds = emailsDb.map(e => e.messageId);
         const existingEmails = await tx
@@ -500,7 +531,7 @@ export class EmailService {
       const updatedCount = insertedEmails.filter((e) =>
         existingEmailsMap.has(e.messageId)
       ).length;
-      const skippedCount = emailsDb.length - insertedEmails.length;
+      const skippedCount = dedupSkipped + (emailsDb.length - insertedEmails.length);
 
       // Transaction commits here - ALL OR NOTHING
       // If anything fails, entire transaction rolls back
@@ -535,6 +566,87 @@ export class EmailService {
    */
   private hashString(str: string): string {
     return createHash('sha256').update(str).digest('hex');
+  }
+
+  /**
+   * Filter out duplicate emails that are forwarded copies of already-stored emails.
+   * Uses two-layer detection:
+   *   Layer 1: RFC 2822 Message-ID match (same original email)
+   *   Layer 2: Content hash match (same content, different Message-ID)
+   *
+   * Returns only the emails that are NOT duplicates.
+   */
+  private async filterDuplicateEmails(
+    tx: any,
+    tenantId: string,
+    emailsDb: NewEmail[]
+  ): Promise<NewEmail[]> {
+    if (emailsDb.length === 0) return [];
+
+    // Collect rfcMessageIds and contentHashes to check
+    const rfcMessageIds = emailsDb
+      .map(e => e.rfcMessageId)
+      .filter((id): id is string => !!id);
+    const contentHashes = emailsDb
+      .map(e => e.contentHash)
+      .filter((hash): hash is string => !!hash);
+
+    // Batch query: find existing emails with matching rfcMessageId or contentHash
+    const existingRfcIds = new Set<string>();
+    const existingHashes = new Set<string>();
+
+    if (rfcMessageIds.length > 0) {
+      const existing = await tx
+        .select({ rfcMessageId: emails.rfcMessageId })
+        .from(emails)
+        .where(
+          and(
+            eq(emails.tenantId, tenantId),
+            inArray(emails.rfcMessageId, rfcMessageIds)
+          )
+        );
+      for (const row of existing) {
+        if (row.rfcMessageId) existingRfcIds.add(row.rfcMessageId);
+      }
+    }
+
+    if (contentHashes.length > 0) {
+      const existing = await tx
+        .select({ contentHash: emails.contentHash })
+        .from(emails)
+        .where(
+          and(
+            eq(emails.tenantId, tenantId),
+            inArray(emails.contentHash, contentHashes)
+          )
+        );
+      for (const row of existing) {
+        if (row.contentHash) existingHashes.add(row.contentHash);
+      }
+    }
+
+    // Filter: keep only emails that don't match existing rfcMessageId or contentHash
+    return emailsDb.filter(email => {
+      // Layer 1: RFC Message-ID match
+      if (email.rfcMessageId && existingRfcIds.has(email.rfcMessageId)) {
+        logger.debug(
+          { tenantId, messageId: email.messageId, rfcMessageId: email.rfcMessageId },
+          'Dedup: skipping email (RFC Message-ID match)'
+        );
+        return false;
+      }
+
+      // Layer 2: Content hash match
+      if (email.contentHash && existingHashes.has(email.contentHash)) {
+        logger.debug(
+          { tenantId, messageId: email.messageId, contentHash: email.contentHash },
+          'Dedup: skipping email (content hash match)'
+        );
+        return false;
+      }
+
+      return true;
+    });
   }
 
   /**

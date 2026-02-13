@@ -49,6 +49,9 @@ For existing databases, use the migration scripts in the `migrations/` directory
 ```bash
 # Apply TAT metrics migration (adds TAT tracking columns, holiday_calendars table)
 psql $DATABASE_URL -f apps/api/sql/migrations/001_tat_metrics.sql
+
+# Apply email dedup migration (adds rfc_message_id, content_hash columns + indexes)
+psql $DATABASE_URL -f apps/api/sql/migrations/003_email_dedup.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
