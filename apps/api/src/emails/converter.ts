@@ -1,5 +1,6 @@
 import type { Email, EmailThread } from '@crm/shared';
 import type { NewEmail, NewEmailThread, Email as DbEmail } from './schema';
+import { createHash } from 'crypto';
 
 /**
  * Convert email thread to database insert type
@@ -38,6 +39,12 @@ export function emailToDb(
     ? !email.from.email.toLowerCase().endsWith(`@${tenantDomain.toLowerCase()}`)
     : null; // null if tenant domain not configured
 
+  // Extract RFC 2822 Message-ID from metadata (set by email parser)
+  const rfcMessageId = email.metadata?.rfcMessageId as string | undefined || null;
+
+  // Compute content hash for deduplication
+  const contentHash = computeEmailContentHash(email);
+
   return {
     tenantId,
     threadId,
@@ -56,7 +63,32 @@ export function emailToDb(
     receivedAt: email.receivedAt,
     metadata: email.metadata,
     isCustomerEmail,
+    rfcMessageId,
+    contentHash,
   };
+}
+
+/**
+ * Compute SHA-256 content hash for email deduplication.
+ * Identical forwarded copies (via Gmail auto-forward) will produce the same hash
+ * because the email content is preserved as-is.
+ *
+ * Hash = SHA-256(lowercase(from) + lowercase(subject) + lowercase(body) + sorted(tos) + sorted(ccs) + sorted(bccs))
+ */
+export function computeEmailContentHash(email: Email): string {
+  const fromEmail = (email.from.email || '').toLowerCase();
+  const subject = (email.subject || '').toLowerCase();
+  const body = (email.body || '').toLowerCase();
+
+  const sortEmails = (addrs?: Array<{ email: string; name?: string }>): string =>
+    (addrs || []).map(a => a.email.toLowerCase()).sort().join(',');
+
+  const tos = sortEmails(email.tos);
+  const ccs = sortEmails(email.ccs);
+  const bccs = sortEmails(email.bccs);
+
+  const content = `${fromEmail}\n${subject}\n${body}\n${tos}\n${ccs}\n${bccs}`;
+  return createHash('sha256').update(content).digest('hex');
 }
 
 /**

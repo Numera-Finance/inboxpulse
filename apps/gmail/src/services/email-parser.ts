@@ -126,6 +126,10 @@ export class EmailParserService {
         labelIds: message.labelIds || [],
         snippet: message.snippet,
         sizeEstimate: message.sizeEstimate,
+        // RFC 2822 headers for deduplication
+        rfcMessageId: headers.get('message-id') || undefined,
+        references: headers.get('references') || undefined,
+        inReplyTo: headers.get('in-reply-to') || undefined,
       },
     };
   }
