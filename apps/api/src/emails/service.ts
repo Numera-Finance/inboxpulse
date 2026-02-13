@@ -626,24 +626,50 @@ export class EmailService {
     }
 
     // Filter: keep only emails that don't match existing rfcMessageId or contentHash
+    // Also dedup within the batch itself (multiple forwarded copies can arrive together)
+    const seenRfcIds = new Set<string>();
+    const seenHashes = new Set<string>();
+
     return emailsDb.filter(email => {
-      // Layer 1: RFC Message-ID match
+      // Layer 1: RFC Message-ID match (against DB)
       if (email.rfcMessageId && existingRfcIds.has(email.rfcMessageId)) {
         logger.debug(
           { tenantId, messageId: email.messageId, rfcMessageId: email.rfcMessageId },
-          'Dedup: skipping email (RFC Message-ID match)'
+          'Dedup: skipping email (RFC Message-ID match in DB)'
         );
         return false;
       }
 
-      // Layer 2: Content hash match
-      if (email.contentHash && existingHashes.has(email.contentHash)) {
+      // Layer 1b: RFC Message-ID match (within batch)
+      if (email.rfcMessageId && seenRfcIds.has(email.rfcMessageId)) {
         logger.debug(
-          { tenantId, messageId: email.messageId, contentHash: email.contentHash },
-          'Dedup: skipping email (content hash match)'
+          { tenantId, messageId: email.messageId, rfcMessageId: email.rfcMessageId },
+          'Dedup: skipping email (RFC Message-ID match in batch)'
         );
         return false;
       }
+
+      // Layer 2: Content hash match (against DB)
+      if (email.contentHash && existingHashes.has(email.contentHash)) {
+        logger.debug(
+          { tenantId, messageId: email.messageId, contentHash: email.contentHash },
+          'Dedup: skipping email (content hash match in DB)'
+        );
+        return false;
+      }
+
+      // Layer 2b: Content hash match (within batch)
+      if (email.contentHash && seenHashes.has(email.contentHash)) {
+        logger.debug(
+          { tenantId, messageId: email.messageId, contentHash: email.contentHash },
+          'Dedup: skipping email (content hash match in batch)'
+        );
+        return false;
+      }
+
+      // Track this email for intra-batch dedup
+      if (email.rfcMessageId) seenRfcIds.add(email.rfcMessageId);
+      if (email.contentHash) seenHashes.add(email.contentHash);
 
       return true;
     });
