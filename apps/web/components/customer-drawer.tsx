@@ -50,9 +50,10 @@ interface CustomerDrawerProps {
   isLoading?: boolean
   selectedEmailId?: string
   onEmailSelect?: (emailId: string | null) => void
+  initialSignalFilter?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | null
 }
 
-export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect }: CustomerDrawerProps) {
+export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter }: CustomerDrawerProps) {
   // Track visibility separately from open to allow exit animation
   const [isVisible, setIsVisible] = React.useState(open)
   const [shouldRender, setShouldRender] = React.useState(open)
@@ -108,7 +109,14 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const [editTeamMemberError, setEditTeamMemberError] = React.useState<string | null>(null)
 
   // Email filter state - lifted from InboxView to enable server-side filtering
-  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all'>('negative')
+  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all'>(initialSignalFilter || 'negative')
+
+  // Sync signal filter when URL signal changes (e.g., clicking different signal counts)
+  React.useEffect(() => {
+    if (initialSignalFilter) {
+      setEmailSentimentFilter(initialSignalFilter)
+    }
+  }, [initialSignalFilter])
 
   // Get tenantId from auth service
   const tenantId = authService.getTenantId() || ""
@@ -198,7 +206,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       setLabels(customer.labels)
     }
     // Always reset filters when customer ID changes (including to undefined)
-    setEmailSentimentFilter('negative')
+    setEmailSentimentFilter(initialSignalFilter || 'negative')
     setContactSearch('')
     setContactSorting([])
   }, [customer?.id])

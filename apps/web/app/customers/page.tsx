@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { Search, Plus, Upload } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ViewToggle } from "@/components/view-toggle"
@@ -18,6 +18,7 @@ import { CustomerTableSkeleton } from "@/components/ui/table-skeleton"
 import { useCustomers, useCustomer, useUpsertCustomer, useImportCustomers, useExportCustomers } from "@/lib/hooks"
 import { type Customer, mapApiCustomerToCustomer } from "@/lib/types"
 import { SearchOperator } from "@crm/shared"
+import type { SignalFilterType } from "@crm/clients"
 import { toast } from "sonner"
 import { PermissionGate, Permission } from "@/src/components/PermissionGate"
 
@@ -41,6 +42,8 @@ function useDebounce<T>(value: T, delay: number): T {
 export default function CustomersPage() {
   const { customerId, tab, emailId } = useParams<{ customerId?: string; tab?: string; emailId?: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const signalFromUrl = searchParams.get("signal") as SignalFilterType | null
 
   const [view, setView] = React.useState<"grid" | "table">("table")
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -105,7 +108,7 @@ export default function CustomersPage() {
   }
 
   const handleCloseDrawer = () => {
-    navigate('/customers')
+    navigate('/customers', { replace: true })
   }
 
   const handleTabChange = (newTab: string) => {
@@ -120,6 +123,10 @@ export default function CustomersPage() {
     } else if (customerId) {
       navigate(`/customers/${customerId}/emails`, { replace: true })
     }
+  }
+
+  const handleSignalClick = (customer: Customer, signal: string) => {
+    navigate(`/customers/${customer.id}/emails?signal=${signal}`)
   }
 
   const handleAddCustomer = async (customerData: CustomerFormData) => {
@@ -253,6 +260,7 @@ export default function CustomersPage() {
               <CustomerTable
                 customers={customers}
                 onSelect={handleSelectCustomer}
+                onSignalClick={handleSignalClick}
                 pagination={pagination}
                 onPaginationChange={setPagination}
                 totalCount={totalCount}
@@ -276,6 +284,7 @@ export default function CustomersPage() {
           isLoading={Boolean(customerId) && !selectedCustomer && isLoadingCustomer}
           selectedEmailId={emailId}
           onEmailSelect={handleEmailSelect}
+          initialSignalFilter={signalFromUrl}
         />
 
         <AddCustomerDrawer
