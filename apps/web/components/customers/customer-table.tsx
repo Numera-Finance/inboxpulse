@@ -135,7 +135,7 @@ export function CustomerTable({ customers, onSelect, pagination, onPaginationCha
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
         >
           <AlertTriangle className="mr-1 h-3 w-3" />
-          Escalations
+          Negative
           <ArrowUpDown className="ml-2 h-3 w-3" />
         </Button>
       ),

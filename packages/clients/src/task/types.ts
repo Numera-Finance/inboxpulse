@@ -66,6 +66,7 @@ export interface TaskSearchRequest {
   offset?: number;
   dateFrom?: Date | string;
   dateTo?: Date | string;
+  signal?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat';
 }
 
 /**
@@ -105,6 +106,7 @@ export interface TaskExportRequest {
   customerId?: string;
   dateFrom?: Date | string;
   dateTo?: Date | string;
+  signal?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat';
 }
 
 /**

@@ -9,6 +9,7 @@ import { ExportButton } from "@/components/ui/export-button"
 import { createXlsxBlob } from "@/lib/utils/export"
 import {
   InboxView,
+  SignalFilter,
   apiTaskToInboxItem,
   apiTaskToInboxContent,
   type InboxItem,
@@ -16,6 +17,7 @@ import {
   type InboxPagination,
   type InboxPage,
   type InboxItemContent,
+  type InboxSentimentFilter,
   type TaskWithComments,
 } from "@/components/inbox"
 import {
@@ -58,6 +60,8 @@ export default function EscalationsPage() {
   const customerIdFromUrl = searchParams.get("customer")
   const dateFromUrl = searchParams.get("dateFrom")
   const dateToUrl = searchParams.get("dateTo")
+  const signalFromUrl = searchParams.get("signal") as TaskFilter['signal'] | null
+  const effectiveSignal = signalFromUrl || 'negative'
 
   // Task filter state (synced with URL params)
   const taskFilters = React.useMemo<TaskFilter>(() => {
@@ -91,9 +95,13 @@ export default function EscalationsPage() {
     if (dateToUrl) {
       filters.dateTo = new Date(dateToUrl)
     }
-    
+
+    if (effectiveSignal) {
+      filters.signal = effectiveSignal
+    }
+
     return filters
-  }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl])
+  }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, effectiveSignal])
 
   // Data fetching
   const { data: assignableUsers = [] } = useAssignableUsers()
@@ -174,9 +182,14 @@ export default function EscalationsPage() {
         request.dateTo = toDate.toISOString()
       }
 
+      // Signal filter
+      if (effectiveSignal) {
+        request.signal = effectiveSignal
+      }
+
       return request
     },
-    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId]
+    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId, effectiveSignal]
   )
 
   // Fetch tasks callback for InboxView
@@ -316,7 +329,14 @@ export default function EscalationsPage() {
       } else {
         params.delete("dateTo")
       }
-      
+
+      // Signal
+      if (newFilters.signal) {
+        params.set("signal", newFilters.signal)
+      } else {
+        params.delete("signal")
+      }
+
       return params
     })
   }, [setSearchParams])
@@ -447,6 +467,10 @@ export default function EscalationsPage() {
       exportRequest.dateTo = toDate.toISOString()
     }
 
+    if (effectiveSignal) {
+      exportRequest.signal = effectiveSignal
+    }
+
     // Fetch all escalations with comments in one request
     const escalationsWithComments = await taskClient.exportWithComments(exportRequest)
 
@@ -467,7 +491,7 @@ export default function EscalationsPage() {
       ],
       sheetName: "Escalations",
     })
-  }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId])
+  }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId, effectiveSignal])
 
   return (
     <AppShell>
@@ -477,7 +501,7 @@ export default function EscalationsPage() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Inbox className="h-5 w-5 text-primary" />
-              <h1 className="text-lg font-semibold">Escalations</h1>
+              <h1 className="text-lg font-semibold">AI Analysis</h1>
             </div>
             <ExportButton
               onExport={handleExportEscalations}
@@ -491,6 +515,12 @@ export default function EscalationsPage() {
             availableAssignees={assignableUsers}
             currentUserId={currentUserId}
             customerName={customerName}
+            afterStatus={
+              <SignalFilter
+                value={(effectiveSignal || 'all') as InboxSentimentFilter}
+                onChange={(v) => handleFiltersChange({ ...taskFilters, signal: v === 'all' ? undefined : v as TaskFilter['signal'] })}
+              />
+            }
           />
         </div>
 

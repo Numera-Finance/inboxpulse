@@ -1,22 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { Search, RefreshCw, Archive, Inbox, AlertTriangle, Loader2, ChevronLeft, ChevronRight, GripVertical, Smile, Frown, Meh, TrendingUp, TrendingDown, Clock } from "lucide-react"
+import { Search, RefreshCw, Archive, Inbox, AlertTriangle, Loader2, ChevronLeft, ChevronRight, GripVertical } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { InboxListItem } from "./inbox-list-item"
 import { InboxDetailPanel } from "./inbox-detail-panel"
+import { SignalFilter } from "./signal-filter"
 import { cn } from "@/lib/utils"
 import type {
   InboxViewProps,
@@ -460,55 +454,7 @@ export function InboxView({
           )}
           {/* Sentiment Filter */}
           {config.showSentimentFilter && (
-            <Select
-              value={sentimentFilter}
-              onValueChange={(v) => setSentimentFilter(v as InboxSentimentFilter)}
-            >
-              <SelectTrigger className="w-[130px] h-8">
-                <SelectValue placeholder="Sentiment" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <span className="flex items-center gap-2">All</span>
-                </SelectItem>
-                <SelectItem value="positive">
-                  <span className="flex items-center gap-2">
-                    <Smile className="h-3.5 w-3.5 text-green-500" />
-                    Positive
-                  </span>
-                </SelectItem>
-                <SelectItem value="neutral">
-                  <span className="flex items-center gap-2">
-                    <Meh className="h-3.5 w-3.5 text-gray-500" />
-                    Neutral
-                  </span>
-                </SelectItem>
-                <SelectItem value="negative">
-                  <span className="flex items-center gap-2">
-                    <Frown className="h-3.5 w-3.5 text-red-500" />
-                    Negative
-                  </span>
-                </SelectItem>
-                <SelectItem value="upsell">
-                  <span className="flex items-center gap-2">
-                    <TrendingUp className="h-3.5 w-3.5 text-blue-500" />
-                    Upsell
-                  </span>
-                </SelectItem>
-                <SelectItem value="churn">
-                  <span className="flex items-center gap-2">
-                    <TrendingDown className="h-3.5 w-3.5 text-orange-500" />
-                    Churn Risk
-                  </span>
-                </SelectItem>
-                <SelectItem value="tat">
-                  <span className="flex items-center gap-2">
-                    <Clock className="h-3.5 w-3.5 text-red-500" />
-                    TAT Breach
-                  </span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
+            <SignalFilter value={sentimentFilter} onChange={setSentimentFilter} />
           )}
           <TooltipProvider>
             <Tooltip>

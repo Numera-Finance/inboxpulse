@@ -108,7 +108,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const [editTeamMemberError, setEditTeamMemberError] = React.useState<string | null>(null)
 
   // Email filter state - lifted from InboxView to enable server-side filtering
-  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all'>('all')
+  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all'>('negative')
 
   // Get tenantId from auth service
   const tenantId = authService.getTenantId() || ""
@@ -198,7 +198,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       setLabels(customer.labels)
     }
     // Always reset filters when customer ID changes (including to undefined)
-    setEmailSentimentFilter('all')
+    setEmailSentimentFilter('negative')
     setContactSearch('')
     setContactSorting([])
   }, [customer?.id])
