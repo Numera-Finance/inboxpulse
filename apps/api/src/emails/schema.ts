@@ -37,16 +37,16 @@ export const emailThreads = pgTable('email_threads', {
   // Tracking
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  tenantLastMessageIdx: index('idx_threads_tenant_last_message').on(table.tenantId, table.lastMessageAt),
-  integrationThreadIdx: index('idx_threads_integration_thread').on(table.integrationId, table.providerThreadId),
-  integrationIdx: index('idx_threads_integration').on(table.integrationId),
-  tenantIntegrationThreadUnique: uniqueIndex('uniq_thread_tenant_integration').on(
+}, (table) => [
+  index('idx_threads_tenant_last_message').on(table.tenantId, table.lastMessageAt),
+  index('idx_threads_integration_thread').on(table.integrationId, table.providerThreadId),
+  index('idx_threads_integration').on(table.integrationId),
+  uniqueIndex('uniq_thread_tenant_integration').on(
     table.tenantId,
     table.integrationId,
     table.providerThreadId
   ),
-}));
+]);
 
 export type EmailThread = typeof emailThreads.$inferSelect;
 export type NewEmailThread = typeof emailThreads.$inferInsert;
@@ -106,25 +106,25 @@ export const emails = pgTable('emails', {
   // Tracking
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  tenantReceivedIdx: index('idx_emails_tenant_received').on(table.tenantId, table.receivedAt),
-  threadIdx: index('idx_emails_thread').on(table.threadId, table.receivedAt),
-  fromIdx: index('idx_emails_from').on(table.tenantId, table.fromEmail),
-  providerMessageIdx: index('idx_emails_provider_message').on(table.provider, table.messageId),
-  integrationIdx: index('idx_emails_integration').on(table.integrationId),
-  tenantProviderMessageUnique: uniqueIndex('uniq_emails_tenant_provider_message').on(
+}, (table) => [
+  index('idx_emails_tenant_received').on(table.tenantId, table.receivedAt),
+  index('idx_emails_thread').on(table.threadId, table.receivedAt),
+  index('idx_emails_from').on(table.tenantId, table.fromEmail),
+  index('idx_emails_provider_message').on(table.provider, table.messageId),
+  index('idx_emails_integration').on(table.integrationId),
+  uniqueIndex('uniq_emails_tenant_provider_message').on(
     table.tenantId,
     table.provider,
     table.messageId
   ),
   // Index for TAT metrics queries (customer emails only)
-  tenantCustomerEmailIdx: index('idx_emails_tenant_customer').on(table.tenantId, table.isCustomerEmail),
+  index('idx_emails_tenant_customer').on(table.tenantId, table.isCustomerEmail),
   // Dedup indexes
-  tenantRfcMessageIdIdx: index('idx_emails_rfc_message_id').on(table.tenantId, table.rfcMessageId),
-  tenantContentHashIdx: index('idx_emails_content_hash').on(table.tenantId, table.contentHash),
+  index('idx_emails_rfc_message_id').on(table.tenantId, table.rfcMessageId),
+  index('idx_emails_content_hash').on(table.tenantId, table.contentHash),
   // GIN index for efficient array containment queries: WHERE signals @> ARRAY[1]
   // Note: Drizzle doesn't support GIN indexes directly, add via SQL migration
-}));
+]);
 
 export type Email = typeof emails.$inferSelect;
 export type NewEmail = typeof emails.$inferInsert;

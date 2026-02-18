@@ -120,35 +120,35 @@ export const emailAnalyses = pgTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
-  (table) => ({
+  (table) => [
     // Unique constraint: one analysis result per email per analysis type
-    emailAnalysisTypeUnique: uniqueIndex('uniq_email_analysis_type').on(
+    uniqueIndex('uniq_email_analysis_type').on(
       table.emailId,
       table.analysisType
     ),
 
     // Indexes for common queries
-    emailIdx: index('idx_email_analyses_email').on(table.emailId),
-    tenantIdx: index('idx_email_analyses_tenant').on(table.tenantId),
-    analysisTypeIdx: index('idx_email_analyses_type').on(table.analysisType),
-    confidenceIdx: index('idx_email_analyses_confidence').on(table.confidence),
-    detectedIdx: index('idx_email_analyses_detected').on(table.detected), // For escalation, upsell, kudos, competitor
-    riskLevelIdx: index('idx_email_analyses_risk_level').on(table.riskLevel), // For churn
-    urgencyIdx: index('idx_email_analyses_urgency').on(table.urgency), // For escalation
-    sentimentValueIdx: index('idx_email_analyses_sentiment_value').on(table.sentimentValue), // For sentiment
-    tenantTypeIdx: index('idx_email_analyses_tenant_type').on(table.tenantId, table.analysisType),
-    tenantTypeDetectedIdx: index('idx_email_analyses_tenant_type_detected').on(
+    index('idx_email_analyses_email').on(table.emailId),
+    index('idx_email_analyses_tenant').on(table.tenantId),
+    index('idx_email_analyses_type').on(table.analysisType),
+    index('idx_email_analyses_confidence').on(table.confidence),
+    index('idx_email_analyses_detected').on(table.detected), // For escalation, upsell, kudos, competitor
+    index('idx_email_analyses_risk_level').on(table.riskLevel), // For churn
+    index('idx_email_analyses_urgency').on(table.urgency), // For escalation
+    index('idx_email_analyses_sentiment_value').on(table.sentimentValue), // For sentiment
+    index('idx_email_analyses_tenant_type').on(table.tenantId, table.analysisType),
+    index('idx_email_analyses_tenant_type_detected').on(
       table.tenantId,
       table.analysisType,
       table.detected
     ), // For querying detected escalations/upsells/etc.
-    tenantTypeRiskIdx: index('idx_email_analyses_tenant_type_risk').on(
+    index('idx_email_analyses_tenant_type_risk').on(
       table.tenantId,
       table.analysisType,
       table.riskLevel
     ), // For querying churn risk
-    createdAtIdx: index('idx_email_analyses_created_at').on(table.createdAt),
-  })
+    index('idx_email_analyses_created_at').on(table.createdAt),
+  ]
 );
 
 export type EmailAnalysis = typeof emailAnalyses.$inferSelect;

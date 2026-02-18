@@ -45,18 +45,18 @@ export const runs = pgTable(
     completedAt: timestamp('completed_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
-  (table) => ({
-    tenantStatusIdx: index('idx_runs_tenant_status').on(
+  (table) => [
+    index('idx_runs_tenant_status').on(
       table.tenantId,
       table.status,
       table.startedAt
     ),
-    integrationStatusIdx: index('idx_runs_integration_status').on(
+    index('idx_runs_integration_status').on(
       table.integrationId,
       table.status,
       table.startedAt
     ),
-  })
+  ]
 );
 
 export type Run = typeof runs.$inferSelect;

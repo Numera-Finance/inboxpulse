@@ -11,9 +11,9 @@ export const analysisCache = pgTable('analysis_cache', {
   tenantId: uuid('tenant_id').notNull(),
   results: jsonb('results').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.messageId, table.modelId] }),
-}));
+}, (table) => [
+  primaryKey({ columns: [table.messageId, table.modelId] }),
+]);
 
 export type AnalysisCacheRecord = typeof analysisCache.$inferSelect;
 export type NewAnalysisCacheRecord = typeof analysisCache.$inferInsert;

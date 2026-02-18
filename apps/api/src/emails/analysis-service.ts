@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { AnalysisClient, type ClassificationResult } from '@crm/clients';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import { EmailAnalysisRepository } from './analysis-repository';
 import { EmailRepository } from './repository';
 import { ThreadAnalysisService } from './thread-analysis-service';
@@ -550,7 +550,7 @@ export class EmailAnalysisService {
    * This is the single source of truth for email → customer mapping logic.
    */
   private async ensureContactsInTransaction(
-    tx: any,
+    tx: Transaction,
     tenantId: string,
     email: Email,
     participantsToEnsure: Array<{ email: string; name?: string }>
@@ -778,7 +778,7 @@ export class EmailAnalysisService {
    * Create email participants (within transaction)
    */
   private async createEmailParticipantsInTransaction(
-    tx: any,
+    tx: Transaction,
     tenantId: string,
     emailId: string,
     email: Email,
@@ -836,7 +836,7 @@ export class EmailAnalysisService {
    * Persist analysis results (within transaction)
    */
   private async persistAnalysisResultsInTransaction(
-    tx: any,
+    tx: Transaction,
     tenantId: string,
     emailId: string,
     analysisResults: Record<string, any>
@@ -881,7 +881,7 @@ export class EmailAnalysisService {
    * Converts analysis results to Signal integers and updates the signals array
    */
   private async updateEmailSignalsInTransaction(
-    tx: any,
+    tx: Transaction,
     emailId: string,
     analysisResults: Record<string, any>,
     classificationResult?: ClassificationResult
@@ -981,7 +981,7 @@ export class EmailAnalysisService {
    * Enrich contacts from signature (within transaction)
    */
   private async enrichContactsFromSignatureInTransaction(
-    tx: any,
+    tx: Transaction,
     tenantId: string,
     emailId: string,
     email: Email,
@@ -1014,7 +1014,7 @@ export class EmailAnalysisService {
    * Update thread summaries (within transaction)
    */
   private async updateThreadSummariesInTransaction(
-    tx: any,
+    tx: Transaction,
     tenantId: string,
     threadId: string,
     emailId: string,

@@ -25,12 +25,12 @@ export const customerDomains = pgTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
-  (table) => ({
+  (table) => [
     // Each domain must be unique per tenant
-    tenantDomainUnique: uniqueIndex('uniq_customer_domains_tenant_domain').on(table.tenantId, table.domain),
-    customerIdIdx: index('idx_customer_domains_customer_id').on(table.customerId),
-    tenantDomainIdx: index('idx_customer_domains_tenant_domain').on(table.tenantId, table.domain),
-  })
+    uniqueIndex('uniq_customer_domains_tenant_domain').on(table.tenantId, table.domain),
+    index('idx_customer_domains_customer_id').on(table.customerId),
+    index('idx_customer_domains_tenant_domain').on(table.tenantId, table.domain),
+  ]
 );
 
 export type CustomerDomain = typeof customerDomains.$inferSelect;

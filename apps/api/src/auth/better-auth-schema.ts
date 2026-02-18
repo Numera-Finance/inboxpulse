@@ -30,10 +30,10 @@ export const betterAuthUser = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => ({
-    emailIdx: uniqueIndex('idx_better_auth_user_email').on(table.email),
-    tenantIdIdx: index('idx_better_auth_user_tenant_id').on(table.tenantId),
-  })
+  (table) => [
+    uniqueIndex('idx_better_auth_user_email').on(table.email),
+    index('idx_better_auth_user_tenant_id').on(table.tenantId),
+  ]
 );
 
 /**
@@ -58,11 +58,11 @@ export const betterAuthSession = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => ({
-    userIdIdx: index('idx_better_auth_session_user_id').on(table.userId),
-    tokenIdx: uniqueIndex('idx_better_auth_session_token').on(table.token),
-    expiresAtIdx: index('idx_better_auth_session_expires_at').on(table.expiresAt),
-  })
+  (table) => [
+    index('idx_better_auth_session_user_id').on(table.userId),
+    uniqueIndex('idx_better_auth_session_token').on(table.token),
+    index('idx_better_auth_session_expires_at').on(table.expiresAt),
+  ]
 );
 
 /**
@@ -91,13 +91,13 @@ export const betterAuthAccount = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => ({
-    userIdIdx: index('idx_better_auth_account_user_id').on(table.userId),
-    providerAccountIdx: uniqueIndex('idx_better_auth_account_provider').on(
+  (table) => [
+    index('idx_better_auth_account_user_id').on(table.userId),
+    uniqueIndex('idx_better_auth_account_provider').on(
       table.providerId,
       table.accountId
     ),
-  })
+  ]
 );
 
 /**
@@ -118,11 +118,11 @@ export const betterAuthVerification = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => ({
-    identifierValueIdx: uniqueIndex('idx_better_auth_verification_identifier_value').on(
+  (table) => [
+    uniqueIndex('idx_better_auth_verification_identifier_value').on(
       table.identifier,
       table.value
     ),
-    expiresAtIdx: index('idx_better_auth_verification_expires_at').on(table.expiresAt),
-  })
+    index('idx_better_auth_verification_expires_at').on(table.expiresAt),
+  ]
 );
