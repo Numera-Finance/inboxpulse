@@ -92,7 +92,7 @@ export function CustomerCard({ customer, onClick }: CustomerCardProps) {
         <div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
             <AlertTriangle className="h-3 w-3" />
-            Escalations
+            Negative
           </div>
           <p className={cn("text-lg font-semibold", customer.escalations > 0 && "text-destructive")}>
             {customer.escalations}

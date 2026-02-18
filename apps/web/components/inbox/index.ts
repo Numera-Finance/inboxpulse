@@ -77,6 +77,7 @@
 export { InboxView } from "./inbox-view"
 export { InboxListItem } from "./inbox-list-item"
 export { InboxDetailPanel } from "./inbox-detail-panel"
+export { SignalFilter } from "./signal-filter"
 
 // Types
 export type {
@@ -97,6 +98,7 @@ export type {
   InboxDetailPanelProps,
   InboxItemAdapter,
   InboxContentAdapter,
+  InboxSentimentFilter,
 } from "./types"
 
 // Adapters

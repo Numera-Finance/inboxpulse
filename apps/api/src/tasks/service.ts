@@ -27,6 +27,7 @@ export const taskSearchRequestSchema = z.object({
   offset: z.number().int().min(0).optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
+  signal: z.enum(['positive', 'negative', 'neutral', 'upsell', 'churn', 'tat']).optional(),
 });
 
 export const taskExportRequestSchema = z.object({
@@ -35,6 +36,7 @@ export const taskExportRequestSchema = z.object({
   customerId: z.string().uuid().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
+  signal: z.enum(['positive', 'negative', 'neutral', 'upsell', 'churn', 'tat']).optional(),
 });
 
 export const createTaskRequestSchema = z.object({
@@ -136,6 +138,7 @@ export class TaskService {
       offset: request.offset,
       dateFrom,
       dateTo,
+      signal: request.signal,
     });
 
     return {
@@ -168,6 +171,7 @@ export class TaskService {
       customerId: request.customerId,
       dateFrom,
       dateTo,
+      signal: request.signal,
     });
 
     logger.info({

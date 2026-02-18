@@ -1,7 +1,7 @@
 import { eq, and, sql, SQL, desc, asc, inArray } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository, type Database } from '@crm/database';
-import { Permission, type RequestHeader } from '@crm/shared';
+import { Permission, Signal, type RequestHeader } from '@crm/shared';
 import { tasks, taskComments, userSubordinates, type Task, type NewTask, type TaskComment, type NewTaskComment, TaskStatus } from './schema';
 import { users } from '../users/schema';
 import { customers } from '../customers/schema';
@@ -76,6 +76,7 @@ export class TaskRepository extends ScopedRepository {
       search?: string;
       dateFrom?: Date;
       dateTo?: Date;
+      signal?: string;
     }
   ): SQL[] {
     const conditions: SQL[] = [
@@ -119,6 +120,24 @@ export class TaskRepository extends ScopedRepository {
         ? options.dateTo.toISOString()
         : options.dateTo;
       conditions.push(sql`${tasks.createdAt} <= ${dateToStr}`);
+    }
+
+    if (options.signal) {
+      const signalMap: Record<string, number[]> = {
+        positive: [Signal.SENTIMENT_POSITIVE],
+        negative: [Signal.SENTIMENT_NEGATIVE],
+        neutral: [Signal.SENTIMENT_NEUTRAL],
+        upsell: [Signal.UPSELL],
+        churn: [Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL],
+        tat: [], // TAT violation is computed dynamically, not a stored signal
+      };
+      const signalValues = signalMap[options.signal];
+      if (signalValues && signalValues.length > 0) {
+        conditions.push(sql`${tasks.emailId} IN (
+          SELECT e.id FROM emails e
+          WHERE e.signals && ARRAY[${sql.join(signalValues.map(v => sql`${v}`), sql`, `)}]::integer[]
+        )`);
+      }
     }
 
     return conditions;
@@ -204,6 +223,7 @@ export class TaskRepository extends ScopedRepository {
       offset?: number;
       dateFrom?: Date;
       dateTo?: Date;
+      signal?: string;
     }
   ): Promise<{ items: TaskWithRelations[]; total: number }> {
     const conditions = this.buildTaskFilters(header, options);
@@ -425,6 +445,7 @@ export class TaskRepository extends ScopedRepository {
       customerId?: string;
       dateFrom?: Date;
       dateTo?: Date;
+      signal?: string;
     }
   ): Promise<Array<TaskWithRelations & { comments: TaskCommentWithUser[] }>> {
     const conditions = this.buildTaskFilters(header, options);

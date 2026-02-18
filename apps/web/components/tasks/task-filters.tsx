@@ -16,6 +16,7 @@ export interface TaskFilter {
   customerId?: string
   dateFrom?: Date
   dateTo?: Date
+  signal?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat'
   [key: string]: any
 }
 
@@ -35,6 +36,7 @@ interface TaskFiltersProps {
   availableAssignees?: Array<{ id: string; name: string }>
   currentUserId?: string
   customerName?: string | null  // Customer name for display in badge
+  afterStatus?: React.ReactNode  // Slot rendered right after the status dropdown
   className?: string
 }
 
@@ -46,6 +48,7 @@ export function TaskFilters({
   availableAssignees = [],
   currentUserId,
   customerName: propCustomerName,
+  afterStatus,
   className,
 }: TaskFiltersProps) {
   const [dateRange, setDateRange] = React.useState<{from?: Date; to?: Date}>(() => ({
@@ -136,7 +139,8 @@ export function TaskFilters({
     (filters.assignedToId && filters.assignedToId !== 'all') ||
     filters.customerId ||
     filters.dateFrom ||
-    filters.dateTo
+    filters.dateTo ||
+    filters.signal
 
   // Use customer name from prop
   const customerName = propCustomerName || null
@@ -164,6 +168,8 @@ export function TaskFilters({
             </SelectContent>
           </Select>
         )}
+
+        {afterStatus}
 
         {/* Assignee Filter (Always Visible) */}
         {alwaysVisibleConfigs.find(c => c.id === 'assignee') && (

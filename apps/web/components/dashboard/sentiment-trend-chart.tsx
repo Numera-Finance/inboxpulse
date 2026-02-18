@@ -60,14 +60,20 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 width={30}
               />
               <Tooltip
-                formatter={(value: number) => [`${value}%`, '']}
-                contentStyle={{
-                  backgroundColor: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "var(--radius)",
-                  color: "hsl(var(--foreground))",
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null
+                  return (
+                    <div className="rounded-md border bg-card p-2 text-sm shadow-sm">
+                      <p className="font-medium text-card-foreground mb-1">{label}</p>
+                      {payload.map((entry) => (
+                        <div key={entry.dataKey} className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                          <span className="text-card-foreground">{entry.name}: {entry.value}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
                 }}
-                labelStyle={{ color: "hsl(var(--foreground))" }}
               />
               <Legend
                 verticalAlign="bottom"

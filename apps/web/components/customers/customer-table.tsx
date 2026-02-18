@@ -21,12 +21,13 @@ import { TablePagination } from "@/components/ui/table-pagination"
 interface CustomerTableProps {
   customers: Customer[]
   onSelect: (customer: Customer) => void
+  onSignalClick?: (customer: Customer, signal: string) => void
   pagination?: { pageIndex: number; pageSize: number }
   onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
   totalCount?: number
 }
 
-export function CustomerTable({ customers, onSelect, pagination, onPaginationChange, totalCount }: CustomerTableProps) {
+export function CustomerTable({ customers, onSelect, onSignalClick, pagination, onPaginationChange, totalCount }: CustomerTableProps) {
   const [sorting, setSorting] = useState<SortingState>([])
 
   // Use server-side pagination if props are provided
@@ -103,7 +104,12 @@ export function CustomerTable({ customers, onSelect, pagination, onPaginationCha
       ),
       cell: ({ row }) => {
         const count = row.getValue("upsellCount") as number
-        return <span className={cn("font-medium w-full text-center block", count > 0 && "text-green-500")}>{count}</span>
+        return (
+          <span
+            className={cn("font-medium w-full text-center block", count > 0 && "text-green-500 cursor-pointer hover:underline")}
+            onClick={count > 0 ? (e) => { e.stopPropagation(); onSignalClick?.(row.original, 'upsell') } : undefined}
+          >{count}</span>
+        )
       },
       size: 90,
     },
@@ -122,7 +128,12 @@ export function CustomerTable({ customers, onSelect, pagination, onPaginationCha
       ),
       cell: ({ row }) => {
         const count = row.getValue("churnCount") as number
-        return <span className={cn("font-medium w-full text-center block", count > 0 && "text-orange-500")}>{count}</span>
+        return (
+          <span
+            className={cn("font-medium w-full text-center block", count > 0 && "text-orange-500 cursor-pointer hover:underline")}
+            onClick={count > 0 ? (e) => { e.stopPropagation(); onSignalClick?.(row.original, 'churn') } : undefined}
+          >{count}</span>
+        )
       },
       size: 90,
     },
@@ -135,13 +146,18 @@ export function CustomerTable({ customers, onSelect, pagination, onPaginationCha
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
         >
           <AlertTriangle className="mr-1 h-3 w-3" />
-          Escalations
+          Negative
           <ArrowUpDown className="ml-2 h-3 w-3" />
         </Button>
       ),
       cell: ({ row }) => {
         const escalations = row.getValue("escalations") as number
-        return <span className={cn("font-medium w-full text-center block", escalations > 0 && "text-red-500")}>{escalations}</span>
+        return (
+          <span
+            className={cn("font-medium w-full text-center block", escalations > 0 && "text-red-500 cursor-pointer hover:underline")}
+            onClick={escalations > 0 ? (e) => { e.stopPropagation(); onSignalClick?.(row.original, 'negative') } : undefined}
+          >{escalations}</span>
+        )
       },
       size: 110,
     },
@@ -160,7 +176,12 @@ export function CustomerTable({ customers, onSelect, pagination, onPaginationCha
       ),
       cell: ({ row }) => {
         const count = row.getValue("positiveCount") as number
-        return <span className={cn("font-medium w-full text-center block", count > 0 && "text-blue-500")}>{count}</span>
+        return (
+          <span
+            className={cn("font-medium w-full text-center block", count > 0 && "text-blue-500 cursor-pointer hover:underline")}
+            onClick={count > 0 ? (e) => { e.stopPropagation(); onSignalClick?.(row.original, 'positive') } : undefined}
+          >{count}</span>
+        )
       },
       size: 90,
     },

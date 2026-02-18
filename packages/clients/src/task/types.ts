@@ -53,6 +53,11 @@ export const taskCommentSchema = z.object({
 export type TaskComment = z.infer<typeof taskCommentSchema>;
 
 /**
+ * Signal filter values for email sentiment/signal filtering
+ */
+export type SignalFilterType = 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat';
+
+/**
  * Search request for tasks
  */
 export interface TaskSearchRequest {
@@ -66,6 +71,7 @@ export interface TaskSearchRequest {
   offset?: number;
   dateFrom?: Date | string;
   dateTo?: Date | string;
+  signal?: SignalFilterType;
 }
 
 /**
@@ -105,6 +111,7 @@ export interface TaskExportRequest {
   customerId?: string;
   dateFrom?: Date | string;
   dateTo?: Date | string;
+  signal?: SignalFilterType;
 }
 
 /**
