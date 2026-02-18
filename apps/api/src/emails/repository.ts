@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
 import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from './schema';
@@ -145,7 +145,7 @@ export class EmailRepository extends ScopedRepository {
   async updateSignals(
     emailId: string,
     signals: number[],
-    tx?: any
+    tx?: Transaction
   ): Promise<void> {
     const db = tx ?? this.db;
     await db
@@ -166,7 +166,7 @@ export class EmailRepository extends ScopedRepository {
   async updateAnalysisStatus(
     emailId: string,
     status: EmailAnalysisStatus,
-    tx?: any
+    tx?: Transaction
   ): Promise<void> {
     const db = tx ?? this.db;
     await db
@@ -663,7 +663,7 @@ export class EmailRepository extends ScopedRepository {
    * @param participants - Array of participants to create
    * @param tx - Optional transaction context
    */
-  async createParticipants(participants: NewEmailParticipant[], tx?: any): Promise<void> {
+  async createParticipants(participants: NewEmailParticipant[], tx?: Transaction): Promise<void> {
     if (participants.length === 0) {
       return;
     }

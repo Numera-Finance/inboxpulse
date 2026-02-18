@@ -6,7 +6,7 @@ import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
 import { threadToDb, emailToDb, computeEmailContentHash } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import { emails, emailThreads } from './schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { createHash } from 'crypto';
@@ -627,7 +627,7 @@ export class EmailService {
    * Returns only the emails that are NOT duplicates.
    */
   private async filterDuplicateEmails(
-    tx: any,
+    tx: Transaction,
     tenantId: string,
     provider: string,
     incomingEmails: Email[],

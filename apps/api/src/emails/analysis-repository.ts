@@ -1,5 +1,5 @@
 import { injectable, inject } from 'tsyringe';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import { emailAnalyses, type AnalysisType, type NewEmailAnalysis } from './analysis-schema';
 import { eq, and } from 'drizzle-orm';
 import { logger } from '../utils/logger';
@@ -50,12 +50,12 @@ export class EmailAnalysisRepository {
    * @param analyses - Array of analyses to upsert
    * @param tx - Optional transaction context. If not provided, creates its own transaction.
    */
-  async upsertAnalyses(analyses: NewEmailAnalysis[], tx?: any): Promise<void> {
+  async upsertAnalyses(analyses: NewEmailAnalysis[], tx?: Transaction): Promise<void> {
     if (analyses.length === 0) {
       return;
     }
 
-    const doUpsert = async (db: any) => {
+    const doUpsert = async (db: Database | Transaction) => {
       for (const analysis of analyses) {
         await db
           .insert(emailAnalyses)

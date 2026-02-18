@@ -42,13 +42,13 @@ export const threadAnalyses = pgTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
-  (table) => ({
-    threadIdx: index('idx_thread_analyses_thread').on(table.threadId),
-    tenantTypeIdx: index('idx_thread_analyses_tenant_type').on(table.tenantId, table.analysisType),
-    lastAnalyzedIdx: index('idx_thread_analyses_last_analyzed').on(table.lastAnalyzedAt),
-    threadTypeIdx: index('idx_thread_analyses_thread_type').on(table.threadId, table.analysisType),
-    threadTypeUnique: uniqueIndex('uniq_thread_analysis_type').on(table.threadId, table.analysisType),
-  })
+  (table) => [
+    index('idx_thread_analyses_thread').on(table.threadId),
+    index('idx_thread_analyses_tenant_type').on(table.tenantId, table.analysisType),
+    index('idx_thread_analyses_last_analyzed').on(table.lastAnalyzedAt),
+    index('idx_thread_analyses_thread_type').on(table.threadId, table.analysisType),
+    uniqueIndex('uniq_thread_analysis_type').on(table.threadId, table.analysisType),
+  ]
 );
 
 export type ThreadAnalysis = typeof threadAnalyses.$inferSelect;

@@ -28,12 +28,12 @@ export const contacts = pgTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
-  (table) => ({
-    tenantEmailIdx: index('idx_contacts_tenant_email').on(table.tenantId, table.email),
-    customerIdx: index('idx_contacts_customer').on(table.customerId),
-    tenantCustomerIdx: index('idx_contacts_tenant_customer').on(table.tenantId, table.customerId),
-    tenantEmailUnique: uniqueIndex('uniq_contacts_tenant_email').on(table.tenantId, table.email),
-  })
+  (table) => [
+    index('idx_contacts_tenant_email').on(table.tenantId, table.email),
+    index('idx_contacts_customer').on(table.customerId),
+    index('idx_contacts_tenant_customer').on(table.tenantId, table.customerId),
+    uniqueIndex('uniq_contacts_tenant_email').on(table.tenantId, table.email),
+  ]
 );
 
 export type Contact = typeof contacts.$inferSelect;

@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
-  AlertTriangle,
+  Inbox,
   Building2,
   Settings,
   Mail,
@@ -38,7 +38,7 @@ interface NavItem {
 
 const navigation: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Escalations", href: "/escalations", icon: AlertTriangle },
+  { name: "AI Analysis", href: "/escalations", icon: Inbox },
   { name: "Customers", href: "/customers", icon: Building2 },
   {
     name: "Users",

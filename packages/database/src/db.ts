@@ -1,4 +1,5 @@
-import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { drizzle, type PostgresJsDatabase, type PostgresJsTransaction } from 'drizzle-orm/postgres-js';
+import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import postgres from 'postgres';
 
 // Lazy client creation - only create when createDatabase is called
@@ -88,6 +89,7 @@ export function getDatabase(): PostgresJsDatabase<Record<string, unknown>> {
 }
 
 export type Database = PostgresJsDatabase<Record<string, unknown>>;
+export type Transaction = PostgresJsTransaction<Record<string, unknown>, ExtractTablesWithRelations<Record<string, unknown>>>;
 
 // Export client getter for Better Auth or other libraries that need direct access
 export function getDatabaseClient(): ReturnType<typeof postgres> {

@@ -14,7 +14,7 @@
     "@crm/database": "workspace:*",
     "@crm/shared": "workspace:*",
     "@hono/node-server": "catalog:",
-    "better-auth": "^1.4.7",
+    "better-auth": "^1.4.18",
     "date-fns": "catalog:",
     "date-fns-tz": "catalog:",
     "dotenv": "catalog:",
