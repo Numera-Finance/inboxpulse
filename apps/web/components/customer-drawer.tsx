@@ -93,6 +93,11 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const [labels, setLabels] = React.useState<string[]>([])
   const [labelPopoverOpen, setLabelPopoverOpen] = React.useState(false)
   const [newLabelInput, setNewLabelInput] = React.useState("")
+  const [isEditingName, setIsEditingName] = React.useState(false)
+  const [editName, setEditName] = React.useState("")
+  const [isEditingDomains, setIsEditingDomains] = React.useState(false)
+  const [editDomains, setEditDomains] = React.useState<string[]>([])
+  const [newDomainInput, setNewDomainInput] = React.useState("")
   const [contactSorting, setContactSorting] = React.useState<SortingState>([])
 
   // Team tab state
@@ -173,6 +178,11 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       setIsEditingLabels(false)
       setLabelPopoverOpen(false)
       setNewLabelInput("")
+      setIsEditingName(false)
+      setEditName("")
+      setIsEditingDomains(false)
+      setEditDomains([])
+      setNewDomainInput("")
       setAddingTeamMember(false)
       setNewTeamMember({ userId: null, userName: '', userEmail: '', roleId: null })
       setEditingTeamMember(null)
@@ -619,6 +629,53 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     }
   }
 
+  const handleSaveName = async () => {
+    if (!customer || !editName.trim()) return
+
+    try {
+      await updateCustomer.mutateAsync({
+        id: customer.id,
+        data: { name: editName.trim() },
+      })
+      queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
+      queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
+      setIsEditingName(false)
+    } catch (error) {
+      console.error("Failed to save name:", error)
+    }
+  }
+
+  const handleSaveDomains = async () => {
+    if (!customer || editDomains.length === 0) return
+
+    try {
+      await updateCustomer.mutateAsync({
+        id: customer.id,
+        data: { domains: editDomains },
+      })
+      queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
+      queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
+      setIsEditingDomains(false)
+      setNewDomainInput("")
+    } catch (error) {
+      console.error("Failed to save domains:", error)
+    }
+  }
+
+  const handleAddDomain = () => {
+    const domain = newDomainInput.trim().toLowerCase()
+    if (domain && !editDomains.includes(domain)) {
+      setEditDomains([...editDomains, domain])
+      setNewDomainInput("")
+    }
+  }
+
+  const handleRemoveDomain = (domain: string) => {
+    if (editDomains.length > 1) {
+      setEditDomains(editDomains.filter((d) => d !== domain))
+    }
+  }
+
   // Team member handlers
   const handleStartAddTeamMember = () => {
     setAddingTeamMember(true)
@@ -750,41 +807,129 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       >
         <div className="flex h-full flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-border px-6 py-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+          <div className="flex items-start justify-between border-b border-border px-6 py-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 mt-0.5">
                 <Building2 className="h-5 w-5 text-primary" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold">{customer.name}</h2>
-                  {/* Labels inline with customer name */}
-                  {!isEditingLabels ? (
+              <div className="space-y-1">
+                {/* Row 1: Customer Name + Labels */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {!isEditingName ? (
                     <>
-                      {labels.map((label) => (
-                        <Badge key={label} variant="outline" className="text-xs">
-                          {label}
-                        </Badge>
-                      ))}
+                      <h2 className="text-lg font-semibold">{customer.name}</h2>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6"
-                        onClick={() => setIsEditingLabels(true)}
+                        onClick={() => {
+                          setEditName(customer.name)
+                          setIsEditingName(true)
+                          setIsEditingDomains(false)
+                          setNewDomainInput("")
+                          setLabels(customer.labels)
+                          setIsEditingLabels(false)
+                        }}
                       >
                         <Pencil className="h-3 w-3" />
                       </Button>
                     </>
                   ) : (
                     <>
-                      {labels.map((label) => (
-                        <Badge key={label} variant="outline" className="text-xs">
-                          {label}
-                          <button className="ml-1 hover:text-destructive" onClick={() => handleRemoveLabel(label)}>
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      ))}
+                      <Input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="h-8 w-64 text-lg font-semibold"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveName()
+                          if (e.key === "Escape") setIsEditingName(false)
+                        }}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={handleSaveName}
+                        disabled={updateCustomer.isPending || !editName.trim()}
+                      >
+                        {updateCustomer.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Check className="h-3 w-3" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => setIsEditingName(false)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </>
+                  )}
+                  {/* Labels */}
+                  {labels.map((label) => (
+                    <Badge key={label} variant="outline" className="text-xs">
+                      {label}
+                      {isEditingLabels && (
+                        <button className="ml-1 hover:text-destructive" onClick={() => handleRemoveLabel(label)}>
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </Badge>
+                  ))}
+                  {!isEditingLabels ? (
+                    <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-xs bg-transparent"
+                          onClick={() => {
+                            setIsEditingLabels(true)
+                            setLabelPopoverOpen(true)
+                            setIsEditingName(false)
+                            setIsEditingDomains(false)
+                            setNewDomainInput("")
+                          }}
+                        >
+                          <Plus className="h-3 w-3 mr-1" />
+                          Labels
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[200px] p-0" align="start">
+                        <Command>
+                          <CommandInput
+                            placeholder="Search or add..."
+                            value={newLabelInput}
+                            onValueChange={setNewLabelInput}
+                          />
+                          <CommandList>
+                            <CommandEmpty>
+                              {newLabelInput && (
+                                <button
+                                  className="w-full px-2 py-1.5 text-sm text-left hover:bg-accent"
+                                  onClick={() => handleAddLabel(newLabelInput)}
+                                >
+                                  Create "{newLabelInput}"
+                                </button>
+                              )}
+                            </CommandEmpty>
+                            <CommandGroup>
+                              {availableLabels.map((label) => (
+                                <CommandItem key={label} value={label} onSelect={() => handleAddLabel(label)}>
+                                  {label}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  ) : (
+                    <>
                       <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
                         <PopoverTrigger asChild>
                           <Button variant="outline" size="sm" className="h-6 text-xs bg-transparent">
@@ -843,10 +988,87 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                     </>
                   )}
                 </div>
+
+                {/* Row 2: Domains */}
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Globe className="h-3 w-3" />
-                  {customer.domains.join(", ")}
+                  {!isEditingDomains ? (
+                    <>
+                      <Globe className="h-3 w-3" />
+                      {customer.domains.join(", ")}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5"
+                        onClick={() => {
+                          setEditDomains([...customer.domains])
+                          setIsEditingDomains(true)
+                          setIsEditingName(false)
+                          setLabels(customer.labels)
+                          setIsEditingLabels(false)
+                        }}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <Globe className="h-3 w-3" />
+                      {editDomains.map((domain) => (
+                        <Badge key={domain} variant="outline" className="text-xs">
+                          {domain}
+                          <button
+                            className="ml-1 hover:text-destructive disabled:opacity-50"
+                            onClick={() => handleRemoveDomain(domain)}
+                            disabled={editDomains.length <= 1}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                      <Input
+                        value={newDomainInput}
+                        onChange={(e) => setNewDomainInput(e.target.value)}
+                        placeholder="Add domain..."
+                        className="h-6 w-32 text-xs"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault()
+                            handleAddDomain()
+                          }
+                          if (e.key === "Escape") {
+                            setIsEditingDomains(false)
+                            setNewDomainInput("")
+                          }
+                        }}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5"
+                        onClick={handleSaveDomains}
+                        disabled={updateCustomer.isPending || editDomains.length === 0}
+                      >
+                        {updateCustomer.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Check className="h-3 w-3" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5"
+                        onClick={() => {
+                          setIsEditingDomains(false)
+                          setNewDomainInput("")
+                        }}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
+
               </div>
             </div>
             <Button variant="ghost" size="icon" onClick={onClose}>
