@@ -17,6 +17,7 @@ const updateCustomerSchema = z.object({
   industry: z.string().max(100).optional().nullable(),
   labels: z.array(z.string()).optional(),
   metadata: z.record(z.string(), z.any()).optional().nullable(),
+  domains: z.array(z.string()).min(1).optional(),
 });
 
 export const customerRoutes = new Hono();
@@ -187,10 +188,20 @@ customerRoutes.patch('/:id', requirePermission(Permission.CUSTOMER_EDIT), async 
         throw new NotFoundError('Customer', params.id);
       }
 
-      // Update the customer
-      const updated = await service.updateCustomer(params.id, updateData);
-      if (!updated) {
-        throw new NotFoundError('Customer', params.id);
+      // Extract domains from updateData (not a column on customers table)
+      const { domains, ...customerFields } = updateData;
+
+      // Update customer fields if any provided
+      if (Object.keys(customerFields).length > 0) {
+        const updated = await service.updateCustomer(params.id, customerFields);
+        if (!updated) {
+          throw new NotFoundError('Customer', params.id);
+        }
+      }
+
+      // Replace domains if provided
+      if (domains) {
+        await service.replaceDomains(params.id, requestHeader.tenantId, domains);
       }
 
       // Return updated customer with domains

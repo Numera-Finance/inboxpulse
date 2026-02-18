@@ -503,6 +503,10 @@ export class CustomerService {
     }
   }
 
+  async replaceDomains(customerId: string, tenantId: string, domains: string[]): Promise<void> {
+    return this.customerRepository.replaceDomains(customerId, tenantId, domains);
+  }
+
   // ===========================================================================
   // Internal Methods (for email mapping - no ClientCustomer conversion)
   // ===========================================================================

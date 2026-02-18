@@ -78,6 +78,7 @@ export class CustomerClient extends BaseClient {
       industry?: string | null;
       labels?: string[];
       metadata?: Record<string, any> | null;
+      domains?: string[];
     },
     signal?: AbortSignal
   ): Promise<Customer> {

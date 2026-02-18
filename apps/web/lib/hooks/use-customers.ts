@@ -116,6 +116,7 @@ export function useUpdateCustomer() {
         industry?: string | null;
         labels?: string[];
         metadata?: Record<string, any> | null;
+        domains?: string[];
       };
     }) => api.updateCustomer(id, data),
     onSuccess: (customer) => {
