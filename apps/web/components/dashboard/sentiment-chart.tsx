@@ -84,12 +84,18 @@ export function SentimentChart({ filters }: SentimentChartProps) {
                 ))}
               </Pie>
               <Tooltip
-                formatter={(value: number) => [`${value}%`, '']}
-                contentStyle={{
-                  backgroundColor: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "var(--radius)",
-                  color: "hsl(var(--foreground))",
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null
+                  return (
+                    <div className="rounded-md border bg-card p-2 text-sm shadow-sm">
+                      {payload.map((entry) => (
+                        <div key={entry.name} className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.payload?.fill }} />
+                          <span className="text-card-foreground">{entry.name}: {entry.value}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
                 }}
               />
               <Legend
