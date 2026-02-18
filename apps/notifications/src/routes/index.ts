@@ -760,7 +760,7 @@ app.get('/simulate', (c) => {
           },
         },
       ],
-      note: 'If EMAIL_OVERRIDE is set, all emails are redirected to that address.',
+      note: 'If EMAIL_OVERRIDE is set (comma-separated), only those recipients receive emails. Others are redirected to the first address.',
     },
   });
 });
