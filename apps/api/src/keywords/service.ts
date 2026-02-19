@@ -26,7 +26,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  *   '"well done" great' → ['well done', 'great']
  *   '"cancel subscription" churn' → ['cancel subscription', 'churn']
  */
-function parseKeywords(input: string): string[] {
+export function parseKeywords(input: string): string[] {
   const keywords: string[] = [];
   const regex = /"([^"]+)"|(\S+)/g;
   let match: RegExpExecArray | null;
