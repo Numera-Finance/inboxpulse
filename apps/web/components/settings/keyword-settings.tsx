@@ -107,13 +107,13 @@ export function KeywordSettings() {
                     <Label htmlFor={catId}>{cat.label}</Label>
                     <Textarea
                       id={catId}
-                      placeholder="Separate keywords with spaces or new lines..."
+                      placeholder="e.g. urgent "well done" critical..."
                       rows={4}
                       value={formState[catId] || ''}
                       onChange={(e) => handleChange(catId, e.target.value)}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Separate with spaces or new lines. Case-insensitive matching.
+                      Separate with spaces or new lines. Use "double quotes" for phrases. Case-insensitive.
                     </p>
                   </div>
                 )

@@ -19,6 +19,26 @@ interface CacheEntry {
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Parse keyword string supporting quoted multi-word phrases and single words.
+ * Examples:
+ *   'urgent critical' → ['urgent', 'critical']
+ *   '"well done" great' → ['well done', 'great']
+ *   '"cancel subscription" churn' → ['cancel subscription', 'churn']
+ */
+function parseKeywords(input: string): string[] {
+  const keywords: string[] = [];
+  const regex = /"([^"]+)"|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(input)) !== null) {
+    const value = (match[1] || match[2]).trim();
+    if (value.length > 0) {
+      keywords.push(value);
+    }
+  }
+  return keywords;
+}
+
 @injectable()
 export class KeywordService {
   private cache = new Map<string, CacheEntry>();
@@ -37,10 +57,7 @@ export class KeywordService {
     const map = new Map<string, string[]>();
 
     for (const row of rows) {
-      const parsed = row.keywords
-        .split(/[\s]+/)
-        .map(k => k.trim())
-        .filter(k => k.length > 0);
+      const parsed = parseKeywords(row.keywords);
       if (parsed.length > 0) {
         map.set(row.category, parsed);
       }
