@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Check, ChevronsUpDown, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -12,8 +13,14 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
 } from "@/components/ui/command"
-import { useUsers } from "@/lib/hooks"
+import { useUsers, userKeys } from "@/lib/hooks"
+import { searchUsers } from "@/lib/api"
+import { SearchOperator } from "@crm/shared"
+import type { SearchRequest } from "@crm/shared"
+
+const PAGE_SIZE = 100
 
 interface UserAutocompleteProps {
   value: string | null // userId or email depending on valueField
@@ -27,6 +34,18 @@ interface UserAutocompleteProps {
   excludeIds?: Set<string> | string[]
   excludeEmails?: Set<string> | string[]
   onlyLoginable?: boolean // Only show users who can login (default: false)
+  hierarchyFiltered?: boolean // Only show self + subordinates for non-admins (default: false)
+  prefixOptions?: Array<{ value: string; label: string }> // Special options shown above user list (e.g., All, Me, My Team)
+}
+
+function buildSearchRequest(searchQueries: SearchRequest['queries'], offset: number): SearchRequest {
+  return {
+    queries: searchQueries,
+    sortBy: 'firstName',
+    sortOrder: 'asc',
+    limit: PAGE_SIZE,
+    offset,
+  }
 }
 
 export function UserAutocomplete({
@@ -41,28 +60,85 @@ export function UserAutocomplete({
   excludeIds,
   excludeEmails,
   onlyLoginable = false,
+  hierarchyFiltered = false,
+  prefixOptions,
 }: UserAutocompleteProps) {
+  const queryClient = useQueryClient()
   const [open, setOpen] = React.useState(false)
   const [search, setSearch] = React.useState("")
+  const [debouncedSearch, setDebouncedSearch] = React.useState("")
+  const [offset, setOffset] = React.useState(0)
+  const [allItems, setAllItems] = React.useState<any[]>([])
+  const [hasMore, setHasMore] = React.useState(true)
+  const listRef = React.useRef<HTMLDivElement | null>(null)
+  const loadingNextPage = React.useRef(false)
 
-  // Fetch all users
-  const { data: usersData, isLoading, error } = useUsers({
-    queries: [],
-    sortBy: 'firstName',
-    sortOrder: 'asc',
-    limit: 500,
-    offset: 0,
-  })
+  // Debounce search term for server-side filtering
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [search])
+
+  // Reset pagination when search changes
+  React.useEffect(() => {
+    setOffset(0)
+    setAllItems([])
+    setHasMore(true)
+    loadingNextPage.current = false
+  }, [debouncedSearch])
+
+  // Build search queries for server-side filtering
+  const searchQueries = React.useMemo(() => {
+    const queries: SearchRequest['queries'] = []
+    if (debouncedSearch.trim()) {
+      queries.push({ field: '_search', operator: SearchOperator.EQUALS, value: debouncedSearch.trim() })
+    }
+    if (hierarchyFiltered) {
+      queries.push({ field: '_hierarchy', operator: SearchOperator.EQUALS, value: 'subordinates' })
+    }
+    return queries
+  }, [debouncedSearch, hierarchyFiltered])
+
+  // Fetch current page
+  const currentRequest = buildSearchRequest(searchQueries, offset)
+  const { data: usersData, isLoading, isFetching, error } = useUsers(currentRequest)
+
+  // Accumulate results as pages load + prefetch next page
+  React.useEffect(() => {
+    if (!usersData?.items) return
+    loadingNextPage.current = false
+    const newItems = usersData.items
+    if (offset === 0) {
+      setAllItems(newItems)
+    } else {
+      setAllItems(prev => {
+        const existingIds = new Set(prev.map(u => u.id))
+        const unique = newItems.filter(u => !existingIds.has(u.id))
+        return [...prev, ...unique]
+      })
+    }
+
+    const pageHasMore = newItems.length >= PAGE_SIZE
+    setHasMore(pageHasMore)
+
+    // Prefetch next page into React Query cache
+    if (pageHasMore) {
+      const nextRequest = buildSearchRequest(searchQueries, offset + PAGE_SIZE)
+      queryClient.prefetchQuery({
+        queryKey: userKeys.list(nextRequest),
+        queryFn: () => searchUsers(nextRequest),
+      })
+    }
+  }, [usersData, offset, searchQueries, queryClient])
 
   // Debug logging
   React.useEffect(() => {
     if (error) {
       console.error('UserAutocomplete: Error fetching users:', error)
     }
-    if (usersData) {
-      console.log('UserAutocomplete: Loaded users:', usersData.items?.length || 0)
-    }
-  }, [usersData, error])
+  }, [error])
 
   // Convert exclude arrays to Sets for efficient lookup
   const excludeIdSet = React.useMemo(() => {
@@ -75,42 +151,20 @@ export function UserAutocomplete({
     return excludeEmails instanceof Set ? excludeEmails : new Set(excludeEmails)
   }, [excludeEmails])
 
-  // Transform and filter users
+  // Filter out excluded users and optionally filter by canLogin
   const users = React.useMemo(() => {
-    const items = usersData?.items || []
-
-    // Filter out excluded users and optionally filter by canLogin
-    const filtered = items.filter(user => {
-      // Keep currently selected user even if in exclude list or not loginable
+    const filtered = allItems.filter(user => {
       const currentValue = valueField === 'email' ? user.email : user.id
       if (currentValue === value) return true
 
-      // Filter by canLogin if onlyLoginable is set
       if (onlyLoginable && user.canLogin === false) return false
-
       if (excludeIdSet.has(user.id)) return false
       if (excludeEmailSet.has(user.email)) return false
       return true
     })
 
-    // Sort by name
-    return filtered.sort((a, b) => {
-      const nameA = `${a.firstName} ${a.lastName}`.toLowerCase()
-      const nameB = `${b.firstName} ${b.lastName}`.toLowerCase()
-      return nameA.localeCompare(nameB)
-    })
-  }, [usersData, excludeIdSet, excludeEmailSet, value, valueField, onlyLoginable])
-
-  // Filter by search query
-  const filteredUsers = React.useMemo(() => {
-    if (!search) return users
-    const searchLower = search.toLowerCase()
-    return users.filter(user => {
-      const name = `${user.firstName} ${user.lastName}`.toLowerCase()
-      const email = user.email.toLowerCase()
-      return name.includes(searchLower) || email.includes(searchLower)
-    })
-  }, [users, search])
+    return filtered
+  }, [allItems, excludeIdSet, excludeEmailSet, value, valueField, onlyLoginable])
 
   // Find selected user
   const selectedUser = React.useMemo(() => {
@@ -125,7 +179,6 @@ export function UserAutocomplete({
     const name = `${user.firstName} ${user.lastName}`
 
     if (newValue === value) {
-      // Deselect
       onChange(null)
     } else {
       onChange(newValue, name, user.email)
@@ -133,18 +186,48 @@ export function UserAutocomplete({
     setOpen(false)
   }
 
-  // Reset search when closing
+  // Load next page when scrolling past 70% — prefetched data will be instant
+  const handleScroll = React.useCallback((e: Event) => {
+    const el = e.target as HTMLElement
+    if (!el || !hasMore || loadingNextPage.current) return
+    const { scrollTop, scrollHeight, clientHeight } = el
+    if (scrollTop + clientHeight >= scrollHeight * 0.7) {
+      loadingNextPage.current = true
+      setOffset(prev => prev + PAGE_SIZE)
+    }
+  }, [hasMore])
+
+  // Attach scroll listener to the CommandList element
+  const commandListCallbackRef = React.useCallback((node: HTMLDivElement | null) => {
+    if (listRef.current) {
+      listRef.current.removeEventListener('scroll', handleScroll)
+    }
+    listRef.current = node
+    if (node) {
+      node.addEventListener('scroll', handleScroll)
+    }
+  }, [handleScroll])
+
+  // Reset search and pagination when closing (preserve allItems for instant reopen)
   React.useEffect(() => {
     if (!open) {
       setSearch("")
+      setDebouncedSearch("")
+      setOffset(0)
+      loadingNextPage.current = false
     }
   }, [open])
 
-  const displayText = selectedUser
-    ? `${selectedUser.firstName} ${selectedUser.lastName} (${selectedUser.email})`
-    : isLoading
-      ? "Loading users..."
-      : placeholder
+  const selectedPrefixOption = prefixOptions?.find(o => o.value === value)
+  const displayText = selectedPrefixOption
+    ? selectedPrefixOption.label
+    : selectedUser
+      ? `${selectedUser.firstName} ${selectedUser.lastName} (${selectedUser.email})`
+      : isLoading
+        ? "Loading users..."
+        : placeholder
+
+  const showInitialLoading = isLoading && allItems.length === 0
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -153,35 +236,60 @@ export function UserAutocomplete({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          disabled={disabled || isLoading}
+          disabled={disabled || (isLoading && allItems.length === 0)}
           className={cn("w-full justify-between bg-transparent", className)}
         >
           <span className="truncate">{displayText}</span>
-          {isLoading ? (
+          {isLoading && allItems.length === 0 ? (
             <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin" />
           ) : (
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+      <PopoverContent className="w-[400px] p-0" align="start">
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={searchPlaceholder}
             value={search}
             onValueChange={setSearch}
           />
-          <CommandList>
-            {isLoading ? (
+          <CommandList ref={commandListCallbackRef}>
+            {prefixOptions && prefixOptions.length > 0 && (
+              <>
+                <CommandGroup>
+                  {prefixOptions.map((option) => (
+                    <CommandItem
+                      key={option.value}
+                      value={option.value}
+                      onSelect={() => {
+                        onChange(option.value)
+                        setOpen(false)
+                      }}
+                    >
+                      <Check
+                        className={cn(
+                          "mr-2 h-4 w-4",
+                          value === option.value ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      {option.label}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+                <CommandSeparator />
+              </>
+            )}
+            {showInitialLoading ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
                 <Loader2 className="mx-auto h-4 w-4 animate-spin mb-2" />
                 Loading users...
               </div>
-            ) : filteredUsers.length === 0 ? (
+            ) : users.length === 0 && !isFetching ? (
               <CommandEmpty>{emptyText}</CommandEmpty>
             ) : (
               <CommandGroup>
-                {filteredUsers.map((user) => {
+                {users.map((user) => {
                   const itemValue = valueField === 'email' ? user.email : user.id
                   const isSelected = value === itemValue
                   const name = `${user.firstName} ${user.lastName}`
@@ -202,6 +310,11 @@ export function UserAutocomplete({
                     </CommandItem>
                   )
                 })}
+                {isFetching && (
+                  <div className="py-2 text-center">
+                    <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                  </div>
+                )}
               </CommandGroup>
             )}
           </CommandList>

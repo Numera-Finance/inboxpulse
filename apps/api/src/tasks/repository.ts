@@ -556,7 +556,7 @@ export class TaskRepository extends ScopedRepository {
             sql`${users.rowStatus} = 0` // Active users only
           )
         )
-        .orderBy(users.firstName, users.lastName);
+        .orderBy(sql`lower(${users.firstName})`, sql`lower(${users.lastName})`);
 
       return result;
     }
@@ -581,7 +581,7 @@ export class TaskRepository extends ScopedRepository {
           inArray(users.id, subordinateIds)
         )
       )
-      .orderBy(users.firstName, users.lastName);
+      .orderBy(sql`lower(${users.firstName})`, sql`lower(${users.lastName})`);
 
     return result;
   }

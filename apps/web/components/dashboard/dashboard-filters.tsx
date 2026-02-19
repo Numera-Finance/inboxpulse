@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
-import { UserSelect } from "./user-select"
+import { UserAutocomplete } from "@/components/ui/user-autocomplete"
 import type { TileFilters } from "./tiles"
 
 // Quick date presets
@@ -168,10 +168,12 @@ export function DashboardFilters({
       />
 
       {/* User Filter */}
-      <UserSelect
+      <UserAutocomplete
         value={filters.userId || null}
-        onChange={handleUserChange}
+        onChange={(userId) => handleUserChange(userId)}
+        hierarchyFiltered
         placeholder="All Users"
+        className="w-[200px]"
       />
 
       {/* Date Range Filter */}

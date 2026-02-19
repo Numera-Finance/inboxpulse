@@ -132,3 +132,23 @@ export const addCustomerRequestSchema = z.object({
 });
 
 export type AddCustomerRequest = z.infer<typeof addCustomerRequestSchema>;
+
+/**
+ * Zod schema for transferring a user's responsibilities
+ */
+export const transferUserRequestSchema = z.object({
+  targetUserId: z.string().uuid(),
+});
+
+export type TransferUserRequest = z.infer<typeof transferUserRequestSchema>;
+
+/**
+ * Response from a user transfer operation
+ */
+export const transferUserResponseSchema = z.object({
+  customersTransferred: z.number(),
+  tasksTransferred: z.number(),
+  managersTransferred: z.number(),
+});
+
+export type TransferUserResponse = z.infer<typeof transferUserResponseSchema>;

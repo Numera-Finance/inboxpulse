@@ -1,12 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { User, Building2, Calendar } from "lucide-react"
+import { Calendar } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar as CalendarComponent } from "@/components/ui/calendar"
 import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
+import { UserAutocomplete } from "@/components/ui/user-autocomplete"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 
@@ -33,7 +34,7 @@ interface TaskFiltersProps {
   onFiltersChange: (filters: TaskFilter) => void
   alwaysVisible?: string[]  // Filter IDs to always show
   availableFilters?: FilterConfig[]  // Additional filters to add
-  availableAssignees?: Array<{ id: string; name: string }>
+  availableAssignees?: Array<{ id: string; name: string }> // Deprecated: no longer used, UserAutocomplete fetches its own data
   currentUserId?: string
   customerName?: string | null  // Customer name for display in badge
   afterStatus?: React.ReactNode  // Slot rendered right after the status dropdown
@@ -105,19 +106,16 @@ export function TaskFilters({
     {
       id: 'assignee',
       label: 'Assigned To',
-      icon: <User className="h-4 w-4" />,
       type: 'assignee',
     },
     {
       id: 'customer',
       label: 'Customer',
-      icon: <Building2 className="h-4 w-4" />,
       type: 'customer',
     },
     {
       id: 'date',
       label: 'Date Range',
-      icon: <Calendar className="h-4 w-4" />,
       type: 'date-range',
     },
   ]
@@ -173,28 +171,19 @@ export function TaskFilters({
 
         {/* Assignee Filter (Always Visible) */}
         {alwaysVisibleConfigs.find(c => c.id === 'assignee') && (
-          <Select
+          <UserAutocomplete
             value={filters.assignedToId || 'all'}
-            onValueChange={(value) => updateFilter('assignedToId', value === 'all' ? undefined : value)}
-          >
-            <SelectTrigger className="h-8 w-[160px]">
-              <div className="flex items-center gap-2">
-                <User className="h-4 w-4" />
-                <SelectValue placeholder="Assigned To" />
-              </div>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="me">Me</SelectItem>
-              <SelectItem value="my-team">My Team</SelectItem>
-              <SelectItem value="unassigned">Unassigned</SelectItem>
-              {availableAssignees.map(user => (
-                <SelectItem key={user.id} value={user.id}>
-                  {user.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(value) => updateFilter('assignedToId', value === 'all' ? undefined : value)}
+            hierarchyFiltered
+            prefixOptions={[
+              { value: 'all', label: 'All' },
+              { value: 'me', label: 'Me' },
+              { value: 'my-team', label: 'My Team' },
+              { value: 'unassigned', label: 'Unassigned' },
+            ]}
+            placeholder="Assigned To"
+            className="h-8 w-[160px]"
+          />
         )}
 
         {/* Customer Filter (Always Visible) */}

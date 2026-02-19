@@ -12,6 +12,7 @@ import {
   updateUserPreferencesSchema,
   addManagerRequestSchema,
   addCustomerRequestSchema,
+  transferUserRequestSchema,
 } from '@crm/clients';
 import { searchRequestSchema } from '@crm/shared';
 import type { RequestHeader, ApiResponse } from '@crm/shared';
@@ -406,6 +407,22 @@ userRoutes.put('/:id/customers', requirePermission(Permission.USER_CUSTOMER_MANA
         request.assignments
       );
       return { success: true };
+    }
+  );
+});
+
+/**
+ * POST /api/users/:id/transfer - Transfer user's responsibilities to another user
+ * Requires USER_CUSTOMER_MANAGE permission
+ */
+userRoutes.post('/:id/transfer', requirePermission(Permission.USER_CUSTOMER_MANAGE), async (c) => {
+  return handleApiRequestWithParams(
+    c,
+    z.object({ id: z.uuid() }),
+    transferUserRequestSchema,
+    async (requestHeader: RequestHeader, params, request) => {
+      const service = container.resolve(UserService);
+      return await service.transferToUser(requestHeader, params.id, request.targetUserId);
     }
   );
 });

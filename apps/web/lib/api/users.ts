@@ -7,6 +7,7 @@ import type {
   UpdateUserRequest,
   AddManagerRequest,
   AddCustomerRequest,
+  TransferUserResponse,
 } from '@crm/clients';
 
 /**
@@ -124,6 +125,17 @@ export async function setUserCustomerAssignments(
   signal?: AbortSignal
 ): Promise<void> {
   return getUserClient().setCustomerAssignments(userId, assignments, signal);
+}
+
+/**
+ * Transfer a user's responsibilities to another user
+ */
+export async function transferUser(
+  sourceUserId: string,
+  targetUserId: string,
+  signal?: AbortSignal
+): Promise<TransferUserResponse> {
+  return getUserClient().transfer(sourceUserId, { targetUserId }, signal);
 }
 
 /**
