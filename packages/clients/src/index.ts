@@ -12,3 +12,4 @@ export * from './task';
 export * from './notification';
 export * from './dashboard';
 export * from './holiday';
+export * from './keyword';

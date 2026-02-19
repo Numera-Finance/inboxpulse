@@ -14,6 +14,7 @@ import { ContactService, type SignatureData } from '../contacts/service';
 import { CustomerService } from '../customers/service';
 import { TaskService } from '../tasks/service';
 import { TenantService } from '../tenants/service';
+import { KeywordService } from '../keywords/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply, hasAnalyzableSignatureContent } from './extraction/extractor';
 
@@ -132,7 +133,8 @@ export class EmailAnalysisService {
     private contactService: ContactService,
     private customerService: CustomerService,
     private taskService: TaskService,
-    private tenantService: TenantService
+    private tenantService: TenantService,
+    private keywordService: KeywordService
   ) { }
 
   // ===========================================================================
@@ -221,9 +223,14 @@ export class EmailAnalysisService {
     // This strips quoted content and separates signature for token savings
     this.extractEmailContent(ctx);
 
+    // Step 2d½: Check keyword-based analysis before calling LLM
+    const keywordResults = await this.runKeywordAnalysis(ctx);
+    const excludeTypes = new Set(Object.keys(keywordResults));
+
     // Step 2e: Run main analyses (external API call) with classification
-    const { results, classificationResult } = await this.callMainAnalyses(ctx);
-    data.analysisResults = results;
+    // Exclude types already resolved by keywords
+    const { results, classificationResult } = await this.callMainAnalyses(ctx, excludeTypes);
+    data.analysisResults = { ...results, ...keywordResults };
     data.classificationResult = classificationResult;
 
     return data;
@@ -291,6 +298,124 @@ export class EmailAnalysisService {
       );
       // Keep original body on failure
     }
+  }
+
+  /**
+   * Run keyword-based analysis for all categories
+   * Returns a map of analysisType → synthetic result for types that matched keywords
+   */
+  private async runKeywordAnalysis(ctx: AnalysisContext): Promise<Record<string, any>> {
+    const keywordMap = await this.keywordService.getKeywordsByTenant(ctx.tenantId);
+    if (keywordMap.size === 0) {
+      return {};
+    }
+
+    const searchText = this.prepareTextForKeywordSearch(ctx.email);
+    if (!searchText) {
+      return {};
+    }
+
+    const results: Record<string, any> = {};
+
+    // Sentiment: check negative first (higher priority), then positive
+    const negativeKeywords = keywordMap.get('sentiment_negative');
+    const positiveKeywords = keywordMap.get('sentiment_positive');
+    if (negativeKeywords) {
+      const match = this.findKeywordMatch(searchText, negativeKeywords);
+      if (match) {
+        results['sentiment'] = { value: 'negative', confidence: 1.0, reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
+      }
+    }
+    if (!results['sentiment'] && positiveKeywords) {
+      const match = this.findKeywordMatch(searchText, positiveKeywords);
+      if (match) {
+        results['sentiment'] = { value: 'positive', confidence: 1.0, reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
+      }
+    }
+
+    // Escalation
+    const escalationKeywords = keywordMap.get('escalation');
+    if (escalationKeywords) {
+      const match = this.findKeywordMatch(searchText, escalationKeywords);
+      if (match) {
+        results['escalation'] = { detected: true, urgency: 'medium', reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
+      }
+    }
+
+    // Upsell
+    const upsellKeywords = keywordMap.get('upsell');
+    if (upsellKeywords) {
+      const match = this.findKeywordMatch(searchText, upsellKeywords);
+      if (match) {
+        results['upsell'] = { detected: true, reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
+      }
+    }
+
+    // Churn
+    const churnKeywords = keywordMap.get('churn');
+    if (churnKeywords) {
+      const match = this.findKeywordMatch(searchText, churnKeywords);
+      if (match) {
+        results['churn'] = { riskLevel: 'medium', reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
+      }
+    }
+
+    // Kudos
+    const kudosKeywords = keywordMap.get('kudos');
+    if (kudosKeywords) {
+      const match = this.findKeywordMatch(searchText, kudosKeywords);
+      if (match) {
+        results['kudos'] = { detected: true, reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
+      }
+    }
+
+    // Competitor
+    const competitorKeywords = keywordMap.get('competitor');
+    if (competitorKeywords) {
+      const match = this.findKeywordMatch(searchText, competitorKeywords);
+      if (match) {
+        results['competitor'] = { detected: true, reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
+      }
+    }
+
+    if (Object.keys(results).length > 0) {
+      logger.info(
+        {
+          tenantId: ctx.tenantId,
+          emailId: ctx.emailId,
+          matchedTypes: Object.keys(results),
+          logType: 'KEYWORD_ANALYSIS_MATCHES',
+        },
+        'Keyword analysis resolved types without LLM'
+      );
+    }
+
+    return results;
+  }
+
+  /**
+   * Prepare email text for keyword searching (lowercase subject + body)
+   */
+  private prepareTextForKeywordSearch(email: Email): string {
+    const parts: string[] = [];
+    if (email.subject) parts.push(email.subject);
+    if (email.body) parts.push(email.body);
+    return parts.join(' ').toLowerCase();
+  }
+
+  /**
+   * Find first keyword match in text using word-boundary matching
+   * Returns the matched keyword or null
+   */
+  private findKeywordMatch(text: string, keywords: string[]): string | null {
+    for (const keyword of keywords) {
+      const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+      if (regex.test(text)) {
+        return keyword;
+      }
+    }
+    return null;
   }
 
   /**
@@ -372,11 +497,23 @@ export class EmailAnalysisService {
    * Call main analyses API (sentiment, escalation, signature-extraction)
    * Also runs email classification via filter (classify but don't skip)
    */
-  private async callMainAnalyses(ctx: AnalysisContext): Promise<{ results: Record<string, any>; classificationResult?: ClassificationResult }> {
+  private async callMainAnalyses(ctx: AnalysisContext, excludeTypes?: Set<string>): Promise<{ results: Record<string, any>; classificationResult?: ClassificationResult }> {
     const startTime = Date.now();
 
-    // Filter out signature-extraction if no signature available (saves tokens)
+    // Filter out types already resolved by keyword analysis
     let analysisTypes = ctx.analysisTypes;
+    if (excludeTypes && excludeTypes.size > 0 && analysisTypes) {
+      analysisTypes = analysisTypes.filter(t => !excludeTypes.has(t));
+      if (analysisTypes.length === 0) {
+        logger.info(
+          { tenantId: ctx.tenantId, emailId: ctx.emailId, logType: 'SKIP_LLM_ALL_KEYWORD_RESOLVED' },
+          'All analysis types resolved by keywords, skipping LLM call'
+        );
+        return { results: {} };
+      }
+    }
+
+    // Filter out signature-extraction if no signature available (saves tokens)
     if (analysisTypes && !ctx.email.signature) {
       const filtered = analysisTypes.filter(t => t !== 'signature-extraction');
       if (filtered.length < analysisTypes.length) {
@@ -845,12 +982,18 @@ export class EmailAnalysisService {
 
     for (const [analysisType, result] of Object.entries(analysisResults)) {
       try {
+        // Extract keyword metadata if present, then remove from result to keep JSONB clean
+        const metadata: { modelUsed?: string; reasoning?: string } = {};
+        if (result?.modelUsed === 'keyword-match') {
+          metadata.modelUsed = result.modelUsed;
+          metadata.reasoning = result.reasoning;
+        }
         const record = createEmailAnalysisRecord(
           emailId,
           tenantId,
           analysisType as EmailAnalysisType,
           result as any,
-          {}
+          metadata
         );
         recordsToSave.push(record);
       } catch (error: any) {

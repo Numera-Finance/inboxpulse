@@ -40,6 +40,7 @@ Execute files in the following order to set up the database from scratch:
 - `runs.sql` - Runs table + run enums (run_status, run_type) with foreign key to integrations
 - `better_auth_tables.sql` - Better-auth tables for authentication
 - `holiday_calendars.sql` - Holiday calendars for TAT business days calculation (references tenants)
+- `analysis_keywords.sql` - Analysis keyword rules for keyword-based email analysis (references tenants)
 - `migrations/` - Directory containing incremental migration scripts for existing databases
 
 ## Migrations
@@ -52,6 +53,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/001_tat_metrics.sql
 
 # Apply email dedup migration (adds rfc_message_id, content_hash columns + indexes)
 psql $DATABASE_URL -f apps/api/sql/migrations/003_email_dedup.sql
+
+# Apply analysis keywords migration (adds analysis_keywords table)
+psql $DATABASE_URL -f apps/api/sql/migrations/004_analysis_keywords.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
