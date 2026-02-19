@@ -38,7 +38,7 @@ export class KeywordService {
 
     for (const row of rows) {
       const parsed = row.keywords
-        .split('\n')
+        .split(/[\s]+/)
         .map(k => k.trim())
         .filter(k => k.length > 0);
       if (parsed.length > 0) {

@@ -107,13 +107,13 @@ export function KeywordSettings() {
                     <Label htmlFor={catId}>{cat.label}</Label>
                     <Textarea
                       id={catId}
-                      placeholder="One keyword per line..."
+                      placeholder="Separate keywords with spaces or new lines..."
                       rows={4}
                       value={formState[catId] || ''}
                       onChange={(e) => handleChange(catId, e.target.value)}
                     />
                     <p className="text-xs text-muted-foreground">
-                      One keyword per line. Case-insensitive matching.
+                      Separate with spaces or new lines. Case-insensitive matching.
                     </p>
                   </div>
                 )

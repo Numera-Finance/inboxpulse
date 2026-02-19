@@ -30,7 +30,7 @@ export class KeywordRepository {
       .returning();
 
     logger.info(
-      { tenantId, category, keywordCount: keywords.split('\n').filter(k => k.trim()).length },
+      { tenantId, category, keywordCount: keywords.split(/[\s]+/).filter(k => k.trim()).length },
       'Upserted analysis keywords'
     );
 
