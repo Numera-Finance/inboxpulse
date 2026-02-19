@@ -107,7 +107,7 @@ export function KeywordSettings() {
                     <Label htmlFor={catId}>{cat.label}</Label>
                     <Textarea
                       id={catId}
-                      placeholder="e.g. urgent "well done" critical..."
+                      placeholder={'e.g. urgent "well done" critical...'}
                       rows={4}
                       value={formState[catId] || ''}
                       onChange={(e) => handleChange(catId, e.target.value)}
