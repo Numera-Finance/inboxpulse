@@ -21,7 +21,6 @@ const CATEGORIES: Array<{
   { category: 'escalation', label: 'Keywords', section: 'Escalation', description: 'Triggers escalation detection' },
   { category: 'upsell', label: 'Keywords', section: 'Upsell', description: 'Triggers upsell detection' },
   { category: 'churn', label: 'Keywords', section: 'Churn', description: 'Triggers churn risk detection' },
-  { category: 'kudos', label: 'Keywords', section: 'Kudos', description: 'Triggers kudos detection' },
   { category: 'competitor', label: 'Keywords', section: 'Competitor', description: 'Triggers competitor mention detection' },
 ]
 
@@ -31,7 +30,6 @@ const SECTIONS = [
   { title: 'Escalation', description: 'Keywords that trigger escalation detection', categories: ['escalation'] },
   { title: 'Upsell', description: 'Keywords that trigger upsell opportunity detection', categories: ['upsell'] },
   { title: 'Churn', description: 'Keywords that trigger churn risk detection', categories: ['churn'] },
-  { title: 'Kudos', description: 'Keywords that trigger kudos/praise detection', categories: ['kudos'] },
   { title: 'Competitor', description: 'Keywords that trigger competitor mention detection', categories: ['competitor'] },
 ]
 
@@ -101,7 +99,7 @@ export function KeywordSettings() {
             <CardDescription>{section.description}</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className={section.categories.length > 1 ? "grid grid-cols-2 gap-4" : ""}>
+            <div className={section.categories.length > 1 ? "space-y-4" : ""}>
               {section.categories.map(catId => {
                 const cat = CATEGORIES.find(c => c.category === catId)!
                 return (
