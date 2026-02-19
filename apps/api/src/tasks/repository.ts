@@ -318,6 +318,25 @@ export class TaskRepository extends ScopedRepository {
     return this.updateScoped(header, id, { assignedToId });
   }
 
+  /**
+   * Reassign all open tasks from one user to another within a tenant.
+   * Returns the number of tasks reassigned.
+   */
+  async reassignOpenTasks(sourceUserId: string, targetUserId: string, tenantId: string): Promise<number> {
+    const result = await this.db
+      .update(tasks)
+      .set({ assignedToId: targetUserId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(tasks.assignedToId, sourceUserId),
+          eq(tasks.status, TaskStatus.OPEN),
+          eq(tasks.tenantId, tenantId)
+        )
+      )
+      .returning({ id: tasks.id });
+    return result.length;
+  }
+
   // ===========================================================================
   // Dashboard Operations
   // ===========================================================================
@@ -556,7 +575,7 @@ export class TaskRepository extends ScopedRepository {
             sql`${users.rowStatus} = 0` // Active users only
           )
         )
-        .orderBy(users.firstName, users.lastName);
+        .orderBy(sql`lower(${users.firstName})`, sql`lower(${users.lastName})`);
 
       return result;
     }
@@ -581,7 +600,7 @@ export class TaskRepository extends ScopedRepository {
           inArray(users.id, subordinateIds)
         )
       )
-      .orderBy(users.firstName, users.lastName);
+      .orderBy(sql`lower(${users.firstName})`, sql`lower(${users.lastName})`);
 
     return result;
   }

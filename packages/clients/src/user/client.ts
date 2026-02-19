@@ -9,6 +9,8 @@ import type {
   UpdateUserPreferences,
   AddManagerRequest,
   AddCustomerRequest,
+  TransferUserRequest,
+  TransferUserResponse,
 } from './types';
 
 /**
@@ -159,6 +161,25 @@ export class UserClient extends BaseClient {
     signal?: AbortSignal
   ): Promise<void> {
     await this.put<ApiResponse<void>>(`/api/users/${id}/customers`, { assignments }, signal);
+  }
+
+  /**
+   * Transfer a user's responsibilities to another user
+   */
+  async transfer(
+    sourceUserId: string,
+    data: TransferUserRequest,
+    signal?: AbortSignal
+  ): Promise<TransferUserResponse> {
+    const response = await this.post<ApiResponse<TransferUserResponse>>(
+      `/api/users/${sourceUserId}/transfer`,
+      data,
+      signal
+    );
+    if (!response?.data) {
+      throw new Error('Invalid API response: missing data');
+    }
+    return response.data;
   }
 
   /**

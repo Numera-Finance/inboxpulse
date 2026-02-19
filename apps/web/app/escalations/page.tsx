@@ -32,7 +32,6 @@ import {
 import { toast } from "sonner"
 import {
   useTask,
-  useAssignableUsers,
   useMarkTaskDone,
   useCustomers,
   taskKeys,
@@ -104,7 +103,6 @@ export default function EscalationsPage() {
   }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, effectiveSignal])
 
   // Data fetching
-  const { data: assignableUsers = [] } = useAssignableUsers()
   const { data: selectedTaskData } = useTask(taskIdFromUrl || "")
 
   // Mutations
@@ -512,7 +510,6 @@ export default function EscalationsPage() {
             filters={taskFilters}
             onFiltersChange={handleFiltersChange}
             alwaysVisible={['status', 'assignee', 'customer', 'date']}
-            availableAssignees={assignableUsers}
             currentUserId={currentUserId}
             customerName={customerName}
             afterStatus={

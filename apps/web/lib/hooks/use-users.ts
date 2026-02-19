@@ -208,3 +208,20 @@ export function useImportUsers() {
     },
   });
 }
+
+/**
+ * Hook to transfer a user's responsibilities to another user
+ */
+export function useTransferUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ sourceUserId, targetUserId }: { sourceUserId: string; targetUserId: string }) =>
+      api.transferUser(sourceUserId, targetUserId),
+    onSuccess: (_, { sourceUserId, targetUserId }) => {
+      queryClient.invalidateQueries({ queryKey: userKeys.detail(sourceUserId) });
+      queryClient.invalidateQueries({ queryKey: userKeys.detail(targetUserId) });
+      queryClient.invalidateQueries({ queryKey: userKeys.lists() });
+    },
+  });
+}

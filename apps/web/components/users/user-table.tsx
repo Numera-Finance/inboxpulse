@@ -26,6 +26,9 @@ import {
 import { cn } from "@/lib/utils"
 import { type User } from "@/lib/types"
 import { TablePagination } from "@/components/ui/table-pagination"
+import { TransferUserDialog } from "./transfer-user-dialog"
+import { useTransferUser } from "@/lib/hooks"
+import { toast } from "sonner"
 
 interface UserTableProps {
   users: User[]
@@ -37,6 +40,8 @@ interface UserTableProps {
 
 export function UserTable({ users, onSelect, pagination, onPaginationChange, totalCount }: UserTableProps) {
   const [sorting, setSorting] = React.useState<SortingState>([])
+  const [transferUser, setTransferUser] = React.useState<User | null>(null)
+  const transferMutation = useTransferUser()
 
   // Use server-side pagination if props are provided
   const isServerSide = pagination !== undefined && onPaginationChange !== undefined
@@ -196,6 +201,7 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => onSelect(user)}>View Details</DropdownMenuItem>
                 <DropdownMenuItem>Send Message</DropdownMenuItem>
+                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setTransferUser(user) }}>Transfer</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive">Deactivate</DropdownMenuItem>
               </DropdownMenuContent>
@@ -288,6 +294,29 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
         </Table>
       </div>
       <TablePagination table={table} />
+      <TransferUserDialog
+        open={transferUser !== null}
+        onClose={() => setTransferUser(null)}
+        sourceUser={transferUser}
+        onConfirm={(targetUserId) => {
+          if (!transferUser) return
+          transferMutation.mutate(
+            { sourceUserId: transferUser.id, targetUserId },
+            {
+              onSuccess: (data) => {
+                toast.success(
+                  `Transferred ${data.customersTransferred} customer${data.customersTransferred !== 1 ? 's' : ''}, ${data.tasksTransferred} task${data.tasksTransferred !== 1 ? 's' : ''}, ${data.managersTransferred} manager relationship${data.managersTransferred !== 1 ? 's' : ''}`
+                )
+                setTransferUser(null)
+              },
+              onError: (error) => {
+                toast.error(error.message)
+              },
+            }
+          )
+        }}
+        isLoading={transferMutation.isPending}
+      />
     </div>
   )
 }

@@ -13,6 +13,7 @@ export {
   useRemoveCustomerFromUser,
   useSetUserCustomerAssignments,
   useImportUsers,
+  useTransferUser,
   userKeys,
 } from './use-users';
 

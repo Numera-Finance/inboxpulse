@@ -2,8 +2,9 @@ import { injectable, inject } from 'tsyringe';
 import { CustomerRepository } from '../customers/repository';
 import { TenantRepository } from '../tenants/repository';
 import { RoleRepository } from '../roles/repository';
-import { sql, desc, asc, and, isNull } from 'drizzle-orm';
-import { NotFoundError, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
+import { TaskRepository } from '../tasks/repository';
+import { sql, desc, asc, and, isNull, inArray } from 'drizzle-orm';
+import { NotFoundError, ValidationError, isAdmin, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
 import { scopedSearch } from '@crm/database';
 import type { Database } from '@crm/database';
 import { UserRepository } from './repository';
@@ -38,7 +39,8 @@ export class UserService {
     @inject(UserRepository) private userRepository: UserRepository,
     @inject(CustomerRepository) private customerRepository: CustomerRepository,
     @inject(TenantRepository) private tenantRepository: TenantRepository,
-    @inject(RoleRepository) private roleRepository: RoleRepository
+    @inject(RoleRepository) private roleRepository: RoleRepository,
+    @inject(TaskRepository) private taskRepository: TaskRepository
   ) {
     // Initialize field mapping
     this.fieldMapping = {
@@ -81,9 +83,10 @@ export class UserService {
       userId: requestHeader.userId,
     };
 
-    // Extract '_search' queries for freeform search
+    // Extract '_search' and '_hierarchy' queries for special handling
     const searchQueries = searchRequest.queries.filter(q => q.field === '_search');
-    const otherQueries = searchRequest.queries.filter(q => q.field !== '_search');
+    const hierarchyQueries = searchRequest.queries.filter(q => q.field === '_hierarchy');
+    const otherQueries = searchRequest.queries.filter(q => q.field !== '_search' && q.field !== '_hierarchy');
 
     // Build scoped search query with tenant isolation
     // Also exclude API/service users (those with apiKeyHash set)
@@ -102,16 +105,28 @@ export class UserService {
       }
     }
 
+    // Apply hierarchy filtering: non-admins see only self + subordinates
+    if (hierarchyQueries.some(q => q.value === 'subordinates')) {
+      if (!isAdmin(requestHeader.permissions ?? [])) {
+        const subordinateIds = await this.userRepository.getSubordinateIds(requestHeader.userId);
+        const allowedIds = [requestHeader.userId, ...subordinateIds];
+        conditions.push(inArray(users.id, allowedIds));
+      }
+    }
+
     const where = and(...conditions);
 
-    // Determine sort column
+    // Determine sort column (case-insensitive for text columns)
     const sortBy = searchRequest.sortBy as keyof typeof this.fieldMapping | undefined;
     const sortColumn = sortBy && this.fieldMapping[sortBy]
       ? this.fieldMapping[sortBy]
       : users.createdAt;
+    const textFields = ['firstName', 'lastName', 'email'] as const;
+    const isTextField = sortBy && (textFields as readonly string[]).includes(sortBy);
+    const orderExpr = isTextField ? sql`lower(${sortColumn})` : sortColumn;
     const orderByClause = searchRequest.sortOrder === 'asc'
-      ? asc(sortColumn)
-      : desc(sortColumn);
+      ? asc(orderExpr)
+      : desc(orderExpr);
 
     // Pagination
     const limit = searchRequest.limit || 20;
@@ -473,6 +488,65 @@ export class UserService {
     );
 
     await this.queueAccessRebuild(tenantId);
+  }
+
+  // ===========================================================================
+  // Transfer
+  // ===========================================================================
+
+  /**
+   * Transfer all responsibilities (customers, open tasks, manager relationships)
+   * from one user to another.
+   *
+   * Orchestrates across domains:
+   * - UserRepository: customer assignments + manager relationships
+   * - TaskRepository: open task reassignment
+   */
+  async transferToUser(
+    requestHeader: RequestHeader,
+    sourceUserId: string,
+    targetUserId: string
+  ): Promise<{ customersTransferred: number; tasksTransferred: number; managersTransferred: number }> {
+    if (sourceUserId === targetUserId) {
+      throw new ValidationError('Cannot transfer a user to themselves');
+    }
+
+    const sourceUser = await this.userRepository.findById(sourceUserId, requestHeader);
+    if (!sourceUser) {
+      throw new NotFoundError('Source user', sourceUserId);
+    }
+
+    const targetUser = await this.userRepository.findById(targetUserId, requestHeader);
+    if (!targetUser) {
+      throw new NotFoundError('Target user', targetUserId);
+    }
+
+    // 1. Transfer customer assignments + manager relationships (user domain)
+    const { customersTransferred, managersTransferred } =
+      await this.userRepository.transferCustomersAndManagers(sourceUserId, targetUserId);
+
+    // 2. Reassign open tasks (task domain)
+    const tasksTransferred = await this.taskRepository.reassignOpenTasks(
+      sourceUserId,
+      targetUserId,
+      requestHeader.tenantId
+    );
+
+    const result = { customersTransferred, tasksTransferred, managersTransferred };
+
+    logger.info(
+      {
+        tenantId: requestHeader.tenantId,
+        sourceUserId,
+        targetUserId,
+        ...result,
+      },
+      'Transferred user responsibilities'
+    );
+
+    await this.queueAccessRebuild(requestHeader.tenantId);
+
+    return result;
   }
 
   // ===========================================================================

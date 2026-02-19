@@ -370,6 +370,9 @@ export function InboxView({
     }
   }, [handleSelectItem])
 
+  // Don't show detail panel content when list is empty (no matching items for current filters)
+  const detailItem = !isLoading && items.length === 0 ? null : selectedItem
+
   return (
     <div ref={containerRef} className={cn("flex h-full overflow-hidden", className)}>
       {/* Left Panel - Item List */}
@@ -576,7 +579,7 @@ export function InboxView({
       {/* Right Panel - Detail View */}
       <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden" style={{ width: config.detailPanelWidth }}>
         <InboxDetailPanel
-          item={selectedItem}
+          item={detailItem}
           content={content}
           isLoading={isLoadingContent}
           callbacks={{
@@ -594,10 +597,10 @@ export function InboxView({
             } : undefined,
           }}
           config={{ itemType: config.itemType }}
-          headerActions={selectedItem && renderHeaderActions ? renderHeaderActions(selectedItem, content) : undefined}
-          metaInfo={selectedItem && renderMetaInfo ? renderMetaInfo(selectedItem, content) : undefined}
-          headerBadges={selectedItem && renderHeaderBadges ? renderHeaderBadges(selectedItem, content) : undefined}
-          afterContent={selectedItem && renderAfterContent ? renderAfterContent(selectedItem, content) : undefined}
+          headerActions={detailItem && renderHeaderActions ? renderHeaderActions(detailItem, content) : undefined}
+          metaInfo={detailItem && renderMetaInfo ? renderMetaInfo(detailItem, content) : undefined}
+          headerBadges={detailItem && renderHeaderBadges ? renderHeaderBadges(detailItem, content) : undefined}
+          afterContent={detailItem && renderAfterContent ? renderAfterContent(detailItem, content) : undefined}
         />
       </div>
     </div>
