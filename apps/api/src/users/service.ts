@@ -2,6 +2,7 @@ import { injectable, inject } from 'tsyringe';
 import { CustomerRepository } from '../customers/repository';
 import { TenantRepository } from '../tenants/repository';
 import { RoleRepository } from '../roles/repository';
+import { TaskRepository } from '../tasks/repository';
 import { sql, desc, asc, and, isNull, inArray } from 'drizzle-orm';
 import { NotFoundError, ValidationError, isAdmin, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
 import { scopedSearch } from '@crm/database';
@@ -38,7 +39,8 @@ export class UserService {
     @inject(UserRepository) private userRepository: UserRepository,
     @inject(CustomerRepository) private customerRepository: CustomerRepository,
     @inject(TenantRepository) private tenantRepository: TenantRepository,
-    @inject(RoleRepository) private roleRepository: RoleRepository
+    @inject(RoleRepository) private roleRepository: RoleRepository,
+    @inject(TaskRepository) private taskRepository: TaskRepository
   ) {
     // Initialize field mapping
     this.fieldMapping = {
@@ -495,6 +497,10 @@ export class UserService {
   /**
    * Transfer all responsibilities (customers, open tasks, manager relationships)
    * from one user to another.
+   *
+   * Orchestrates across domains:
+   * - UserRepository: customer assignments + manager relationships
+   * - TaskRepository: open task reassignment
    */
   async transferToUser(
     requestHeader: RequestHeader,
@@ -515,11 +521,18 @@ export class UserService {
       throw new NotFoundError('Target user', targetUserId);
     }
 
-    const result = await this.userRepository.transferToUser(
+    // 1. Transfer customer assignments + manager relationships (user domain)
+    const { customersTransferred, managersTransferred } =
+      await this.userRepository.transferCustomersAndManagers(sourceUserId, targetUserId);
+
+    // 2. Reassign open tasks (task domain)
+    const tasksTransferred = await this.taskRepository.reassignOpenTasks(
       sourceUserId,
       targetUserId,
       requestHeader.tenantId
     );
+
+    const result = { customersTransferred, tasksTransferred, managersTransferred };
 
     logger.info(
       {

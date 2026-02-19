@@ -591,130 +591,113 @@ export class UserRepository extends ScopedRepository {
   }
 
   // ===========================================================================
-  // Transfer
+  // Transfer (user-domain only: customer assignments + manager relationships)
   // ===========================================================================
 
   /**
-   * Transfer all responsibilities from one user to another in a single transaction.
-   * Moves customer assignments, open tasks, and manager relationships.
+   * Transfer customer assignments and manager relationships from one user to another.
+   * Does NOT handle tasks — that's the TaskRepository's responsibility.
    */
-  async transferToUser(
+  async transferCustomersAndManagers(
     sourceUserId: string,
-    targetUserId: string,
-    tenantId: string
-  ): Promise<{ customersTransferred: number; tasksTransferred: number; managersTransferred: number }> {
-    const { tasks, TaskStatus } = await import('../tasks/schema');
-
+    targetUserId: string
+  ): Promise<{ customersTransferred: number; managersTransferred: number }> {
     return await this.db.transaction(async (tx) => {
-      // 1. Transfer customer assignments (merge, don't duplicate)
-      const sourceAssignments = await tx
-        .select()
-        .from(userCustomers)
-        .where(eq(userCustomers.userId, sourceUserId));
-
-      let customersTransferred = sourceAssignments.length;
-
-      if (sourceAssignments.length > 0) {
-        // Get target's existing customer IDs
-        const targetAssignments = await tx
-          .select({ customerId: userCustomers.customerId })
-          .from(userCustomers)
-          .where(eq(userCustomers.userId, targetUserId));
-        const targetCustomerIds = new Set(targetAssignments.map((a) => a.customerId));
-
-        // Insert non-overlapping assignments to target
-        const newAssignments = sourceAssignments.filter(
-          (a) => !targetCustomerIds.has(a.customerId)
-        );
-        if (newAssignments.length > 0) {
-          await tx.insert(userCustomers).values(
-            newAssignments.map((a) => ({
-              userId: targetUserId,
-              customerId: a.customerId,
-              roleId: a.roleId,
-            }))
-          );
-        }
-
-        // Delete all source assignments
-        await tx
-          .delete(userCustomers)
-          .where(eq(userCustomers.userId, sourceUserId));
-      }
-
-      // 2. Transfer open tasks
-      const transferredTasks = await tx
-        .update(tasks)
-        .set({ assignedToId: targetUserId, updatedAt: new Date() })
-        .where(
-          and(
-            eq(tasks.assignedToId, sourceUserId),
-            eq(tasks.status, TaskStatus.OPEN),
-            eq(tasks.tenantId, tenantId)
-          )
-        )
-        .returning({ id: tasks.id });
-
-      const tasksTransferred = transferredTasks.length;
-
-      // 3. Transfer manager relationships (where source is the manager)
-      // First, find subordinates where target is already a manager (to avoid conflicts)
-      const sourceSubordinates = await tx
-        .select({ userId: userManagers.userId })
-        .from(userManagers)
-        .where(eq(userManagers.managerId, sourceUserId));
-
-      let managersTransferred = 0;
-
-      if (sourceSubordinates.length > 0) {
-        const targetExistingSubordinates = await tx
-          .select({ userId: userManagers.userId })
-          .from(userManagers)
-          .where(eq(userManagers.managerId, targetUserId));
-        const targetSubordinateIds = new Set(targetExistingSubordinates.map((s) => s.userId));
-
-        for (const sub of sourceSubordinates) {
-          // Skip if this would create a self-reference
-          if (sub.userId === targetUserId) {
-            await tx
-              .delete(userManagers)
-              .where(
-                and(
-                  eq(userManagers.userId, sub.userId),
-                  eq(userManagers.managerId, sourceUserId)
-                )
-              );
-            continue;
-          }
-
-          if (targetSubordinateIds.has(sub.userId)) {
-            // Target is already a manager for this subordinate, just delete the source row
-            await tx
-              .delete(userManagers)
-              .where(
-                and(
-                  eq(userManagers.userId, sub.userId),
-                  eq(userManagers.managerId, sourceUserId)
-                )
-              );
-          } else {
-            // Redirect to target
-            await tx
-              .update(userManagers)
-              .set({ managerId: targetUserId })
-              .where(
-                and(
-                  eq(userManagers.userId, sub.userId),
-                  eq(userManagers.managerId, sourceUserId)
-                )
-              );
-          }
-          managersTransferred++;
-        }
-      }
-
-      return { customersTransferred, tasksTransferred, managersTransferred };
+      const customersTransferred = await this.transferCustomerAssignments(tx, sourceUserId, targetUserId);
+      const managersTransferred = await this.transferManagerRelationships(tx, sourceUserId, targetUserId);
+      return { customersTransferred, managersTransferred };
     });
+  }
+
+  /**
+   * Move all customer assignments from source to target.
+   * Merges with target's existing assignments (no duplicates).
+   * Returns the number of customer assignments transferred.
+   */
+  private async transferCustomerAssignments(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    sourceUserId: string,
+    targetUserId: string
+  ): Promise<number> {
+    const sourceAssignments = await tx
+      .select()
+      .from(userCustomers)
+      .where(eq(userCustomers.userId, sourceUserId));
+
+    if (sourceAssignments.length === 0) return 0;
+
+    // Find which customers the target already has
+    const targetAssignments = await tx
+      .select({ customerId: userCustomers.customerId })
+      .from(userCustomers)
+      .where(eq(userCustomers.userId, targetUserId));
+    const targetCustomerIds = new Set(targetAssignments.map((a) => a.customerId));
+
+    // Insert only non-overlapping assignments to target
+    const newAssignments = sourceAssignments.filter(
+      (a) => !targetCustomerIds.has(a.customerId)
+    );
+    if (newAssignments.length > 0) {
+      await tx.insert(userCustomers).values(
+        newAssignments.map((a) => ({
+          userId: targetUserId,
+          customerId: a.customerId,
+          roleId: a.roleId,
+        }))
+      );
+    }
+
+    // Remove all source assignments
+    await tx
+      .delete(userCustomers)
+      .where(eq(userCustomers.userId, sourceUserId));
+
+    return sourceAssignments.length;
+  }
+
+  /**
+   * Redirect all subordinates of source to be subordinates of target.
+   * Handles conflicts (target already manages the subordinate) and
+   * self-references (target can't manage themselves).
+   * Returns the number of manager relationships transferred.
+   */
+  private async transferManagerRelationships(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    sourceUserId: string,
+    targetUserId: string
+  ): Promise<number> {
+    const sourceSubordinates = await tx
+      .select({ userId: userManagers.userId })
+      .from(userManagers)
+      .where(eq(userManagers.managerId, sourceUserId));
+
+    if (sourceSubordinates.length === 0) return 0;
+
+    // Find who the target already manages (to avoid duplicate relationships)
+    const targetExistingSubordinates = await tx
+      .select({ userId: userManagers.userId })
+      .from(userManagers)
+      .where(eq(userManagers.managerId, targetUserId));
+    const targetSubordinateIds = new Set(targetExistingSubordinates.map((s) => s.userId));
+
+    let count = 0;
+    for (const sub of sourceSubordinates) {
+      const whereClause = and(
+        eq(userManagers.userId, sub.userId),
+        eq(userManagers.managerId, sourceUserId)
+      );
+
+      if (sub.userId === targetUserId || targetSubordinateIds.has(sub.userId)) {
+        // Self-reference or duplicate — just remove the source row
+        await tx.delete(userManagers).where(whereClause);
+      } else {
+        // Redirect to target
+        await tx.update(userManagers).set({ managerId: targetUserId }).where(whereClause);
+      }
+      count++;
+    }
+
+    return count;
   }
 
   // ===========================================================================
