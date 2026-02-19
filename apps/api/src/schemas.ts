@@ -12,3 +12,4 @@ export { tasks, taskComments, userSubordinates } from './tasks/schema';
 export { betterAuthUser, betterAuthSession, betterAuthAccount, betterAuthVerification } from './auth/better-auth-schema';
 export { dashboards } from './dashboards/schema';
 export { holidayCalendars } from './holidays/schema';
+export { analysisKeywords } from './keywords/schema';

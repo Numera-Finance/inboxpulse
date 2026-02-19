@@ -53,6 +53,7 @@ import { roleRoutes } from './roles/routes';
 import { taskRoutes } from './tasks/routes';
 import { dashboardRoutes } from './dashboards/routes';
 import { holidayRoutes } from './holidays/routes';
+import { keywordRoutes } from './keywords/routes';
 import { authRoutes } from './auth/routes';
 import { betterAuthRoutes } from './auth/better-auth-routes';
 import inngestRoutes from './inngest/routes';
@@ -271,6 +272,7 @@ app.use('/api/roles/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/tasks/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/dashboards/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/holidays/*', betterAuthRequestHeaderMiddleware);
+app.use('/api/keywords/*', betterAuthRequestHeaderMiddleware);
 
 app.route('/api/users', userRoutes);
 app.route('/api/integrations', integrationsRoutes);
@@ -283,6 +285,7 @@ app.route('/api/roles', roleRoutes);
 app.route('/api/tasks', taskRoutes);
 app.route('/api/dashboards', dashboardRoutes);
 app.route('/api/holidays', holidayRoutes);
+app.route('/api/keywords', keywordRoutes);
 
 const port = process.env.PORT ? parseInt(process.env.PORT) : 4001;
 

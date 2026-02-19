@@ -76,3 +76,6 @@ export {
   useDashboardTATMetrics,
   dashboardKeys,
 } from './use-dashboard';
+
+// Keyword hooks
+export { useKeywords, useSaveKeywords, keywordKeys } from './use-keywords';

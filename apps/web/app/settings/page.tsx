@@ -9,6 +9,7 @@ import {
   UserPreferences,
   IntegrationsSettings,
   HolidaySettings,
+  KeywordSettings,
   type SettingsTab,
 } from "@/components/settings"
 import { useAuth } from "@/src/contexts/AuthContext"
@@ -20,7 +21,7 @@ export default function SettingsPage() {
 
   // Get active tab from URL or default to 'user'
   const tabParam = searchParams.get('tab') as SettingsTab | null
-  const activeTab: SettingsTab = tabParam && ['user', 'integrations', 'holidays'].includes(tabParam)
+  const activeTab: SettingsTab = tabParam && ['user', 'integrations', 'holidays', 'keywords'].includes(tabParam)
     ? tabParam
     : 'user'
 
@@ -30,7 +31,7 @@ export default function SettingsPage() {
 
   // If non-admin tries to access admin-only tabs, redirect to user tab
   React.useEffect(() => {
-    const adminOnlyTabs: SettingsTab[] = ['integrations', 'holidays']
+    const adminOnlyTabs: SettingsTab[] = ['integrations', 'holidays', 'keywords']
     if (!isAuthLoading && !isAdmin && adminOnlyTabs.includes(activeTab)) {
       navigate('/settings?tab=user', { replace: true })
     }
@@ -58,6 +59,7 @@ export default function SettingsPage() {
           <div className="flex-1 max-w-3xl">
             {activeTab === 'user' && <UserPreferences />}
             {activeTab === 'holidays' && isAdmin && <HolidaySettings />}
+            {activeTab === 'keywords' && isAdmin && <KeywordSettings />}
             {activeTab === 'integrations' && isAdmin && <IntegrationsSettings />}
           </div>
         </div>
