@@ -2,9 +2,8 @@
 
 import * as React from "react"
 import { formatDistanceToNow } from "date-fns"
-import { MessageSquare, Send, Loader2, ChevronDown } from "lucide-react"
+import { MessageSquare, Send, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
@@ -41,9 +40,6 @@ function getInitials(name: string): string {
  * Fetches and manages comments internally using React Query.
  * Handles optimistic updates for adding comments.
  */
-// ID used for scroll-to-comments functionality
-export const TASK_COMMENTS_ID = 'task-comments-section'
-
 export function TaskComments({ taskId, className, variant = 'inline' }: TaskCommentsProps) {
   const queryClient = useQueryClient()
   const { data: comments = [], isLoading } = useTaskComments(taskId)
@@ -112,7 +108,7 @@ export function TaskComments({ taskId, className, variant = 'inline' }: TaskComm
 
   if (isLoading) {
     return (
-      <div id={TASK_COMMENTS_ID} className={className}>
+      <div className={className}>
         {variant === 'inline' && <Separator className="my-4" />}
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -123,7 +119,7 @@ export function TaskComments({ taskId, className, variant = 'inline' }: TaskComm
   }
 
   return (
-    <div id={TASK_COMMENTS_ID} className={className}>
+    <div className={className}>
       {variant === 'inline' && <Separator className="my-4" />}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
@@ -191,40 +187,5 @@ export function TaskComments({ taskId, className, variant = 'inline' }: TaskComm
         </div>
       </div>
     </div>
-  )
-}
-
-/**
- * TaskCommentsBadge - Small badge showing comment count with click-to-scroll
- *
- * Shows visual affordance to indicate it's clickable (unlike status/priority badges)
- */
-export function TaskCommentsBadge({
-  taskId,
-  onClick
-}: {
-  taskId: string
-  onClick?: () => void
-}) {
-  const { data: comments = [] } = useTaskComments(taskId)
-  const hasComments = comments.length > 0
-
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "text-xs cursor-pointer transition-colors",
-        "hover:bg-primary/10 hover:border-primary hover:text-primary",
-        !hasComments && "border-dashed border-muted-foreground/50"
-      )}
-      onClick={onClick}
-    >
-      <MessageSquare className="mr-1 h-3 w-3" />
-      {hasComments
-        ? `${comments.length} ${comments.length === 1 ? 'Comment' : 'Comments'}`
-        : 'Add comment'
-      }
-      <ChevronDown className="ml-1 h-3 w-3 opacity-50" />
-    </Badge>
   )
 }
