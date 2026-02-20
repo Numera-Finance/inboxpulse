@@ -1,6 +1,5 @@
 export { TaskDetail } from "./task-detail"
 export { TaskList } from "./task-list"
 export { TaskFilters, type TaskFilter, type FilterConfig } from "./task-filters"
-export { TaskComments, TaskCommentsBadge, TASK_COMMENTS_ID } from "./task-comments"
+export { TaskComments } from "./task-comments"
 export { TaskMetaInfo } from "./task-meta-info"
-export { QuickCommentPopover } from "./quick-comment-popover"
