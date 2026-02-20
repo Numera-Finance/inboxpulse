@@ -88,8 +88,10 @@ export function TaskComments({ taskId, className, variant = 'inline' }: TaskComm
 
     try {
       await addComment.mutateAsync({ taskId, content: commentContent })
-      // Invalidate to get the real comment with proper ID
-      queryClient.invalidateQueries({ queryKey: taskKeys.comments(taskId) })
+      // Wait for refetch so real data is in cache before removing optimistic comment.
+      // React 18 batches both updates into a single render — no flicker.
+      await queryClient.refetchQueries({ queryKey: taskKeys.comments(taskId) })
+      setOptimisticComments(prev => prev.filter(c => c.id !== optimisticComment.id))
     } catch (error) {
       console.error("Failed to add comment:", error)
       // Remove optimistic comment on error
