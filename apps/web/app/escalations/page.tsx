@@ -472,13 +472,20 @@ export default function EscalationsPage() {
     // Fetch all escalations with comments in one request
     const escalationsWithComments = await taskClient.exportWithComments(exportRequest)
 
-    // Build export data: Customer Name, Email Subject, Comments (newline separated)
+    // Build export data
     const exportData = escalationsWithComments.map(escalation => ({
       customerName: escalation.customerName || "",
       emailSubject: escalation.emailSubject || escalation.title || "",
       comments: (escalation.comments || [])
-        .map(c => `[${c.userName}]: ${c.content}`)
+        .map(c => {
+          const time = new Date(c.createdAt).toLocaleString()
+          return `[${time} - ${c.userName}]: ${c.content}`
+        })
         .join("\n"),
+      bookKeeping: "",
+      accountant: "",
+      controller: "",
+      srController: "",
     }))
 
     return createXlsxBlob(exportData, {
@@ -486,6 +493,10 @@ export default function EscalationsPage() {
         { key: "customerName", header: "Customer Name", width: 30 },
         { key: "emailSubject", header: "Email Subject", width: 50 },
         { key: "comments", header: "Comments", width: 80 },
+        { key: "bookKeeping", header: "Book Keeping", width: 20 },
+        { key: "accountant", header: "Accountant", width: 20 },
+        { key: "controller", header: "Controller", width: 20 },
+        { key: "srController", header: "Sr Controller", width: 20 },
       ],
       sheetName: "Escalations",
     })
