@@ -10,6 +10,7 @@ import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
 import { customers } from '../customers/schema';
 import { users } from '../users/schema';
 import { UserRepository } from '../users/repository';
+import { ContactRepository } from '../contacts/repository';
 import { logger } from '../utils/logger';
 
 // =============================================================================
@@ -109,7 +110,8 @@ export class TaskService {
   constructor(
     @inject('Database') private db: Database,
     @inject(TaskRepository) private taskRepository: TaskRepository,
-    @inject(UserRepository) private userRepository: UserRepository
+    @inject(UserRepository) private userRepository: UserRepository,
+    @inject(ContactRepository) private contactRepository: ContactRepository
   ) { }
 
   /**
@@ -155,7 +157,10 @@ export class TaskService {
   async exportWithComments(
     header: RequestHeader,
     request: TaskExportRequest
-  ): Promise<Array<TaskWithRelations & { comments: Array<{ userName: string; content: string }> }>> {
+  ): Promise<Array<TaskWithRelations & {
+    comments: Array<{ userName: string; content: string; createdAt: Date }>;
+    contactRoles: { bookKeeping: string; accountant: string; controller: string; srController: string };
+  }>> {
     const status = request.status === 'open' ? TaskStatus.OPEN
       : request.status === 'done' ? TaskStatus.DONE
         : undefined;
@@ -174,12 +179,57 @@ export class TaskService {
       signal: request.signal,
     });
 
+    // Fetch contacts for all unique customers to derive role columns
+    const uniqueCustomerIds = [...new Set(result.map(t => t.customerId).filter(Boolean))];
+    const contactsByCustomer = new Map<string, Array<{ name: string | null; title: string | null }>>();
+    await Promise.all(
+      uniqueCustomerIds.map(async (customerId) => {
+        try {
+          const contacts = await this.contactRepository.findByCustomerId(customerId);
+          contactsByCustomer.set(customerId, contacts);
+        } catch {
+          // skip if fetch fails
+        }
+      })
+    );
+
+    const enriched = result.map(task => ({
+      ...task,
+      contactRoles: this.matchContactRoles(contactsByCustomer.get(task.customerId)),
+    }));
+
     logger.info({
       totalTasks: result.length,
       tasksWithComments: result.filter(t => t.comments.length > 0).length,
       totalComments: result.reduce((sum, t) => sum + t.comments.length, 0),
     }, 'Export result');
 
+    return enriched;
+  }
+
+  private matchContactRoles(
+    contacts?: Array<{ name: string | null; title: string | null }>
+  ): { bookKeeping: string; accountant: string; controller: string; srController: string } {
+    const result = { bookKeeping: '', accountant: '', controller: '', srController: '' };
+    if (!contacts) return result;
+
+    const matchers: Array<{ key: keyof typeof result; patterns: string[] }> = [
+      { key: 'srController', patterns: ['sr controller', 'sr. controller', 'senior controller'] },
+      { key: 'controller', patterns: ['controller'] },
+      { key: 'bookKeeping', patterns: ['book keeping', 'bookkeeping', 'book keeper', 'bookkeeper'] },
+      { key: 'accountant', patterns: ['accountant'] },
+    ];
+
+    for (const contact of contacts) {
+      const titleLower = (contact.title || '').toLowerCase().trim();
+      if (!titleLower) continue;
+      for (const { key, patterns } of matchers) {
+        if (result[key]) continue;
+        if (patterns.some(p => titleLower.includes(p))) {
+          result[key] = contact.name || contact.title || '';
+        }
+      }
+    }
     return result;
   }
 

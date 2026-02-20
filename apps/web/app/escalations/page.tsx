@@ -469,7 +469,7 @@ export default function EscalationsPage() {
       exportRequest.signal = effectiveSignal
     }
 
-    // Fetch all escalations with comments in one request
+    // Fetch all escalations with comments and contact roles in one request
     const escalationsWithComments = await taskClient.exportWithComments(exportRequest)
 
     // Build export data
@@ -482,10 +482,10 @@ export default function EscalationsPage() {
           return `[${time} - ${c.userName}]: ${c.content}`
         })
         .join("\n"),
-      bookKeeping: "",
-      accountant: "",
-      controller: "",
-      srController: "",
+      bookKeeping: escalation.contactRoles?.bookKeeping || "",
+      accountant: escalation.contactRoles?.accountant || "",
+      controller: escalation.contactRoles?.controller || "",
+      srController: escalation.contactRoles?.srController || "",
     }))
 
     return createXlsxBlob(exportData, {
