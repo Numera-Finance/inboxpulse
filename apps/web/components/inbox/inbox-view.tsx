@@ -53,6 +53,7 @@ export function InboxView({
   renderMetaInfo,
   renderHeaderBadges,
   renderAfterContent,
+  renderSidePanel,
 }: InboxViewProps) {
   // Internal state
   const [items, setItems] = React.useState<InboxItem[]>([])
@@ -576,32 +577,43 @@ export function InboxView({
         </div>
       </div>
 
-      {/* Right Panel - Detail View */}
-      <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden" style={{ width: config.detailPanelWidth }}>
-        <InboxDetailPanel
-          item={detailItem}
-          content={content}
-          isLoading={isLoadingContent}
-          callbacks={{
-            onArchive: callbacks.onArchive,
-            onDelete: callbacks.onDelete,
-            onMarkRead: callbacks.onMarkRead,
-            onStar: callbacks.onStar,
-            onReply: callbacks.onReply,
-            onReplyAll: callbacks.onReplyAll,
-            onForward: callbacks.onForward,
-            onResolve: callbacks.onResolve ? async (itemId) => {
-              await callbacks.onResolve!(itemId)
-              // Refresh the list to show updated status
-              fetchItems(page)
-            } : undefined,
-          }}
-          config={{ itemType: config.itemType }}
-          headerActions={detailItem && renderHeaderActions ? renderHeaderActions(detailItem, content) : undefined}
-          metaInfo={detailItem && renderMetaInfo ? renderMetaInfo(detailItem, content) : undefined}
-          headerBadges={detailItem && renderHeaderBadges ? renderHeaderBadges(detailItem, content) : undefined}
-          afterContent={detailItem && renderAfterContent ? renderAfterContent(detailItem, content) : undefined}
-        />
+      {/* Right Panel - Detail View + Optional Side Panel */}
+      <div className="flex-1 min-w-0 flex h-full overflow-hidden" style={{ width: config.detailPanelWidth }}>
+        <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+          <InboxDetailPanel
+            item={detailItem}
+            content={content}
+            isLoading={isLoadingContent}
+            callbacks={{
+              onArchive: callbacks.onArchive,
+              onDelete: callbacks.onDelete,
+              onMarkRead: callbacks.onMarkRead,
+              onStar: callbacks.onStar,
+              onReply: callbacks.onReply,
+              onReplyAll: callbacks.onReplyAll,
+              onForward: callbacks.onForward,
+              onResolve: callbacks.onResolve ? async (itemId) => {
+                await callbacks.onResolve!(itemId)
+                // Refresh the list to show updated status
+                fetchItems(page)
+              } : undefined,
+            }}
+            config={{ itemType: config.itemType }}
+            headerActions={detailItem && renderHeaderActions ? renderHeaderActions(detailItem, content) : undefined}
+            metaInfo={detailItem && renderMetaInfo ? renderMetaInfo(detailItem, content) : undefined}
+            headerBadges={detailItem && renderHeaderBadges ? renderHeaderBadges(detailItem, content) : undefined}
+            afterContent={detailItem && renderAfterContent ? renderAfterContent(detailItem, content) : undefined}
+          />
+        </div>
+        {detailItem && renderSidePanel && (
+          <div className="w-[320px] flex-shrink-0 border-l border-border h-full overflow-hidden">
+            <ScrollArea className="h-full">
+              <div className="p-4">
+                {renderSidePanel(detailItem, content)}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
       </div>
     </div>
   )

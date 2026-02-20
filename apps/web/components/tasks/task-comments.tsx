@@ -22,6 +22,8 @@ interface TaskComment {
 interface TaskCommentsProps {
   taskId: string
   className?: string
+  /** When 'panel', skips the leading Separator (used in side panel layout) */
+  variant?: 'inline' | 'panel'
 }
 
 function getInitials(name: string): string {
@@ -42,7 +44,7 @@ function getInitials(name: string): string {
 // ID used for scroll-to-comments functionality
 export const TASK_COMMENTS_ID = 'task-comments-section'
 
-export function TaskComments({ taskId, className }: TaskCommentsProps) {
+export function TaskComments({ taskId, className, variant = 'inline' }: TaskCommentsProps) {
   const queryClient = useQueryClient()
   const { data: comments = [], isLoading } = useTaskComments(taskId)
   const addComment = useAddTaskComment()
@@ -109,7 +111,7 @@ export function TaskComments({ taskId, className }: TaskCommentsProps) {
   if (isLoading) {
     return (
       <div id={TASK_COMMENTS_ID} className={className}>
-        <Separator className="my-4" />
+        {variant === 'inline' && <Separator className="my-4" />}
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span className="text-sm">Loading comments...</span>
@@ -120,7 +122,7 @@ export function TaskComments({ taskId, className }: TaskCommentsProps) {
 
   return (
     <div id={TASK_COMMENTS_ID} className={className}>
-      <Separator className="my-4" />
+      {variant === 'inline' && <Separator className="my-4" />}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-muted-foreground" />

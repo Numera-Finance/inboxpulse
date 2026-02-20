@@ -23,10 +23,7 @@ import {
 import {
   TaskFilters,
   TaskComments,
-  TaskCommentsBadge,
   TaskMetaInfo,
-  QuickCommentPopover,
-  TASK_COMMENTS_ID,
   type TaskFilter,
 } from "@/components/tasks"
 import { toast } from "sonner"
@@ -373,30 +370,15 @@ export default function EscalationsPage() {
   // Memoize render functions to prevent re-renders
   const renderHeaderActions = React.useCallback((item: InboxItem) => (
     item.status !== "resolved" ? (
-      <div className="flex items-center gap-2">
-        <QuickCommentPopover taskId={item.id} />
-        <Button
-          className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
-          onClick={() => handleDoneWithCommentCheck(item.id)}
-        >
-          <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
-          Done
-        </Button>
-      </div>
+      <Button
+        className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
+        onClick={() => handleDoneWithCommentCheck(item.id)}
+      >
+        <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
+        Done
+      </Button>
     ) : null
   ), [handleDoneWithCommentCheck])
-
-  // Scroll to comments section when badge is clicked
-  const scrollToComments = React.useCallback(() => {
-    const commentsSection = document.getElementById(TASK_COMMENTS_ID)
-    if (commentsSection) {
-      commentsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, [])
-
-  const renderHeaderBadges = React.useCallback((item: InboxItem) => (
-    <TaskCommentsBadge taskId={item.id} onClick={scrollToComments} />
-  ), [scrollToComments])
 
   const renderMetaInfo = React.useCallback((item: InboxItem) => (
     <TaskMetaInfo
@@ -408,8 +390,8 @@ export default function EscalationsPage() {
     />
   ), [])
 
-  const renderAfterContent = React.useCallback((item: InboxItem) => (
-    <TaskComments taskId={item.id} />
+  const renderSidePanel = React.useCallback((item: InboxItem) => (
+    <TaskComments taskId={item.id} variant="panel" />
   ), [])
 
   // Get customer name for display (if needed)
@@ -543,9 +525,8 @@ export default function EscalationsPage() {
             }}
             selectedItem={selectedInboxItem}
             renderHeaderActions={renderHeaderActions}
-            renderHeaderBadges={renderHeaderBadges}
             renderMetaInfo={renderMetaInfo}
-            renderAfterContent={renderAfterContent}
+            renderSidePanel={renderSidePanel}
           />
         </div>
 

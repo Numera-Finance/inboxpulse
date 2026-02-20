@@ -493,6 +493,12 @@ export interface InboxViewProps {
    * Receives (item, content) to render context-aware content
    */
   renderAfterContent?: (item: InboxItem, content: InboxItemContent | null) => React.ReactNode;
+
+  /**
+   * Render prop for a side panel next to the detail panel
+   * Receives (item, content) to render context-aware content (e.g., comments)
+   */
+  renderSidePanel?: (item: InboxItem, content: InboxItemContent | null) => React.ReactNode;
 }
 
 /**
