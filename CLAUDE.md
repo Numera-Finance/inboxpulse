@@ -1,5 +1,13 @@
 # Claude Code Rules for CRM Project
 
+## Git Workflow
+
+- **NEVER commit or push changes without explicitly asking the user first.** Always show the diff and ask for confirmation before committing.
+
+## Export Rules
+
+- **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.
+
 ## Project Overview
 
 Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer management, email sync (Gmail), AI-powered email analysis, task management, dashboards, and notifications.

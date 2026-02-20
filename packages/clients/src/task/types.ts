@@ -119,4 +119,10 @@ export interface TaskExportRequest {
  */
 export interface TaskWithComments extends Task {
   comments: TaskComment[];
+  contactRoles?: {
+    bookKeeping: string;
+    accountant: string;
+    controller: string;
+    srController: string;
+  };
 }
