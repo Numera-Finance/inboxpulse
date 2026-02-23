@@ -347,6 +347,9 @@ importers:
       tsyringe:
         specifier: 'catalog:'
         version: 4.10.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.2.1
     devDependencies:
       '@types/bun':
         specifier: latest

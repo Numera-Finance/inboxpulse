@@ -2,9 +2,7 @@ import { injectable, inject } from 'tsyringe';
 import type { Email } from '@crm/shared';
 import { ContactClient } from '@crm/clients';
 import { logger } from '../utils/logger';
-
-// API service base URL for clients
-const apiBaseUrl = process.env.SERVICE_API_URL;
+import { getEnv } from '../env';
 
 export interface ExtractedContact {
   id: string;
@@ -18,7 +16,7 @@ export class ContactExtractionService {
   private contactClient: ContactClient;
 
   constructor() {
-    this.contactClient = new ContactClient(apiBaseUrl, { internal: true });
+    this.contactClient = new ContactClient(getEnv().SERVICE_API_URL, { internal: true });
   }
 
   /**

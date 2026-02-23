@@ -7,13 +7,7 @@
 
 import type { ChannelPayload, ChannelSender, SendResult } from '@crm/notifications';
 import { logger } from '../utils/logger';
-
-// =============================================================================
-// Configuration
-// =============================================================================
-
-const FROM_EMAIL = process.env.FROM_EMAIL || 'hello@9mo.ai';
-const FROM_NAME = process.env.FROM_NAME || 'MSCFO Email Sentiment';
+import { getEnv } from '../env';
 
 // =============================================================================
 // Postmark Email Sender
@@ -25,8 +19,9 @@ export class PostmarkEmailSender implements ChannelSender {
   private allowedEmails: string[];
 
   constructor() {
-    this.serverToken = process.env.POSTMARK_API_TOKEN;
-    this.allowedEmails = (process.env.EMAIL_OVERRIDE || '')
+    const env = getEnv();
+    this.serverToken = env.POSTMARK_API_TOKEN;
+    this.allowedEmails = env.EMAIL_OVERRIDE
       .split(',')
       .map(e => e.trim().toLowerCase())
       .filter(Boolean);
@@ -36,7 +31,7 @@ export class PostmarkEmailSender implements ChannelSender {
     }
 
     if (this.allowedEmails.length > 0) {
-      logger.info({ allowedEmails: this.allowedEmails }, 'EMAIL_OVERRIDE is set - only allowed recipients will receive emails, others redirected');
+      logger.info({ allowedEmails: this.allowedEmails }, 'EMAIL_OVERRIDE is active - only allowed recipients will receive emails, others redirected');
     }
   }
 
@@ -84,7 +79,7 @@ export class PostmarkEmailSender implements ChannelSender {
           'X-Postmark-Server-Token': this.serverToken,
         },
         body: JSON.stringify({
-          From: payload.from || `${FROM_NAME} <${FROM_EMAIL}>`,
+          From: payload.from || `${getEnv().FROM_NAME} <${getEnv().FROM_EMAIL}>`,
           To: effectiveRecipient,
           Subject: subject,
           HtmlBody: payload.html,

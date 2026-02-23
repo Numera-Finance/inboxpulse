@@ -5,6 +5,7 @@
 
 import { injectable, inject } from 'tsyringe';
 import { UserClient } from '@crm/clients';
+import { getEnv } from './env';
 import type {
   UserResolver,
   NotificationUser,
@@ -23,10 +24,7 @@ export class CrmUserResolver implements UserResolver {
     this.userClient = new UserClient(apiBaseUrl);
 
     // Set service API key for service-to-service calls
-    const serviceApiKey = process.env.SERVICE_API_KEY;
-    if (serviceApiKey) {
-      this.userClient.setServiceApiKey(serviceApiKey);
-    }
+    this.userClient.setServiceApiKey(getEnv().SERVICE_API_KEY);
   }
 
   async getUser(userId: string, tenantId: string): Promise<NotificationUser | null> {

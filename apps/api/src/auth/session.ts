@@ -1,15 +1,19 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import { UnauthorizedError } from '@crm/shared';
+import { getEnv } from '../env';
 
 // Lazy getter for SESSION_SECRET to allow dotenv to load first
 function getSessionSecret(): string {
-  if (!process.env.SESSION_SECRET) {
+  const secret = getEnv().SESSION_SECRET;
+  if (!secret) {
     throw new Error('SESSION_SECRET environment variable is required');
   }
-  return process.env.SESSION_SECRET;
+  return secret;
 }
 
-const SESSION_DURATION_MS = parseInt(process.env.SESSION_DURATION_MS || '1800000'); // 30 minutes default
+function getSessionDurationMs(): number {
+  return getEnv().SESSION_DURATION_MS;
+}
 
 export interface SessionPayload {
   userId: string;
@@ -30,7 +34,7 @@ export function createSessionToken(payload: {
   email?: string;
   indefinite?: boolean;
 }): string {
-  const duration = payload.indefinite ? INDEFINITE_DURATION_MS : SESSION_DURATION_MS;
+  const duration = payload.indefinite ? INDEFINITE_DURATION_MS : getSessionDurationMs();
   const sessionPayload: SessionPayload = {
     userId: payload.userId,
     tenantId: payload.tenantId,
@@ -106,7 +110,7 @@ export function shouldRefreshSession(payload: SessionPayload): boolean {
  * Get session duration in seconds (for cookie maxAge)
  */
 export function getSessionDurationSeconds(): number {
-  return SESSION_DURATION_MS / 1000;
+  return getSessionDurationMs() / 1000;
 }
 
 /**

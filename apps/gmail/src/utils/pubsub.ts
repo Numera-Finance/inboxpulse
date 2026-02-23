@@ -1,3 +1,5 @@
+import { getEnv } from '../env';
+
 /**
  * Verify Pub/Sub push authentication
  * https://cloud.google.com/pubsub/docs/push#setting_up_for_push_authentication
@@ -5,7 +7,7 @@
 export async function verifyPubSubToken(authHeader: string | undefined): Promise<boolean> {
   // If no verification token is configured, allow requests
   // This is typical when using default Pub/Sub push without OIDC
-  const expectedToken = process.env.PUBSUB_VERIFICATION_TOKEN;
+  const expectedToken = getEnv().PUBSUB_VERIFICATION_TOKEN;
 
   if (!expectedToken) {
     // Note: Using console.log here as this is an info-level message and logger may not be available

@@ -5,11 +5,12 @@ import { GmailClientFactory } from '../services/gmail-client-factory';
 import { GmailService } from '../services/gmail';
 import { EmailParserService } from '../services/email-parser';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 const app = new Hono();
 
-// API service base URL for clients
-const apiBaseUrl = process.env.SERVICE_API_URL;
+// API service base URL for clients (lazy to ensure env is loaded)
+const getApiBaseUrl = (): string => getEnv().SERVICE_API_URL;
 
 // Helper to get internal API headers for service-to-service calls
 function getInternalHeaders(): HeadersInit {
@@ -17,7 +18,7 @@ function getInternalHeaders(): HeadersInit {
     'Content-Type': 'application/json',
   };
 
-  const apiKey = process.env.SERVICE_API_KEY;
+  const apiKey = getEnv().SERVICE_API_KEY;
   if (apiKey) {
     headers['x-internal-api-key'] = apiKey;
   }
@@ -27,7 +28,6 @@ function getInternalHeaders(): HeadersInit {
 
 
 const emailParser = new EmailParserService();
-const emailClient = new EmailClient(apiBaseUrl, { internal: true });
 
 /**
  * Route to renew Gmail watches expiring within 2 days
@@ -41,8 +41,10 @@ app.get('/renew-expiring', async (c) => {
   logger.info('Starting watch renewal check');
 
   try {
+    const apiBaseUrl = getApiBaseUrl();
     const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
     const runClient = new RunClient(apiBaseUrl, { internal: true });
+    const emailClient = new EmailClient(apiBaseUrl, { internal: true });
     const gmailClientFactory = new GmailClientFactory(integrationClient);
     const gmailService = new GmailService(gmailClientFactory);
     const syncService = new SyncService(
@@ -55,7 +57,7 @@ app.get('/renew-expiring', async (c) => {
 
     // Get all Gmail integrations that need watch renewal (expiring within 2 days)
     const response = await fetch(
-      `${process.env.SERVICE_API_URL}/api/internal/integrations/watch/renewals?source=gmail&daysBeforeExpiry=2`,
+      `${apiBaseUrl}/api/internal/integrations/watch/renewals?source=gmail&daysBeforeExpiry=2`,
       { headers: getInternalHeaders() }
     );
 
@@ -195,8 +197,10 @@ app.post('/', async (c) => {
   logger.info({ integrationId, tenantId }, 'Starting watch setup');
 
   try {
+    const apiBaseUrl = getApiBaseUrl();
     const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
     const runClient = new RunClient(apiBaseUrl, { internal: true });
+    const emailClient = new EmailClient(apiBaseUrl, { internal: true });
     const gmailClientFactory = new GmailClientFactory(integrationClient);
     const gmailService = new GmailService(gmailClientFactory);
     const syncService = new SyncService(
@@ -211,7 +215,7 @@ app.post('/', async (c) => {
     if (integrationId) {
       // Get integration to extract tenantId
       const response = await fetch(
-        `${process.env.SERVICE_API_URL}/api/internal/integrations/${integrationId}`,
+        `${apiBaseUrl}/api/internal/integrations/${integrationId}`,
         { headers: getInternalHeaders() }
       );
 
@@ -252,7 +256,7 @@ app.post('/', async (c) => {
 
     // If only tenantId is provided, setup watches for all Gmail integrations
     const response = await fetch(
-      `${process.env.SERVICE_API_URL}/api/internal/integrations?tenantId=${tenantId}&source=gmail`,
+      `${apiBaseUrl}/api/internal/integrations?tenantId=${tenantId}&source=gmail`,
       { headers: getInternalHeaders() }
     );
 
@@ -375,7 +379,7 @@ app.delete('/', async (c) => {
   logger.info({ tenantId }, 'Stopping watch for integration');
 
   try {
-    const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
+    const integrationClient = new IntegrationClient(getApiBaseUrl(), { internal: true });
     const gmailClientFactory = new GmailClientFactory(integrationClient);
     const gmailService = new GmailService(gmailClientFactory);
 

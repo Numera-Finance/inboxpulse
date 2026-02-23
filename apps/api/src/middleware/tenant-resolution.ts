@@ -6,6 +6,7 @@ import type { Database } from '@crm/database';
 import { BetterAuthUserService } from '../auth/better-auth-user-service';
 import { users } from '../users/schema';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 /**
  * Step 2: Resolve tenant from session
@@ -18,7 +19,7 @@ export async function tenantResolutionMiddleware(c: Context, next: Next) {
 
   if (!session) {
     // ⚠️ SECURITY: Explicit production check to prevent accidental dev auth in production
-    const allowDevAuth = process.env.ALLOW_DEV_AUTH === 'true';
+    const allowDevAuth = getEnv().ALLOW_DEV_AUTH === 'true';
 
 
     // Production: Never allow dev auth

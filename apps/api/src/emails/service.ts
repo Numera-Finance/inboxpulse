@@ -11,6 +11,7 @@ import { emails, emailThreads } from './schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 @injectable()
 export class EmailService {
@@ -812,7 +813,7 @@ export class EmailService {
           threadId,
           eventId,
           eventName: eventData.name,
-          inngestEventKey: process.env.INNGEST_EVENT_KEY ? 'configured' : 'missing',
+          inngestEventKey: getEnv().INNGEST_EVENT_KEY ? 'configured' : 'missing',
           logType: 'INNGEST_EVENT_SEND_ATTEMPT',
         },
         'INNGEST EVENT: Attempting to send email/inserted event'
@@ -848,7 +849,7 @@ export class EmailService {
           tenantId,
           emailId,
           threadId,
-          inngestEventKey: process.env.INNGEST_EVENT_KEY ? 'configured' : 'missing',
+          inngestEventKey: getEnv().INNGEST_EVENT_KEY ? 'configured' : 'missing',
           logType: 'INNGEST_EVENT_FAILED',
         },
         'INNGEST EVENT: Failed to send (email saved, analysis may need manual retry)'

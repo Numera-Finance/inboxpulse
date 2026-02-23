@@ -1,6 +1,7 @@
 import { Inngest } from 'inngest';
 import { logger } from '../../utils/logger';
 import { internalFetch } from '../../utils/internal-fetch';
+import { getEnv } from '../../env';
 
 /**
  * Creates the Inngest cron function to renew Gmail watches before they expire.
@@ -20,12 +21,7 @@ export const createGmailWatchRenewalCronFunction = (inngest: Inngest) => {
     },
     { cron: '0 */4 * * *' }, // Run every 4 hours at minute 0
     async ({ step }) => {
-      const gmailServiceUrl = process.env.SERVICE_GMAIL_URL;
-
-      if (!gmailServiceUrl) {
-        logger.error('SERVICE_GMAIL_URL environment variable is not set');
-        throw new Error('SERVICE_GMAIL_URL is not configured');
-      }
+      const gmailServiceUrl = getEnv().SERVICE_GMAIL_URL;
 
       const result = await step.run('renew-expiring-watches', async () => {
         logger.info('Starting Gmail watch renewal cron');

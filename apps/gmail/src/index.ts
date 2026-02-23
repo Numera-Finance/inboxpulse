@@ -5,21 +5,9 @@ import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env.local') });
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
-// Validate required environment variables
-const requiredEnvVars = [
-  'SERVICE_API_URL',
-  'GMAIL_PUBSUB_TOPIC',
-  'GOOGLE_CLIENT_ID',
-  'GOOGLE_CLIENT_SECRET',
-];
-
-const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
-  console.error('Please set them in .env.local or .env file');
-  process.exit(1);
-}
+// Validate environment variables via Zod schema (exits on failure)
+import { getEnv } from './env';
+getEnv();
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -62,9 +50,10 @@ try {
   logger.error({ error: error.message }, 'Failed to register routes');
 }
 
-const port = process.env.PORT ? parseInt(process.env.PORT) : 4002;
+const env = getEnv();
+const port = env.PORT;
 
-logger.info({ port, env: process.env.NODE_ENV }, 'Gmail sync service starting');
+logger.info({ port, env: env.NODE_ENV }, 'Gmail sync service starting');
 
 try {
   serve({

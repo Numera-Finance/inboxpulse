@@ -4,9 +4,7 @@ import type { Email } from '@crm/shared';
 import { AIService } from './ai-service';
 import { ContactClient } from '@crm/clients';
 import { logger } from '../utils/logger';
-
-// API service base URL for clients
-const apiBaseUrl = process.env.SERVICE_API_URL;
+import { getEnv } from '../env';
 
 /**
  * Zod schema for extracted signature data
@@ -70,7 +68,7 @@ export class SignatureExtractionService {
   constructor(
     @inject(AIService) private aiService: AIService
   ) {
-    this.contactClient = new ContactClient(apiBaseUrl, { internal: true });
+    this.contactClient = new ContactClient(getEnv().SERVICE_API_URL, { internal: true });
   }
 
   /**
