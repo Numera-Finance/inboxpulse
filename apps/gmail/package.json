@@ -22,7 +22,8 @@
     "hono": "catalog:",
     "pino": "catalog:",
     "reflect-metadata": "catalog:",
-    "tsyringe": "catalog:"
+    "tsyringe": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "latest",

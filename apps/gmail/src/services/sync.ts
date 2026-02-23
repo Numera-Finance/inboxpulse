@@ -2,6 +2,7 @@ import { IntegrationClient, RunClient, EmailClient, Integration } from '@crm/cli
 import { GmailService } from './gmail';
 import { EmailParserService } from './email-parser';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 export class SyncService {
   constructor(
@@ -287,10 +288,7 @@ export class SyncService {
    * Renew watch for a specific integration
    */
   async renewWatch(integration: Integration): Promise<{ historyId: string; watchExpiresAt: Date; watchSetAt: Date }> {
-    const topicName = process.env.GMAIL_PUBSUB_TOPIC;
-    if (!topicName) {
-      throw new Error('GMAIL_PUBSUB_TOPIC not configured');
-    }
+    const topicName = getEnv().GMAIL_PUBSUB_TOPIC;
 
     const { historyId, expiration } = await this.gmailService.setupWatch(integration.tenantId, topicName);
 
@@ -319,11 +317,7 @@ export class SyncService {
 
     logger.info({ integrationId: integration.id }, 'Watch expired, renewing');
 
-    const topicName = process.env.GMAIL_PUBSUB_TOPIC;
-    if (!topicName) {
-      logger.warn({ integrationId: integration.id }, 'GMAIL_PUBSUB_TOPIC not set');
-      return;
-    }
+    const topicName = getEnv().GMAIL_PUBSUB_TOPIC;
 
     try {
       const { historyId, expiration } = await this.gmailService.setupWatch(integration.tenantId, topicName);

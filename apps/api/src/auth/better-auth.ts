@@ -14,6 +14,7 @@ import { tenants } from '../tenants/schema';
 import { users } from '../users/schema';
 import { BetterAuthUserService } from './better-auth-user-service';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 // Lazy getter for database instance from DI container
 // This allows better-auth to be imported before container is initialized
@@ -56,11 +57,11 @@ function getAuth() {
       },
       socialProviders: {
         // Only enable Google if credentials are provided
-        ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+        ...(getEnv().GOOGLE_CLIENT_ID && getEnv().GOOGLE_CLIENT_SECRET
           ? {
               google: {
-                clientId: process.env.GOOGLE_CLIENT_ID,
-                clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+                clientId: getEnv().GOOGLE_CLIENT_ID,
+                clientSecret: getEnv().GOOGLE_CLIENT_SECRET,
                 // Scopes are optional - better-auth uses defaults if not specified
                 // scope: [
                 //   'openid',
@@ -78,16 +79,16 @@ function getAuth() {
           enabled: false, // Disabled to ensure tenant_id is read from DB after updates
         },
       },
-      baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:4001', // API runs on 4001
+      baseURL: getEnv().BETTER_AUTH_URL, // API runs on 4001
       basePath: '/api/auth', // Better-auth will handle routes under this path
       trustedOrigins: [
-        process.env.WEB_URL || 'http://localhost:4000', // Web app runs on 4000
-        process.env.SERVICE_API_URL || 'http://localhost:4001', // API runs on 4001
+        getEnv().WEB_URL, // Web app runs on 4000
+        getEnv().SERVICE_API_URL, // API runs on 4001
       ].filter(Boolean),
-      secret: process.env.BETTER_AUTH_SECRET || process.env.SESSION_SECRET || 'dev-secret-change-in-production-minimum-32-characters',
+      secret: getEnv().BETTER_AUTH_SECRET || getEnv().SESSION_SECRET || 'dev-secret-change-in-production-minimum-32-characters',
       advanced: {
         // Enable cross-origin cookies for separate API/Web domains
-        useSecureCookies: process.env.NODE_ENV === 'production',
+        useSecureCookies: getEnv().NODE_ENV === 'production',
         defaultCookieAttributes: {
           sameSite: 'none' as const, // Required for cross-origin
           secure: true, // Required when sameSite is 'none'
@@ -219,7 +220,7 @@ function getAuth() {
             after: async (user: any, context: any) => {
               const account = context?.account;
 
-              if (user.email && process.env.GOOGLE_CLIENT_ID) {
+              if (user.email && getEnv().GOOGLE_CLIENT_ID) {
                 try {
                   const betterAuthUserService = container.resolve(BetterAuthUserService);
 

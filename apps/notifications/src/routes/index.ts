@@ -13,6 +13,7 @@ import {
   getAllTemplates,
   getTemplateInstance,
 } from '@crm/notifications';
+import { getEnv } from '../env';
 import type { RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { getRequestHeader } from '../utils/request-header';
@@ -727,7 +728,7 @@ app.get('/simulate', (c) => {
   return c.json({
     success: true,
     data: {
-      emailOverride: process.env.EMAIL_OVERRIDE || null,
+      emailOverride: getEnv().EMAIL_OVERRIDE || null,
       endpoints: [
         {
           method: 'POST',

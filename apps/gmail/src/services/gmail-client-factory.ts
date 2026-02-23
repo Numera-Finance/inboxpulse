@@ -2,6 +2,7 @@ import { google, gmail_v1 } from 'googleapis';
 import { batchFetchImplementation } from '@jrmdayn/googleapis-batcher';
 import { IntegrationClient } from '@crm/clients';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 /**
  * Gmail Client Factory
@@ -179,15 +180,12 @@ export class GmailClientFactory {
     logger.info({ tenantId }, 'Refreshing OAuth access token');
 
     // Get OAuth app credentials from environment (static, not user-specific)
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const env = getEnv();
+    const clientId = env.GOOGLE_CLIENT_ID;
+    const clientSecret = env.GOOGLE_CLIENT_SECRET;
 
     // Get user-specific refresh token from database
     const refreshToken = credentials.refreshToken;
-
-    if (!clientId || !clientSecret) {
-      throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in environment variables');
-    }
 
     if (!refreshToken) {
       throw new Error('refreshToken is required to refresh access token');

@@ -5,6 +5,7 @@ import { GMAIL_SCOPE_URLS } from '@crm/shared';
 import { IntegrationService } from '../integrations/service';
 import { logger } from '../utils/logger';
 import { internalFetch } from '../utils/internal-fetch';
+import { getEnv } from '../env';
 
 const app = new Hono();
 
@@ -68,8 +69,8 @@ app.get('/gmail/authorize', async (c) => {
       logger.info({ tenantId }, 'Using OAuth credentials from query parameters');
     } else {
       // Check environment variables as fallback
-      clientId = process.env.GOOGLE_CLIENT_ID || '';
-      clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+      clientId = getEnv().GOOGLE_CLIENT_ID;
+      clientSecret = getEnv().GOOGLE_CLIENT_SECRET;
 
       if (!clientId || !clientSecret) {
         return c.json({
@@ -81,13 +82,7 @@ app.get('/gmail/authorize', async (c) => {
     }
 
     // Determine redirect URI based on environment
-    const baseUrl = process.env.SERVICE_API_URL;
-    if (!baseUrl) {
-      logger.error('SERVICE_API_URL environment variable is not set');
-      return c.json({
-        error: 'SERVER_CONFIGURATION_ERROR: SERVICE_API_URL environment variable is not set'
-      }, 500);
-    }
+    const baseUrl = getEnv().SERVICE_API_URL;
     const redirectUri = `${baseUrl}/oauth/gmail/callback`;
 
     // Create OAuth2 client
@@ -170,7 +165,7 @@ app.get('/gmail/callback', async (c) => {
     const integrationService = container.resolve(IntegrationService);
 
     // Determine redirect URI (must match the one used in authorize)
-    const baseUrl = process.env.SERVICE_API_URL;
+    const baseUrl = getEnv().SERVICE_API_URL;
     const redirectUri = `${baseUrl}/oauth/gmail/callback`;
 
     // Create OAuth2 client using credentials from state
@@ -228,7 +223,7 @@ app.get('/gmail/callback', async (c) => {
 
     // Setup Gmail watch automatically
     try {
-      const gmailServiceUrl = process.env.SERVICE_GMAIL_URL!;
+      const gmailServiceUrl = getEnv().SERVICE_GMAIL_URL;
       const watchResponse = await internalFetch(`${gmailServiceUrl}/api/watch?tenantId=${tenantId}`, {
         method: 'POST',
       });
@@ -256,7 +251,7 @@ app.get('/gmail/callback', async (c) => {
 
     // Trigger initial sync to fetch historical emails (last 30 days)
     try {
-      const gmailServiceUrl = process.env.SERVICE_GMAIL_URL!;
+      const gmailServiceUrl = getEnv().SERVICE_GMAIL_URL;
       const syncResponse = await internalFetch(`${gmailServiceUrl}/api/sync/${tenantId}/initial`, {
         method: 'POST',
       });
@@ -283,13 +278,12 @@ app.get('/gmail/callback', async (c) => {
     }
 
     // Redirect to web app integrations page
-    const webUrl = process.env.WEB_URL || 'http://localhost:4000';
-    return c.redirect(`${webUrl}/integrations?oauth=success`);
+    return c.redirect(`${getEnv().WEB_URL}/integrations?oauth=success`);
   } catch (error: any) {
     logger.error({ error, tenantId }, 'Failed to complete OAuth flow');
 
     // Redirect to web app with error
-    const webUrl = process.env.WEB_URL || 'http://localhost:4000';
+    const webUrl = getEnv().WEB_URL;
     const errorMessage = encodeURIComponent(error.message || 'Unknown error');
     return c.redirect(`${webUrl}/integrations?oauth=error&error=${errorMessage}`);
   }

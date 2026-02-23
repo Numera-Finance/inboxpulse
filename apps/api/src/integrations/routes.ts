@@ -5,6 +5,7 @@ import type { IntegrationSource } from './schema';
 import { updateRunStateSchema, updateAccessTokenSchema, updateWatchExpirySchema, updateParametersRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 import { internalFetch } from '../utils/internal-fetch';
+import { getEnv } from '../env';
 
 const app = new Hono();
 
@@ -391,7 +392,7 @@ app.delete('/:tenantId/:source', async (c) => {
   // Stop Gmail watch first (if it's a gmail integration)
   if (source === 'gmail') {
     try {
-      const gmailServiceUrl = process.env.SERVICE_GMAIL_URL;
+      const gmailServiceUrl = getEnv().SERVICE_GMAIL_URL;
       if (gmailServiceUrl) {
         const watchResponse = await internalFetch(`${gmailServiceUrl}/api/watch?tenantId=${tenantId}`, {
           method: 'DELETE',

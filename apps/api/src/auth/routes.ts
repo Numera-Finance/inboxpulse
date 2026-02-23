@@ -7,6 +7,7 @@ import { requestHeaderMiddleware } from '../middleware/requestHeader';
 import { createSessionToken, getSessionDurationSeconds } from './session';
 import { UserRepository } from '../users/repository';
 import { getRequestHeader } from '../utils/request-header';
+import { getEnv } from '../env';
 import type { ApiResponse } from '@crm/shared';
 
 export const authRoutes = new Hono();
@@ -54,7 +55,7 @@ authRoutes.post('/login', async (c) => {
   // Set httpOnly cookie for browser
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: getEnv().NODE_ENV === 'production',
     sameSite: 'Lax',
     maxAge: getSessionDurationSeconds(),
     path: '/',
@@ -121,7 +122,7 @@ const testTokenRequestSchema = z.object({
  */
 authRoutes.post('/test-token', async (c) => {
   // Verify API key is configured
-  const testTokenApiKey = process.env.TEST_TOKEN_API_KEY;
+  const testTokenApiKey = getEnv().TEST_TOKEN_API_KEY;
   if (!testTokenApiKey) {
     throw new ValidationError('TEST_TOKEN_API_KEY environment variable is not configured');
   }

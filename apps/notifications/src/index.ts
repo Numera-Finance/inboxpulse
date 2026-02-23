@@ -6,18 +6,9 @@ import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env.local') });
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
-// Validate required environment variables
-const requiredEnvVars = [
-  'DATABASE_URL',
-];
-
-const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
-  console.error('Please set them in .env.local or .env file');
-  process.exit(1);
-}
+// Validate environment variables via Zod (exits on failure)
+import { getEnv } from './env';
+const env = getEnv();
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -80,7 +71,7 @@ app.use('*', cors({
     const allowedOrigins = [
       'http://localhost:4000',
       'http://127.0.0.1:4000',
-      process.env.WEB_URL,
+      env.WEB_URL,
     ].filter(Boolean) as string[];
 
     return allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
@@ -111,7 +102,7 @@ app.route('/api/notifications', notificationsRoutes);
 // Inngest webhook handler (handles its own auth via signing key)
 app.route('/', inngestRoutes);
 
-const port = process.env.PORT ? parseInt(process.env.PORT) : 4004;
+const port = env.PORT;
 
 logger.info({ port }, 'Notifications service starting');
 

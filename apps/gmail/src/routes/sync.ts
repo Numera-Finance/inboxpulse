@@ -5,11 +5,12 @@ import { GmailClientFactory } from '../services/gmail-client-factory';
 import { GmailService } from '../services/gmail';
 import { EmailParserService } from '../services/email-parser';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 const app = new Hono();
 
-// API service base URL for clients
-const apiBaseUrl = process.env.SERVICE_API_URL;
+// API service base URL for clients (lazy to ensure env is loaded)
+const getApiBaseUrl = (): string => getEnv().SERVICE_API_URL;
 
 /**
  * Trigger incremental sync
@@ -20,6 +21,7 @@ app.post('/:tenantId', async (c) => {
   logger.info({ tenantId }, 'Triggering incremental sync');
 
   try {
+    const apiBaseUrl = getApiBaseUrl();
     const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
     const runClient = new RunClient(apiBaseUrl, { internal: true });
     const gmailClientFactory = new GmailClientFactory(integrationClient);
@@ -87,6 +89,7 @@ app.post('/:tenantId/initial', async (c) => {
   logger.info({ tenantId }, 'Triggering initial sync');
 
   try {
+    const apiBaseUrl = getApiBaseUrl();
     const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
     const runClient = new RunClient(apiBaseUrl, { internal: true });
     const gmailClientFactory = new GmailClientFactory(integrationClient);
@@ -168,6 +171,7 @@ app.post('/:tenantId/historical', async (c) => {
 app.get('/:tenantId/status', async (c) => {
   const tenantId = c.req.param('tenantId');
 
+  const apiBaseUrl = getApiBaseUrl();
   const integrationClient = new IntegrationClient(apiBaseUrl, { internal: true });
   const runClient = new RunClient(apiBaseUrl, { internal: true });
 
@@ -192,7 +196,7 @@ app.get('/:tenantId/status', async (c) => {
 app.get('/:tenantId/runs/:runId', async (c) => {
   const runId = c.req.param('runId');
 
-  const runClient = new RunClient(apiBaseUrl, { internal: true });
+  const runClient = new RunClient(getApiBaseUrl(), { internal: true });
   const run = await runClient.getById(runId);
 
   if (!run) {

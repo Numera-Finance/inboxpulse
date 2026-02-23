@@ -6,18 +6,9 @@ import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env.local') });
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
-// Validate required environment variables
-const requiredEnvVars = [
-  'SERVICE_API_URL'
-];
-
-const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
-  console.error('Please set them in .env.local or .env file');
-  process.exit(1);
-}
+// Validate environment variables via Zod schema (exits on failure)
+import { getEnv } from './env';
+const env = getEnv();
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -47,9 +38,9 @@ app.get('/health', (c) => {
 app.route('/api/analysis', analysisRoutes);
 logger.info('Routes registered successfully');
 
-const port = process.env.PORT ? parseInt(process.env.PORT) : 4003;
+const port = env.PORT;
 
-logger.info({ port, env: process.env.NODE_ENV }, 'Analysis service starting');
+logger.info({ port, env: env.NODE_ENV }, 'Analysis service starting');
 
 try {
   serve({
@@ -57,7 +48,9 @@ try {
     port,
   });
   logger.info({ port }, 'Server listening successfully');
-} catch (error: any) {
-  logger.error({ error: error.message, stack: error.stack, port }, 'Failed to start server');
+} catch (error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+  logger.error({ error: message, stack, port }, 'Failed to start server');
   process.exit(1);
 }

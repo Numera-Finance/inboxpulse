@@ -1,5 +1,6 @@
 import { container } from 'tsyringe';
 import { createDatabase, type Database } from '@crm/database';
+import { getEnv } from '../env';
 // Import schemas
 import {
   tenants,
@@ -30,8 +31,8 @@ export function setupContainer() {
   container.register<Database>('Database', { useValue: db });
 
   // Register API base URL for service-to-service calls
-  const apiBaseUrl = process.env.SERVICE_API_URL || 'http://localhost:4001';
-  container.register('ApiBaseUrl', { useValue: apiBaseUrl });
+  const { SERVICE_API_URL } = getEnv();
+  container.register('ApiBaseUrl', { useValue: SERVICE_API_URL });
 
   // Register notification repository (for future history/audit)
   container.register('NotificationRepository', {

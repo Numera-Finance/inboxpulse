@@ -7,6 +7,7 @@ import { xai } from '@ai-sdk/xai';
 import { Langfuse } from 'langfuse';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 import type { PromptMessage } from './ai-types';
 
 /**
@@ -92,16 +93,18 @@ export class AIService {
 
   constructor() {
     // Initialize Langfuse if enabled
-    if (process.env.LANGFUSE_ENABLED === 'true' && process.env.LANGFUSE_SECRET_KEY) {
+    const env = getEnv();
+    if (env.LANGFUSE_ENABLED === 'true' && env.LANGFUSE_SECRET_KEY) {
       try {
         this.langfuse = new Langfuse({
-          secretKey: process.env.LANGFUSE_SECRET_KEY,
-          publicKey: process.env.LANGFUSE_PUBLIC_KEY,
-          baseUrl: process.env.LANGFUSE_BASE_URL || 'https://cloud.langfuse.com',
+          secretKey: env.LANGFUSE_SECRET_KEY,
+          publicKey: env.LANGFUSE_PUBLIC_KEY,
+          baseUrl: env.LANGFUSE_BASE_URL,
         });
         logger.info('Langfuse initialized for observability');
-      } catch (error: any) {
-        logger.warn({ error: error.message }, 'Failed to initialize Langfuse, continuing without observability');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn({ error: message }, 'Failed to initialize Langfuse, continuing without observability');
       }
     }
   }

@@ -12,6 +12,7 @@ import { users } from '../users/schema';
 import { UserRepository } from '../users/repository';
 import { ContactRepository } from '../contacts/repository';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 // =============================================================================
 // Zod Schemas for request validation
@@ -480,7 +481,7 @@ export class TaskService {
             dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
             assignedTo: assignedToName,
             accountOwner: accountOwnerName,
-            detailsUrl: `${process.env.APP_URL || 'http://localhost:3000'}/tasks/${task.id}`,
+            detailsUrl: `${getEnv().APP_URL}/tasks/${task.id}`,
           });
 
           // Categorize this task for per-manager metrics
@@ -604,7 +605,7 @@ export class TaskService {
         dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
         assignedTo: assignedToName,
         accountOwner: accountOwnerName,
-        detailsUrl: `${process.env.APP_URL || 'http://localhost:3000'}/tasks/${task.id}`,
+        detailsUrl: `${getEnv().APP_URL}/tasks/${task.id}`,
       });
     }
 
@@ -680,7 +681,7 @@ export class TaskService {
     data: ManagerEscalationData
   ): Promise<boolean> {
     try {
-      const notificationsUrl = process.env.SERVICE_NOTIFICATIONS_URL || 'http://localhost:4004';
+      const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
       const response = await fetch(
         `${notificationsUrl}/api/notifications/send/escalation-batch`,
         {
@@ -740,8 +741,8 @@ export class TaskService {
       return false;
     }
 
-    const notificationsUrl = process.env.SERVICE_NOTIFICATIONS_URL || 'http://localhost:4004';
-    const webUrl = process.env.WEB_URL || 'http://localhost:4000';
+    const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
+    const webUrl = getEnv().WEB_URL;
 
     try {
       // Call /send - the notification service handles preference checks

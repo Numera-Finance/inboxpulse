@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Email } from '@crm/shared';
 import { AIService, type ModelConfig } from './ai-service';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 /**
  * Email classification categories
@@ -499,7 +500,7 @@ export class EmailFilterService {
    * Stage 3: HuggingFace spam detection
    */
   private async runHuggingFaceSpamDetection(email: Email): Promise<ClassificationResult | null> {
-    const hfToken = process.env.HUGGINGFACE_API_TOKEN;
+    const hfToken = getEnv().HUGGINGFACE_API_TOKEN;
     if (!hfToken) {
       logger.debug('HuggingFace API token not configured, skipping spam detection');
       return null;
@@ -551,7 +552,7 @@ export class EmailFilterService {
    * Stage 4: HuggingFace zero-shot classification
    */
   private async runHuggingFaceZeroShot(email: Email): Promise<ClassificationResult | null> {
-    const hfToken = process.env.HUGGINGFACE_API_TOKEN;
+    const hfToken = getEnv().HUGGINGFACE_API_TOKEN;
     if (!hfToken) {
       logger.debug('HuggingFace API token not configured, skipping zero-shot classification');
       return null;
