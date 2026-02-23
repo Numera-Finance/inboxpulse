@@ -6,6 +6,7 @@ import { requirePermission } from '../middleware/require-permission';
 import { getRequestHeader } from '../utils/request-header';
 import { handleApiRequest, handleApiRequestWithStatus, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { UserService } from './service';
+import { TenantRepository } from '../tenants/repository';
 import {
   createUserRequestSchema,
   updateUserRequestSchema,
@@ -104,15 +105,22 @@ userRoutes.patch('/me/preferences', async (c) => {
 userRoutes.get('/me', async (c) => {
   const requestHeader = getRequestHeader(c);
   const service = container.resolve(UserService);
-  const user = await service.getById(requestHeader, requestHeader.userId);
+  const tenantRepository = container.resolve(TenantRepository);
+
+  const [user, tenant] = await Promise.all([
+    service.getById(requestHeader, requestHeader.userId),
+    tenantRepository.findById(requestHeader.tenantId),
+  ]);
 
   if (!user) {
     throw new NotFoundError('User', requestHeader.userId);
   }
 
-  return c.json<ApiResponse<typeof user>>({
+  const data = { ...user, tenantDomain: tenant?.domain ?? null };
+
+  return c.json<ApiResponse<typeof data>>({
     success: true,
-    data: user,
+    data,
   });
 });
 

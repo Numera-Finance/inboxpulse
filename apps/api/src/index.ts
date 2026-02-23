@@ -110,6 +110,17 @@ app.use('*', cors({
       process.env.WEB_URL,
     ].filter(Boolean) as string[];
 
+    // Allow Chrome extension origins
+    if (origin.startsWith('chrome-extension://')) {
+      // In production, restrict to specific extension ID
+      const allowedExtensionId = process.env.CHROME_EXTENSION_ID;
+      if (allowedExtensionId) {
+        return origin === `chrome-extension://${allowedExtensionId}` ? origin : allowedOrigins[0];
+      }
+      // In development, allow all extension origins
+      return origin;
+    }
+
     // Return origin if allowed, null otherwise
     return allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
   },
@@ -164,14 +175,19 @@ app.on(['POST', 'GET', 'OPTIONS'], '/api/auth/*', async (c) => {
       return handlerResponse;
     }
     
-    // If this is a callback redirect (302), check if it's redirecting to API server
-    // and redirect to web app instead
+    // If this is a callback redirect (302), check where it's going
     if (handlerResponse.status === 302 && pathname.includes('callback')) {
       const location = handlerResponse.headers.get('Location');
+
+      // If better-auth is redirecting to a chrome-extension:// URL, let it through
+      // This happens when the Chrome extension initiated the OAuth flow
+      if (location?.startsWith('chrome-extension://')) {
+        return handlerResponse;
+      }
+
+      // If redirecting to the API server itself, redirect to web app instead
       const apiUrl = process.env.BETTER_AUTH_URL || process.env.SERVICE_API_URL || 'http://localhost:4001';
       if (location && location.startsWith(apiUrl)) {
-        // Better-auth redirected to API server, redirect to web app instead
-        // WEB_URL should be set in Cloud Run environment variables for production
         const webUrl = process.env.WEB_URL || 'http://localhost:4000';
         return c.redirect(`${webUrl}/?auth=success`);
       }

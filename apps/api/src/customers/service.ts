@@ -312,7 +312,31 @@ export class CustomerService {
     try {
       logger.info({ domain, tenantId: requestHeader.tenantId }, 'Fetching customer by domain (scoped)');
       const customer = await this.customerRepository.findByDomainScoped(requestHeader, domain);
-      return await toClientCustomer(customer, this.customerRepository);
+      const clientCustomer = await toClientCustomer(customer, this.customerRepository);
+      if (!clientCustomer) return undefined;
+
+      // Enrich with email stats for sidebar display
+      const ids = [clientCustomer.id];
+      const [emailCounts, escalationCounts, upsellCounts, churnCounts, positiveCounts, averageTats, lastContactDates] = await Promise.all([
+        this.emailRepository.getCountsByCustomerIdsScoped(requestHeader, ids),
+        this.emailRepository.getEscalationCountsByCustomerIdsScoped(requestHeader, ids),
+        this.emailRepository.getUpsellCountsByCustomerIdsScoped(requestHeader, ids),
+        this.emailRepository.getChurnCountsByCustomerIdsScoped(requestHeader, ids),
+        this.emailRepository.getPositiveCountsByCustomerIdsScoped(requestHeader, ids),
+        this.emailRepository.getAverageTatByCustomerIdsScoped(requestHeader, ids),
+        this.emailRepository.getLastContactDatesByCustomerIdsScoped(requestHeader, ids),
+      ]);
+
+      return {
+        ...clientCustomer,
+        emailCount: emailCounts[clientCustomer.id] || 0,
+        escalationCount: escalationCounts[clientCustomer.id] || 0,
+        upsellCount: upsellCounts[clientCustomer.id] || 0,
+        churnCount: churnCounts[clientCustomer.id] || 0,
+        positiveCount: positiveCounts[clientCustomer.id] || 0,
+        averageTat: averageTats[clientCustomer.id] ?? null,
+        lastContactDate: lastContactDates[clientCustomer.id],
+      };
     } catch (error: any) {
       logger.error({ error, domain, tenantId: requestHeader.tenantId }, 'Failed to fetch customer by domain');
       throw error;
