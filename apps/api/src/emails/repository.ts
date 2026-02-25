@@ -1252,20 +1252,13 @@ export class EmailRepository extends ScopedRepository {
   ): Promise<{ total: number; analyzed: number }> {
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      this.emailAccessSubquery(header),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emails.id} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
     }
-
-    // Add date filters
     if (filters?.dateFrom) {
       conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
     }
@@ -1273,15 +1266,27 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
     }
 
+    // Count per customer, then sum to match customer table's per-row counts
+    const perCustomer = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        total: sql<number>`count(DISTINCT ${emails.id})::int`.as('total'),
+        analyzed: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emails.id} IN (
+          SELECT DISTINCT ea.email_id FROM email_analyses ea
+        ))::int`.as('analyzed'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(emailParticipants.customerId)
+      .as('per_customer');
+
     const result = await this.db
       .select({
-        total: sql<number>`count(*)::int`,
-        analyzed: sql<number>`count(*) FILTER (WHERE ${emails.id} IN (
-          SELECT DISTINCT ea.email_id FROM email_analyses ea
-        ))::int`,
+        total: sql<number>`coalesce(sum(${perCustomer.total}), 0)::int`,
+        analyzed: sql<number>`coalesce(sum(${perCustomer.analyzed}), 0)::int`,
       })
-      .from(emails)
-      .where(and(...conditions));
+      .from(perCustomer);
 
     return {
       total: result[0]?.total ?? 0,
@@ -1303,46 +1308,44 @@ export class EmailRepository extends ScopedRepository {
     }
   ): Promise<{ positive: number; neutral: number; negative: number }> {
     const conditions: SQL[] = [
-      eq(emailAnalyses.tenantId, header.tenantId),
+      eq(emails.tenantId, header.tenantId),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
       eq(emailAnalyses.analysisType, 'sentiment'),
-      this.emailAnalysesAccessFilter(header),
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emailAnalyses.emailId} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
+    }
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
     }
 
-    // Add date filters via emails table
-    if (filters?.dateFrom || filters?.dateTo) {
-      const dateConditions: SQL[] = [];
-      if (filters?.dateFrom) {
-        dateConditions.push(sql`e.received_at >= ${filters.dateFrom}::timestamp`);
-      }
-      if (filters?.dateTo) {
-        dateConditions.push(sql`e.received_at <= ${filters.dateTo}::timestamp`);
-      }
-      conditions.push(
-        sql`${emailAnalyses.emailId} IN (
-          SELECT e.id FROM emails e
-          WHERE ${and(...dateConditions)}
-        )`
-      );
-    }
+    // Count per customer, then sum to match customer table's per-row counts
+    const perCustomer = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`.as('positive'),
+        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`.as('neutral'),
+        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`.as('negative'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .innerJoin(emailAnalyses, eq(emailAnalyses.emailId, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(emailParticipants.customerId)
+      .as('per_customer');
 
     const result = await this.db
       .select({
-        positive: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`,
-        neutral: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`,
-        negative: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`,
+        positive: sql<number>`coalesce(sum(${perCustomer.positive}), 0)::int`,
+        neutral: sql<number>`coalesce(sum(${perCustomer.neutral}), 0)::int`,
+        negative: sql<number>`coalesce(sum(${perCustomer.negative}), 0)::int`,
       })
-      .from(emailAnalyses)
-      .where(and(...conditions));
+      .from(perCustomer);
 
     return {
       positive: result[0]?.positive ?? 0,
@@ -1371,34 +1374,44 @@ export class EmailRepository extends ScopedRepository {
     }
 
     const conditions: SQL[] = [
-      eq(emailAnalyses.tenantId, header.tenantId),
+      eq(emails.tenantId, header.tenantId),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
       eq(emailAnalyses.analysisType, 'sentiment'),
-      this.emailAnalysesAccessFilter(header),
       // Filter to last 6 months
       sql`${emailAnalyses.createdAt} >= date_trunc('month', now() - interval '5 months')`,
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emailAnalyses.emailId} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
     }
+
+    // Count per customer per month, then sum per month
+    const perCustomerMonth = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        month: sql<string>`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`.as('month'),
+        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`.as('positive'),
+        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`.as('neutral'),
+        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`.as('negative'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .innerJoin(emailAnalyses, eq(emailAnalyses.emailId, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(emailParticipants.customerId, sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`)
+      .as('per_customer_month');
 
     const result = await this.db
       .select({
-        month: sql<string>`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`,
-        positive: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`,
-        neutral: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`,
-        negative: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`,
+        month: perCustomerMonth.month,
+        positive: sql<number>`coalesce(sum(${perCustomerMonth.positive}), 0)::int`,
+        neutral: sql<number>`coalesce(sum(${perCustomerMonth.neutral}), 0)::int`,
+        negative: sql<number>`coalesce(sum(${perCustomerMonth.negative}), 0)::int`,
       })
-      .from(emailAnalyses)
-      .where(and(...conditions))
-      .groupBy(sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`)
-      .orderBy(sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`);
+      .from(perCustomerMonth)
+      .groupBy(perCustomerMonth.month)
+      .orderBy(perCustomerMonth.month);
 
     // Convert to percentages and ensure all months are represented
     const resultMap = new Map(result.map(r => [r.month, r]));
@@ -1435,31 +1448,42 @@ export class EmailRepository extends ScopedRepository {
   ): Promise<Array<{ week: string; totalEmails: number; escalations: number }>> {
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      this.emailAccessSubquery(header),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
       // Filter to last 4 weeks
       sql`${emails.receivedAt} >= date_trunc('week', now() - interval '3 weeks')`,
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emails.id} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
     }
+
+    // Count per customer per week, then sum per week
+    const perCustomerWeek = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        weekStart: sql<string>`to_char(date_trunc('week', ${emails.receivedAt}), 'Mon DD, YYYY')`.as('week_start'),
+        totalEmails: sql<number>`count(DISTINCT ${emails.id})::int`.as('total_emails'),
+        escalations: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emails.signals} @> ARRAY[10]::integer[])::int`.as('escalations'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(
+        emailParticipants.customerId,
+        sql`date_trunc('week', ${emails.receivedAt})`
+      )
+      .as('per_customer_week');
 
     const result = await this.db
       .select({
-        weekStart: sql<string>`to_char(date_trunc('week', ${emails.receivedAt}), 'Mon DD, YYYY')`,
-        totalEmails: sql<number>`count(*)::int`,
-        escalations: sql<number>`count(*) FILTER (WHERE ${emails.signals} @> ARRAY[10]::integer[])::int`,
+        weekStart: perCustomerWeek.weekStart,
+        totalEmails: sql<number>`coalesce(sum(${perCustomerWeek.totalEmails}), 0)::int`,
+        escalations: sql<number>`coalesce(sum(${perCustomerWeek.escalations}), 0)::int`,
       })
-      .from(emails)
-      .where(and(...conditions))
-      .groupBy(sql`date_trunc('week', ${emails.receivedAt})`)
-      .orderBy(sql`date_trunc('week', ${emails.receivedAt})`);
+      .from(perCustomerWeek)
+      .groupBy(perCustomerWeek.weekStart)
+      .orderBy(perCustomerWeek.weekStart);
 
     // Generate last 4 weeks with start dates
     const weeks: Array<{ week: string; totalEmails: number; escalations: number }> = [];
