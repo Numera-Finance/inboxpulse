@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
+import { subDays, startOfDay, endOfDay } from "date-fns"
 import { Search, Plus, Upload } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ViewToggle } from "@/components/view-toggle"
@@ -14,6 +15,7 @@ import { ImportResultsDialog, type ImportResults } from "@/components/import-res
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ExportButton } from "@/components/ui/export-button"
+import { DateRangeFilter } from "@/components/ui/date-range-filter"
 import { CustomerTableSkeleton } from "@/components/ui/table-skeleton"
 import { useCustomers, useCustomer, useUpsertCustomer, useImportCustomers, useExportCustomers } from "@/lib/hooks"
 import { type Customer, mapApiCustomerToCustomer } from "@/lib/types"
@@ -55,6 +57,16 @@ export default function CustomersPage() {
   // Pagination state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
 
+  // Date filter state (default to Last 30 days)
+  const [dateFrom, setDateFrom] = React.useState(() => startOfDay(subDays(new Date(), 30)).toISOString())
+  const [dateTo, setDateTo] = React.useState(() => endOfDay(new Date()).toISOString())
+
+  const handleDateRangeChange = React.useCallback((newDateFrom: string, newDateTo: string) => {
+    setDateFrom(newDateFrom)
+    setDateTo(newDateTo)
+    setPagination(prev => ({ ...prev, pageIndex: 0 }))
+  }, [])
+
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
@@ -72,6 +84,8 @@ export default function CustomersPage() {
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     include: ['emailCount', 'lastContactDate', 'sentiment', 'escalationCount', 'upsellCount', 'churnCount', 'positiveCount', 'averageTat'],
+    dateFrom,
+    dateTo,
   })
 
   // Fetch single customer when customerId is in URL (for direct link access)
@@ -218,13 +232,20 @@ export default function CustomersPage() {
         </div>
 
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search by company, domain, contact, or labels..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+          <div className="flex items-center gap-2 flex-1">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by company, domain, contact, or labels..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <DateRangeFilter
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onChange={handleDateRangeChange}
             />
           </div>
           <ViewToggle view={view} onViewChange={setView} />

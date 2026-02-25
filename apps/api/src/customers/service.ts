@@ -53,13 +53,14 @@ async function toClientCustomer(
 ): Promise<ClientCustomer | undefined> {
   if (!customer) return undefined;
 
-  const domains = await repository.getDomains(customer.id);
+  const domains = await repository.getDomains(customer.id, customer.tenantId);
   return toClientCustomerWithDomains(customer, domains);
 }
 
 @injectable()
 export class CustomerService {
   private fieldMapping = {
+    tenantId: customers.tenantId,
     id: customers.id,
     name: customers.name,
     industry: customers.industry,
@@ -85,7 +86,8 @@ export class CustomerService {
 
     // Batch fetch all domains for all customers in a single query
     const customerIds = customerList.map(c => c.id);
-    const domainsMap = await this.customerRepository.getDomainsBatch(customerIds);
+    const tenantId = customerList[0].tenantId;
+    const domainsMap = await this.customerRepository.getDomainsBatch(customerIds, tenantId);
 
     // Convert each customer using pre-fetched domains
     const clientCustomers: ClientCustomer[] = [];
@@ -184,6 +186,11 @@ export class CustomerService {
     // Handle include parameter for additional data
     const includes = searchRequest.include || [];
 
+    // Extract date filters for email metric queries
+    const dateFilters = (searchRequest.dateFrom || searchRequest.dateTo)
+      ? { dateFrom: searchRequest.dateFrom, dateTo: searchRequest.dateTo }
+      : undefined;
+
     if (clientCustomers.length > 0) {
       const customerIds = clientCustomers.map(c => c.id);
 
@@ -191,7 +198,8 @@ export class CustomerService {
       if (includes.includes('emailCount')) {
         const emailCounts = await this.emailRepository.getCountsByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({
@@ -204,7 +212,8 @@ export class CustomerService {
       if (includes.includes('lastContactDate')) {
         const lastContactDates = await this.emailRepository.getLastContactDatesByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({
@@ -217,7 +226,8 @@ export class CustomerService {
       if (includes.includes('sentiment')) {
         const sentiments = await this.emailRepository.getAggregateSentimentByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({
@@ -230,7 +240,8 @@ export class CustomerService {
       if (includes.includes('escalationCount')) {
         const escalationCounts = await this.emailRepository.getEscalationCountsByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({
@@ -243,7 +254,8 @@ export class CustomerService {
       if (includes.includes('upsellCount')) {
         const upsellCounts = await this.emailRepository.getUpsellCountsByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({
@@ -256,7 +268,8 @@ export class CustomerService {
       if (includes.includes('churnCount')) {
         const churnCounts = await this.emailRepository.getChurnCountsByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({
@@ -269,7 +282,8 @@ export class CustomerService {
       if (includes.includes('positiveCount')) {
         const positiveCounts = await this.emailRepository.getPositiveCountsByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({
@@ -282,7 +296,8 @@ export class CustomerService {
       if (includes.includes('averageTat')) {
         const averageTats = await this.emailRepository.getAverageTatByCustomerIdsScoped(
           requestHeader,
-          customerIds
+          customerIds,
+          dateFilters
         );
 
         clientCustomers = clientCustomers.map(customer => ({

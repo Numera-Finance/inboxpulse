@@ -2,7 +2,14 @@ import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { RunService } from './service';
 import { createRunRequestSchema, updateRunRequestSchema } from '@crm/clients';
+import type { RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
+
+/** Try to get tenantId from requestHeader (set by session auth middleware on external routes) */
+function getTenantIdFromContext(c: { get: (key: string) => unknown }): string | undefined {
+  const header = c.get('requestHeader') as RequestHeader | undefined;
+  return header?.tenantId;
+}
 
 const app = new Hono();
 
@@ -84,12 +91,13 @@ app.get('/', async (c) => {
   const integrationId = c.req.query('integrationId');
   const limit = parseInt(c.req.query('limit') || '10');
 
+  const scopedTenantId = getTenantIdFromContext(c);
   const runService = container.resolve(RunService);
 
   try {
     let runs;
     if (integrationId) {
-      runs = await runService.findByIntegration(integrationId, { limit });
+      runs = await runService.findByIntegration(integrationId, { limit }, scopedTenantId);
     } else if (tenantId) {
       runs = await runService.findByTenant(tenantId, { limit });
     } else {

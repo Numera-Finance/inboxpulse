@@ -268,11 +268,16 @@ export class CustomerRepository extends ScopedRepository {
    * Get first domain for a customer (oldest by created_at)
    * Internal method for domain management
    */
-  async getFirstDomain(customerId: string): Promise<string | undefined> {
+  async getFirstDomain(customerId: string, tenantId?: string): Promise<string | undefined> {
+    const conditions = [eq(customerDomains.customerId, customerId)];
+    if (tenantId) {
+      conditions.push(eq(customerDomains.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select({ domain: customerDomains.domain })
       .from(customerDomains)
-      .where(eq(customerDomains.customerId, customerId))
+      .where(and(...conditions))
       .orderBy(customerDomains.createdAt)
       .limit(1);
 
@@ -283,11 +288,16 @@ export class CustomerRepository extends ScopedRepository {
    * Get all domains for a customer
    * Internal method for domain management
    */
-  async getDomains(customerId: string): Promise<string[]> {
+  async getDomains(customerId: string, tenantId?: string): Promise<string[]> {
+    const conditions = [eq(customerDomains.customerId, customerId)];
+    if (tenantId) {
+      conditions.push(eq(customerDomains.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select({ domain: customerDomains.domain })
       .from(customerDomains)
-      .where(eq(customerDomains.customerId, customerId));
+      .where(and(...conditions));
 
     return result.map(r => r.domain);
   }
@@ -296,19 +306,24 @@ export class CustomerRepository extends ScopedRepository {
    * Batch get domains for multiple customers (fixes N+1 query problem)
    * Returns a map of customerId -> domains[]
    */
-  async getDomainsBatch(customerIds: string[]): Promise<Map<string, string[]>> {
+  async getDomainsBatch(customerIds: string[], tenantId?: string): Promise<Map<string, string[]>> {
     if (customerIds.length === 0) {
       return new Map();
     }
 
     const { inArray } = await import('drizzle-orm');
+    const conditions = [inArray(customerDomains.customerId, customerIds)];
+    if (tenantId) {
+      conditions.push(eq(customerDomains.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select({
         customerId: customerDomains.customerId,
         domain: customerDomains.domain,
       })
       .from(customerDomains)
-      .where(inArray(customerDomains.customerId, customerIds));
+      .where(and(...conditions));
 
     // Group domains by customerId
     const domainsMap = new Map<string, string[]>();
@@ -555,7 +570,7 @@ export class CustomerRepository extends ScopedRepository {
     }
 
     const customerIds = customerList.map(c => c.id);
-    const domainsMap = await this.getDomainsBatch(customerIds);
+    const domainsMap = await this.getDomainsBatch(customerIds, tenantId);
 
     return customerList.map(customer => ({
       ...customer,

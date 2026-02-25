@@ -14,6 +14,8 @@ export const customerKeys = {
       sortOrder: filters.sortOrder || 'asc',
       limit: filters.limit || 2000,
       offset: filters.offset || 0,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
     }
     return [...customerKeys.lists(), normalized] as const
   },

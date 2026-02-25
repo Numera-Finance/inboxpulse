@@ -43,15 +43,15 @@ export class RunService {
   /**
    * Get runs for an integration
    */
-  async findByIntegration(integrationId: string, options?: { limit?: number }) {
-    return this.runRepo.findByIntegration(integrationId, options);
+  async findByIntegration(integrationId: string, options?: { limit?: number }, tenantId?: string) {
+    return this.runRepo.findByIntegration(integrationId, options, tenantId);
   }
 
   /**
    * Get running jobs for integration
    */
-  async findRunningByIntegration(integrationId: string) {
-    return this.runRepo.findRunningByIntegration(integrationId);
+  async findRunningByIntegration(integrationId: string, tenantId?: string) {
+    return this.runRepo.findRunningByIntegration(integrationId, tenantId);
   }
 
   /**
