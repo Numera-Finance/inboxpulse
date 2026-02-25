@@ -306,6 +306,8 @@ export default function CustomersPage() {
           selectedEmailId={emailId}
           onEmailSelect={handleEmailSelect}
           initialSignalFilter={signalFromUrl}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
         />
 
         <AddCustomerDrawer

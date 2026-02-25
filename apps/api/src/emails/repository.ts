@@ -4,7 +4,8 @@ import type { Database, Transaction } from '@crm/database';
 import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
 import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from './schema';
-import { eq, and, desc, sql, inArray, or, ilike, SQL } from 'drizzle-orm';
+import { customers } from '../customers/schema';
+import { eq, and, desc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
 // Re-export TATMetricRow from shared
@@ -504,6 +505,14 @@ export class EmailRepository extends ScopedRepository {
       )!);
     }
 
+    // Add date range filter
+    if (options?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${options.dateFrom}::timestamp`);
+    }
+    if (options?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${options.dateTo}::timestamp`);
+    }
+
     // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
     if (options?.tatViolation) {
       conditions.push(sql`${emails.id} IN (${this.getTATViolationSubquery(header, customerId, options.dateFrom, options.dateTo)})`);
@@ -591,6 +600,14 @@ export class EmailRepository extends ScopedRepository {
         ilike(emails.fromEmail, search),
         ilike(emails.fromName, search),
       )!);
+    }
+
+    // Add date range filter
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
     }
 
     // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
@@ -1481,19 +1498,16 @@ export class EmailRepository extends ScopedRepository {
     }
   ): Promise<number> {
     const conditions: SQL[] = [
-      this.tenantFilter(emails.tenantId, header),
-      this.emailAccessSubquery(header),
+      eq(emails.tenantId, header.tenantId),
       signalContains(Signal.UPSELL),
+      isNotNull(emailParticipants.customerId),
+      // Scope to customers the user can access (same filter as customer table)
+      this.customerAccessFilter(emailParticipants.customerId, header),
     ];
 
     // Add customer filter
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emails.id} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
     }
 
     // Add date filters
@@ -1504,12 +1518,24 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
     }
 
-    const result = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(emails)
-      .where(and(...conditions));
+    // Sum per-customer distinct email counts so shared emails are counted once per customer,
+    // matching the customer table's per-row counts
+    const perCustomer = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        count: sql<number>`count(DISTINCT ${emails.id})::int`.as('count'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(emailParticipants.customerId)
+      .as('per_customer');
 
-    return result[0]?.count ?? 0;
+    const result = await this.db
+      .select({ total: sql<number>`coalesce(sum(${perCustomer.count}), 0)::int` })
+      .from(perCustomer);
+
+    return result[0]?.total ?? 0;
   }
 
   // ===========================================================================
