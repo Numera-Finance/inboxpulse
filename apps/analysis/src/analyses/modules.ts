@@ -23,7 +23,7 @@ Return:
 - value: positive|negative|neutral
 - confidence: 0-1 (how confident you are in the sentiment classification)
 
-CRITICAL: Default to NEUTRAL. Only classify as POSITIVE when there is EXPLICIT emotional language expressing genuine satisfaction, delight, or heartfelt gratitude.
+CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) are NEUTRAL. Only classify as POSITIVE when the PRIMARY PURPOSE of the email is to express genuine satisfaction, praise, or heartfelt gratitude — not as a side effect of politeness.
 
 **NEUTRAL** - Standard business communication (THIS IS THE DEFAULT):
 - Routine confirmations ("I have scheduled the payment", "confirming receipt")
@@ -36,14 +36,19 @@ CRITICAL: Default to NEUTRAL. Only classify as POSITIVE when there is EXPLICIT e
 - Standard business pleasantries without emotional content
 - Automated notifications or transactional emails
 - New Year/holiday greetings without additional emotional content
+- Operational requests even with polite language ("I would also need...", "Could you please send...")
+- Emails that contain a request or action item, even if they include "thank you"
+- Enthusiastic sign-offs ("thank you so much!", "thanks a ton!") when the email body is a request, update, or operational matter
+- Emails about HR, invoicing, onboarding, compliance, or administrative tasks — these are inherently operational regardless of tone
 
-**POSITIVE** - Genuine satisfaction or praise (REQUIRES EXPLICIT EMOTIONAL LANGUAGE):
-- Must contain words expressing genuine emotion: "happy", "delighted", "grateful", "impressed", "amazing", "fantastic", "love", "thrilled", "excellent"
-- Expressions of happiness or delight ("I'm so happy with...", "This is amazing!")
-- Compliments about service or product ("Your team has been fantastic")
-- Heartfelt gratitude beyond routine politeness ("I really appreciate all the extra effort", "Grateful to be working together")
+**POSITIVE** - Genuine satisfaction or praise (REQUIRES ALL of the following):
+1. The email must contain words expressing genuine emotion: "happy", "delighted", "grateful", "impressed", "amazing", "fantastic", "love", "thrilled", "excellent", "outstanding"
+2. The positive sentiment must be the PRIMARY PURPOSE of the email, not incidental politeness
+3. The praise or gratitude must be ABOUT a specific service, product, outcome, or person — not just a generic closing pleasantry
+- Examples: Compliments about service ("Your team has been fantastic at handling this")
+- Heartfelt gratitude for specific help ("I really appreciate all the extra effort your team put in to resolve this")
 - Testimonials or recommendations
-- Relief after problem resolution WITH expressed satisfaction
+- Expressed relief or satisfaction after problem resolution ("So glad this is finally working, you guys nailed it")
 
 **NEGATIVE** - Dissatisfaction or frustration:
 - Complaints or expressions of frustration
@@ -59,16 +64,22 @@ EXAMPLES - Classify as NEUTRAL (NOT positive):
 - "Got it, will review." → NEUTRAL (acknowledgment)
 - "Happy New Year! Please share the report." → NEUTRAL (greeting + request)
 - "Thank you for the update." → NEUTRAL (routine thanks)
+- "We got it from here, thank you so much!!!!" → NEUTRAL (acknowledgment with enthusiastic sign-off, but primary purpose is confirming they'll handle it)
+- "I would also need the Passport Barcode Page Image. Please share." → NEUTRAL (operational request)
+- "Thank you so much for your help! Can you also send me the invoice?" → NEUTRAL (request with polite opening)
+- "Great, thanks! I'll review and get back to you." → NEUTRAL (acknowledgment)
 
 EXAMPLES - Classify as POSITIVE:
-- "Grateful to be working together!" → POSITIVE (explicit gratitude)
-- "Your team has been fantastic, thank you so much!" → POSITIVE (praise + enthusiasm)
-- "I'm really happy with how this turned out" → POSITIVE (explicit happiness)
-- "This is exactly what we needed, amazing work!" → POSITIVE (enthusiasm + praise)
+- "Your team has been fantastic, I can't thank you enough for going above and beyond!" → POSITIVE (specific praise about team + emotional gratitude)
+- "I'm really happy with how this turned out, excellent work" → POSITIVE (explicit happiness about outcome)
+- "This is exactly what we needed, amazing work!" → POSITIVE (enthusiasm + praise about deliverable)
+- "I wanted to write to say how impressed I am with the level of support we've received" → POSITIVE (dedicated email expressing satisfaction)
 
-Remember: "Thank you" alone is NEVER sufficient for positive. Scheduling a meeting is NEVER positive. Simple agreements are NEVER positive.`,
+KEY TEST: Ask yourself — "Is the primary purpose of this email to express positive emotion, or is positive language just used as social courtesy?" If it's courtesy, classify as NEUTRAL.
+
+Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
-  version: 'v1.2',
+  version: 'v1.3',
 };
 
 /**

@@ -51,9 +51,12 @@ interface CustomerDrawerProps {
   selectedEmailId?: string
   onEmailSelect?: (emailId: string | null) => void
   initialSignalFilter?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | null
+  /** Optional date filters to scope email results (passed from customer page) */
+  dateFrom?: string
+  dateTo?: string
 }
 
-export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter }: CustomerDrawerProps) {
+export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter, dateFrom, dateTo }: CustomerDrawerProps) {
   // Track visibility separately from open to allow exit animation
   const [isVisible, setIsVisible] = React.useState(open)
   const [shouldRender, setShouldRender] = React.useState(open)
@@ -133,13 +136,13 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const inFlightRef = React.useRef<Map<string, Promise<EmailsByCustomerResponse>>>(new Map())
   const [emailTotal, setEmailTotal] = React.useState<number | null>(null)
 
-  // Clear caches when customer or filter changes
+  // Clear caches when customer, filter, or date range changes
   React.useEffect(() => {
     pageCacheRef.current.clear()
     emailCacheRef.current.clear()
     inFlightRef.current.clear()
     setEmailTotal(null)
-  }, [customer?.id, emailSentimentFilter])
+  }, [customer?.id, emailSentimentFilter, dateFrom, dateTo])
 
   // Fetch contacts for customer from API
   const {
@@ -235,6 +238,8 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       signal?: 'upsell' | 'churn';
       tatViolation?: boolean;
       query?: string;
+      dateFrom?: string;
+      dateTo?: string;
     } = { limit, offset };
 
     const sentimentVal = filter.sentiment || emailSentimentFilter;
@@ -252,14 +257,21 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       options.query = filter.query;
     }
 
+    if (dateFrom) {
+      options.dateFrom = dateFrom;
+    }
+    if (dateTo) {
+      options.dateTo = dateTo;
+    }
+
     return options;
-  }, [emailSentimentFilter])
+  }, [emailSentimentFilter, dateFrom, dateTo])
 
   // Helper: build cache key from filter + page
   const getCacheKey = React.useCallback((filter: InboxFilter, page: number, limit: number) => {
     const sentiment = filter.sentiment || emailSentimentFilter || 'all';
-    return `${page}_${limit}_${sentiment}_${filter.query || ''}`;
-  }, [emailSentimentFilter])
+    return `${page}_${limit}_${sentiment}_${filter.query || ''}_${dateFrom || ''}_${dateTo || ''}`;
+  }, [emailSentimentFilter, dateFrom, dateTo])
 
   // Fetch 2 pages from API starting at `startPage`, split and cache each page individually.
   // Deduplicates in-flight requests: if a prefetch is already running for this page,
