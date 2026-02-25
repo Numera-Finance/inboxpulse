@@ -15,23 +15,23 @@ import { getEnv } from '../env';
 
 export class PostmarkEmailSender implements ChannelSender {
   private serverToken: string | undefined;
-  /** Comma-separated allowlist of emails. If set, only these recipients receive mail; others are redirected to the first address. */
-  private allowedEmails: string[];
+  /** Comma-separated override emails. When set, ALL emails are redirected to these addresses instead of the actual recipient. */
+  private overrideEmails: string[];
 
   constructor() {
     const env = getEnv();
     this.serverToken = env.POSTMARK_API_TOKEN;
-    this.allowedEmails = env.EMAIL_OVERRIDE
+    this.overrideEmails = env.EMAIL_OVERRIDE
       .split(',')
-      .map(e => e.trim().toLowerCase())
+      .map(e => e.trim())
       .filter(Boolean);
 
     if (!this.serverToken) {
       logger.warn('POSTMARK_API_TOKEN not set - emails will not be sent');
     }
 
-    if (this.allowedEmails.length > 0) {
-      logger.info({ allowedEmails: this.allowedEmails }, 'EMAIL_OVERRIDE is active - only allowed recipients will receive emails, others redirected');
+    if (this.overrideEmails.length > 0) {
+      logger.info({ overrideEmails: this.overrideEmails }, 'EMAIL_OVERRIDE is active - all emails will be redirected');
     }
   }
 
@@ -53,20 +53,15 @@ export class PostmarkEmailSender implements ChannelSender {
       };
     }
 
-    // Determine recipient: if allowlist is set, only deliver to allowed emails; redirect others to first allowed email
+    // Determine recipient: if EMAIL_OVERRIDE is set, redirect ALL emails to override addresses
     const actualRecipient = payload.to;
-    let effectiveRecipient = actualRecipient;
-    if (this.allowedEmails.length > 0) {
-      if (this.allowedEmails.includes(actualRecipient.toLowerCase())) {
-        effectiveRecipient = actualRecipient; // Recipient is on the allowlist — deliver normally
-      } else {
-        effectiveRecipient = this.allowedEmails[0]; // Redirect to first allowed email
-      }
-    }
+    const effectiveRecipient = this.overrideEmails.length > 0
+      ? this.overrideEmails.join(',')
+      : actualRecipient;
 
-    // Build subject (add prefix if redirecting)
+    // Build subject (add prefix if redirecting so we know who it was originally for)
     let subject = payload.subject;
-    if (this.allowedEmails.length > 0 && actualRecipient.toLowerCase() !== effectiveRecipient.toLowerCase()) {
+    if (this.overrideEmails.length > 0) {
       subject = `[To: ${actualRecipient}] ${subject}`;
     }
 
@@ -110,7 +105,7 @@ export class PostmarkEmailSender implements ChannelSender {
         {
           messageId: data.MessageID,
           recipient: effectiveRecipient,
-          originalRecipient: effectiveRecipient !== actualRecipient ? actualRecipient : undefined,
+          originalRecipient: this.overrideEmails.length > 0 ? actualRecipient : undefined,
         },
         'Email sent via Postmark'
       );

@@ -33,22 +33,32 @@ export class RunRepository {
       .limit(limit);
   }
 
-  async findByIntegration(integrationId: string, options?: { limit?: number }) {
+  async findByIntegration(integrationId: string, options?: { limit?: number }, tenantId?: string) {
     const limit = options?.limit || 10;
+
+    const conditions = [eq(runs.integrationId, integrationId)];
+    if (tenantId) {
+      conditions.push(eq(runs.tenantId, tenantId));
+    }
 
     return this.db
       .select()
       .from(runs)
-      .where(eq(runs.integrationId, integrationId))
+      .where(and(...conditions))
       .orderBy(desc(runs.startedAt))
       .limit(limit);
   }
 
-  async findRunningByIntegration(integrationId: string) {
+  async findRunningByIntegration(integrationId: string, tenantId?: string) {
+    const conditions = [eq(runs.integrationId, integrationId), eq(runs.status, 'running')];
+    if (tenantId) {
+      conditions.push(eq(runs.tenantId, tenantId));
+    }
+
     return this.db
       .select()
       .from(runs)
-      .where(and(eq(runs.integrationId, integrationId), eq(runs.status, 'running')))
+      .where(and(...conditions))
       .orderBy(desc(runs.startedAt));
   }
 

@@ -109,8 +109,8 @@ export class IntegrationService {
    * Find integration by email (for webhook lookup)
    * Returns the full integration so we have the ID for subsequent updates
    */
-  async findByEmail(email: string, source: IntegrationSource = 'gmail') {
-    return this.integrationRepo.findByEmail(email, source);
+  async findByEmail(email: string, source: IntegrationSource = 'gmail', tenantId?: string) {
+    return this.integrationRepo.findByEmail(email, source, tenantId);
   }
 
   /**
@@ -132,11 +132,13 @@ export class IntegrationService {
    */
   async findIntegrationsNeedingWatchRenewal(
     source: IntegrationSource,
-    daysBeforeExpiry: number = 2
+    daysBeforeExpiry: number = 2,
+    tenantId?: string
   ) {
     const integrations = await this.integrationRepo.findIntegrationsNeedingWatchRenewal(
       source,
-      daysBeforeExpiry
+      daysBeforeExpiry,
+      tenantId
     );
 
     // Return without sensitive data

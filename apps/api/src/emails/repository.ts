@@ -690,7 +690,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -705,6 +706,18 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Count emails per customer
     const result = await this.db
       .select({
@@ -713,12 +726,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     // Build result map
@@ -740,7 +748,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getLastContactDatesByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, Date>> {
     if (customerIds.length === 0) {
       return {};
@@ -755,6 +764,18 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Get the most recent email date per customer using email_participants
     const result = await this.db
       .select({
@@ -763,12 +784,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const lastContacts: Record<string, Date> = {};
@@ -787,7 +803,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getAggregateSentimentByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, { value: 'positive' | 'negative' | 'neutral'; confidence: number }>> {
     if (customerIds.length === 0) {
       return {};
@@ -802,6 +819,20 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      // Has any sentiment signal
+      signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Query emails with sentiment signals via email_participants
     const emailsResult = await this.db
       .select({
@@ -810,14 +841,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          // Has any sentiment signal
-          signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL])
-        )
-      )
+      .where(and(...conditions))
       .orderBy(desc(emails.receivedAt))
       .limit(1000);
 
@@ -886,7 +910,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getEscalationCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -901,6 +926,19 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalContains(Signal.SENTIMENT_NEGATIVE),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Count negative sentiment emails per customer (used as escalation indicator)
     const result = await this.db
       .select({
@@ -909,13 +947,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalContains(Signal.SENTIMENT_NEGATIVE)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     // Build result map with zeros for customers with no negative sentiment emails
@@ -938,7 +970,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getUpsellCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -952,6 +985,19 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalContains(Signal.UPSELL),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     const result = await this.db
       .select({
         customerId: emailParticipants.customerId,
@@ -959,13 +1005,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalContains(Signal.UPSELL)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const counts: Record<string, number> = {};
@@ -987,7 +1027,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getChurnCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -1003,6 +1044,19 @@ export class EmailRepository extends ScopedRepository {
 
     const churnSignals = [Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL];
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalOverlaps(churnSignals),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     const result = await this.db
       .select({
         customerId: emailParticipants.customerId,
@@ -1010,13 +1064,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalOverlaps(churnSignals)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const counts: Record<string, number> = {};
@@ -1038,7 +1086,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getPositiveCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -1052,6 +1101,19 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalContains(Signal.SENTIMENT_POSITIVE),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     const result = await this.db
       .select({
         customerId: emailParticipants.customerId,
@@ -1059,13 +1121,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalContains(Signal.SENTIMENT_POSITIVE)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const counts: Record<string, number> = {};
@@ -1088,7 +1144,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getAverageTatByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number | null>> {
     if (customerIds.length === 0) {
       return {};
@@ -1102,6 +1159,20 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      eq(emails.isCustomerEmail, true),
+      sql`${emails.firstReplyAt} IS NOT NULL`,
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Calculate average TAT in hours for customer emails with a reply
     const result = await this.db
       .select({
@@ -1110,14 +1181,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          eq(emails.isCustomerEmail, true),
-          sql`${emails.firstReplyAt} IS NOT NULL`
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const avgTats: Record<string, number | null> = {};

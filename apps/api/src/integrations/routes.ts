@@ -3,9 +3,16 @@ import { container } from 'tsyringe';
 import { IntegrationService } from './service';
 import type { IntegrationSource } from './schema';
 import { updateRunStateSchema, updateAccessTokenSchema, updateWatchExpirySchema, updateParametersRequestSchema } from '@crm/clients';
+import type { RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { internalFetch } from '../utils/internal-fetch';
 import { getEnv } from '../env';
+
+/** Try to get tenantId from requestHeader (set by session auth middleware on external routes) */
+function getTenantIdFromContext(c: { get: (key: string) => unknown }): string | undefined {
+  const header = c.get('requestHeader') as RequestHeader | undefined;
+  return header?.tenantId;
+}
 
 const app = new Hono();
 
@@ -80,8 +87,9 @@ app.get('/lookup/by-email', async (c) => {
     return c.json({ error: 'Invalid source' }, 400);
   }
 
+  const tenantId = getTenantIdFromContext(c);
   const integrationService = container.resolve(IntegrationService);
-  const integration = await integrationService.findByEmail(email, source);
+  const integration = await integrationService.findByEmail(email, source, tenantId);
 
   if (!integration) {
     return c.json({ error: 'No integration found for email' }, 404);
@@ -103,10 +111,12 @@ app.get('/watch/renewals', async (c) => {
     return c.json({ error: 'Invalid source' }, 400);
   }
 
+  const tenantId = getTenantIdFromContext(c);
   const integrationService = container.resolve(IntegrationService);
   const integrations = await integrationService.findIntegrationsNeedingWatchRenewal(
     source,
-    daysBeforeExpiry
+    daysBeforeExpiry,
+    tenantId
   );
 
   return c.json({

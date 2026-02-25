@@ -45,6 +45,10 @@ export const searchRequestSchema = z.object({
   offset: z.number().int().min(0).optional().default(0),
   /** Optional list of related data to include (e.g., 'emailCount', 'contactCount') */
   include: z.array(z.string()).optional(),
+  /** Optional ISO date string for filtering results from this date */
+  dateFrom: z.string().optional(),
+  /** Optional ISO date string for filtering results up to this date */
+  dateTo: z.string().optional(),
 });
 
 export type SearchRequest = z.infer<typeof searchRequestSchema>;

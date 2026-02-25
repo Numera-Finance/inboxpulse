@@ -877,7 +877,7 @@ export class UserService {
         // Get customer domains and role names
         const customers = await Promise.all(
           customerAssignments.map(async (assignment) => {
-            const domains = await this.customerRepository.getDomains(assignment.customerId);
+            const domains = await this.customerRepository.getDomains(assignment.customerId, tenantId);
             return {
               domain: domains.length > 0 ? domains[0] : '',
               roleName: getCustomerRoleName(assignment.roleId),
