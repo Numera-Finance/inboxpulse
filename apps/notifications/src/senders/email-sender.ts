@@ -53,11 +53,11 @@ export class PostmarkEmailSender implements ChannelSender {
       };
     }
 
-    // Determine recipient: if EMAIL_OVERRIDE is set, redirect ALL emails to override addresses
+    // Determine recipients: if EMAIL_OVERRIDE is set, send a separate email to each override address
     const actualRecipient = payload.to;
-    const effectiveRecipient = this.overrideEmails.length > 0
-      ? this.overrideEmails.join(',')
-      : actualRecipient;
+    const recipients = this.overrideEmails.length > 0
+      ? this.overrideEmails
+      : [actualRecipient];
 
     // Build subject (add prefix if redirecting so we know who it was originally for)
     let subject = payload.subject;
@@ -65,65 +65,75 @@ export class PostmarkEmailSender implements ChannelSender {
       subject = `[To: ${actualRecipient}] ${subject}`;
     }
 
-    try {
-      const response = await fetch('https://api.postmarkapp.com/email', {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          'X-Postmark-Server-Token': this.serverToken,
-        },
-        body: JSON.stringify({
-          From: payload.from || `${getEnv().FROM_NAME} <${getEnv().FROM_EMAIL}>`,
-          To: effectiveRecipient,
-          Subject: subject,
-          HtmlBody: payload.html,
-          TextBody: payload.text,
-          MessageStream: 'outbound',
-        }),
-      });
+    const errors: string[] = [];
+    const messageIds: string[] = [];
 
-      const data = (await response.json()) as {
-        MessageID?: string;
-        ErrorCode?: number;
-        Message?: string;
-      };
+    for (const recipient of recipients) {
+      try {
+        const response = await fetch('https://api.postmarkapp.com/email', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-Postmark-Server-Token': this.serverToken,
+          },
+          body: JSON.stringify({
+            From: payload.from || `${getEnv().FROM_NAME} <${getEnv().FROM_EMAIL}>`,
+            To: recipient,
+            Subject: subject,
+            HtmlBody: payload.html,
+            TextBody: payload.text,
+            MessageStream: 'outbound',
+          }),
+        });
 
-      if (!response.ok || (data.ErrorCode && data.ErrorCode !== 0)) {
-        logger.error(
-          { recipient: effectiveRecipient, error: data.Message },
-          'Postmark send failed'
-        );
-        return {
-          sent: false,
-          skipped: false,
-          error: data.Message || `HTTP ${response.status}`,
+        const data = (await response.json()) as {
+          MessageID?: string;
+          ErrorCode?: number;
+          Message?: string;
         };
+
+        if (!response.ok || (data.ErrorCode && data.ErrorCode !== 0)) {
+          logger.error(
+            { recipient, error: data.Message },
+            'Postmark send failed'
+          );
+          errors.push(`${recipient}: ${data.Message || `HTTP ${response.status}`}`);
+          continue;
+        }
+
+        logger.info(
+          {
+            messageId: data.MessageID,
+            recipient,
+            originalRecipient: this.overrideEmails.length > 0 ? actualRecipient : undefined,
+          },
+          'Email sent via Postmark'
+        );
+
+        if (data.MessageID) {
+          messageIds.push(data.MessageID);
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        logger.error({ error: message, recipient }, 'Failed to send email via Postmark');
+        errors.push(`${recipient}: ${message}`);
       }
+    }
 
-      logger.info(
-        {
-          messageId: data.MessageID,
-          recipient: effectiveRecipient,
-          originalRecipient: this.overrideEmails.length > 0 ? actualRecipient : undefined,
-        },
-        'Email sent via Postmark'
-      );
-
-      return {
-        sent: true,
-        skipped: false,
-        messageId: data.MessageID,
-      };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      logger.error({ error: message }, 'Failed to send email via Postmark');
+    if (messageIds.length === 0) {
       return {
         sent: false,
         skipped: false,
-        error: message,
+        error: errors.join('; '),
       };
     }
+
+    return {
+      sent: true,
+      skipped: false,
+      messageId: messageIds.join(','),
+    };
   }
 }
 
