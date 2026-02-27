@@ -450,8 +450,14 @@ export default function EscalationsPage() {
     const exportData = escalationsWithComments.map(escalation => ({
       customerName: escalation.customerName || "",
       emailSubject: escalation.emailSubject || escalation.title || "",
+      status: escalation.status === 1 ? "Done" : "Open",
+      assignedTo: escalation.assignedToName || "",
       problem: escalation.problem || "",
       resolution: escalation.resolution || "",
+      completedBy: escalation.completedByName || "",
+      completedAt: escalation.completedAt
+        ? new Date(escalation.completedAt).toLocaleDateString()
+        : "",
       comments: (escalation.comments || [])
         .map(c => {
           const time = new Date(c.createdAt).toLocaleString()
@@ -468,8 +474,12 @@ export default function EscalationsPage() {
       columns: [
         { key: "customerName", header: "Customer Name", width: 30 },
         { key: "emailSubject", header: "Email Subject", width: 50 },
+        { key: "status", header: "Status", width: 10 },
+        { key: "assignedTo", header: "Assigned To", width: 20 },
         { key: "problem", header: "Problem", width: 40 },
         { key: "resolution", header: "Resolution", width: 40 },
+        { key: "completedBy", header: "Completed By", width: 20 },
+        { key: "completedAt", header: "Completed At", width: 15 },
         { key: "comments", header: "Comments", width: 80 },
         { key: "bookKeeping", header: "Book Keeping", width: 20 },
         { key: "accountant", header: "Accountant", width: 20 },
