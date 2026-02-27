@@ -191,7 +191,7 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'contact-extraction': true,     // Always enabled
     'signature-extraction': true,   // Enable signature extraction
     'sentiment': true,               // Enable sentiment analysis
-    'escalation': true,              // Enable escalation detection
+    'escalation': false,              // Disabled — negative sentiment drives escalation workflow
     'upsell': true,                   // Enable upsell detection
     'churn': false,                   // Enable churn risk assessment
     'kudos': false,                   // Enable kudos detection
