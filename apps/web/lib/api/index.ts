@@ -28,6 +28,7 @@ export type {
   TaskSearchResponse,
   CreateTaskRequest,
   AssignableUser,
+  MarkDoneRequest,
 } from '@crm/clients';
 
 // Re-export shared types

@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- Creation tracking
     created_by_system BOOLEAN NOT NULL DEFAULT false, -- true if auto-created from negative email
 
+    -- Closure details (populated when marking done)
+    problem TEXT,
+    resolution TEXT,
+
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),

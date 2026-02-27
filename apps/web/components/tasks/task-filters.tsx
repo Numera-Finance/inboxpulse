@@ -146,7 +146,7 @@ export function TaskFilters({
   return (
     <div className={cn("flex flex-col gap-2", className)}>
       {/* Always-Visible Filters Row */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-3 flex-wrap">
         {/* Status Filter (Always Visible) */}
         {alwaysVisibleConfigs.find(c => c.id === 'status') && (
           <Select

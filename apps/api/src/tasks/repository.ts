@@ -13,6 +13,7 @@ export interface TaskWithRelations extends Task {
   customerDomain?: string;
   assignedToName?: string | null;
   assignedToEmail?: string | null;
+  completedByName?: string | null;
   emailSubject?: string | null;
   emailBody?: string | null;
   emailFromEmail?: string | null;
@@ -174,12 +175,16 @@ export class TaskRepository extends ScopedRepository {
         status: tasks.status,
         assignedToId: tasks.assignedToId,
         createdBySystem: tasks.createdBySystem,
+        problem: tasks.problem,
+        resolution: tasks.resolution,
+        completedById: tasks.completedById,
         createdAt: tasks.createdAt,
         updatedAt: tasks.updatedAt,
         completedAt: tasks.completedAt,
         customerName: customers.name,
         assignedToName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('assignedToName'),
         assignedToEmail: users.email,
+        completedByName: sql<string>`(SELECT CONCAT(u.first_name, ' ', u.last_name) FROM users u WHERE u.id = ${tasks.completedById})`.as('completedByName'),
         emailSubject: emails.subject,
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,
@@ -247,12 +252,16 @@ export class TaskRepository extends ScopedRepository {
         status: tasks.status,
         assignedToId: tasks.assignedToId,
         createdBySystem: tasks.createdBySystem,
+        problem: tasks.problem,
+        resolution: tasks.resolution,
+        completedById: tasks.completedById,
         createdAt: tasks.createdAt,
         updatedAt: tasks.updatedAt,
         completedAt: tasks.completedAt,
         customerName: customers.name,
         assignedToName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('assignedToName'),
         assignedToEmail: users.email,
+        completedByName: sql<string>`(SELECT CONCAT(u.first_name, ' ', u.last_name) FROM users u WHERE u.id = ${tasks.completedById})`.as('completedByName'),
         emailSubject: emails.subject,
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,
@@ -300,10 +309,13 @@ export class TaskRepository extends ScopedRepository {
     return this.update(id, data);
   }
 
-  async markDone(header: RequestHeader, id: string): Promise<Task | undefined> {
+  async markDone(header: RequestHeader, id: string, problem: string, resolution: string): Promise<Task | undefined> {
     return this.updateScoped(header, id, {
       status: TaskStatus.DONE,
       completedAt: new Date(),
+      completedById: header.userId,
+      problem,
+      resolution,
     });
   }
 
@@ -311,6 +323,8 @@ export class TaskRepository extends ScopedRepository {
     return this.updateScoped(header, id, {
       status: TaskStatus.OPEN,
       completedAt: null,
+      problem: null,
+      resolution: null,
     });
   }
 
@@ -481,12 +495,16 @@ export class TaskRepository extends ScopedRepository {
         status: tasks.status,
         assignedToId: tasks.assignedToId,
         createdBySystem: tasks.createdBySystem,
+        problem: tasks.problem,
+        resolution: tasks.resolution,
+        completedById: tasks.completedById,
         createdAt: tasks.createdAt,
         updatedAt: tasks.updatedAt,
         completedAt: tasks.completedAt,
         customerName: customers.name,
         assignedToName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('assignedToName'),
         assignedToEmail: users.email,
+        completedByName: sql<string>`(SELECT CONCAT(u.first_name, ' ', u.last_name) FROM users u WHERE u.id = ${tasks.completedById})`.as('completedByName'),
         emailSubject: emails.subject,
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,

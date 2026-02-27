@@ -56,6 +56,11 @@ export const addCommentRequestSchema = z.object({
   content: z.string().min(1).max(5000),
 });
 
+export const markDoneRequestSchema = z.object({
+  problem: z.string().min(1, 'Problem is required').max(5000),
+  resolution: z.string().min(1, 'Resolution is required').max(5000),
+});
+
 // =============================================================================
 // Derived types from Zod schemas
 // =============================================================================
@@ -65,6 +70,7 @@ export type TaskExportRequest = z.infer<typeof taskExportRequestSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type ReassignTaskRequest = z.infer<typeof reassignTaskRequestSchema>;
 export type AddCommentRequest = z.infer<typeof addCommentRequestSchema>;
+export type MarkDoneRequest = z.infer<typeof markDoneRequestSchema>;
 
 export interface TaskSearchResponse {
   items: TaskWithRelations[];
@@ -301,9 +307,9 @@ export class TaskService {
   /**
    * Mark task as done
    */
-  async markDone(header: RequestHeader, id: string): Promise<Task | undefined> {
+  async markDone(header: RequestHeader, id: string, problem: string, resolution: string): Promise<Task | undefined> {
     logger.info({ taskId: id }, 'Marking task as done');
-    return this.taskRepository.markDone(header, id);
+    return this.taskRepository.markDone(header, id, problem, resolution);
   }
 
   /**

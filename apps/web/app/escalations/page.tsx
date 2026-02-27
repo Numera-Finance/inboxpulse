@@ -3,6 +3,7 @@
 import * as React from "react"
 import { useSearchParams, useNavigate, useParams } from "react-router-dom"
 import { Inbox, CheckCircle } from "lucide-react"
+import { Separator } from "@/components/ui/separator"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import { ExportButton } from "@/components/ui/export-button"
@@ -24,9 +25,10 @@ import {
   TaskFilters,
   TaskComments,
   TaskMetaInfo,
+  MarkDoneDialog,
+  TaskResolutionInfo,
   type TaskFilter,
 } from "@/components/tasks"
-import { toast } from "sonner"
 import {
   useTask,
   useMarkTaskDone,
@@ -47,6 +49,9 @@ export default function EscalationsPage() {
   // Get current user ID for "Me" filter
   const { user } = useAuth()
   const currentUserId = user?.id
+
+  // Dialog state for mark done
+  const [doneDialogTaskId, setDoneDialogTaskId] = React.useState<string | null>(null)
 
   // Get filter state from URL search params
   // Default to "open" if no status specified
@@ -248,32 +253,14 @@ export default function EscalationsPage() {
     [navigate, searchParams]
   )
 
-  // Handle mark done
+  // Handle mark done with problem/resolution
   const handleResolve = React.useCallback(
-    async (itemId: string) => {
-      await markDone.mutateAsync(itemId)
+    async (itemId: string, problem: string, resolution: string) => {
+      await markDone.mutateAsync({ id: itemId, problem, resolution })
       queryClient.invalidateQueries({ queryKey: taskKeys.lists() })
       queryClient.invalidateQueries({ queryKey: taskKeys.detail(itemId) })
     },
     [markDone, queryClient]
-  )
-
-  // Handle mark done with comment check - requires at least one comment
-  const handleDoneWithCommentCheck = React.useCallback(
-    async (itemId: string) => {
-      const taskClient = getTaskClient()
-      const comments = await taskClient.getComments(itemId)
-
-      if (comments.length === 0) {
-        toast.error("Comment required", {
-          description: "Please add a comment before marking this task as done.",
-        })
-        return
-      }
-
-      await handleResolve(itemId)
-    },
-    [handleResolve]
   )
 
   // Handle filter changes - sync to URL params
@@ -348,8 +335,7 @@ export default function EscalationsPage() {
     onFetchItems: handleFetchItems,
     onFetchContent: handleFetchContent,
     onSelect: handleSelectItem,
-    onResolve: handleResolve,
-  }), [handleFetchItems, handleFetchContent, handleSelectItem, handleResolve])
+  }), [handleFetchItems, handleFetchContent, handleSelectItem])
 
   // Memoize config to prevent re-renders
   const inboxConfig = React.useMemo(() => ({
@@ -368,17 +354,19 @@ export default function EscalationsPage() {
   }), [])
 
   // Memoize render functions to prevent re-renders
-  const renderHeaderActions = React.useCallback((item: InboxItem) => (
-    item.status !== "resolved" ? (
+  const renderHeaderActions = React.useCallback((item: InboxItem) => {
+    const showDone = (effectiveSignal === 'negative' || effectiveSignal === 'churn') && item.status !== "resolved"
+    if (!showDone) return null
+    return (
       <Button
         className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
-        onClick={() => handleDoneWithCommentCheck(item.id)}
+        onClick={() => setDoneDialogTaskId(item.id)}
       >
         <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
         Done
       </Button>
-    ) : null
-  ), [handleDoneWithCommentCheck])
+    )
+  }, [effectiveSignal])
 
   const renderMetaInfo = React.useCallback((item: InboxItem) => (
     <TaskMetaInfo
@@ -391,7 +379,11 @@ export default function EscalationsPage() {
   ), [])
 
   const renderSidePanel = React.useCallback((item: InboxItem) => (
-    <TaskComments taskId={item.id} variant="panel" />
+    <div className="space-y-4">
+      <TaskResolutionInfo taskId={item.id} />
+      <Separator />
+      <TaskComments taskId={item.id} variant="panel" />
+    </div>
   ), [])
 
   // Get customer name for display (if needed)
@@ -458,6 +450,8 @@ export default function EscalationsPage() {
     const exportData = escalationsWithComments.map(escalation => ({
       customerName: escalation.customerName || "",
       emailSubject: escalation.emailSubject || escalation.title || "",
+      problem: escalation.problem || "",
+      resolution: escalation.resolution || "",
       comments: (escalation.comments || [])
         .map(c => {
           const time = new Date(c.createdAt).toLocaleString()
@@ -474,6 +468,8 @@ export default function EscalationsPage() {
       columns: [
         { key: "customerName", header: "Customer Name", width: 30 },
         { key: "emailSubject", header: "Email Subject", width: 50 },
+        { key: "problem", header: "Problem", width: 40 },
+        { key: "resolution", header: "Resolution", width: 40 },
         { key: "comments", header: "Comments", width: 80 },
         { key: "bookKeeping", header: "Book Keeping", width: 20 },
         { key: "accountant", header: "Accountant", width: 20 },
@@ -530,6 +526,17 @@ export default function EscalationsPage() {
           />
         </div>
 
+        <MarkDoneDialog
+          open={!!doneDialogTaskId}
+          onClose={() => setDoneDialogTaskId(null)}
+          onConfirm={async (problem, resolution) => {
+            if (doneDialogTaskId) {
+              await handleResolve(doneDialogTaskId, problem, resolution)
+              setDoneDialogTaskId(null)
+            }
+          }}
+          isLoading={markDone.isPending}
+        />
       </div>
     </AppShell>
   )

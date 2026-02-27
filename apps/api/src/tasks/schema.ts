@@ -63,6 +63,11 @@ export const tasks = pgTable(
     // Whether this task was auto-created by the system (from negative email)
     createdBySystem: boolean('created_by_system').notNull().default(false),
 
+    // Closure details (populated when marking done)
+    problem: text('problem'),
+    resolution: text('resolution'),
+    completedById: uuid('completed_by_id').references(() => users.id, { onDelete: 'set null' }),
+
     // Timestamps
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

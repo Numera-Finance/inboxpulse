@@ -9,6 +9,7 @@ import {
   createTaskRequestSchema,
   reassignTaskRequestSchema,
   addCommentRequestSchema,
+  markDoneRequestSchema,
 } from './service';
 import type { RequestHeader } from '@crm/shared';
 import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams, handleGetRequestWithQuery } from '../utils/api-handler';
@@ -120,14 +121,16 @@ taskRoutes.get('/:id', async (c) => {
 /**
  * POST /api/tasks/:id/done - Mark task as done
  * Requires TASK_EDIT permission
+ * Body: { problem: string, resolution: string }
  */
 taskRoutes.post('/:id/done', requirePermission(Permission.TASK_EDIT), async (c) => {
-  return handleGetRequestWithParams(
+  return handleApiRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
-    async (requestHeader: RequestHeader, params) => {
+    markDoneRequestSchema,
+    async (requestHeader: RequestHeader, params, body) => {
       const service = container.resolve(TaskService);
-      const task = await service.markDone(requestHeader, params.id);
+      const task = await service.markDone(requestHeader, params.id, body.problem, body.resolution);
       if (!task) {
         throw new NotFoundError('Task', params.id);
       }

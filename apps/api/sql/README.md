@@ -56,6 +56,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/003_email_dedup.sql
 
 # Apply analysis keywords migration (adds analysis_keywords table)
 psql $DATABASE_URL -f apps/api/sql/migrations/004_analysis_keywords.sql
+
+# Apply task problem/resolution migration (adds problem and resolution columns to tasks)
+psql $DATABASE_URL -f apps/api/sql/migrations/005_task_problem_resolution.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
