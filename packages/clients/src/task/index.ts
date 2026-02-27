@@ -8,6 +8,7 @@ export type {
   TaskWithComments,
   CreateTaskRequest,
   AssignableUser,
+  MarkDoneRequest,
   TaskStatusType,
   SignalFilterType,
 } from './types';

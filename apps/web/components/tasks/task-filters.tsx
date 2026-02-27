@@ -208,7 +208,7 @@ export function TaskFilters({
                 variant="outline"
                 size="sm"
                 className={cn(
-                  "h-8 justify-start text-left font-normal",
+                  "h-8 ml-2 justify-start text-left font-normal",
                   !dateRange.from && !dateRange.to && "text-muted-foreground"
                 )}
               >

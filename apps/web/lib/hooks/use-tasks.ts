@@ -79,7 +79,8 @@ export function useMarkTaskDone() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => api.markTaskDone(id),
+    mutationFn: ({ id, problem, resolution }: { id: string; problem: string; resolution: string }) =>
+      api.markTaskDone(id, { problem, resolution }),
     onSuccess: (task) => {
       queryClient.setQueryData(taskKeys.detail(task.id), task);
       queryClient.invalidateQueries({ queryKey: taskKeys.lists() });

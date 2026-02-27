@@ -6,6 +6,7 @@ import type {
   TaskSearchResponse,
   CreateTaskRequest,
   AssignableUser,
+  MarkDoneRequest,
 } from '@crm/clients';
 
 /**
@@ -38,8 +39,8 @@ export async function createTask(
 /**
  * Mark a task as done
  */
-export async function markTaskDone(id: string, signal?: AbortSignal): Promise<Task> {
-  return getTaskClient().markDone(id, signal);
+export async function markTaskDone(id: string, data: MarkDoneRequest, signal?: AbortSignal): Promise<Task> {
+  return getTaskClient().markDone(id, data, signal);
 }
 
 /**
