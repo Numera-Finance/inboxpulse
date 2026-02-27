@@ -21,17 +21,19 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Parse keyword string supporting quoted multi-word phrases and single words.
+ * Handles both straight quotes ("...") and curly/smart quotes (\u201c...\u201d).
  * Examples:
  *   'urgent critical' → ['urgent', 'critical']
  *   '"well done" great' → ['well done', 'great']
- *   '"cancel subscription" churn' → ['cancel subscription', 'churn']
+ *   '\u201ccancel subscription\u201d churn' → ['cancel subscription', 'churn']
  */
 export function parseKeywords(input: string): string[] {
   const keywords: string[] = [];
-  const regex = /"([^"]+)"|(\S+)/g;
+  // Match: straight-quoted phrase | curly-quoted phrase | unquoted word
+  const regex = /"([^"]+)"|[\u201c\u201e\u201f]([^\u201d\u201c"]+)[\u201d\u201c"]|(\S+)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(input)) !== null) {
-    const value = (match[1] || match[2]).trim();
+    const value = (match[1] || match[2] || match[3]).trim();
     if (value.length > 0) {
       keywords.push(value);
     }
