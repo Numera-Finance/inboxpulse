@@ -312,6 +312,7 @@ Drizzle schemas live in `apps/api/src/{module}/schema.ts`. Key tables:
 
 ### Migration Rules
 
+- **All SQL must be idempotent.** Use `IF NOT EXISTS` / `IF EXISTS` for all DDL statements (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`, etc.) so migrations can be safely re-run without errors.
 - When modifying an existing table (ALTER), create a NEW migration file — never edit a previous one
 - Drizzle schema files (`apps/api/src/{module}/schema.ts`) must always match the latest migration state
 - If a migration needs to be rolled back, create a separate rollback migration file
