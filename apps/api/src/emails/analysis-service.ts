@@ -333,15 +333,6 @@ export class EmailAnalysisService {
       }
     }
 
-    // Escalation
-    const escalationKeywords = keywordMap.get('escalation');
-    if (escalationKeywords) {
-      const match = this.findKeywordMatch(searchText, escalationKeywords);
-      if (match) {
-        results['escalation'] = { detected: true, urgency: 'medium', reasoning: `Keyword match: "${match}"`, modelUsed: 'keyword-match' };
-      }
-    }
-
     // Upsell
     const upsellKeywords = keywordMap.get('upsell');
     if (upsellKeywords) {
@@ -1066,12 +1057,6 @@ export class EmailAnalysisService {
           signals.push(Signal.SENTIMENT_NEUTRAL);
           break;
       }
-    }
-
-    // Escalation
-    const escalationResult = analysisResults['escalation'];
-    if (escalationResult?.detected === true) {
-      signals.push(Signal.ESCALATION);
     }
 
     // Upsell

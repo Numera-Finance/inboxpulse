@@ -526,9 +526,9 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(signalContains(signalValue));
     }
 
-    // Add escalation filter using signals array
+    // Add escalation filter using signals array (backed by negative sentiment)
     if (options?.escalation) {
-      conditions.push(signalContains(Signal.ESCALATION));
+      conditions.push(signalContains(Signal.SENTIMENT_NEGATIVE));
     }
 
     // Add signal filter (upsell, churn)
@@ -623,9 +623,9 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(signalContains(signalValue));
     }
 
-    // Add escalation filter using signals array
+    // Add escalation filter using signals array (backed by negative sentiment)
     if (filters?.escalation) {
-      conditions.push(signalContains(Signal.ESCALATION));
+      conditions.push(signalContains(Signal.SENTIMENT_NEGATIVE));
     }
 
     // Add signal filter (upsell, churn)
@@ -1464,7 +1464,7 @@ export class EmailRepository extends ScopedRepository {
         customerId: emailParticipants.customerId,
         weekStart: sql<string>`to_char(date_trunc('week', ${emails.receivedAt}), 'Mon DD, YYYY')`.as('week_start'),
         totalEmails: sql<number>`count(DISTINCT ${emails.id})::int`.as('total_emails'),
-        escalations: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emails.signals} @> ARRAY[10]::integer[])::int`.as('escalations'),
+        escalations: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emails.signals} @> ARRAY[2]::integer[])::int`.as('escalations'),
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
