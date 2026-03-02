@@ -144,13 +144,24 @@ export class SyncService {
       return { processed: 0, inserted: 0, skipped: 0 };
     }
 
-    // Fetch integration credentials to get blacklist emails
+    // Fetch integration credentials to get blacklist entries (emails and domains)
     const credentials = await this.integrationClient.getCredentials(tenantId, 'gmail');
-    const blacklistEmails: string[] = Array.isArray(credentials?.blacklistEmails) ? credentials.blacklistEmails : [];
-    const normalizedBlacklist = new Set(blacklistEmails.map(email => email.toLowerCase()));
+    const blacklistEntries: string[] = Array.isArray(credentials?.blacklistEmails) ? credentials.blacklistEmails : [];
 
-    if (blacklistEmails.length > 0) {
-      logger.info({ integrationId, blacklistCount: blacklistEmails.length }, 'Applying email blacklist filter');
+    // Partition blacklist into email addresses and domains
+    const emailBlacklist = new Set<string>();
+    const domainBlacklist = new Set<string>();
+    for (const entry of blacklistEntries) {
+      const normalized = entry.toLowerCase();
+      if (normalized.includes('@')) {
+        emailBlacklist.add(normalized);
+      } else {
+        domainBlacklist.add(normalized);
+      }
+    }
+
+    if (blacklistEntries.length > 0) {
+      logger.info({ integrationId, emailBlacklistCount: emailBlacklist.size, domainBlacklistCount: domainBlacklist.size }, 'Applying blacklist filter');
     }
 
     let totalProcessed = 0;
@@ -164,7 +175,7 @@ export class SyncService {
       let highestHistoryId: string | null = null;
 
       // Phase 1: If blacklist is configured, fetch headers first to filter
-      if (normalizedBlacklist.size > 0) {
+      if (emailBlacklist.size > 0 || domainBlacklist.size > 0) {
         const headers = await this.gmailService.batchGetMessageHeaders(tenantId, chunkMessageIds);
 
         // Filter out blacklisted senders and track highest historyId
@@ -179,13 +190,24 @@ export class SyncService {
             }
           }
 
-          // Check if sender is blacklisted
+          // Check if sender is blacklisted (by email or domain)
           if (header.from) {
             const fromEmail = this.extractEmailFromHeader(header.from);
-            if (fromEmail && normalizedBlacklist.has(fromEmail.toLowerCase())) {
-              totalBlacklisted++;
-              logger.debug({ integrationId, from: fromEmail }, 'Skipping blacklisted sender');
-              continue;
+            if (fromEmail) {
+              const normalizedFrom = fromEmail.toLowerCase();
+              // Check email blacklist
+              if (emailBlacklist.has(normalizedFrom)) {
+                totalBlacklisted++;
+                logger.debug({ integrationId, from: normalizedFrom }, 'Skipping blacklisted sender (email)');
+                continue;
+              }
+              // Check domain blacklist
+              const domain = this.extractDomainFromEmail(normalizedFrom);
+              if (domain && domainBlacklist.has(domain)) {
+                totalBlacklisted++;
+                logger.debug({ integrationId, from: normalizedFrom, domain }, 'Skipping blacklisted sender (domain)');
+                continue;
+              }
             }
           }
 
@@ -282,6 +304,15 @@ export class SyncService {
     }
 
     return null;
+  }
+
+  /**
+   * Extract domain from an email address (part after @)
+   */
+  private extractDomainFromEmail(email: string): string | null {
+    const atIndex = email.lastIndexOf('@');
+    if (atIndex === -1) return null;
+    return email.substring(atIndex + 1).toLowerCase();
   }
 
   /**

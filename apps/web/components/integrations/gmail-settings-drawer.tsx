@@ -26,14 +26,16 @@ interface GmailSettingsDrawerProps {
 
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+// Domain validation regex (e.g., example.com, sub.example.com)
+const DOMAIN_REGEX = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/
 
 interface ValidationResult {
   valid: string[]
   invalid: string[]
 }
 
-function validateEmails(input: string): ValidationResult {
-  const emails = input
+function validateEntries(input: string): ValidationResult {
+  const entries = input
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter((e) => e.length > 0)
@@ -41,14 +43,18 @@ function validateEmails(input: string): ValidationResult {
   const valid: string[] = []
   const invalid: string[] = []
 
-  for (const email of emails) {
-    if (EMAIL_REGEX.test(email)) {
+  for (const entry of entries) {
+    const isValid = entry.includes("@")
+      ? EMAIL_REGEX.test(entry)
+      : DOMAIN_REGEX.test(entry)
+
+    if (isValid) {
       // Avoid duplicates in valid list
-      if (!valid.includes(email)) {
-        valid.push(email)
+      if (!valid.includes(entry)) {
+        valid.push(entry)
       }
     } else {
-      invalid.push(email)
+      invalid.push(entry)
     }
   }
 
@@ -113,7 +119,7 @@ export function GmailSettingsDrawer({
 
   const handleSave = async () => {
     // Validate before saving
-    const { valid, invalid } = validateEmails(emailText)
+    const { valid, invalid } = validateEntries(emailText)
 
     if (invalid.length > 0) {
       setValidationErrors(invalid)
@@ -143,13 +149,13 @@ export function GmailSettingsDrawer({
         </DrawerHeader>
 
         <div className="flex-1 overflow-auto p-4 space-y-6">
-          {/* Email Blacklist Section */}
+          {/* Blacklist Section */}
           <div className="space-y-4">
             <div>
-              <Label className="text-base font-medium">Email Blacklist</Label>
+              <Label className="text-base font-medium">Blacklist</Label>
               <p className="text-sm text-muted-foreground mt-1">
-                Emails from these addresses will be skipped during sync and won't be analyzed.
-                Enter email addresses separated by commas.
+                Emails from these addresses or domains will be skipped during sync and won't be analyzed.
+                Enter email addresses or domains separated by commas.
               </p>
             </div>
 
@@ -160,7 +166,7 @@ export function GmailSettingsDrawer({
             ) : (
               <>
                 <Textarea
-                  placeholder="email1@example.com, email2@example.com"
+                  placeholder="email@example.com, example.com"
                   value={emailText}
                   onChange={handleTextChange}
                   className={validationErrors.length > 0 ? "border-destructive min-h-[240px]" : "min-h-[240px]"}
@@ -172,7 +178,7 @@ export function GmailSettingsDrawer({
                       <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
                       <div>
                         <p className="text-sm font-medium text-destructive">
-                          Invalid email addresses
+                          Invalid entries
                         </p>
                         <p className="text-xs text-destructive/80 mt-1">
                           {validationErrors.join(", ")}
@@ -184,8 +190,11 @@ export function GmailSettingsDrawer({
 
                 <p className="text-xs text-muted-foreground">
                   {emailText.trim() === ""
-                    ? "No emails blacklisted"
-                    : `${validateEmails(emailText).valid.length} valid email(s)`}
+                    ? "No entries blacklisted"
+                    : (() => {
+                        const count = validateEntries(emailText).valid.length
+                        return `${count} valid ${count === 1 ? "entry" : "entries"}`
+                      })()}
                 </p>
               </>
             )}
