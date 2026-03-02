@@ -48,12 +48,13 @@ export function useDashboardCustomers(filters?: TileFilters) {
       const result = await api.searchCustomers({
         queries,
         sortOrder: 'asc',
-        limit: 1, // We only need the count
+        limit: 1,
         offset: 0,
       });
+
       return {
         value: result.total,
-        change: '+0%', // TODO: Calculate from historical data
+        change: '',
       };
     },
     ...DASHBOARD_QUERY_OPTIONS,
@@ -70,11 +71,10 @@ export function useDashboardEscalations(filters?: TileFilters) {
     queryFn: async () => {
       const request: api.TaskSearchRequest = {
         status: 'open',
-        limit: 1, // We only need the count
+        limit: 1,
         offset: 0,
       };
 
-      // Add filters
       if (filters?.customerId) {
         request.customerId = filters.customerId;
       }
@@ -89,9 +89,10 @@ export function useDashboardEscalations(filters?: TileFilters) {
       }
 
       const result = await api.searchTasks(request);
+
       return {
         value: result.total,
-        change: '+0 new', // TODO: Calculate new since last period
+        change: '',
       };
     },
     ...DASHBOARD_QUERY_OPTIONS,
@@ -145,7 +146,7 @@ export function useDashboardOpportunities(filters?: TileFilters) {
 
       return {
         value: count,
-        change: '+0 this week', // TODO: Calculate from historical data
+        change: '',
       };
     },
     ...DASHBOARD_QUERY_OPTIONS,
