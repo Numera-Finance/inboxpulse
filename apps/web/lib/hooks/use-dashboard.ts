@@ -34,26 +34,56 @@ export function useDashboardCustomers(filters?: TileFilters) {
   return useQuery({
     queryKey: dashboardKeys.customers(filters),
     queryFn: async () => {
-      const queries: api.SearchRequest['queries'] = [];
+      const baseQueries: api.SearchRequest['queries'] = [];
 
       // Add customer filter if specified
       if (filters?.customerId) {
-        queries.push({
+        baseQueries.push({
           field: 'id',
           operator: SearchOperator.EQUALS,
           value: filters.customerId,
         });
       }
 
-      const result = await api.searchCustomers({
-        queries,
-        sortOrder: 'asc',
-        limit: 1, // We only need the count
-        offset: 0,
-      });
+      // Build date queries for "new" count
+      const dateQueries: api.SearchRequest['queries'] = [];
+      if (filters?.dateFrom) {
+        dateQueries.push({
+          field: 'createdAt',
+          operator: SearchOperator.GREATER_THAN_OR_EQUAL,
+          value: filters.dateFrom,
+        });
+      }
+      if (filters?.dateTo) {
+        dateQueries.push({
+          field: 'createdAt',
+          operator: SearchOperator.LESS_THAN_OR_EQUAL,
+          value: filters.dateTo,
+        });
+      }
+
+      const hasDateFilter = dateQueries.length > 0;
+
+      const [totalResult, newResult] = await Promise.all([
+        api.searchCustomers({
+          queries: baseQueries,
+          sortOrder: 'asc',
+          limit: 1,
+          offset: 0,
+        }),
+        hasDateFilter
+          ? api.searchCustomers({
+              queries: [...baseQueries, ...dateQueries],
+              sortOrder: 'asc',
+              limit: 1,
+              offset: 0,
+            })
+          : Promise.resolve(null),
+      ]);
+
       return {
-        value: result.total,
-        change: '+0%', // TODO: Calculate from historical data
+        value: totalResult.total,
+        change: newResult ? `+${newResult.total} new` : '',
       };
     },
     ...DASHBOARD_QUERY_OPTIONS,
@@ -68,30 +98,36 @@ export function useDashboardEscalations(filters?: TileFilters) {
   return useQuery({
     queryKey: dashboardKeys.escalations(filters),
     queryFn: async () => {
-      const request: api.TaskSearchRequest = {
+      // Base request without date filters (for total count)
+      const baseRequest: api.TaskSearchRequest = {
         status: 'open',
-        limit: 1, // We only need the count
+        limit: 1,
         offset: 0,
       };
 
-      // Add filters
       if (filters?.customerId) {
-        request.customerId = filters.customerId;
+        baseRequest.customerId = filters.customerId;
       }
       if (filters?.userId) {
-        request.assignedToId = filters.userId;
-      }
-      if (filters?.dateFrom) {
-        request.dateFrom = filters.dateFrom;
-      }
-      if (filters?.dateTo) {
-        request.dateTo = filters.dateTo;
+        baseRequest.assignedToId = filters.userId;
       }
 
-      const result = await api.searchTasks(request);
+      const hasDateFilter = !!(filters?.dateFrom || filters?.dateTo);
+
+      const [totalResult, periodResult] = await Promise.all([
+        api.searchTasks(baseRequest),
+        hasDateFilter
+          ? api.searchTasks({
+              ...baseRequest,
+              dateFrom: filters?.dateFrom,
+              dateTo: filters?.dateTo,
+            })
+          : Promise.resolve(null),
+      ]);
+
       return {
-        value: result.total,
-        change: '+0 new', // TODO: Calculate new since last period
+        value: totalResult.total,
+        change: periodResult ? `+${periodResult.total} new` : '',
       };
     },
     ...DASHBOARD_QUERY_OPTIONS,
@@ -137,15 +173,22 @@ export function useDashboardOpportunities(filters?: TileFilters) {
   return useQuery({
     queryKey: dashboardKeys.opportunities(filters),
     queryFn: async () => {
-      const count = await api.getDashboardUpsellCount({
-        customerId: filters?.customerId,
-        dateFrom: filters?.dateFrom,
-        dateTo: filters?.dateTo,
-      });
+      const hasDateFilter = !!(filters?.dateFrom || filters?.dateTo);
+
+      const [totalCount, periodCount] = await Promise.all([
+        api.getDashboardUpsellCount({ customerId: filters?.customerId }),
+        hasDateFilter
+          ? api.getDashboardUpsellCount({
+              customerId: filters?.customerId,
+              dateFrom: filters?.dateFrom,
+              dateTo: filters?.dateTo,
+            })
+          : Promise.resolve(null),
+      ]);
 
       return {
-        value: count,
-        change: '+0 this week', // TODO: Calculate from historical data
+        value: totalCount,
+        change: periodCount !== null ? `+${periodCount} new` : '',
       };
     },
     ...DASHBOARD_QUERY_OPTIONS,
