@@ -7,6 +7,7 @@ import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from '.
 import { customers } from '../customers/schema';
 import { eq, and, desc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
+import type { AnalyzedEmail, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
 
 // Re-export TATMetricRow from shared
 export type { TATMetricRow } from '@crm/shared';
@@ -1297,7 +1298,7 @@ export class EmailRepository extends ScopedRepository {
   /**
    * Get sentiment distribution for dashboard chart with access control
    * Returns counts for positive, neutral, and negative sentiment
-   * Queries email_analyses table for sentiment data
+   * Uses emails.signals array instead of email_analyses table
    */
   async getSentimentStatsScoped(
     header: RequestHeader,
@@ -1311,7 +1312,8 @@ export class EmailRepository extends ScopedRepository {
       eq(emails.tenantId, header.tenantId),
       isNotNull(emailParticipants.customerId),
       this.customerAccessFilter(emailParticipants.customerId, header),
-      eq(emailAnalyses.analysisType, 'sentiment'),
+      // Only include emails that have at least one sentiment signal
+      signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
     ];
 
     if (filters?.customerId) {
@@ -1328,13 +1330,12 @@ export class EmailRepository extends ScopedRepository {
     const perCustomer = this.db
       .select({
         customerId: emailParticipants.customerId,
-        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`.as('positive'),
-        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`.as('neutral'),
-        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`.as('negative'),
+        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_POSITIVE)})::int`.as('positive'),
+        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEUTRAL)})::int`.as('neutral'),
+        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEGATIVE)})::int`.as('negative'),
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .innerJoin(emailAnalyses, eq(emailAnalyses.emailId, emailParticipants.emailId))
       .where(and(...conditions))
       .groupBy(emailParticipants.customerId)
       .as('per_customer');
@@ -1358,6 +1359,7 @@ export class EmailRepository extends ScopedRepository {
    * Get sentiment trend data for dashboard chart with access control
    * Returns monthly counts for positive, neutral, and negative sentiment over last 6 months
    * Returns percentages (stacked to 100%)
+   * Uses emails.signals array instead of email_analyses table
    */
   async getSentimentTrendScoped(
     header: RequestHeader,
@@ -1377,9 +1379,10 @@ export class EmailRepository extends ScopedRepository {
       eq(emails.tenantId, header.tenantId),
       isNotNull(emailParticipants.customerId),
       this.customerAccessFilter(emailParticipants.customerId, header),
-      eq(emailAnalyses.analysisType, 'sentiment'),
-      // Filter to last 6 months
-      sql`${emailAnalyses.createdAt} >= date_trunc('month', now() - interval '5 months')`,
+      // Only include emails that have at least one sentiment signal
+      signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
+      // Filter to last 6 months using emails.receivedAt
+      sql`${emails.receivedAt} >= date_trunc('month', now() - interval '5 months')`,
     ];
 
     if (filters?.customerId) {
@@ -1390,16 +1393,15 @@ export class EmailRepository extends ScopedRepository {
     const perCustomerMonth = this.db
       .select({
         customerId: emailParticipants.customerId,
-        month: sql<string>`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`.as('month'),
-        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`.as('positive'),
-        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`.as('neutral'),
-        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`.as('negative'),
+        month: sql<string>`to_char(${emails.receivedAt}, 'YYYY-MM')`.as('month'),
+        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_POSITIVE)})::int`.as('positive'),
+        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEUTRAL)})::int`.as('neutral'),
+        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEGATIVE)})::int`.as('negative'),
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .innerJoin(emailAnalyses, eq(emailAnalyses.emailId, emailParticipants.emailId))
       .where(and(...conditions))
-      .groupBy(emailParticipants.customerId, sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`)
+      .groupBy(emailParticipants.customerId, sql`to_char(${emails.receivedAt}, 'YYYY-MM')`)
       .as('per_customer_month');
 
     const result = await this.db
@@ -1560,6 +1562,317 @@ export class EmailRepository extends ScopedRepository {
       .from(perCustomer);
 
     return result[0]?.total ?? 0;
+  }
+
+  // ===========================================================================
+  // Analyzed Email Search
+  // ===========================================================================
+
+  /**
+   * Map a signal filter string to raw SQL conditions (using table alias "e" for emails)
+   * Used in raw SQL queries where emails is aliased as "e"
+   */
+  private getSignalFilterCondition(signal: string): SQL | null {
+    switch (signal) {
+      case 'positive':
+        return sql`e.signals @> ARRAY[${Signal.SENTIMENT_POSITIVE}]::integer[]`;
+      case 'negative':
+        return sql`e.signals @> ARRAY[${Signal.SENTIMENT_NEGATIVE}]::integer[]`;
+      case 'neutral':
+        return sql`e.signals @> ARRAY[${Signal.SENTIMENT_NEUTRAL}]::integer[]`;
+      case 'upsell':
+        return sql`e.signals @> ARRAY[${Signal.UPSELL}]::integer[]`;
+      case 'churn':
+        return sql`e.signals && ARRAY[${Signal.CHURN_LOW}, ${Signal.CHURN_MEDIUM}, ${Signal.CHURN_HIGH}, ${Signal.CHURN_CRITICAL}]::integer[]`;
+      case 'tat':
+        return sql`e.is_customer_email = true AND e.first_reply_at IS NULL`;
+      case 'all':
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Search analyzed emails with optional task overlay
+   * Returns emails that have been analyzed (analysis_status = 3)
+   * with LEFT JOIN to tasks for task overlay information
+   */
+  async searchAnalyzedEmails(
+    header: RequestHeader,
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailSearchResponse> {
+    const limit = request.limit ?? 50;
+    const offset = request.offset ?? 0;
+
+    // Build raw SQL WHERE conditions (using table aliases e, ep, t, c)
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
+      sql`ep.customer_id IS NOT NULL`,
+    ];
+
+    // Customer access filter
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
+    }
+
+    // Signal filter
+    if (request.signal && request.signal !== 'all') {
+      const signalCondition = this.getSignalFilterCondition(request.signal);
+      if (signalCondition) {
+        whereParts.push(signalCondition);
+      }
+    }
+
+    // Status filter (only show emails with tasks matching status)
+    if (request.status && request.status !== 'all') {
+      const taskStatus = request.status === 'done' ? 1 : 0;
+      whereParts.push(sql`t.status = ${taskStatus}`);
+    }
+
+    // Assignee filter
+    if (request.assignedToId) {
+      if (request.assignedToId === 'unassigned') {
+        whereParts.push(sql`t.id IS NOT NULL AND t.assigned_to_id IS NULL`);
+      } else {
+        whereParts.push(sql`t.assigned_to_id = ${request.assignedToId}`);
+      }
+    }
+
+    // Customer filter
+    if (request.customerId) {
+      whereParts.push(sql`ep.customer_id = ${request.customerId}`);
+    }
+
+    // Date range filters
+    if (request.dateFrom) {
+      whereParts.push(sql`e.received_at >= ${request.dateFrom}::timestamp`);
+    }
+    if (request.dateTo) {
+      whereParts.push(sql`e.received_at <= ${request.dateTo}::timestamp`);
+    }
+
+    // Text search
+    if (request.search) {
+      const term = `%${request.search}%`;
+      whereParts.push(sql`(
+        e.subject ILIKE ${term} OR
+        e.id IN (
+          SELECT ep2.email_id FROM email_participants ep2
+          WHERE ep2.email ILIKE ${term} OR ep2.name ILIKE ${term}
+        )
+      )`);
+    }
+
+    const whereClause = sql.join(whereParts, sql` AND `);
+
+    // Sort direction
+    const sortColumn = request.sortBy === 'createdAt' ? sql`sub.created_at` : sql`sub.received_at`;
+    const sortDir = request.sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
+
+    // Count query
+    const countResult = await this.db.execute<{ count: number }>(sql`
+      SELECT count(DISTINCT e.id)::int AS count
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      WHERE ${whereClause}
+    `);
+
+    const total = countResult[0]?.count ?? 0;
+
+    // Main query - use subquery for DISTINCT ON then sort in outer query
+    const rows = await this.db.execute<{
+      id: string;
+      subject: string;
+      body: string | null;
+      from_email: string;
+      from_name: string | null;
+      received_at: Date;
+      signals: number[];
+      customer_id: string;
+      customer_name: string | null;
+      task_id: string | null;
+      task_status: number | null;
+      assigned_to_id: string | null;
+      assigned_to_name: string | null;
+      assigned_to_email: string | null;
+      problem: string | null;
+      resolution: string | null;
+      completed_at: Date | null;
+      completed_by_id: string | null;
+      completed_by_name: string | null;
+      task_created_at: Date | null;
+    }>(sql`
+      SELECT * FROM (
+        SELECT DISTINCT ON (e.id)
+          e.id,
+          e.subject,
+          e.body,
+          e.from_email,
+          e.from_name,
+          e.received_at,
+          e.created_at,
+          e.signals,
+          ep.customer_id,
+          c.name AS customer_name,
+          t.id AS task_id,
+          t.status AS task_status,
+          t.assigned_to_id,
+          assignee_u.name AS assigned_to_name,
+          assignee_u.email AS assigned_to_email,
+          t.problem,
+          t.resolution,
+          t.completed_at,
+          t.completed_by_id,
+          completed_u.name AS completed_by_name,
+          t.created_at AS task_created_at
+        FROM emails e
+        INNER JOIN email_participants ep ON ep.email_id = e.id
+        INNER JOIN customers c ON c.id = ep.customer_id
+        LEFT JOIN tasks t ON t.email_id = e.id
+        LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+        LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+        WHERE ${whereClause}
+        ORDER BY e.id
+      ) sub
+      ORDER BY ${sortColumn} ${sortDir}
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `);
+
+    const items: AnalyzedEmail[] = rows.map(row => ({
+      id: row.id,
+      subject: row.subject,
+      body: row.body,
+      fromEmail: row.from_email,
+      fromName: row.from_name,
+      receivedAt: new Date(row.received_at),
+      signals: row.signals ?? [],
+      customerId: row.customer_id,
+      customerName: row.customer_name,
+      taskId: row.task_id,
+      taskStatus: row.task_status,
+      assignedToId: row.assigned_to_id,
+      assignedToName: row.assigned_to_name,
+      assignedToEmail: row.assigned_to_email,
+      problem: row.problem,
+      resolution: row.resolution,
+      completedAt: row.completed_at ? new Date(row.completed_at) : null,
+      completedById: row.completed_by_id,
+      completedByName: row.completed_by_name,
+      taskCreatedAt: row.task_created_at ? new Date(row.task_created_at) : null,
+    }));
+
+    return { items, total, limit, offset };
+  }
+
+  /**
+   * Get a single analyzed email by ID with task overlay
+   */
+  async getAnalyzedEmailById(
+    header: RequestHeader,
+    emailId: string
+  ): Promise<AnalyzedEmail | null> {
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`e.id = ${emailId}`,
+      sql`ep.customer_id IS NOT NULL`,
+    ];
+
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
+    }
+
+    const whereClause = sql.join(whereParts, sql` AND `);
+
+    const rows = await this.db.execute<{
+      id: string;
+      subject: string;
+      body: string | null;
+      from_email: string;
+      from_name: string | null;
+      received_at: Date;
+      signals: number[];
+      customer_id: string;
+      customer_name: string | null;
+      task_id: string | null;
+      task_status: number | null;
+      assigned_to_id: string | null;
+      assigned_to_name: string | null;
+      assigned_to_email: string | null;
+      problem: string | null;
+      resolution: string | null;
+      completed_at: Date | null;
+      completed_by_id: string | null;
+      completed_by_name: string | null;
+      task_created_at: Date | null;
+    }>(sql`
+      SELECT DISTINCT ON (e.id)
+        e.id,
+        e.subject,
+        e.body,
+        e.from_email,
+        e.from_name,
+        e.received_at,
+        e.signals,
+        ep.customer_id,
+        c.name AS customer_name,
+        t.id AS task_id,
+        t.status AS task_status,
+        t.assigned_to_id,
+        assignee_u.name AS assigned_to_name,
+        assignee_u.email AS assigned_to_email,
+        t.problem,
+        t.resolution,
+        t.completed_at,
+        t.completed_by_id,
+        completed_u.name AS completed_by_name,
+        t.created_at AS task_created_at
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+      LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+      WHERE ${whereClause}
+      ORDER BY e.id
+      LIMIT 1
+    `);
+
+    if (rows.length === 0) return null;
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      subject: row.subject,
+      body: row.body,
+      fromEmail: row.from_email,
+      fromName: row.from_name,
+      receivedAt: new Date(row.received_at),
+      signals: row.signals ?? [],
+      customerId: row.customer_id,
+      customerName: row.customer_name,
+      taskId: row.task_id,
+      taskStatus: row.task_status,
+      assignedToId: row.assigned_to_id,
+      assignedToName: row.assigned_to_name,
+      assignedToEmail: row.assigned_to_email,
+      problem: row.problem,
+      resolution: row.resolution,
+      completedAt: row.completed_at ? new Date(row.completed_at) : null,
+      completedById: row.completed_by_id,
+      completedByName: row.completed_by_name,
+      taskCreatedAt: row.task_created_at ? new Date(row.task_created_at) : null,
+    };
   }
 
   // ===========================================================================

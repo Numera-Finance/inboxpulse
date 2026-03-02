@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { RefreshCw } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import type { TileFilters } from "./index"
 
@@ -23,6 +24,8 @@ export interface StatTileConfig {
   category: "stat"
   // Data hook that fetches tile data based on filters
   useData: (filters?: TileFilters) => UseQueryResult<StatTileData, Error>
+  // Optional path for drilldown navigation
+  drilldownPath?: string
 }
 
 export interface StatTileProps {
@@ -32,12 +35,28 @@ export interface StatTileProps {
 
 export function StatTile({ config, filters }: StatTileProps) {
   const { data, isLoading, error, refetch } = config.useData(filters)
+  const navigate = useNavigate()
   const Icon = config.icon
   const trend = config.trend ?? "neutral"
 
+  const isClickable = !!config.drilldownPath
+
+  const handleClick = () => {
+    if (config.drilldownPath) {
+      navigate(config.drilldownPath)
+    }
+  }
+
   return (
-    <Card className="tile-drag-handle h-full cursor-move p-4 flex items-center">
-      <div className="w-full">
+    <Card
+      className={cn(
+        "tile-drag-handle h-full cursor-move p-4 flex items-center",
+        isClickable && "hover:bg-accent/50 transition-colors"
+      )}
+      onClick={handleClick}
+      role={isClickable ? "button" : undefined}
+    >
+      <div className={cn("w-full", isClickable && "cursor-pointer")}>
         {isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-4 w-24" />

@@ -6,6 +6,7 @@ import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
 import { threadToDb, emailToDb, computeEmailContentHash } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
 import { emails, emailThreads } from './schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
@@ -942,5 +943,29 @@ export class EmailService {
     }
   ) {
     return this.emailRepo.getTATMetricsScoped(requestHeader, filters);
+  }
+
+  // ===========================================================================
+  // Analyzed Email Search
+  // ===========================================================================
+
+  /**
+   * Search analyzed emails with optional task overlay
+   */
+  async searchAnalyzedEmails(
+    requestHeader: RequestHeader,
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailSearchResponse> {
+    return this.emailRepo.searchAnalyzedEmails(requestHeader, request);
+  }
+
+  /**
+   * Get a single analyzed email by ID with task overlay
+   */
+  async getAnalyzedEmailById(
+    requestHeader: RequestHeader,
+    emailId: string
+  ): Promise<AnalyzedEmail | null> {
+    return this.emailRepo.getAnalyzedEmailById(requestHeader, emailId);
   }
 }

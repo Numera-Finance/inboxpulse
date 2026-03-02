@@ -7,7 +7,7 @@
 
 import type { Email as FrontendEmail } from "@/lib/types"
 import type { Escalation } from "@/lib/data"
-import type { Task, TaskComment } from "@crm/clients"
+import type { Task, TaskComment, AnalyzedEmail } from "@crm/clients"
 import type {
   InboxItem,
   InboxItemContent,
@@ -525,6 +525,87 @@ export const apiTaskToInboxContent: InboxContentAdapter<TaskWithComments> = (
       emailId: task.emailId,
       createdBySystem: task.createdBySystem,
       completedAt: task.completedAt,
+    },
+  }
+}
+
+// =============================================================================
+// Analyzed Email Adapters (email with optional task overlay)
+// =============================================================================
+
+/**
+ * Convert AnalyzedEmail to InboxItem
+ * Uses the email as the primary data source with task info overlaid
+ */
+export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
+  email
+): InboxItem<AnalyzedEmail> => {
+  const timestamp = new Date(email.receivedAt)
+  const hasTask = email.taskId !== null
+
+  return {
+    id: email.id,
+    type: "email",
+    subject: email.subject || "(No Subject)",
+    preview: truncateText(stripHtml(email.body || ""), 100),
+    timestamp,
+    isRead: hasTask ? email.taskStatus === 1 : true,
+    isStarred: false,
+    sender: {
+      name: email.fromName || extractNameFromEmail(email.fromEmail),
+      email: email.fromEmail,
+    },
+    recipients: email.assignedToName
+      ? [{ name: email.assignedToName, id: email.assignedToId || undefined }]
+      : [],
+    status: hasTask
+      ? (email.taskStatus === 1 ? "resolved" : "open")
+      : undefined,
+    customerId: email.customerId,
+    customerName: email.customerName || undefined,
+    originalData: email,
+  }
+}
+
+/**
+ * Convert AnalyzedEmail to InboxItemContent
+ */
+export const analyzedEmailToInboxContent = (
+  email: AnalyzedEmail,
+  comments?: TaskComment[]
+): InboxItemContent => {
+  const timestamp = new Date(email.receivedAt)
+
+  const inboxComments = comments?.map((comment) => ({
+    id: comment.id,
+    content: comment.content,
+    userId: comment.userId,
+    userName: comment.userName || "Unknown",
+    createdAt: new Date(comment.createdAt),
+  }))
+
+  return {
+    id: email.id,
+    subject: email.subject || "(No Subject)",
+    body: email.body || "",
+    bodyFormat: "html",
+    from: {
+      name: email.fromName || extractNameFromEmail(email.fromEmail),
+      email: email.fromEmail,
+    },
+    to: email.assignedToName
+      ? [{ name: email.assignedToName, id: email.assignedToId || undefined }]
+      : [],
+    timestamp,
+    comments: inboxComments,
+    metadata: {
+      taskId: email.taskId,
+      taskStatus: email.taskStatus,
+      customerId: email.customerId,
+      customerName: email.customerName,
+      problem: email.problem,
+      resolution: email.resolution,
+      completedAt: email.completedAt,
     },
   }
 }

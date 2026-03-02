@@ -1,5 +1,6 @@
 import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail } from './types';
 
 /**
  * Email input type for bulk insert API
@@ -305,6 +306,40 @@ export class EmailClient extends BaseClient {
     const response = await this.get<ApiResponse<TATMetricRow[]>>(url);
 
     return response?.data ?? [];
+  }
+
+  // ===========================================================================
+  // Analyzed Email Search
+  // ===========================================================================
+
+  /**
+   * Search analyzed emails with optional task overlay
+   */
+  async searchAnalyzed(
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailSearchResponse> {
+    const response = await this.post<ApiResponse<AnalyzedEmailSearchResponse>>(
+      '/api/emails/analyzed/search',
+      request
+    );
+
+    return (response as unknown as ApiResponse<AnalyzedEmailSearchResponse>)?.data ?? {
+      items: [],
+      total: 0,
+      limit: request.limit ?? 50,
+      offset: request.offset ?? 0,
+    };
+  }
+
+  /**
+   * Get a single analyzed email by ID with task overlay
+   */
+  async getAnalyzedById(emailId: string): Promise<AnalyzedEmail | null> {
+    const response = await this.get<ApiResponse<AnalyzedEmail>>(
+      `/api/emails/analyzed/${encodeURIComponent(emailId)}`
+    );
+
+    return response?.data ?? null;
   }
 }
 
