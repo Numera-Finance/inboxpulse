@@ -1724,13 +1724,13 @@ export class EmailRepository extends ScopedRepository {
           t.id AS task_id,
           t.status AS task_status,
           t.assigned_to_id,
-          assignee_u.name AS assigned_to_name,
+          CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
           assignee_u.email AS assigned_to_email,
           t.problem,
           t.resolution,
           t.completed_at,
           t.completed_by_id,
-          completed_u.name AS completed_by_name,
+          CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
           t.created_at AS task_created_at
         FROM emails e
         INNER JOIN email_participants ep ON ep.email_id = e.id
@@ -1829,13 +1829,13 @@ export class EmailRepository extends ScopedRepository {
         t.id AS task_id,
         t.status AS task_status,
         t.assigned_to_id,
-        assignee_u.name AS assigned_to_name,
+        CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
         assignee_u.email AS assigned_to_email,
         t.problem,
         t.resolution,
         t.completed_at,
         t.completed_by_id,
-        completed_u.name AS completed_by_name,
+        CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
         t.created_at AS task_created_at
       FROM emails e
       INNER JOIN email_participants ep ON ep.email_id = e.id

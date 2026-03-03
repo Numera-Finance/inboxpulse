@@ -35,6 +35,7 @@ import {
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
 import type { AnalyzedEmail, AnalyzedEmailSearchRequest, TaskExportRequest } from "@crm/clients"
+import { Signal, hasSignal } from "@crm/shared"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { getEmailClient, getTaskClient } from "@/lib/api/clients"
 
@@ -319,11 +320,12 @@ export default function EscalationsPage() {
   }), [])
 
   // Memoize render functions to prevent re-renders
-  // Show "Done" button only when email has a task and task is not resolved
+  // Show "Done" button only for negative sentiment emails with a task
   const renderHeaderActions = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
+    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
     const hasTask = email?.taskId !== null
-    const showDone = hasTask && (effectiveSignal === 'negative' || effectiveSignal === 'churn') && item.status !== "resolved"
+    const showDone = isNegative && hasTask && item.status !== "resolved"
     if (!showDone) return null
     return (
       <Button
@@ -336,12 +338,14 @@ export default function EscalationsPage() {
         Done
       </Button>
     )
-  }, [effectiveSignal])
+  }, [])
 
   const renderMetaInfo = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
-    if (!email?.taskId) {
-      // No task - show minimal meta info (just customer and date)
+    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
+    const showTaskMeta = isNegative && email?.taskId
+    if (!showTaskMeta) {
+      // Not negative or no task - show minimal meta info (just customer and date)
       return (
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
           {item.customerName && (
@@ -357,7 +361,7 @@ export default function EscalationsPage() {
     }
     return (
       <TaskMetaInfo
-        taskId={email.taskId}
+        taskId={email.taskId!}
         customerName={item.customerName}
         assigneeId={email.assignedToId || undefined}
         assigneeName={email.assignedToName || undefined}
@@ -368,8 +372,9 @@ export default function EscalationsPage() {
 
   const renderSidePanel = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
-    if (!email?.taskId) {
-      // No task - no side panel
+    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
+    if (!isNegative || !email?.taskId) {
+      // Not negative or no task - no side panel
       return null
     }
     return (
