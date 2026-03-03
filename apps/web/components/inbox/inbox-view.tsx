@@ -292,14 +292,18 @@ export function InboxView({
         // Next item
         const currentIndex = items.findIndex((i) => i.id === selectedItem?.id)
         if (currentIndex < items.length - 1) {
-          handleSelectItem(items[currentIndex + 1])
+          const nextItem = items[currentIndex + 1]
+          handleSelectItem(nextItem)
+          document.querySelector(`[data-item-id="${nextItem.id}"]`)?.scrollIntoView({ block: "nearest" })
         }
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault()
         // Previous item
         const currentIndex = items.findIndex((i) => i.id === selectedItem?.id)
         if (currentIndex > 0) {
-          handleSelectItem(items[currentIndex - 1])
+          const prevItem = items[currentIndex - 1]
+          handleSelectItem(prevItem)
+          document.querySelector(`[data-item-id="${prevItem.id}"]`)?.scrollIntoView({ block: "nearest" })
         }
       } else if (e.key === "e" && callbacksRef.current.onArchive && selectedItem) {
         // Archive

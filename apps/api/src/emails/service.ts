@@ -2,10 +2,12 @@ import { injectable, inject } from 'tsyringe';
 import { EmailRepository } from './repository';
 import { EmailThreadRepository } from './thread-repository';
 import { TenantRepository } from '../tenants/repository';
+import { ContactRepository } from '../contacts/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
 import { threadToDb, emailToDb, computeEmailContentHash } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
 import { emails, emailThreads } from './schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
@@ -19,6 +21,7 @@ export class EmailService {
     @inject(EmailRepository) private emailRepo: EmailRepository,
     @inject(EmailThreadRepository) private threadRepo: EmailThreadRepository,
     @inject(TenantRepository) private tenantRepo: TenantRepository,
+    @inject(ContactRepository) private contactRepo: ContactRepository,
     @inject('Database') private db: Database
   ) {}
 
@@ -942,5 +945,94 @@ export class EmailService {
     }
   ) {
     return this.emailRepo.getTATMetricsScoped(requestHeader, filters);
+  }
+
+  // ===========================================================================
+  // Analyzed Email Search
+  // ===========================================================================
+
+  /**
+   * Search analyzed emails with optional task overlay
+   */
+  async searchAnalyzedEmails(
+    requestHeader: RequestHeader,
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailSearchResponse> {
+    return this.emailRepo.searchAnalyzedEmails(requestHeader, request);
+  }
+
+  /**
+   * Get a single analyzed email by ID with task overlay
+   */
+  async getAnalyzedEmailById(
+    requestHeader: RequestHeader,
+    emailId: string
+  ): Promise<AnalyzedEmail | null> {
+    return this.emailRepo.getAnalyzedEmailById(requestHeader, emailId);
+  }
+
+  /**
+   * Export analyzed emails with comments and contact roles
+   * No pagination - returns all matching results for XLSX export
+   */
+  async exportAnalyzedEmails(
+    requestHeader: RequestHeader,
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailExportItem[]> {
+    const rows = await this.emailRepo.exportAnalyzedEmails(requestHeader, request);
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    // Collect unique customerIds for contact role lookup
+    const uniqueCustomerIds = [...new Set(rows.map(r => r.customerId))];
+
+    // Fetch contacts for all customers in parallel
+    const contactsByCustomer = new Map<string, Array<{ name: string | null; title: string | null }>>();
+    const contactResults = await Promise.all(
+      uniqueCustomerIds.map(async (customerId) => {
+        const contacts = await this.contactRepo.findByCustomerId(customerId);
+        return { customerId, contacts };
+      })
+    );
+    for (const { customerId, contacts } of contactResults) {
+      contactsByCustomer.set(customerId, contacts.map(c => ({ name: c.name, title: c.title })));
+    }
+
+    return rows.map(row => ({
+      ...row,
+      comments: row.taskComments,
+      contactRoles: this.matchContactRoles(contactsByCustomer.get(row.customerId)),
+    }));
+  }
+
+  /**
+   * Match contact titles to standard roles (Book Keeping, Accountant, Controller, Sr Controller)
+   */
+  private matchContactRoles(
+    contacts?: Array<{ name: string | null; title: string | null }>
+  ): { bookKeeping: string; accountant: string; controller: string; srController: string } {
+    const result = { bookKeeping: '', accountant: '', controller: '', srController: '' };
+    if (!contacts) return result;
+
+    const matchers: Array<{ key: keyof typeof result; patterns: string[] }> = [
+      { key: 'srController', patterns: ['sr controller', 'sr. controller', 'senior controller'] },
+      { key: 'controller', patterns: ['controller'] },
+      { key: 'bookKeeping', patterns: ['book keeping', 'bookkeeping', 'book keeper', 'bookkeeper'] },
+      { key: 'accountant', patterns: ['accountant'] },
+    ];
+
+    for (const contact of contacts) {
+      const titleLower = (contact.title || '').toLowerCase().trim();
+      if (!titleLower) continue;
+      for (const { key, patterns } of matchers) {
+        if (result[key]) continue;
+        if (patterns.some(p => titleLower.includes(p))) {
+          result[key] = contact.name || contact.title || '';
+        }
+      }
+    }
+    return result;
   }
 }

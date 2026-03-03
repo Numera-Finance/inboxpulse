@@ -4,6 +4,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recha
 import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDashboardSentiment } from "@/lib/hooks"
+import { useNavigate } from "react-router-dom"
 import type { TileFilters } from "./tiles"
 
 const COLORS = {
@@ -17,6 +18,7 @@ interface SentimentChartProps {
 }
 
 export function SentimentChart({ filters }: SentimentChartProps) {
+  const navigate = useNavigate()
   const { data, isLoading, error } = useDashboardSentiment(filters)
 
   const chartData = data?.pieData ?? [
@@ -55,6 +57,13 @@ export function SentimentChart({ filters }: SentimentChartProps) {
                 outerRadius={95}
                 paddingAngle={2}
                 dataKey="value"
+                style={{ cursor: "pointer" }}
+                onClick={(data) => {
+                  if (data?.name) {
+                    const signal = data.name.toLowerCase()
+                    navigate(`/escalations?signal=${signal}&status=all`)
+                  }
+                }}
                 label={({ cx, cy, midAngle, outerRadius, name, value }) => {
                   // Don't show label for 0% values
                   if (value === 0) return null
@@ -80,7 +89,7 @@ export function SentimentChart({ filters }: SentimentChartProps) {
                 labelLine={false}
               >
                 {chartData.map((entry) => (
-                  <Cell key={`cell-${entry.name}`} fill={COLORS[entry.name as keyof typeof COLORS]} />
+                  <Cell key={`cell-${entry.name}`} fill={COLORS[entry.name as keyof typeof COLORS]} style={{ cursor: "pointer" }} />
                 ))}
               </Pie>
               <Tooltip

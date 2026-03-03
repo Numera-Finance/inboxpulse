@@ -8,8 +8,9 @@ import { dbEmailToEmail } from './converter';
 import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
 import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, NotFoundError } from '@crm/shared';
+import { analyzedEmailSearchRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
-import { handleGetRequest, handleGetRequestWithParams } from '../utils/api-handler';
+import { handleGetRequest, handleGetRequestWithParams, handleApiRequest } from '../utils/api-handler';
 
 const app = new Hono();
 
@@ -278,6 +279,46 @@ app.get('/tat-metrics', async (c) => {
 });
 
 /**
+ * POST /api/emails/analyzed/search - Search analyzed emails with task overlay
+ * Returns paginated list of analyzed emails with optional task information
+ */
+app.post('/analyzed/search', async (c) => {
+  return handleApiRequest(c, analyzedEmailSearchRequestSchema, async (requestHeader: RequestHeader, request) => {
+    const service = container.resolve(EmailService);
+    return await service.searchAnalyzedEmails(requestHeader, request);
+  });
+});
+
+/**
+ * POST /api/emails/analyzed/export - Export analyzed emails with comments and contact roles
+ * Same filters as search, but returns all matching results (no pagination)
+ */
+app.post('/analyzed/export', async (c) => {
+  return handleApiRequest(c, analyzedEmailSearchRequestSchema, async (requestHeader: RequestHeader, request) => {
+    const service = container.resolve(EmailService);
+    return await service.exportAnalyzedEmails(requestHeader, request);
+  });
+});
+
+/**
+ * GET /api/emails/analyzed/:emailId - Get single analyzed email with task overlay
+ */
+app.get('/analyzed/:emailId', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ emailId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      const email = await service.getAnalyzedEmailById(requestHeader, params.emailId);
+      if (!email) {
+        throw new NotFoundError('Email', params.emailId);
+      }
+      return email;
+    }
+  );
+});
+
+/**
  * GET /api/emails/customer/:customerId - Get emails by customer (with access control)
  * Query params:
  *   - limit: number (default 50)
@@ -325,7 +366,7 @@ app.get('/customer/:customerId', async (c) => {
 app.get('/:emailId', async (c) => {
   // Skip this route for specific paths that should be handled by other routes
   const emailId = c.req.param('emailId');
-  if (emailId === 'exists' || emailId === 'thread' || emailId === 'bulk' || emailId === 'bulk-with-threads') {
+  if (emailId === 'exists' || emailId === 'thread' || emailId === 'bulk' || emailId === 'bulk-with-threads' || emailId === 'analyzed') {
     return c.notFound();
   }
 
