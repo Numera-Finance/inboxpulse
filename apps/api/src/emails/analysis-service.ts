@@ -230,8 +230,16 @@ export class EmailAnalysisService {
     // Step 2e: Run main analyses (external API call) with classification
     // Exclude types already resolved by keywords
     const { results, classificationResult } = await this.callMainAnalyses(ctx, excludeTypes);
-    data.analysisResults = { ...results, ...keywordResults };
     data.classificationResult = classificationResult;
+
+    // Discard keyword results for non-business emails — keyword matches on
+    // marketing/transactional/spam/automated emails produce false signals
+    const NON_BUSINESS_CATEGORIES = ['spam', 'marketing', 'transactional', 'automated'];
+    if (classificationResult?.category && NON_BUSINESS_CATEGORIES.includes(classificationResult.category)) {
+      data.analysisResults = {};
+    } else {
+      data.analysisResults = { ...results, ...keywordResults };
+    }
 
     return data;
   }
