@@ -34,8 +34,8 @@ import {
   taskKeys,
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
-import type { AnalyzedEmail, AnalyzedEmailSearchRequest, TaskExportRequest } from "@crm/clients"
-import { Signal, hasSignal } from "@crm/shared"
+import type { AnalyzedEmail, AnalyzedEmailSearchRequest } from "@crm/clients"
+import { Signal, hasSignal, SIGNAL_LABELS, type SignalType } from "@crm/shared"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { getEmailClient, getTaskClient } from "@/lib/api/clients"
 
@@ -401,12 +401,12 @@ export default function EscalationsPage() {
     return customer?.name || null
   }, [customerIdFromUrl, customersData])
 
-  // Export escalations with comments to Excel
+  // Export analyzed emails with comments to Excel
   const handleExportEscalations = React.useCallback(async (): Promise<Blob> => {
-    const taskClient = getTaskClient()
+    const emailClient = getEmailClient()
 
     // Build export request with current filters
-    const exportRequest: TaskExportRequest = {}
+    const exportRequest: AnalyzedEmailSearchRequest = {}
 
     if (effectiveStatus && effectiveStatus !== "all") {
       exportRequest.status = effectiveStatus
@@ -442,35 +442,46 @@ export default function EscalationsPage() {
       exportRequest.signal = effectiveSignal
     }
 
-    const escalationsWithComments = await taskClient.exportWithComments(exportRequest)
+    const analyzedEmails = await emailClient.exportAnalyzed(exportRequest)
 
-    const exportData = escalationsWithComments.map(escalation => ({
-      customerName: escalation.customerName || "",
-      emailSubject: escalation.emailSubject || escalation.title || "",
-      status: escalation.status === 1 ? "Done" : "Open",
-      assignedTo: escalation.assignedToName || "",
-      problem: escalation.problem || "",
-      resolution: escalation.resolution || "",
-      completedBy: escalation.completedByName || "",
-      completedAt: escalation.completedAt
-        ? new Date(escalation.completedAt).toLocaleDateString()
+    const exportData = analyzedEmails.map(email => ({
+      customerName: email.customerName || "",
+      emailSubject: email.subject || "",
+      from: email.fromName || email.fromEmail || "",
+      receivedAt: new Date(email.receivedAt).toLocaleDateString(),
+      signals: (email.signals || [])
+        .map(s => SIGNAL_LABELS[s as SignalType] || "")
+        .filter(Boolean)
+        .join(", "),
+      status: email.taskId
+        ? (email.taskStatus === 1 ? "Done" : "Open")
+        : "\u2014",
+      assignedTo: email.assignedToName || "",
+      problem: email.problem || "",
+      resolution: email.resolution || "",
+      completedBy: email.completedByName || "",
+      completedAt: email.completedAt
+        ? new Date(email.completedAt).toLocaleDateString()
         : "",
-      comments: (escalation.comments || [])
+      comments: (email.comments || [])
         .map(c => {
           const time = new Date(c.createdAt).toLocaleString()
           return `[${time} - ${c.userName}]: ${c.content}`
         })
         .join("\n"),
-      bookKeeping: escalation.contactRoles?.bookKeeping || "",
-      accountant: escalation.contactRoles?.accountant || "",
-      controller: escalation.contactRoles?.controller || "",
-      srController: escalation.contactRoles?.srController || "",
+      bookKeeping: email.contactRoles?.bookKeeping || "",
+      accountant: email.contactRoles?.accountant || "",
+      controller: email.contactRoles?.controller || "",
+      srController: email.contactRoles?.srController || "",
     }))
 
     return createXlsxBlob(exportData, {
       columns: [
         { key: "customerName", header: "Customer Name", width: 30 },
         { key: "emailSubject", header: "Email Subject", width: 50 },
+        { key: "from", header: "From", width: 25 },
+        { key: "receivedAt", header: "Received At", width: 15 },
+        { key: "signals", header: "Signals", width: 30 },
         { key: "status", header: "Status", width: 10 },
         { key: "assignedTo", header: "Assigned To", width: 20 },
         { key: "problem", header: "Problem", width: 40 },
@@ -483,13 +494,13 @@ export default function EscalationsPage() {
         { key: "controller", header: "Controller", width: 20 },
         { key: "srController", header: "Sr Controller", width: 20 },
       ],
-      sheetName: "Escalations",
+      sheetName: "AI Analysis",
     })
   }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId, effectiveSignal])
 
   return (
     <AppShell>
-      <div className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
+      <div className="flex flex-col h-full overflow-hidden">
         {/* Page Header */}
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between mb-4">

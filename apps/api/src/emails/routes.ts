@@ -290,6 +290,17 @@ app.post('/analyzed/search', async (c) => {
 });
 
 /**
+ * POST /api/emails/analyzed/export - Export analyzed emails with comments and contact roles
+ * Same filters as search, but returns all matching results (no pagination)
+ */
+app.post('/analyzed/export', async (c) => {
+  return handleApiRequest(c, analyzedEmailSearchRequestSchema, async (requestHeader: RequestHeader, request) => {
+    const service = container.resolve(EmailService);
+    return await service.exportAnalyzedEmails(requestHeader, request);
+  });
+});
+
+/**
  * GET /api/emails/analyzed/:emailId - Get single analyzed email with task overlay
  */
 app.get('/analyzed/:emailId', async (c) => {

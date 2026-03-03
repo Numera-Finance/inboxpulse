@@ -1,6 +1,6 @@
 import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
-import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail } from './types';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem } from './types';
 
 /**
  * Email input type for bulk insert API
@@ -329,6 +329,20 @@ export class EmailClient extends BaseClient {
       limit: request.limit ?? 50,
       offset: request.offset ?? 0,
     };
+  }
+
+  /**
+   * Export analyzed emails with comments and contact roles (no pagination)
+   */
+  async exportAnalyzed(
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailExportItem[]> {
+    const response = await this.post<ApiResponse<AnalyzedEmailExportItem[]>>(
+      '/api/emails/analyzed/export',
+      request
+    );
+
+    return (response as unknown as ApiResponse<AnalyzedEmailExportItem[]>)?.data ?? [];
   }
 
   /**

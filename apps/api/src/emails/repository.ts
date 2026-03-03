@@ -4,8 +4,10 @@ import type { Database, Transaction } from '@crm/database';
 import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
 import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from './schema';
+import { taskComments } from '../tasks/schema';
 import { customers } from '../customers/schema';
-import { eq, and, desc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
+import { users } from '../users/schema';
+import { eq, and, desc, asc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 import type { AnalyzedEmail, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
 
@@ -1770,6 +1772,190 @@ export class EmailRepository extends ScopedRepository {
     }));
 
     return { items, total, limit, offset };
+  }
+
+  /**
+   * Export analyzed emails with comments - no pagination limit
+   * Returns all matching analyzed emails with task comments
+   */
+  async exportAnalyzedEmails(
+    header: RequestHeader,
+    request: AnalyzedEmailSearchRequest
+  ): Promise<Array<AnalyzedEmail & { taskComments: Array<{ userName: string; content: string; createdAt: Date }> }>> {
+    // Build raw SQL WHERE conditions (same as searchAnalyzedEmails)
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
+      sql`ep.customer_id IS NOT NULL`,
+    ];
+
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
+    }
+
+    if (request.signal && request.signal !== 'all') {
+      const signalCondition = this.getSignalFilterCondition(request.signal);
+      if (signalCondition) {
+        whereParts.push(signalCondition);
+      }
+    }
+
+    if (request.status && request.status !== 'all') {
+      const taskStatus = request.status === 'done' ? 1 : 0;
+      whereParts.push(sql`t.status = ${taskStatus}`);
+    }
+
+    if (request.assignedToId) {
+      if (request.assignedToId === 'unassigned') {
+        whereParts.push(sql`t.id IS NOT NULL AND t.assigned_to_id IS NULL`);
+      } else {
+        whereParts.push(sql`t.assigned_to_id = ${request.assignedToId}`);
+      }
+    }
+
+    if (request.customerId) {
+      whereParts.push(sql`ep.customer_id = ${request.customerId}`);
+    }
+
+    if (request.dateFrom) {
+      whereParts.push(sql`e.received_at >= ${request.dateFrom}::timestamp`);
+    }
+    if (request.dateTo) {
+      whereParts.push(sql`e.received_at <= ${request.dateTo}::timestamp`);
+    }
+
+    if (request.search) {
+      const term = `%${request.search}%`;
+      whereParts.push(sql`(
+        e.subject ILIKE ${term} OR
+        e.id IN (
+          SELECT ep2.email_id FROM email_participants ep2
+          WHERE ep2.email ILIKE ${term} OR ep2.name ILIKE ${term}
+        )
+      )`);
+    }
+
+    const whereClause = sql.join(whereParts, sql` AND `);
+
+    // Main query - no LIMIT/OFFSET for export
+    const rows = await this.db.execute<{
+      id: string;
+      subject: string;
+      body: string | null;
+      from_email: string;
+      from_name: string | null;
+      received_at: Date;
+      signals: number[];
+      customer_id: string;
+      customer_name: string | null;
+      task_id: string | null;
+      task_status: number | null;
+      assigned_to_id: string | null;
+      assigned_to_name: string | null;
+      assigned_to_email: string | null;
+      problem: string | null;
+      resolution: string | null;
+      completed_at: Date | null;
+      completed_by_id: string | null;
+      completed_by_name: string | null;
+      task_created_at: Date | null;
+    }>(sql`
+      SELECT * FROM (
+        SELECT DISTINCT ON (e.id)
+          e.id,
+          e.subject,
+          e.body,
+          e.from_email,
+          e.from_name,
+          e.received_at,
+          e.created_at,
+          e.signals,
+          ep.customer_id,
+          c.name AS customer_name,
+          t.id AS task_id,
+          t.status AS task_status,
+          t.assigned_to_id,
+          CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
+          assignee_u.email AS assigned_to_email,
+          t.problem,
+          t.resolution,
+          t.completed_at,
+          t.completed_by_id,
+          CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
+          t.created_at AS task_created_at
+        FROM emails e
+        INNER JOIN email_participants ep ON ep.email_id = e.id
+        INNER JOIN customers c ON c.id = ep.customer_id
+        LEFT JOIN tasks t ON t.email_id = e.id
+        LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+        LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+        WHERE ${whereClause}
+        ORDER BY e.id
+      ) sub
+      ORDER BY sub.received_at DESC
+    `);
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    // Collect task IDs for comment fetching
+    const taskIds = rows
+      .map(r => r.task_id)
+      .filter((id): id is string => id !== null);
+
+    // Fetch all comments for tasks in one query
+    let commentsByTaskId = new Map<string, Array<{ userName: string; content: string; createdAt: Date }>>();
+    if (taskIds.length > 0) {
+      const allComments = await this.db
+        .select({
+          taskId: taskComments.taskId,
+          content: taskComments.content,
+          createdAt: taskComments.createdAt,
+          userName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('userName'),
+        })
+        .from(taskComments)
+        .innerJoin(users, eq(taskComments.userId, users.id))
+        .where(inArray(taskComments.taskId, taskIds))
+        .orderBy(asc(taskComments.createdAt));
+
+      for (const comment of allComments) {
+        const existing = commentsByTaskId.get(comment.taskId) || [];
+        existing.push({
+          userName: comment.userName,
+          content: comment.content,
+          createdAt: comment.createdAt,
+        });
+        commentsByTaskId.set(comment.taskId, existing);
+      }
+    }
+
+    return rows.map(row => ({
+      id: row.id,
+      subject: row.subject,
+      body: row.body,
+      fromEmail: row.from_email,
+      fromName: row.from_name,
+      receivedAt: new Date(row.received_at),
+      signals: row.signals ?? [],
+      customerId: row.customer_id,
+      customerName: row.customer_name,
+      taskId: row.task_id,
+      taskStatus: row.task_status,
+      assignedToId: row.assigned_to_id,
+      assignedToName: row.assigned_to_name,
+      assignedToEmail: row.assigned_to_email,
+      problem: row.problem,
+      resolution: row.resolution,
+      completedAt: row.completed_at ? new Date(row.completed_at) : null,
+      completedById: row.completed_by_id,
+      completedByName: row.completed_by_name,
+      taskCreatedAt: row.task_created_at ? new Date(row.task_created_at) : null,
+      taskComments: row.task_id ? (commentsByTaskId.get(row.task_id) || []) : [],
+    }));
   }
 
   /**

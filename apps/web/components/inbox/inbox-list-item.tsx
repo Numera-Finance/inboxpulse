@@ -118,6 +118,7 @@ export const InboxListItem = React.memo(function InboxListItem({
     <div
       role="button"
       tabIndex={0}
+      data-item-id={item.id}
       onClick={handleClick}
       onKeyDown={(e) => e.key === 'Enter' && handleClick()}
       className={cn(

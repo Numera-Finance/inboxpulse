@@ -66,3 +66,23 @@ export interface AnalyzedEmailSearchResponse {
   limit: number;
   offset: number;
 }
+
+/**
+ * Export item for analyzed emails - includes comments and contact roles
+ */
+export const analyzedEmailExportItemSchema = z.object({
+  ...analyzedEmailSchema.shape,
+  comments: z.array(z.object({
+    userName: z.string(),
+    content: z.string(),
+    createdAt: z.coerce.date(),
+  })).default([]),
+  contactRoles: z.object({
+    bookKeeping: z.string(),
+    accountant: z.string(),
+    controller: z.string(),
+    srController: z.string(),
+  }),
+});
+
+export type AnalyzedEmailExportItem = z.infer<typeof analyzedEmailExportItemSchema>;
