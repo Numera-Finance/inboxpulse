@@ -19,7 +19,7 @@ import type {
   InboxSentiment,
   InboxClassification,
 } from "./types"
-import { getClassificationFromSignals } from "@crm/shared"
+import { getClassificationFromSignals, getSentimentFromSignals } from "@crm/shared"
 import { TaskStatus } from "@crm/clients"
 
 // =============================================================================
@@ -257,6 +257,16 @@ function parseClassification(signals?: number[] | null): InboxClassification | u
     value: classification,
     // Classification confidence is not stored in signals, so we omit it
   }
+}
+
+/**
+ * Parse sentiment from signals array
+ */
+function parseSentimentFromSignals(signals?: number[] | null): InboxSentiment | undefined {
+  if (!signals || signals.length === 0) return undefined
+  const sentiment = getSentimentFromSignals(signals)
+  if (!sentiment) return undefined
+  return { value: sentiment, confidence: 0.5 }
 }
 
 /**
@@ -543,6 +553,7 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
 ): InboxItem<AnalyzedEmail> => {
   const timestamp = new Date(email.receivedAt)
   const hasTask = email.taskId !== null
+  const classification = parseClassification(email.signals)
 
   return {
     id: email.id,
@@ -562,6 +573,7 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
     status: hasTask && hasSignal(email.signals, Signal.SENTIMENT_NEGATIVE)
       ? (email.taskStatus === 1 ? "resolved" : "open")
       : undefined,
+    classification: classification?.value === 'transactional' ? classification : undefined,
     customerId: email.customerId,
     customerName: email.customerName || undefined,
     originalData: email,

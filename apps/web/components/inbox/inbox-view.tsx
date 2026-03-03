@@ -609,15 +609,20 @@ export function InboxView({
             afterContent={detailItem && renderAfterContent ? renderAfterContent(detailItem, content) : undefined}
           />
         </div>
-        {detailItem && renderSidePanel && (
-          <div className="w-[320px] flex-shrink-0 border-l border-border h-full overflow-hidden">
-            <ScrollArea className="h-full">
-              <div className="p-4">
-                {renderSidePanel(detailItem, content)}
-              </div>
-            </ScrollArea>
-          </div>
-        )}
+        {(() => {
+          const sidePanelContent = detailItem && renderSidePanel
+            ? renderSidePanel(detailItem, content)
+            : null
+          return sidePanelContent ? (
+            <div className="w-[320px] flex-shrink-0 border-l border-border h-full overflow-hidden">
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  {sidePanelContent}
+                </div>
+              </ScrollArea>
+            </div>
+          ) : null
+        })()}
       </div>
     </div>
   )
