@@ -553,7 +553,6 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
 ): InboxItem<AnalyzedEmail> => {
   const timestamp = new Date(email.receivedAt)
   const hasTask = email.taskId !== null
-  const classification = parseClassification(email.signals)
 
   return {
     id: email.id,
@@ -573,7 +572,6 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
     status: hasTask && hasSignal(email.signals, Signal.SENTIMENT_NEGATIVE)
       ? (email.taskStatus === 1 ? "resolved" : "open")
       : undefined,
-    classification: classification?.value === 'transactional' ? classification : undefined,
     customerId: email.customerId,
     customerName: email.customerName || undefined,
     originalData: email,

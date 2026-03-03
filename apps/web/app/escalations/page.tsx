@@ -3,7 +3,6 @@
 import * as React from "react"
 import { useSearchParams, useNavigate, useParams } from "react-router-dom"
 import { Inbox, CheckCircle } from "lucide-react"
-import { ClassificationIndicator } from "@/components/ui/classification-indicator"
 import { Separator } from "@/components/ui/separator"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
@@ -371,13 +370,6 @@ export default function EscalationsPage() {
     )
   }, [])
 
-  const renderHeaderBadges = React.useCallback((item: InboxItem) => {
-    if (!item.classification || item.classification.value === 'business') return null
-    return (
-      <ClassificationIndicator classification={item.classification} size="sm" showLabel />
-    )
-  }, [])
-
   const renderSidePanel = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
     const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
@@ -547,7 +539,6 @@ export default function EscalationsPage() {
             }}
             renderHeaderActions={renderHeaderActions}
             renderMetaInfo={renderMetaInfo}
-            renderHeaderBadges={renderHeaderBadges}
             renderSidePanel={renderSidePanel}
           />
         </div>
