@@ -26,18 +26,6 @@ function signalOverlaps(signalValues: number[]): SQL {
   return sql`${emails.signals} && ARRAY[${sql.join(signalValues.map(v => sql`${v}`), sql`, `)}]::integer[]`;
 }
 
-// Exclude non-business emails (spam, marketing, transactional, automated) from analysis queries
-const NON_BUSINESS_SIGNALS = [
-  Signal.CLASSIFICATION_SPAM,
-  Signal.CLASSIFICATION_MARKETING,
-  Signal.CLASSIFICATION_TRANSACTIONAL,
-  Signal.CLASSIFICATION_AUTOMATED,
-];
-
-function excludeNonBusinessEmails(): SQL {
-  return sql`NOT (${emails.signals} && ARRAY[${sql.join(NON_BUSINESS_SIGNALS.map(v => sql`${v}`), sql`, `)}]::integer[])`;
-}
-
 @injectable()
 export class EmailRepository extends ScopedRepository {
   constructor(@inject('Database') db: Database) {
@@ -1328,7 +1316,6 @@ export class EmailRepository extends ScopedRepository {
       this.customerAccessFilter(emailParticipants.customerId, header),
       // Only include emails that have at least one sentiment signal
       signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
-      excludeNonBusinessEmails(),
     ];
 
     if (filters?.customerId) {
@@ -1396,7 +1383,6 @@ export class EmailRepository extends ScopedRepository {
       this.customerAccessFilter(emailParticipants.customerId, header),
       // Only include emails that have at least one sentiment signal
       signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
-      excludeNonBusinessEmails(),
       // Filter to last 6 months using emails.receivedAt
       sql`${emails.receivedAt} >= date_trunc('month', now() - interval '5 months')`,
     ];
@@ -1626,8 +1612,6 @@ export class EmailRepository extends ScopedRepository {
       sql`e.tenant_id = ${header.tenantId}`,
       sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
       sql`ep.customer_id IS NOT NULL`,
-      // Exclude non-business emails (spam, marketing, transactional, automated)
-      sql`NOT (e.signals && ARRAY[${Signal.CLASSIFICATION_SPAM}, ${Signal.CLASSIFICATION_MARKETING}, ${Signal.CLASSIFICATION_TRANSACTIONAL}, ${Signal.CLASSIFICATION_AUTOMATED}]::integer[])`,
     ];
 
     // Customer access filter
@@ -1803,8 +1787,6 @@ export class EmailRepository extends ScopedRepository {
       sql`e.tenant_id = ${header.tenantId}`,
       sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
       sql`ep.customer_id IS NOT NULL`,
-      // Exclude non-business emails (spam, marketing, transactional, automated)
-      sql`NOT (e.signals && ARRAY[${Signal.CLASSIFICATION_SPAM}, ${Signal.CLASSIFICATION_MARKETING}, ${Signal.CLASSIFICATION_TRANSACTIONAL}, ${Signal.CLASSIFICATION_AUTOMATED}]::integer[])`,
     ];
 
     if (!isAdmin(header.permissions)) {
