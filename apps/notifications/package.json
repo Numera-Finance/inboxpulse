@@ -10,6 +10,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-ses": "^3.700.0",
     "@crm/clients": "workspace:*",
     "@crm/database": "workspace:*",
     "@crm/notifications": "workspace:*",

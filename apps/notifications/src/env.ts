@@ -16,8 +16,10 @@ const envSchema = z.object({
   // Auth
   SERVICE_API_KEY: z.string().min(1, 'SERVICE_API_KEY is required'),
 
-  // Email (Postmark)
-  POSTMARK_API_TOKEN: z.string().optional(),
+  // Email (Amazon SES)
+  AWS_SES_REGION: z.string().default('us-east-1'),
+  AWS_SES_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SES_SECRET_ACCESS_KEY: z.string().optional(),
   FROM_EMAIL: z.string().default('hello@9mo.ai'),
   FROM_NAME: z.string().default('MSCFO Email Sentiment'),
 
