@@ -188,7 +188,10 @@ bind_role "${SA_ANALYSIS_EMAIL}" "roles/cloudsql.client" "project"
 grant_secret_access "${SA_ANALYSIS_EMAIL}" \
   "${SECRET_DB_URL}" \
   "${SECRET_INTERNAL_API_KEY}" \
-  "${SECRET_ENCRYPTION_SECRET}"
+  "${SECRET_ENCRYPTION_SECRET}" \
+  "${SECRET_LANGFUSE_SECRET_KEY}" \
+  "${SECRET_LANGFUSE_PUBLIC_KEY}" \
+  "${SECRET_HUGGINGFACE_TOKEN}"
 
 # ── crm-notifications-sa ──────────────────────────────────────────────────────
 # The notifications service needs to:

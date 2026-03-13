@@ -174,6 +174,29 @@ upsert_secret "${SECRET_INNGEST_EVENT_KEY}" "${INNGEST_EVENT_KEY_VAL}" "Inngest 
 INNGEST_SIGNING_KEY_VAL=$(prompt "INNGEST_SIGNING_KEY" "REQUIRED")
 upsert_secret "${SECRET_INNGEST_SIGNING_KEY}" "${INNGEST_SIGNING_KEY_VAL}" "Inngest signing key for verifying callback HMAC signatures"
 
+# ─── 8. Langfuse Keys ─────────────────────────────────────────────────────────
+log ""
+log "=== 8. Langfuse Keys (crm-analysis AI observability) ==="
+log "  Get these from your Langfuse dashboard: https://cloud.langfuse.com"
+log "  If you are not using Langfuse, press Enter to set placeholder values."
+log "  (LANGFUSE_ENABLED=false in the deploy workflow — keys are unused unless enabled)"
+
+LANGFUSE_SECRET_KEY_VAL=$(prompt "LANGFUSE_SECRET_KEY" "disabled")
+upsert_secret "${SECRET_LANGFUSE_SECRET_KEY}" "${LANGFUSE_SECRET_KEY_VAL}" "Langfuse secret key for AI observability in crm-analysis"
+
+LANGFUSE_PUBLIC_KEY_VAL=$(prompt "LANGFUSE_PUBLIC_KEY" "disabled")
+upsert_secret "${SECRET_LANGFUSE_PUBLIC_KEY}" "${LANGFUSE_PUBLIC_KEY_VAL}" "Langfuse public key for AI observability in crm-analysis"
+
+# ─── 9. HuggingFace API Token ─────────────────────────────────────────────────
+log ""
+log "=== 9. HuggingFace API Token (crm-analysis free email classification) ==="
+log "  Get this from: https://huggingface.co/settings/tokens"
+log "  Used for free-tier spam detection and zero-shot email classification."
+log "  If not provided, crm-analysis falls back to LLM-based classification (paid)."
+
+HUGGINGFACE_TOKEN_VAL=$(prompt "HUGGINGFACE_API_TOKEN" "disabled")
+upsert_secret "${SECRET_HUGGINGFACE_TOKEN}" "${HUGGINGFACE_TOKEN_VAL}" "HuggingFace API token for free email classification in crm-analysis"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 log ""
 log "=========================================================="
@@ -190,7 +213,10 @@ for secret in \
   "${SECRET_ENCRYPTION_SECRET}" \
   "${SECRET_PUBSUB_TOKEN}" \
   "${SECRET_INNGEST_EVENT_KEY}" \
-  "${SECRET_INNGEST_SIGNING_KEY}"; do
+  "${SECRET_INNGEST_SIGNING_KEY}" \
+  "${SECRET_LANGFUSE_SECRET_KEY}" \
+  "${SECRET_LANGFUSE_PUBLIC_KEY}" \
+  "${SECRET_HUGGINGFACE_TOKEN}"; do
   log "  • ${secret}"
 done
 

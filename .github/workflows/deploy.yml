@@ -404,10 +404,14 @@ SERVICE_API_URL=${API_URL}" \
             --set-secrets "\
 DATABASE_URL=crm-database-url:latest,\
 INTERNAL_API_KEY=crm-internal-api-key:latest,\
-ENCRYPTION_SECRET=crm-encryption-secret:latest" \
+ENCRYPTION_SECRET=crm-encryption-secret:latest,\
+LANGFUSE_SECRET_KEY=crm-langfuse-secret-key:latest,\
+LANGFUSE_PUBLIC_KEY=crm-langfuse-public-key:latest,\
+HUGGINGFACE_API_TOKEN=crm-huggingface-token:latest" \
             --update-env-vars "\
 NODE_ENV=production,\
 PORT=4003,\
+LANGFUSE_ENABLED=true,\
 SERVICE_API_URL=${API_URL}" \
             --min-instances 0 \
             --max-instances 10 \
