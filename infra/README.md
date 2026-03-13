@@ -118,9 +118,6 @@ bash infra/10-workload-identity.sh
 
 # 12. Migrate database from Neon to Cloud SQL (run after Cloud SQL is ready)
 bash infra/11-database-migration.sh
-
-# 13. Set up monitoring, alerting, and uptime checks
-bash infra/12-monitoring.sh
 ```
 
 ## Gaps & Considerations (Read Before Proceeding)

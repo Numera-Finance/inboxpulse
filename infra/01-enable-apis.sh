@@ -47,14 +47,7 @@ APIS=(
   "oauth2.googleapis.com"            # OAuth2 — Google SSO (better-auth)
   "people.googleapis.com"            # People API — user profile data from Google SSO
 
-  # ── Observability ──────────────────────────────────────────────────────────
-  "monitoring.googleapis.com"        # Cloud Monitoring — metrics and alerting
-  "logging.googleapis.com"           # Cloud Logging — centralised log collection
-  "cloudtrace.googleapis.com"        # Cloud Trace — distributed request tracing
-  "clouderrorreporting.googleapis.com" # Error Reporting — automatic error grouping
-
   # ── CI/CD ──────────────────────────────────────────────────────────────────
-  "cloudbuild.googleapis.com"        # Cloud Build — used by gcloud run deploy --source
   "iam.googleapis.com"               # IAM — service accounts and policies
 )
 
