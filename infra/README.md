@@ -116,8 +116,10 @@ bash infra/09-pubsub.sh
 # 11. Configure Workload Identity Federation for GitHub Actions CI/CD
 bash infra/10-workload-identity.sh
 
-# 12. Migrate database from Neon to Cloud SQL (run after Cloud SQL is ready)
-bash infra/11-database-migration.sh
+# 12. Initialize the Cloud SQL database schema
+# Run from your local machine with DATABASE_URL set to the Cloud SQL private IP
+# (use Cloud SQL Auth Proxy for local access: cloud-sql-proxy PROJECT:REGION:INSTANCE)
+pnpm db:push
 ```
 
 ## Gaps & Considerations (Read Before Proceeding)
