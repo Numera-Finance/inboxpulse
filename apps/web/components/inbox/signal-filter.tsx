@@ -14,9 +14,10 @@ interface SignalFilterProps {
   value: InboxSentimentFilter
   onChange: (value: InboxSentimentFilter) => void
   className?: string
+  excludeNeutral?: boolean
 }
 
-export function SignalFilter({ value, onChange, className }: SignalFilterProps) {
+export function SignalFilter({ value, onChange, className, excludeNeutral }: SignalFilterProps) {
   return (
     <Select
       value={value}
@@ -35,12 +36,14 @@ export function SignalFilter({ value, onChange, className }: SignalFilterProps) 
             Positive
           </span>
         </SelectItem>
-        <SelectItem value="neutral">
-          <span className="flex items-center gap-2">
-            <Meh className="h-3.5 w-3.5 text-gray-500" />
-            Neutral
-          </span>
-        </SelectItem>
+        {!excludeNeutral && (
+          <SelectItem value="neutral">
+            <span className="flex items-center gap-2">
+              <Meh className="h-3.5 w-3.5 text-gray-500" />
+              Neutral
+            </span>
+          </SelectItem>
+        )}
         <SelectItem value="negative">
           <span className="flex items-center gap-2">
             <Frown className="h-3.5 w-3.5 text-red-500" />

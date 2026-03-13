@@ -42,7 +42,7 @@ export function MarkDoneDialog({
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose() }}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>Mark as Done</DialogTitle>
+          <DialogTitle>Mark as Resolved</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -81,7 +81,7 @@ export function MarkDoneDialog({
             disabled={!canSubmit}
           >
             {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Mark Done
+            Resolved
           </Button>
         </DialogFooter>
       </DialogContent>
