@@ -81,7 +81,7 @@ export function MarkDoneDialog({
             disabled={!canSubmit}
           >
             {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Resolved
+            Mark Resolved
           </Button>
         </DialogFooter>
       </DialogContent>
