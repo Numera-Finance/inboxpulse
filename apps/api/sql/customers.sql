@@ -10,11 +10,17 @@ CREATE TABLE IF NOT EXISTS customers (
     name TEXT, -- Extracted from emails or manual entry
     website TEXT,
     industry VARCHAR(100),
-    
+    labels JSONB DEFAULT '[]'::jsonb,
+    external_id VARCHAR(255), -- External system identifier (e.g., Client ID from spreadsheet)
+
     -- Metadata
     metadata JSONB, -- Additional customer data
-    
+
     -- Tracking
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Unique index on external_id per tenant (allows null)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_tenant_external_id
+    ON customers(tenant_id, external_id) WHERE external_id IS NOT NULL;

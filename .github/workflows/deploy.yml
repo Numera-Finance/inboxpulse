@@ -22,6 +22,12 @@ env:
   REPOSITORY: crm
   VPC_NAME: crm-vpc
   SUBNET_NAME: crm-subnet
+  # Cloud Run service URLs
+  CRM_API_URL: https://crm-api-203731638840.us-central1.run.app
+  CRM_WEB_URL: https://crm-web-203731638840.us-central1.run.app
+  CRM_GMAIL_URL: https://crm-gmail-203731638840.us-central1.run.app
+  CRM_ANALYSIS_URL: https://crm-analysis-203731638840.us-central1.run.app
+  CRM_NOTIFICATIONS_URL: https://crm-notifications-203731638840.us-central1.run.app
 
 jobs:
   detect-changes:
@@ -117,14 +123,24 @@ jobs:
             --network ${{ env.VPC_NAME }} \
             --subnet "${SUBNET}" \
             --vpc-egress all-traffic \
-            --ingress internal-and-cloud-load-balancing \
+            --ingress all \
             --allow-unauthenticated \
+            --set-env-vars "\
+          NODE_ENV=production,\
+          LOG_LEVEL=info,\
+          WEB_URL=${{ env.CRM_WEB_URL }},\
+          BETTER_AUTH_URL=${{ env.CRM_API_URL }},\
+          SERVICE_API_URL=${{ env.CRM_API_URL }},\
+          SERVICE_GMAIL_URL=${{ env.CRM_GMAIL_URL }},\
+          SERVICE_ANALYSIS_URL=${{ env.CRM_ANALYSIS_URL }},\
+          SERVICE_NOTIFICATIONS_URL=${{ env.CRM_NOTIFICATIONS_URL }},\
+          APP_URL=${{ env.CRM_WEB_URL }}" \
             --set-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,\
           GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
           GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,\
-          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest" \
             --min-instances 0 \
             --max-instances 10 \
@@ -187,9 +203,15 @@ jobs:
             --vpc-egress all-traffic \
             --ingress all \
             --no-allow-unauthenticated \
+            --set-env-vars "\
+          NODE_ENV=production,\
+          LOG_LEVEL=info,\
+          SERVICE_API_URL=${{ env.CRM_API_URL }},\
+          GMAIL_PUBSUB_TOPIC=projects/project-y-email-sentiment/topics/crm-gmail-push,\
+          GOOGLE_CLOUD_PROJECT_ID=project-y-email-sentiment" \
             --set-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
-          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
           PUBSUB_VERIFICATION_TOKEN=PUBSUB_VERIFICATION_TOKEN:latest,\
           GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
@@ -256,6 +278,7 @@ jobs:
             --vpc-egress private-ranges-only \
             --ingress internal-and-cloud-load-balancing \
             --allow-unauthenticated \
+            --set-env-vars "VITE_API_URL=${{ env.CRM_API_URL }}" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 256Mi \
@@ -317,9 +340,13 @@ jobs:
             --vpc-egress all-traffic \
             --ingress internal \
             --no-allow-unauthenticated \
+            --set-env-vars "\
+          NODE_ENV=production,\
+          LOG_LEVEL=info,\
+          SERVICE_API_URL=${{ env.CRM_API_URL }}" \
             --set-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
-          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
           HUGGINGFACE_API_TOKEN=HUGGINGFACE_TOKEN:latest" \
             --min-instances 0 \
@@ -383,9 +410,14 @@ jobs:
             --vpc-egress all-traffic \
             --ingress all \
             --allow-unauthenticated \
+            --set-env-vars "\
+          NODE_ENV=production,\
+          LOG_LEVEL=info,\
+          SERVICE_API_URL=${{ env.CRM_API_URL }},\
+          WEB_URL=${{ env.CRM_WEB_URL }}" \
             --set-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
-          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           INNGEST_EVENT_KEY=INNGEST_EVENT_KEY:latest,\
           INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest" \
             --min-instances 0 \
