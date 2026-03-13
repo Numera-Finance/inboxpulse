@@ -81,45 +81,61 @@ Internet
 ## Execution Order
 
 Run the scripts in numbered order. Each script is **idempotent** — safe to re-run.
+After each step, run `verify.sh` to confirm it worked before continuing.
 
 ```bash
-# 1. Set your variables (edit this file first!)
+# 0. Set your variables (edit 00-variables.env first!)
 source infra/00-variables.env
 
-# 2. Enable all required GCP APIs
+# 1. Enable all required GCP APIs
 bash infra/01-enable-apis.sh
+bash infra/verify.sh apis
 
-# 3. Create VPC, subnet, Cloud NAT, firewall rules, Private Service Connect
+# 2. Create VPC, subnet, Cloud NAT, firewall rules, Private Service Connect
 bash infra/02-vpc-networking.sh
+bash infra/verify.sh vpc
 
-# 4. Create Artifact Registry repository
+# 3. Create Artifact Registry repository
 bash infra/03-artifact-registry.sh
+bash infra/verify.sh registry
 
-# 5. Create Cloud SQL instance with private IP (takes 5-10 min)
+# 4. Create Cloud SQL instance with private IP (takes 5-10 min)
 bash infra/04-cloud-sql.sh
+bash infra/verify.sh sql
 
-# 6. Create all Secret Manager secrets (interactive — prompts for values)
+# 5. Create all Secret Manager secrets (interactive — prompts for values)
 bash infra/05-secret-manager.sh
+bash infra/verify.sh secrets
 
-# 7. Create service accounts and all IAM bindings
+# 6. Create service accounts and all IAM bindings
 bash infra/06-service-accounts.sh
+bash infra/verify.sh accounts
 
-# 8. Deploy Cloud Run services with VPC, ingress, and secret config
+# 7. Deploy Cloud Run services with VPC, ingress, and secret config
 bash infra/07-cloud-run.sh
+bash infra/verify.sh services
 
-# 9. Create Global HTTPS Load Balancers for web and api (+ Cloud Armor)
+# 8. Create Global HTTPS Load Balancers for web and api (+ Cloud Armor)
 bash infra/08-load-balancer.sh
+bash infra/verify.sh lb
+# ↑ SSL certs will show PROVISIONING until DNS is configured — that's normal
 
-# 10. Create Pub/Sub topic and authenticated push subscription for Gmail
+# 9. Create Pub/Sub topic and authenticated push subscription for Gmail
 bash infra/09-pubsub.sh
+bash infra/verify.sh pubsub
 
-# 11. Configure Workload Identity Federation for GitHub Actions CI/CD
+# 10. Configure Workload Identity Federation for GitHub Actions CI/CD
 bash infra/10-workload-identity.sh
+bash infra/verify.sh cicd
+# ↑ Add the printed GitHub Secrets to your repo, then push to main to test CI/CD
 
-# 12. Initialize the Cloud SQL database schema
+# 11. Initialize the Cloud SQL database schema
 # Run from your local machine with DATABASE_URL set to the Cloud SQL private IP
 # (use Cloud SQL Auth Proxy for local access: cloud-sql-proxy PROJECT:REGION:INSTANCE)
 pnpm db:push
+
+# 12. Full verification of everything
+bash infra/verify.sh all
 ```
 
 ## Gaps & Considerations (Read Before Proceeding)
