@@ -29,7 +29,6 @@ APIS=(
   "compute.googleapis.com"           # Compute Engine — needed for VPC, NAT, LB
   "servicenetworking.googleapis.com" # Service Networking — VPC peering for Cloud SQL
   "vpcaccess.googleapis.com"         # Serverless VPC Access (fallback if Direct VPC not available)
-  "dns.googleapis.com"               # Cloud DNS — internal DNS resolution
 
   # ── Database ───────────────────────────────────────────────────────────────
   "sqladmin.googleapis.com"          # Cloud SQL Admin — manage PostgreSQL instances
@@ -44,8 +43,10 @@ APIS=(
 
   # ── Google Workspace APIs ──────────────────────────────────────────────────
   "gmail.googleapis.com"             # Gmail API — email sync
-  "oauth2.googleapis.com"            # OAuth2 — Google SSO (better-auth)
   "people.googleapis.com"            # People API — user profile data from Google SSO
+
+  # ── Monitoring ────────────────────────────────────────────────────────────
+  "monitoring.googleapis.com"        # Cloud Monitoring — uptime checks, alert policies
 
   # ── CI/CD ──────────────────────────────────────────────────────────────────
   "iam.googleapis.com"               # IAM — service accounts and policies

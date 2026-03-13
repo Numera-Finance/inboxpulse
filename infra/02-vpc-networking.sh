@@ -160,9 +160,9 @@ else
     --nat-custom-subnet-ip-ranges="${SUBNET_NAME}" \
     --auto-allocate-nat-external-ips \
     --min-ports-per-vm=64 \
-    --log-config=enable=true,filter=ERRORS_ONLY \
-    --enable-endpoint-independent-mapping \
-    --description="Cloud NAT for CRM VPC — outbound internet access for Cloud Run"
+    --log-filter=ERRORS_ONLY \
+    --enable-logging \
+    --enable-endpoint-independent-mapping
 fi
 
 # ─── 6. Firewall Rules ────────────────────────────────────────────────────────
@@ -191,7 +191,6 @@ else
     --priority=1000 \
     --source-ranges="35.191.0.0/16,130.211.0.0/22" \
     --allow=tcp:8080,tcp:4001,tcp:4002,tcp:4003,tcp:4004 \
-    --target-tags="crm-cloud-run" \
     --description="Allow GCP LB health checks to reach Cloud Run services"
 fi
 

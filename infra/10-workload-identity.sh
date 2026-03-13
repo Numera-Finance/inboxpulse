@@ -111,13 +111,10 @@ attribute.workflow=assertion.workflow" \
     `# google.subject: the unique subject for policy binding.                ` \
     `# attribute.*: additional claims we can use in conditions.              ` \
     \
-    --attribute-condition="assertion.repository == '${GITHUB_REPO}'" \
+    --attribute-condition="assertion.repository == '${GITHUB_REPO}'"
     `# CRITICAL SECURITY RESTRICTION: Only tokens from our specific GitHub   ` \
     `# repository are accepted. Any other repo's tokens are rejected even if  ` \
-    `# they have a valid GitHub signature.                                     ` \
-    \
-    --jwks-uri="https://token.actions.githubusercontent.com/.well-known/jwks"
-    `# GitHub's public key endpoint for token signature verification.        `
+    `# they have a valid GitHub signature.                                     `
 
   success "OIDC provider '${WIF_PROVIDER_ID}' created"
 fi

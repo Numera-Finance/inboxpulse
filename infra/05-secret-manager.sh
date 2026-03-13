@@ -20,7 +20,9 @@
 #   • Full audit trail (every secret access is logged in Cloud Audit Logs)
 #
 # This script creates secret resources and sets their initial values.
-# It is interactive — it will prompt for values that cannot be generated.
+# Auto-generated values are used where possible. Secrets that require
+# external credentials (Inngest, Langfuse, HuggingFace) use placeholders
+# that must be updated before deployment.
 #
 # USAGE: bash infra/05-secret-manager.sh
 # =============================================================================
@@ -29,36 +31,18 @@ source "$(dirname "$0")/00-variables.env"
 
 log()    { echo "[$(date +'%H:%M:%S')] $*"; }
 success(){ echo "[$(date +'%H:%M:%S')]   ✓ $*"; }
-prompt() {
-  # Usage: prompt "Description" "DEFAULT_VALUE" → echoes the input
-  local desc="$1"
-  local default="$2"
-  local value
-  if [[ -n "${default}" && "${default}" != "REQUIRED" ]]; then
-    read -r -p "  ${desc} [${default}]: " value
-    echo "${value:-${default}}"
-  else
-    while true; do
-      read -r -p "  ${desc}: " value
-      [[ -n "${value}" ]] && break
-      echo "  ⚠ This value is required. Please enter a value." >&2
-    done
-    echo "${value}"
-  fi
-}
 
 # Helper: create or update a secret
 upsert_secret() {
   local name="$1"
   local value="$2"
-  local description="$3"
 
   EXISTING=$(gcloud secrets describe "${name}" \
     --project="${PROJECT_ID}" \
     --format="value(name)" 2>/dev/null || echo "")
 
   if [[ -n "${EXISTING}" ]]; then
-    log "  → Updating secret '${name}' (adding new version)"
+    log "  → Secret '${name}' already exists — adding new version"
     echo -n "${value}" | gcloud secrets versions add "${name}" \
       --project="${PROJECT_ID}" \
       --data-file=-
@@ -69,11 +53,7 @@ upsert_secret() {
       --project="${PROJECT_ID}" \
       --replication-policy=user-managed \
       --locations="${REGION}" \
-      --labels="env=production,team=crm" 2>/dev/null || true
-    # Set description separately (not all SDK versions support --description at create)
-    gcloud secrets update "${name}" \
-      --project="${PROJECT_ID}" \
-      --set-labels="env=production,team=crm" 2>/dev/null || true
+      --labels="env=production,team=crm"
     echo -n "${value}" | gcloud secrets versions add "${name}" \
       --project="${PROJECT_ID}" \
       --data-file=-
@@ -86,14 +66,9 @@ log " Secret Manager Setup"
 log " Project: ${PROJECT_ID}"
 log "=========================================================="
 log ""
-log "This script will prompt you for secret values."
-log "Leave blank to keep the current value (if updating)."
-log ""
 
 # ─── 1. Database URL ──────────────────────────────────────────────────────────
 log "=== 1. Database URL ==="
-log "  Format: postgresql://USER:PASSWORD@PRIVATE_IP:5432/DB_NAME?sslmode=require"
-log "  Get the private IP from: gcloud sql instances describe ${SQL_INSTANCE_NAME} --project=${PROJECT_ID}"
 
 PRIVATE_IP=$(gcloud sql instances describe "${SQL_INSTANCE_NAME}" \
   --project="${PROJECT_ID}" \
@@ -107,103 +82,97 @@ for ip in data.get('ipAddresses',[]):
         break
 " 2>/dev/null || echo "")
 
-AUTO_DB_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${PRIVATE_IP}:5432/${DB_NAME}?sslmode=require"
-DB_URL=$(prompt "DATABASE_URL" "${AUTO_DB_URL}")
-upsert_secret "${SECRET_DB_URL}" "${DB_URL}" "PostgreSQL connection URL for Cloud SQL instance"
+if [[ -z "${PRIVATE_IP}" ]]; then
+  log "  ⚠ Could not determine Cloud SQL private IP!"
+  log "    Using placeholder — update before deploying."
+  PRIVATE_IP="PRIVATE_IP_PLACEHOLDER"
+fi
 
-# ─── 2. Better-Auth Secret ────────────────────────────────────────────────────
+DB_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${PRIVATE_IP}:5432/${DB_NAME}?sslmode=require"
+log "  Database URL: postgresql://${DB_USER}:****@${PRIVATE_IP}:5432/${DB_NAME}?sslmode=require"
+upsert_secret "${SECRET_DB_URL}" "${DB_URL}"
+
+# ─── 2. Better-Auth Secret ──────────────────────────────────────────────────
 log ""
 log "=== 2. Better-Auth Secret ==="
-log "  This must be a random string ≥32 characters. Used to sign auth sessions."
-log "  Auto-generating a secure value (press Enter to accept)..."
+log "  Auto-generating a secure random value (64 chars)..."
 
-AUTO_AUTH_SECRET=$(openssl rand -base64 48 | tr -d '\n')
-AUTH_SECRET=$(prompt "BETTER_AUTH_SECRET" "${AUTO_AUTH_SECRET}")
-upsert_secret "${SECRET_BETTER_AUTH_SECRET}" "${AUTH_SECRET}" "Better-auth session signing secret (min 32 chars)"
+AUTH_SECRET=$(openssl rand -base64 48 | tr -d '\n')
+upsert_secret "${SECRET_BETTER_AUTH_SECRET}" "${AUTH_SECRET}"
 
-# ─── 3. Google OAuth Credentials ─────────────────────────────────────────────
+# ─── 3. Google OAuth Credentials ───────────────────────────────────────────
 log ""
 log "=== 3. Google OAuth Credentials ==="
-log "  Get these from: https://console.cloud.google.com/apis/credentials"
-log "  Create an OAuth 2.0 Client ID of type 'Web application'"
 
-GOOGLE_CLIENT_ID_VAL=$(prompt "GOOGLE_CLIENT_ID (e.g. xxx.apps.googleusercontent.com)" "REQUIRED")
-upsert_secret "${SECRET_GOOGLE_CLIENT_ID}" "${GOOGLE_CLIENT_ID_VAL}" "Google OAuth2 Client ID for better-auth SSO"
+# Check if secrets already exist (user may have created them manually)
+EXISTING_CLIENT_ID=$(gcloud secrets describe "${SECRET_GOOGLE_CLIENT_ID}" \
+  --project="${PROJECT_ID}" \
+  --format="value(name)" 2>/dev/null || echo "")
 
-GOOGLE_CLIENT_SECRET_VAL=$(prompt "GOOGLE_CLIENT_SECRET" "REQUIRED")
-upsert_secret "${SECRET_GOOGLE_CLIENT_SECRET}" "${GOOGLE_CLIENT_SECRET_VAL}" "Google OAuth2 Client Secret for better-auth SSO"
+if [[ -n "${EXISTING_CLIENT_ID}" ]]; then
+  success "Secret '${SECRET_GOOGLE_CLIENT_ID}' already exists — skipping"
+else
+  log "  ⚠ '${SECRET_GOOGLE_CLIENT_ID}' not found. Creating with placeholder."
+  log "    Update later: gcloud secrets versions add ${SECRET_GOOGLE_CLIENT_ID} --data-file=- --project=${PROJECT_ID}"
+  upsert_secret "${SECRET_GOOGLE_CLIENT_ID}" "PLACEHOLDER_UPDATE_ME"
+fi
 
-# ─── 4. Internal API Key ──────────────────────────────────────────────────────
+EXISTING_CLIENT_SECRET=$(gcloud secrets describe "${SECRET_GOOGLE_CLIENT_SECRET}" \
+  --project="${PROJECT_ID}" \
+  --format="value(name)" 2>/dev/null || echo "")
+
+if [[ -n "${EXISTING_CLIENT_SECRET}" ]]; then
+  success "Secret '${SECRET_GOOGLE_CLIENT_SECRET}' already exists — skipping"
+else
+  log "  ⚠ '${SECRET_GOOGLE_CLIENT_SECRET}' not found. Creating with placeholder."
+  upsert_secret "${SECRET_GOOGLE_CLIENT_SECRET}" "PLACEHOLDER_UPDATE_ME"
+fi
+
+# ─── 4. Internal API Key ──────────────────────────────────────────────────
 log ""
 log "=== 4. Internal API Key ==="
-log "  Shared secret used for service-to-service authentication."
-log "  Auto-generating (press Enter to accept)..."
+log "  Auto-generating shared secret for service-to-service auth..."
 
-AUTO_INTERNAL_KEY=$(openssl rand -base64 48 | tr -d '\n')
-INTERNAL_KEY=$(prompt "INTERNAL_API_KEY" "${AUTO_INTERNAL_KEY}")
-upsert_secret "${SECRET_INTERNAL_API_KEY}" "${INTERNAL_KEY}" "Shared secret for internal service-to-service auth (x-internal-api-key header)"
+INTERNAL_KEY=$(openssl rand -base64 48 | tr -d '\n')
+upsert_secret "${SECRET_INTERNAL_API_KEY}" "${INTERNAL_KEY}"
 
-# ─── 5. Encryption Secret ─────────────────────────────────────────────────────
+# ─── 5. Encryption Secret ──────────────────────────────────────────────────
 log ""
 log "=== 5. AES-256 Encryption Secret ==="
-log "  Used by the @crm/encryption package to encrypt sensitive data in the DB."
-log "  Must be exactly 32 bytes. Auto-generating (press Enter to accept)..."
+log "  Auto-generating 32-byte key..."
 
-AUTO_ENC_SECRET=$(openssl rand -base64 32 | tr -d '\n' | head -c 32)
-ENC_SECRET=$(prompt "ENCRYPTION_SECRET (exactly 32 chars)" "${AUTO_ENC_SECRET}")
-upsert_secret "${SECRET_ENCRYPTION_SECRET}" "${ENC_SECRET}" "AES-256 encryption key for sensitive database fields"
+ENC_SECRET=$(openssl rand -base64 32 | tr -d '\n' | head -c 32)
+upsert_secret "${SECRET_ENCRYPTION_SECRET}" "${ENC_SECRET}"
 
-# ─── 6. Pub/Sub Verification Token ───────────────────────────────────────────
+# ─── 6. Pub/Sub Verification Token ─────────────────────────────────────────
 log ""
 log "=== 6. Pub/Sub Verification Token ==="
-log "  Used by crm-gmail to verify that webhook pushes come from Pub/Sub."
-log "  Auto-generating (press Enter to accept)..."
+log "  Auto-generating token for Gmail webhook verification..."
 
-AUTO_PUBSUB_TOKEN=$(openssl rand -hex 32)
-PUBSUB_TOKEN=$(prompt "PUBSUB_VERIFICATION_TOKEN" "${AUTO_PUBSUB_TOKEN}")
-upsert_secret "${SECRET_PUBSUB_TOKEN}" "${PUBSUB_TOKEN}" "Token to verify Pub/Sub push requests in crm-gmail"
+PUBSUB_TOKEN=$(openssl rand -hex 32)
+upsert_secret "${SECRET_PUBSUB_TOKEN}" "${PUBSUB_TOKEN}"
 
-# ─── 7. Inngest Keys ──────────────────────────────────────────────────────────
+# ─── 7. Inngest Keys ──────────────────────────────────────────────────────
 log ""
 log "=== 7. Inngest Keys ==="
-log "  Get these from your Inngest dashboard: https://app.inngest.com"
+INNGEST_EVENT_KEY_VAL="${INNGEST_EVENT_KEY:-PLACEHOLDER_UPDATE_FROM_INNGEST_DASHBOARD}"
+upsert_secret "${SECRET_INNGEST_EVENT_KEY}" "${INNGEST_EVENT_KEY_VAL}"
+INNGEST_SIGNING_KEY_VAL="${INNGEST_SIGNING_KEY:-PLACEHOLDER_UPDATE_FROM_INNGEST_DASHBOARD}"
+upsert_secret "${SECRET_INNGEST_SIGNING_KEY}" "${INNGEST_SIGNING_KEY_VAL}"
 
-INNGEST_EVENT_KEY_VAL=$(prompt "INNGEST_EVENT_KEY" "REQUIRED")
-upsert_secret "${SECRET_INNGEST_EVENT_KEY}" "${INNGEST_EVENT_KEY_VAL}" "Inngest event key for publishing background job events"
-
-INNGEST_SIGNING_KEY_VAL=$(prompt "INNGEST_SIGNING_KEY" "REQUIRED")
-upsert_secret "${SECRET_INNGEST_SIGNING_KEY}" "${INNGEST_SIGNING_KEY_VAL}" "Inngest signing key for verifying callback HMAC signatures"
-
-# ─── 8. Langfuse Keys ─────────────────────────────────────────────────────────
+# ─── 8. HuggingFace Token ──────────────────────────────────────────────────
 log ""
-log "=== 8. Langfuse Keys (crm-analysis AI observability) ==="
-log "  Get these from your Langfuse dashboard: https://cloud.langfuse.com"
-log "  If you are not using Langfuse, press Enter to set placeholder values."
-log "  (LANGFUSE_ENABLED=false in the deploy workflow — keys are unused unless enabled)"
+log "=== 9. HuggingFace Token (email classification — optional) ==="
+HUGGINGFACE_TOKEN_VAL="${HUGGINGFACE_API_TOKEN:-disabled}"
+upsert_secret "${SECRET_HUGGINGFACE_TOKEN}" "${HUGGINGFACE_TOKEN_VAL}"
 
-LANGFUSE_SECRET_KEY_VAL=$(prompt "LANGFUSE_SECRET_KEY" "disabled")
-upsert_secret "${SECRET_LANGFUSE_SECRET_KEY}" "${LANGFUSE_SECRET_KEY_VAL}" "Langfuse secret key for AI observability in crm-analysis"
-
-LANGFUSE_PUBLIC_KEY_VAL=$(prompt "LANGFUSE_PUBLIC_KEY" "disabled")
-upsert_secret "${SECRET_LANGFUSE_PUBLIC_KEY}" "${LANGFUSE_PUBLIC_KEY_VAL}" "Langfuse public key for AI observability in crm-analysis"
-
-# ─── 9. HuggingFace API Token ─────────────────────────────────────────────────
-log ""
-log "=== 9. HuggingFace API Token (crm-analysis free email classification) ==="
-log "  Get this from: https://huggingface.co/settings/tokens"
-log "  Used for free-tier spam detection and zero-shot email classification."
-log "  If not provided, crm-analysis falls back to LLM-based classification (paid)."
-
-HUGGINGFACE_TOKEN_VAL=$(prompt "HUGGINGFACE_API_TOKEN" "disabled")
-upsert_secret "${SECRET_HUGGINGFACE_TOKEN}" "${HUGGINGFACE_TOKEN_VAL}" "HuggingFace API token for free email classification in crm-analysis"
-
-# ─── Summary ──────────────────────────────────────────────────────────────────
+# ─── Summary ──────────────────────────────────────────────────────────────
 log ""
 log "=========================================================="
 log " Secret Manager Setup Complete"
 log "=========================================================="
 log ""
-log "Secrets created in project '${PROJECT_ID}':"
+log "Secrets in project '${PROJECT_ID}':"
 for secret in \
   "${SECRET_DB_URL}" \
   "${SECRET_BETTER_AUTH_SECRET}" \
@@ -214,17 +183,14 @@ for secret in \
   "${SECRET_PUBSUB_TOKEN}" \
   "${SECRET_INNGEST_EVENT_KEY}" \
   "${SECRET_INNGEST_SIGNING_KEY}" \
-  "${SECRET_LANGFUSE_SECRET_KEY}" \
-  "${SECRET_LANGFUSE_PUBLIC_KEY}" \
   "${SECRET_HUGGINGFACE_TOKEN}"; do
   log "  • ${secret}"
 done
-
 log ""
 log "IMPORTANT: Service accounts need secretmanager.versions.access IAM"
-log "  permission to read these secrets.  This is configured in 06-service-accounts.sh"
+log "  permission to read these secrets. This is configured in 06-service-accounts.sh"
 log ""
-log "To view a secret value (for debugging):"
+log "To view a secret value:"
 log "  gcloud secrets versions access latest --secret=SECRET_NAME --project=${PROJECT_ID}"
 log ""
 log "Next step: bash infra/06-service-accounts.sh"

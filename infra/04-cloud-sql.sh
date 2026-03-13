@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 04-cloud-sql.sh — Create Cloud SQL PostgreSQL instance (private IP, HA)
+# 04-cloud-sql.sh — Create Cloud SQL PostgreSQL instance (private IP)
 #
-# This creates a production-grade PostgreSQL 15 instance with:
+# This creates a PostgreSQL 17 instance with:
 #   • Private IP only — no public endpoint exposed to the internet
-#   • High Availability (HA) — automatic failover to standby in same region
+#   • Single-zone (ZONAL) — no HA failover (cost-optimized for early stage)
 #   • Automated daily backups with 7-day retention + point-in-time recovery
 #   • SSL enforcement — all connections must use TLS
 #   • Deletion protection — prevents accidental instance deletion
@@ -33,31 +33,31 @@ if [[ "${INSTANCE_STATE}" == "RUNNABLE" ]]; then
 elif [[ -n "${INSTANCE_STATE}" ]]; then
   log "  ✓ Instance '${SQL_INSTANCE_NAME}' exists (state: ${INSTANCE_STATE})"
 else
-  log "  → Creating Cloud SQL PostgreSQL 15 instance '${SQL_INSTANCE_NAME}'"
-  log "    This takes 5–15 minutes. Please wait..."
+  log "  → Creating Cloud SQL PostgreSQL 17 instance '${SQL_INSTANCE_NAME}'"
+  log "    This takes 5-15 minutes. Please wait..."
   log ""
   log "    Configuration:"
-  log "      Tier:       ${SQL_TIER} (2 vCPU, 7.5 GB RAM)"
+  log "      Tier:       ${SQL_TIER} (shared-core, 614 MB RAM)"
   log "      Region:     ${SQL_REGION}"
-  log "      HA:         enabled (automatic regional failover)"
-  log "      Storage:    50 GB SSD, auto-grow enabled"
+  log "      HA:         disabled (single-zone, cost-optimized)"
+  log "      Storage:    10 GB SSD, auto-grow enabled"
   log "      Backups:    daily, 7-day retention, PITR enabled"
   log "      Network:    private IP only (via ${VPC_NAME} PSA peering)"
 
   gcloud sql instances create "${SQL_INSTANCE_NAME}" \
     --project="${PROJECT_ID}" \
-    --database-version=POSTGRES_15 \
+    --database-version=POSTGRES_17 \
+    --edition=ENTERPRISE \
     --tier="${SQL_TIER}" \
     --region="${SQL_REGION}" \
     \
-    `# ── High Availability ──────────────────────────────────────────────`\
-    --availability-type=REGIONAL \
-    `# REGIONAL = HA with automatic failover to standby in same region. `\
-    `# Use ZONAL for a cheaper dev/staging setup.                        `\
+    `# ── Availability ──────────────────────────────────────────────────`\
+    --availability-type=ZONAL \
+    `# ZONAL = single zone, no HA failover. Upgrade to REGIONAL for HA. `\
     \
     `# ── Storage ────────────────────────────────────────────────────────`\
     --storage-type=SSD \
-    --storage-size=50GB \
+    --storage-size=10GB \
     --storage-auto-increase \
     `# Auto-increase prevents disk-full outages. Max auto-increase: 64TB. `\
     \
@@ -91,15 +91,15 @@ else
     `# Prevents accidental deletion of the production database.        `\
     \
     --database-flags=\
-"max_connections=200,\
+"max_connections=50,\
 log_min_duration_statement=1000,\
 log_checkpoints=on,\
 log_connections=on,\
 log_disconnections=on,\
 log_lock_waits=on,\
 log_temp_files=0"
-    # max_connections=200: Cloud Run can scale to many instances; with
-    # connection pooling (PgBouncer) this should be sufficient.
+    # max_connections=50: f1-micro has limited memory; 50 is sufficient
+    # for early stage with a few Cloud Run instances.
     # log_min_duration_statement=1000: log queries taking >1 second.
     # All log_* flags: enable comprehensive audit logging.
 
@@ -209,7 +209,7 @@ log "    (Save this if needed: ${POSTGRES_RANDOM_PWD})"
 log ""
 log "=== Cloud SQL Setup Complete ==="
 log ""
-log "Instance:    ${SQL_INSTANCE_NAME}  (PostgreSQL 15, ${SQL_TIER})"
+log "Instance:    ${SQL_INSTANCE_NAME}  (PostgreSQL 17, ${SQL_TIER})"
 log "Database:    ${DB_NAME}"
 log "User:        ${DB_USER}"
 log "Private IP:  ${PRIVATE_IP:-<run describe to get IP>}"

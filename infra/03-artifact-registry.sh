@@ -35,11 +35,9 @@ else
     --project="${PROJECT_ID}" \
     --repository-format=docker \
     --location="${REGION}" \
-    --description="CRM platform Docker images (all 5 services)" \
-    --immutable-tags
-  # --immutable-tags prevents overwriting an existing tag (e.g., :latest)
-  # with a different image digest, protecting against accidental overwrites
-  # in production.  CI/CD always pushes both :sha and :latest.
+    --description="CRM platform Docker images (all 5 services)"
+  # Note: immutable-tags is NOT used because CI/CD pushes :latest on every
+  # build, which requires overwriting the tag with a new digest.
 fi
 
 # ─── Enable Container Vulnerability Scanning ──────────────────────────────────
@@ -62,17 +60,17 @@ gcloud artifacts repositories update "${AR_REPOSITORY}" \
 # recent tagged versions and deletes untagged (intermediate build cache) images
 # older than 7 days, controlling storage costs.
 log ""
-log "  → Setting image cleanup policy (keep last 10 tags, purge untagged >7d)"
+log "  → Setting image cleanup policy (keep last 5 tags, purge untagged >7d)"
 
 # Write the cleanup policy JSON to a temp file
 CLEANUP_POLICY_FILE=$(mktemp)
 cat > "${CLEANUP_POLICY_FILE}" << 'EOF'
 [
   {
-    "name": "keep-last-10-tags",
+    "name": "keep-last-5-tags",
     "action": {"type": "Keep"},
     "mostRecentVersions": {
-      "keepCount": 10
+      "keepCount": 5
     }
   },
   {
