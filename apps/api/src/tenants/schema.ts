@@ -1,10 +1,10 @@
-import { pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { v7 as uuidv7 } from 'uuid';
 
 export const tenants = pgTable('tenants', {
   id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
   name: text('name').notNull(),
-  domain: varchar('domain', { length: 255 }), // Email domain for tenant users (e.g., 'acme.com')
+  domains: text('domains').array().notNull().default([]), // Email domains for tenant users (e.g., ['acme.com', 'subsidiary.com'])
 
   // TAT Configuration
   // accountManagerRoleId: The role that identifies Account Managers

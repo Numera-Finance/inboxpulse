@@ -27,7 +27,7 @@ Execute files in the following order to set up the database from scratch:
 
 ## File Structure
 
-- `tenants.sql` - Tenants table (includes account_manager_role_id for TAT metrics)
+- `tenants.sql` - Tenants table (includes domains TEXT[] for multi-domain SSO, account_manager_role_id for TAT metrics)
 - `users.sql` - Users table
 - `integrations.sql` - Integrations table + integration enums (integration_source, integration_auth_type)
 - `customers.sql` - Customers table (references tenants, domain info stored in customer_domains table)
@@ -59,6 +59,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/004_analysis_keywords.sql
 
 # Apply task problem/resolution migration (adds problem and resolution columns to tasks)
 psql $DATABASE_URL -f apps/api/sql/migrations/005_task_problem_resolution.sql
+
+# Apply tenant domains array migration (migrates domain VARCHAR to domains TEXT[])
+psql $DATABASE_URL -f apps/api/sql/migrations/006_tenant_domains_array.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

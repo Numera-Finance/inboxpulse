@@ -1,5 +1,5 @@
 import { injectable, inject } from 'tsyringe';
-import { eq, sql } from 'drizzle-orm';
+import { arrayContains, eq, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import type { Database } from '@crm/database';
 import { UserRepository } from '../users/repository';
@@ -45,7 +45,7 @@ export class BetterAuthUserService {
       const matchingTenant = await tx
         .select()
         .from(tenants)
-        .where(eq(tenants.domain, emailDomain))
+        .where(arrayContains(tenants.domains, [emailDomain]))
         .limit(1);
 
       if (!matchingTenant[0]) {

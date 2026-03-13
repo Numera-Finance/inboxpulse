@@ -1,7 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { customSession } from 'better-auth/plugins';
-import { eq, sql } from 'drizzle-orm';
+import { arrayContains, eq, sql } from 'drizzle-orm';
 import { container } from 'tsyringe';
 import type { Database } from '@crm/database';
 import {
@@ -197,7 +197,7 @@ function getAuth() {
               const matchingTenant = await db
                 .select()
                 .from(tenants)
-                .where(eq(tenants.domain, emailDomain))
+                .where(arrayContains(tenants.domains, [emailDomain]))
                 .limit(1);
 
               if (!matchingTenant[0]) {

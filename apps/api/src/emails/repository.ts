@@ -2245,14 +2245,14 @@ export class EmailRepository extends ScopedRepository {
    * @param threadId - Thread ID
    * @param replyEmailId - ID of the reply email
    * @param replyReceivedAt - Timestamp of when the reply was received
-   * @param _tenantDomain - Unused (kept for backwards compatibility)
+   * @param _tenantDomains - Unused (kept for backwards compatibility)
    */
   async updateFirstReplyForThread(
     tenantId: string,
     threadId: string,
     replyEmailId: string,
     replyReceivedAt: Date,
-    _tenantDomain: string
+    _tenantDomains: string[]
   ): Promise<number> {
     // Update customer emails in this thread that don't have a firstReplyAt yet
     // and were received before this reply
