@@ -1,5 +1,29 @@
 name: Deploy to Cloud Run
 
+# =============================================================================
+# Deploy pipeline for the CRM platform
+#
+# Triggers:
+#   • Push to main (filtered to apps/ and packages/ paths)
+#   • Manual workflow_dispatch (select specific services or "all")
+#
+# Security:
+#   • Authentication via Workload Identity Federation (no long-lived keys)
+#   • Images pushed to Artifact Registry in the same GCP region
+#   • Services deployed with:
+#       - Service-specific IAM service accounts (least privilege)
+#       - Secrets from Secret Manager (never in plain env vars)
+#       - Direct VPC Egress through crm-subnet
+#       - Per-service ingress restrictions (see below)
+#
+# Ingress per service:
+#   crm-web:           internal-and-cloud-load-balancing  (public via LB only)
+#   crm-api:           internal-and-cloud-load-balancing  (public via LB only)
+#   crm-gmail:         all + no-allow-unauthenticated     (Pub/Sub push auth)
+#   crm-analysis:      internal + no-allow-unauthenticated (VPC-only)
+#   crm-notifications: all + allow-unauthenticated         (Inngest HMAC auth)
+# =============================================================================
+
 on:
   push:
     branches:
@@ -20,18 +44,22 @@ env:
   REGION: us-central1
   REGISTRY: us-central1-docker.pkg.dev
   REPOSITORY: crm
+  # VPC configuration (must match infra/00-variables.env)
+  VPC_NAME: crm-vpc
+  SUBNET_NAME: crm-subnet
 
 jobs:
+  # ─── Detect which services need to be deployed ─────────────────────────────
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      packages: ${{ steps.filter.outputs.packages }}
-      api: ${{ steps.filter.outputs.api }}
-      gmail: ${{ steps.filter.outputs.gmail }}
-      web: ${{ steps.filter.outputs.web }}
-      analysis: ${{ steps.filter.outputs.analysis }}
+      packages:      ${{ steps.filter.outputs.packages }}
+      api:           ${{ steps.filter.outputs.api }}
+      gmail:         ${{ steps.filter.outputs.gmail }}
+      web:           ${{ steps.filter.outputs.web }}
+      analysis:      ${{ steps.filter.outputs.analysis }}
       notifications: ${{ steps.filter.outputs.notifications }}
-      deploy-all: ${{ steps.check.outputs.deploy-all }}
+      deploy-all:    ${{ steps.check.outputs.deploy-all }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -57,20 +85,20 @@ jobs:
       - name: Determine deployment strategy
         id: check
         run: |
-          # If manual trigger with specific services
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             if [ "${{ github.event.inputs.services }}" == "all" ]; then
               echo "deploy-all=true" >> $GITHUB_OUTPUT
             else
               echo "deploy-all=false" >> $GITHUB_OUTPUT
             fi
-          # If packages changed, deploy everything
           elif [ "${{ steps.filter.outputs.packages }}" == "true" ]; then
+            # Any shared package change triggers full redeploy
             echo "deploy-all=true" >> $GITHUB_OUTPUT
           else
             echo "deploy-all=false" >> $GITHUB_OUTPUT
           fi
 
+  # ─── Deploy: crm-api ───────────────────────────────────────────────────────
   deploy-api:
     needs: detect-changes
     if: |
@@ -80,16 +108,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write   # Required for Workload Identity Federation OIDC token
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          # WIF exchanges the GitHub OIDC token for a short-lived GCP token.
+          # No long-lived service account keys are stored anywhere.
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
@@ -99,39 +129,55 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api"
           docker build \
             -f apps/api/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
             .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
           gcloud run deploy crm-api \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
+            --service-account "crm-api-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress internal-and-cloud-load-balancing \
             --allow-unauthenticated \
-            --min-instances 0 \
-            --max-instances 10 \
+            --set-secrets "\
+DATABASE_URL=crm-database-url:latest,\
+BETTER_AUTH_SECRET=crm-better-auth-secret:latest,\
+GOOGLE_CLIENT_ID=crm-google-client-id:latest,\
+GOOGLE_CLIENT_SECRET=crm-google-client-secret:latest,\
+INTERNAL_API_KEY=crm-internal-api-key:latest,\
+ENCRYPTION_SECRET=crm-encryption-secret:latest" \
+            --update-env-vars "NODE_ENV=production,PORT=4001" \
+            --min-instances 1 \
+            --max-instances 20 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 300 \
+            --concurrency 100
 
       - name: Get Cloud Run URL
         id: get-url
         run: |
-          URL=$(gcloud run services describe crm-api --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-api Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          URL=$(gcloud run services describe crm-api \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "url=${URL}" >> $GITHUB_OUTPUT
+          echo "### crm-api Deployed 🚀" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-gmail ─────────────────────────────────────────────────────
   deploy-gmail:
     needs: detect-changes
     if: |
@@ -160,39 +206,63 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail"
           docker build \
             -f apps/gmail/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
             .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+          API_URL=$(gcloud run services describe crm-api \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)' 2>/dev/null || echo "")
+
           gcloud run deploy crm-gmail \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
-            --allow-unauthenticated \
+            --service-account "crm-gmail-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress all \
+            --no-allow-unauthenticated \
+            --set-secrets "\
+DATABASE_URL=crm-database-url:latest,\
+INTERNAL_API_KEY=crm-internal-api-key:latest,\
+ENCRYPTION_SECRET=crm-encryption-secret:latest,\
+PUBSUB_VERIFICATION_TOKEN=crm-pubsub-verification-token:latest,\
+GOOGLE_CLIENT_ID=crm-google-client-id:latest,\
+GOOGLE_CLIENT_SECRET=crm-google-client-secret:latest" \
+            --update-env-vars "\
+NODE_ENV=production,\
+PORT=4002,\
+GOOGLE_CLOUD_PROJECT_ID=${{ env.PROJECT_ID }},\
+SERVICE_API_URL=${API_URL}" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 300 \
+            --concurrency 80
 
       - name: Get Cloud Run URL
         id: get-url
         run: |
-          URL=$(gcloud run services describe crm-gmail --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-gmail Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          URL=$(gcloud run services describe crm-gmail \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "url=${URL}" >> $GITHUB_OUTPUT
+          echo "### crm-gmail Deployed 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "**URL (Pub/Sub IAM auth required):** ${URL}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-web ───────────────────────────────────────────────────────
   deploy-web:
     needs: detect-changes
     if: |
@@ -221,46 +291,67 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web"
           docker build \
             -f apps/web/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
             .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
+
+      - name: Resolve API URL for runtime config
+        id: resolve-api-url
+        run: |
+          # Prefer a custom domain secret; fall back to the Cloud Run URL
+          if [ -n "${{ secrets.API_DOMAIN }}" ]; then
+            echo "api_url=https://${{ secrets.API_DOMAIN }}" >> $GITHUB_OUTPUT
+          else
+            URL=$(gcloud run services describe crm-api \
+              --region ${{ env.REGION }} \
+              --format 'value(status.url)' 2>/dev/null || echo "")
+            echo "api_url=${URL}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
           gcloud run deploy crm-web \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
-            --allow-unauthenticated \
             --port 8080 \
-            --min-instances 0 \
-            --max-instances 10 \
+            --service-account "crm-web-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress private-ranges-only \
+            --ingress internal-and-cloud-load-balancing \
+            --allow-unauthenticated \
+            --update-env-vars "NODE_ENV=production,VITE_API_URL=${{ steps.resolve-api-url.outputs.api_url }}" \
+            --min-instances 1 \
+            --max-instances 20 \
             --memory 256Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 30 \
+            --concurrency 1000
 
       - name: Get Cloud Run URL
         id: get-url
         run: |
-          URL=$(gcloud run services describe crm-web --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-web Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          URL=$(gcloud run services describe crm-web \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "url=${URL}" >> $GITHUB_OUTPUT
+          echo "### crm-web Deployed 🚀" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-analysis ──────────────────────────────────────────────────
   deploy-analysis:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.deploy-all == 'true' ||
       needs.detect-changes.outputs.analysis == 'true' ||
-      needs.detect-changes.outputs.packages == 'true' ||
       (github.event_name == 'workflow_dispatch' && contains(github.event.inputs.services, 'analysis'))
     runs-on: ubuntu-latest
     permissions:
@@ -284,45 +375,64 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis"
           docker build \
             -f apps/analysis/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
             .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+          API_URL=$(gcloud run services describe crm-api \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)' 2>/dev/null || echo "")
+
           gcloud run deploy crm-analysis \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
-            --allow-unauthenticated \
+            --service-account "crm-analysis-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress internal \
+            --no-allow-unauthenticated \
+            --set-secrets "\
+DATABASE_URL=crm-database-url:latest,\
+INTERNAL_API_KEY=crm-internal-api-key:latest,\
+ENCRYPTION_SECRET=crm-encryption-secret:latest" \
+            --update-env-vars "\
+NODE_ENV=production,\
+PORT=4003,\
+SERVICE_API_URL=${API_URL}" \
             --min-instances 0 \
             --max-instances 10 \
-            --memory 512Mi \
-            --cpu 1 \
-            --timeout 300
+            --memory 1Gi \
+            --cpu 2 \
+            --timeout 600 \
+            --concurrency 50
 
       - name: Get Cloud Run URL
         id: get-url
         run: |
-          URL=$(gcloud run services describe crm-analysis --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-analysis Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          URL=$(gcloud run services describe crm-analysis \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "url=${URL}" >> $GITHUB_OUTPUT
+          echo "### crm-analysis Deployed 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "**URL (VPC-internal only):** ${URL}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-notifications ─────────────────────────────────────────────
   deploy-notifications:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.deploy-all == 'true' ||
       needs.detect-changes.outputs.notifications == 'true' ||
-      needs.detect-changes.outputs.packages == 'true' ||
       (github.event_name == 'workflow_dispatch' && contains(github.event.inputs.services, 'notifications'))
     runs-on: ubuntu-latest
     permissions:
@@ -346,35 +456,117 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications"
           docker build \
             -f apps/notifications/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
             .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+          API_URL=$(gcloud run services describe crm-api \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)' 2>/dev/null || echo "")
+
           gcloud run deploy crm-notifications \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
+            --service-account "crm-notifications-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress all \
             --allow-unauthenticated \
+            --set-secrets "\
+DATABASE_URL=crm-database-url:latest,\
+INTERNAL_API_KEY=crm-internal-api-key:latest,\
+INNGEST_EVENT_KEY=crm-inngest-event-key:latest,\
+INNGEST_SIGNING_KEY=crm-inngest-signing-key:latest" \
+            --update-env-vars "\
+NODE_ENV=production,\
+PORT=4004,\
+SERVICE_API_URL=${API_URL}" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 300 \
+            --concurrency 80
 
       - name: Get Cloud Run URL
         id: get-url
         run: |
-          URL=$(gcloud run services describe crm-notifications --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-notifications Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+          URL=$(gcloud run services describe crm-notifications \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "url=${URL}" >> $GITHUB_OUTPUT
+          echo "### crm-notifications Deployed 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "**URL (Inngest HMAC protected):** ${URL}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+  # ─── Post-deploy: sync inter-service URLs ──────────────────────────────────
+  # When api, gmail, or analysis all deploy in the same run, ensure each
+  # service's SERVICE_* env vars point to the latest sibling URLs.
+  update-service-urls:
+    needs: [deploy-api, deploy-gmail, deploy-analysis, deploy-notifications]
+    if: |
+      always() &&
+      (needs.deploy-api.result == 'success' ||
+       needs.deploy-gmail.result == 'success' ||
+       needs.deploy-analysis.result == 'success' ||
+       needs.deploy-notifications.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Sync inter-service URLs
+        run: |
+          get_url() {
+            gcloud run services describe "$1" \
+              --region ${{ env.REGION }} \
+              --format 'value(status.url)' 2>/dev/null || echo ""
+          }
+
+          API_URL=$(get_url "crm-api")
+          GMAIL_URL=$(get_url "crm-gmail")
+          ANALYSIS_URL=$(get_url "crm-analysis")
+
+          echo "Resolved service URLs:"
+          echo "  crm-api:      ${API_URL}"
+          echo "  crm-gmail:    ${GMAIL_URL}"
+          echo "  crm-analysis: ${ANALYSIS_URL}"
+
+          # Push latest URLs to each dependent service
+          if [ -n "${API_URL}" ] && [ -n "${GMAIL_URL}" ] && [ -n "${ANALYSIS_URL}" ]; then
+            gcloud run services update crm-api \
+              --region ${{ env.REGION }} \
+              --update-env-vars "SERVICE_GMAIL_URL=${GMAIL_URL},SERVICE_ANALYSIS_URL=${ANALYSIS_URL}" \
+              --quiet 2>/dev/null || true
+          fi
+
+          for SVC in crm-gmail crm-analysis crm-notifications; do
+            if [ -n "${API_URL}" ]; then
+              gcloud run services update "${SVC}" \
+                --region ${{ env.REGION }} \
+                --update-env-vars "SERVICE_API_URL=${API_URL}" \
+                --quiet 2>/dev/null || true
+            fi
+          done
+
+          echo "✓ Inter-service URLs synchronized"
+          echo "### Service URL Sync Complete ✓" >> $GITHUB_STEP_SUMMARY
