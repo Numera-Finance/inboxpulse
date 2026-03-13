@@ -1236,12 +1236,12 @@ export class EmailAnalysisService {
         const senderDomain = email.fromEmail.split('@')[1]?.toLowerCase();
         if (senderDomain) {
           const tenant = await this.tenantService.findById(ctx.tenantId);
-          if (tenant?.domain && senderDomain === tenant.domain.toLowerCase()) {
+          if (tenant?.domains?.length && tenant.domains.some(d => senderDomain === d.toLowerCase())) {
             logger.debug(
               {
                 emailId: ctx.emailId,
                 senderDomain,
-                tenantDomain: tenant.domain,
+                tenantDomains: tenant.domains,
                 logType: 'SKIP_TASK_CREATION_INTERNAL_EMAIL'
               },
               'Skipping task creation for internal email (sender domain matches tenant domain)'

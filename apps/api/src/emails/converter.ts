@@ -24,20 +24,20 @@ export function threadToDb(
 
 /**
  * Convert email to database insert type
- * @param tenantDomain - Tenant's email domain (e.g., 'acme.com') for TAT classification
+ * @param tenantDomains - Tenant's email domains (e.g., ['acme.com', 'subsidiary.com']) for TAT classification
  */
 export function emailToDb(
   email: Email,
   tenantId: string,
   threadId: string,
   integrationId?: string,
-  tenantDomain?: string | null
+  tenantDomains?: string[] | null
 ): NewEmail {
-  // Determine if this is a customer email (not from tenant domain)
+  // Determine if this is a customer email (not from any tenant domain)
   // Used for TAT metrics - only customer emails are tracked
-  const isCustomerEmail = tenantDomain
-    ? !email.from.email.toLowerCase().endsWith(`@${tenantDomain.toLowerCase()}`)
-    : null; // null if tenant domain not configured
+  const isCustomerEmail = tenantDomains?.length
+    ? !tenantDomains.some(d => email.from.email.toLowerCase().endsWith(`@${d.toLowerCase()}`))
+    : null; // null if tenant domains not configured
 
   // Extract RFC 2822 Message-ID from metadata (set by email parser)
   const rfcMessageId = email.metadata?.rfcMessageId as string | undefined || null;
