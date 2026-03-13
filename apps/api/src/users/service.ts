@@ -262,19 +262,19 @@ export class UserService {
       return result;
     }
 
-    // Get tenant domain
+    // Get tenant domains
     const tenant = await this.tenantRepository.findById(tenantId);
-    if (!tenant?.domain) {
-      logger.debug({ tenantId }, 'No tenant domain configured, skipping user auto-creation');
+    if (!tenant?.domains?.length) {
+      logger.debug({ tenantId }, 'No tenant domains configured, skipping user auto-creation');
       return result;
     }
 
-    const tenantDomain = tenant.domain.toLowerCase();
+    const tenantDomains = tenant.domains.map(d => d.toLowerCase());
 
-    // Filter participants matching tenant domain
+    // Filter participants matching any tenant domain
     const tenantParticipants = participants.filter((p) => {
       const emailDomain = p.email.split('@')[1]?.toLowerCase();
-      return emailDomain === tenantDomain;
+      return emailDomain && tenantDomains.includes(emailDomain);
     });
 
     if (tenantParticipants.length === 0) {

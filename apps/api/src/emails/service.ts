@@ -74,9 +74,9 @@ export class EmailService {
       }
     }
 
-    // Fetch tenant domain for TAT tracking (firstReplyAt updates)
+    // Fetch tenant domains for TAT tracking (firstReplyAt updates)
     const tenant = await this.tenantRepo.findById(tenantId);
-    const tenantDomain = tenant?.domain || null;
+    const tenantDomains = tenant?.domains?.length ? tenant.domains : null;
 
     let totalInserted = 0;
     let totalSkipped = 0;
@@ -101,7 +101,7 @@ export class EmailService {
         tenantId,
         integrationId,
         collection,
-        tenantDomain,
+        tenantDomains,
         batchSeenRfcIds,
         batchSeenHashes
       );
@@ -119,12 +119,12 @@ export class EmailService {
       }
 
       // Collect reply emails for TAT tracking (emails from tenant domain)
-      if (tenantDomain) {
+      if (tenantDomains) {
         for (const insertedEmail of result.insertedEmails) {
           const originalEmail = collection.emails.find(
             (e) => e.messageId === insertedEmail.messageId
           );
-          if (originalEmail && originalEmail.from.email.toLowerCase().endsWith(`@${tenantDomain.toLowerCase()}`)) {
+          if (originalEmail && tenantDomains.some(d => originalEmail.from.email.toLowerCase().endsWith(`@${d.toLowerCase()}`))) {
             replyEmailsToProcess.push({
               threadId: result.threadId,
               emailId: insertedEmail.id,
@@ -138,7 +138,7 @@ export class EmailService {
 
     // Update firstReplyAt for customer emails in threads with replies (outside transaction)
     // This populates TAT tracking data
-    if (tenantDomain && replyEmailsToProcess.length > 0) {
+    if (tenantDomains && replyEmailsToProcess.length > 0) {
       for (const reply of replyEmailsToProcess) {
         try {
           await this.emailRepo.updateFirstReplyForThread(
@@ -146,7 +146,7 @@ export class EmailService {
             reply.threadId,
             reply.emailId,
             reply.receivedAt,
-            tenantDomain
+            tenantDomains
           );
         } catch (error) {
           // Log but don't fail - TAT data is not critical
@@ -403,7 +403,7 @@ export class EmailService {
     tenantId: string,
     integrationId: string,
     collection: EmailCollection,
-    tenantDomain: string | null,
+    tenantDomains: string[] | null,
     batchSeenRfcIds: Set<string>,
     batchSeenHashes: Set<string>
   ): Promise<{
@@ -489,9 +489,9 @@ export class EmailService {
       const threadCreated = threadResult.length > 0;
 
       // Step 3: Convert emails to database format with thread ID
-      // Pass tenant domain for TAT classification (isCustomerEmail)
+      // Pass tenant domains for TAT classification (isCustomerEmail)
       const emailsDb: NewEmail[] = filteredCollection.emails.map((email) =>
-        emailToDb(email, tenantId, threadId, integrationId, tenantDomain)
+        emailToDb(email, tenantId, threadId, integrationId, tenantDomains)
       );
 
       // Step 4: Check existing emails before insert/update (for change detection)

@@ -56,7 +56,7 @@ export default function EscalationsPage() {
   // Get filter state from URL search params
   // Default to "all" if no status specified (since we now show all analyzed emails)
   const statusFromUrl = searchParams.get("status") as "open" | "done" | "all" | null
-  const effectiveStatus = statusFromUrl || "all"
+  const effectiveStatus = statusFromUrl || "open"
   const assignedFromUrl = searchParams.get("assigned")
   const customerIdFromUrl = searchParams.get("customer")
   const dateFromUrl = searchParams.get("dateFrom")
@@ -336,7 +336,7 @@ export default function EscalationsPage() {
         }}
       >
         <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
-        Done
+        Resolve
       </Button>
     )
   }, [])
@@ -531,6 +531,7 @@ export default function EscalationsPage() {
               <SignalFilter
                 value={(effectiveSignal || 'all') as InboxSentimentFilter}
                 onChange={(v) => handleFiltersChange({ ...taskFilters, signal: v === 'all' ? undefined : v as TaskFilter['signal'] })}
+                excludeNeutral
               />
             }
           />
