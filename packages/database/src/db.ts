@@ -1,6 +1,34 @@
 import { drizzle, type PostgresJsDatabase, type PostgresJsTransaction } from 'drizzle-orm/postgres-js';
 import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import postgres from 'postgres';
+import type { Options } from 'postgres';
+
+// Build SSL options from environment variables (cert content from Secret Manager)
+function getSslOptions(): Options<Record<string, never>>['ssl'] | undefined {
+  const serverCa = process.env.CLOUDSQL_SERVER_CA;
+  const clientCert = process.env.CLOUDSQL_CLIENT_CERT;
+  const clientKey = process.env.CLOUDSQL_CLIENT_KEY;
+
+  if (serverCa && clientCert && clientKey) {
+    console.error('[Drizzle] SSL: Client certificate authentication enabled (mTLS)');
+    return {
+      ca: serverCa,
+      cert: clientCert,
+      key: clientKey,
+      rejectUnauthorized: true,
+    };
+  }
+
+  if (serverCa) {
+    console.error('[Drizzle] SSL: Server CA verification enabled');
+    return {
+      ca: serverCa,
+      rejectUnauthorized: true,
+    };
+  }
+
+  return undefined;
+}
 
 // Lazy client creation - only create when createDatabase is called
 // This ensures DATABASE_URL is loaded from dotenv before connection
@@ -16,7 +44,9 @@ function getClient() {
       const maskedUrl = connectionString.replace(/:([^:@]+)@/, ':***@');
       console.error(`[Drizzle] Using DATABASE_URL: ${maskedUrl}`);
     }
-    client = postgres(connectionString);
+
+    const ssl = getSslOptions();
+    client = postgres(connectionString, ssl ? { ssl } : {});
   }
   return client;
 }

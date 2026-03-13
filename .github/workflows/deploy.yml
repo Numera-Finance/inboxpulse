@@ -141,7 +141,10 @@ jobs:
           GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
           GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
-          ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest" \
+          ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
+          CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
+          CLOUDSQL_CLIENT_CERT=CLOUDSQL_CLIENT_CERT:latest,\
+          CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
@@ -215,7 +218,10 @@ jobs:
           ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
           PUBSUB_VERIFICATION_TOKEN=PUBSUB_VERIFICATION_TOKEN:latest,\
           GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
-          GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest" \
+          GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,\
+          CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
+          CLOUDSQL_CLIENT_CERT=CLOUDSQL_CLIENT_CERT:latest,\
+          CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
@@ -348,7 +354,10 @@ jobs:
           DATABASE_URL=DATABASE_URL:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
-          HUGGINGFACE_API_TOKEN=HUGGINGFACE_TOKEN:latest" \
+          HUGGINGFACE_API_TOKEN=HUGGINGFACE_TOKEN:latest,\
+          CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
+          CLOUDSQL_CLIENT_CERT=CLOUDSQL_CLIENT_CERT:latest,\
+          CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 1Gi \
@@ -419,7 +428,10 @@ jobs:
           DATABASE_URL=DATABASE_URL:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           INNGEST_EVENT_KEY=INNGEST_EVENT_KEY:latest,\
-          INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest" \
+          INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest,\
+          CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
+          CLOUDSQL_CLIENT_CERT=CLOUDSQL_CLIENT_CERT:latest,\
+          CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
