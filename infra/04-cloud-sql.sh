@@ -77,9 +77,9 @@ else
     `# All access is via the private IP allocated by PSA peering.       `\
     \
     `# ── SSL / security ─────────────────────────────────────────────────`\
-    --ssl-mode=ENCRYPTED_ONLY \
-    `# ENCRYPTED_ONLY rejects non-SSL connections.                      `\
-    `# Use TRUSTED_CLIENT_CERTIFICATE_REQUIRED for mTLS (stricter).     `\
+    --ssl-mode=TRUSTED_CLIENT_CERTIFICATE_REQUIRED \
+    `# TRUSTED_CLIENT_CERTIFICATE_REQUIRED enforces mutual TLS (mTLS). `\
+    `# Clients must present a valid certificate signed by the server CA.`\
     \
     `# ── Maintenance ────────────────────────────────────────────────────`\
     --maintenance-window-day=SUN \
@@ -204,6 +204,43 @@ gcloud sql users set-password postgres \
   --password="${POSTGRES_RANDOM_PWD}"
 log "  ✓ postgres superuser password randomized"
 log "    (Save this if needed: ${POSTGRES_RANDOM_PWD})"
+
+# ─── 6. Create SSL Client Certificate (for mTLS) ─────────────────────────────
+log ""
+log "=== Step 5: SSL Client Certificate ==="
+
+EXISTING_CERT=$(gcloud sql ssl client-certs list \
+  --instance="${SQL_INSTANCE_NAME}" \
+  --project="${PROJECT_ID}" \
+  --filter="commonName=crm-client" \
+  --format="value(commonName)" 2>/dev/null || echo "")
+
+if [[ -n "${EXISTING_CERT}" ]]; then
+  log "  ✓ Client certificate 'crm-client' already exists"
+else
+  log "  → Creating client SSL certificate 'crm-client'"
+  CERT_DIR="/tmp/cloudsql-certs-$$"
+  mkdir -p "${CERT_DIR}"
+
+  gcloud sql ssl client-certs create crm-client "${CERT_DIR}/client-key.pem" \
+    --instance="${SQL_INSTANCE_NAME}" \
+    --project="${PROJECT_ID}"
+
+  gcloud sql ssl client-certs describe crm-client \
+    --instance="${SQL_INSTANCE_NAME}" \
+    --project="${PROJECT_ID}" \
+    --format='value(cert)' > "${CERT_DIR}/client-cert.pem"
+
+  gcloud sql instances describe "${SQL_INSTANCE_NAME}" \
+    --project="${PROJECT_ID}" \
+    --format='value(serverCaCert.cert)' > "${CERT_DIR}/server-ca.pem"
+
+  log "  ✓ Certificates saved to ${CERT_DIR}/"
+  log "    Store these in Secret Manager (05-secret-manager.sh handles this)"
+
+  # Export paths for use by 05-secret-manager.sh
+  export CLOUDSQL_CERT_DIR="${CERT_DIR}"
+fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 log ""

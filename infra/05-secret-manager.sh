@@ -162,9 +162,75 @@ upsert_secret "${SECRET_INNGEST_SIGNING_KEY}" "${INNGEST_SIGNING_KEY_VAL}"
 
 # ─── 8. HuggingFace Token ──────────────────────────────────────────────────
 log ""
-log "=== 9. HuggingFace Token (email classification — optional) ==="
+log "=== 8. HuggingFace Token (email classification — optional) ==="
 HUGGINGFACE_TOKEN_VAL="${HUGGINGFACE_API_TOKEN:-disabled}"
 upsert_secret "${SECRET_HUGGINGFACE_TOKEN}" "${HUGGINGFACE_TOKEN_VAL}"
+
+# ─── 9. Cloud SQL SSL Certificates (mTLS) ─────────────────────────────────
+log ""
+log "=== 9. Cloud SQL SSL Certificates (mTLS) ==="
+
+CERT_DIR="${CLOUDSQL_CERT_DIR:-/tmp/cloudsql-certs}"
+
+if [[ -f "${CERT_DIR}/server-ca.pem" && -f "${CERT_DIR}/client-cert.pem" && -f "${CERT_DIR}/client-key.pem" ]]; then
+  log "  Found certificates in ${CERT_DIR}/"
+
+  # Server CA cert
+  EXISTING_CA=$(gcloud secrets describe CLOUDSQL_SERVER_CA \
+    --project="${PROJECT_ID}" --format="value(name)" 2>/dev/null || echo "")
+  if [[ -n "${EXISTING_CA}" ]]; then
+    log "  → Secret 'CLOUDSQL_SERVER_CA' already exists — adding new version"
+    gcloud secrets versions add CLOUDSQL_SERVER_CA \
+      --project="${PROJECT_ID}" --data-file="${CERT_DIR}/server-ca.pem"
+  else
+    gcloud secrets create CLOUDSQL_SERVER_CA \
+      --project="${PROJECT_ID}" \
+      --replication-policy=user-managed --locations="${REGION}" \
+      --labels="env=production,team=crm" \
+      --data-file="${CERT_DIR}/server-ca.pem"
+  fi
+  success "Secret 'CLOUDSQL_SERVER_CA' stored"
+
+  # Client cert
+  EXISTING_CERT=$(gcloud secrets describe CLOUDSQL_CLIENT_CERT \
+    --project="${PROJECT_ID}" --format="value(name)" 2>/dev/null || echo "")
+  if [[ -n "${EXISTING_CERT}" ]]; then
+    log "  → Secret 'CLOUDSQL_CLIENT_CERT' already exists — adding new version"
+    gcloud secrets versions add CLOUDSQL_CLIENT_CERT \
+      --project="${PROJECT_ID}" --data-file="${CERT_DIR}/client-cert.pem"
+  else
+    gcloud secrets create CLOUDSQL_CLIENT_CERT \
+      --project="${PROJECT_ID}" \
+      --replication-policy=user-managed --locations="${REGION}" \
+      --labels="env=production,team=crm" \
+      --data-file="${CERT_DIR}/client-cert.pem"
+  fi
+  success "Secret 'CLOUDSQL_CLIENT_CERT' stored"
+
+  # Client key
+  EXISTING_KEY=$(gcloud secrets describe CLOUDSQL_CLIENT_KEY \
+    --project="${PROJECT_ID}" --format="value(name)" 2>/dev/null || echo "")
+  if [[ -n "${EXISTING_KEY}" ]]; then
+    log "  → Secret 'CLOUDSQL_CLIENT_KEY' already exists — adding new version"
+    gcloud secrets versions add CLOUDSQL_CLIENT_KEY \
+      --project="${PROJECT_ID}" --data-file="${CERT_DIR}/client-key.pem"
+  else
+    gcloud secrets create CLOUDSQL_CLIENT_KEY \
+      --project="${PROJECT_ID}" \
+      --replication-policy=user-managed --locations="${REGION}" \
+      --labels="env=production,team=crm" \
+      --data-file="${CERT_DIR}/client-key.pem"
+  fi
+  success "Secret 'CLOUDSQL_CLIENT_KEY' stored"
+
+  # Clean up temp cert files
+  rm -rf "${CERT_DIR}"
+  log "  ✓ Temp certificate files cleaned up"
+else
+  log "  ⚠ No certificate files found in ${CERT_DIR}/"
+  log "    Run 04-cloud-sql.sh first to generate client certificates."
+  log "    Or create manually: gcloud sql ssl client-certs create crm-client ..."
+fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────
 log ""
@@ -183,7 +249,10 @@ for secret in \
   "${SECRET_PUBSUB_TOKEN}" \
   "${SECRET_INNGEST_EVENT_KEY}" \
   "${SECRET_INNGEST_SIGNING_KEY}" \
-  "${SECRET_HUGGINGFACE_TOKEN}"; do
+  "${SECRET_HUGGINGFACE_TOKEN}" \
+  "CLOUDSQL_SERVER_CA" \
+  "CLOUDSQL_CLIENT_CERT" \
+  "CLOUDSQL_CLIENT_KEY"; do
   log "  • ${secret}"
 done
 log ""
