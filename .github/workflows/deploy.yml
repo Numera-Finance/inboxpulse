@@ -20,6 +20,8 @@ env:
   REGION: us-central1
   REGISTRY: us-central1-docker.pkg.dev
   REPOSITORY: crm
+  VPC_NAME: crm-vpc
+  SUBNET_NAME: crm-subnet
 
 jobs:
   detect-changes:
@@ -57,20 +59,19 @@ jobs:
       - name: Determine deployment strategy
         id: check
         run: |
-          # If manual trigger with specific services
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             if [ "${{ github.event.inputs.services }}" == "all" ]; then
               echo "deploy-all=true" >> $GITHUB_OUTPUT
             else
               echo "deploy-all=false" >> $GITHUB_OUTPUT
             fi
-          # If packages changed, deploy everything
           elif [ "${{ steps.filter.outputs.packages }}" == "true" ]; then
             echo "deploy-all=true" >> $GITHUB_OUTPUT
           else
             echo "deploy-all=false" >> $GITHUB_OUTPUT
           fi
 
+  # ─── Deploy: crm-api ─────────────────────────────────────────────────────
   deploy-api:
     needs: detect-changes
     if: |
@@ -99,39 +100,46 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api
-          docker build \
-            -f apps/api/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
-            .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api"
+          docker build -f apps/api/Dockerfile -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
           gcloud run deploy crm-api \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
+            --service-account "crm-api-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress internal-and-cloud-load-balancing \
             --allow-unauthenticated \
+            --set-secrets "\
+          DATABASE_URL=DATABASE_URL:latest,\
+          BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,\
+          GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
+          GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,\
+          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 300 \
+            --concurrency 100
 
       - name: Get Cloud Run URL
-        id: get-url
         run: |
           URL=$(gcloud run services describe crm-api --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-api Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "### crm-api Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** crm-api:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-gmail ───────────────────────────────────────────────────
   deploy-gmail:
     needs: detect-changes
     if: |
@@ -160,39 +168,46 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail
-          docker build \
-            -f apps/gmail/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
-            .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail"
+          docker build -f apps/gmail/Dockerfile -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
           gcloud run deploy crm-gmail \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
-            --allow-unauthenticated \
+            --service-account "crm-gmail-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress all \
+            --no-allow-unauthenticated \
+            --set-secrets "\
+          DATABASE_URL=DATABASE_URL:latest,\
+          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
+          PUBSUB_VERIFICATION_TOKEN=PUBSUB_VERIFICATION_TOKEN:latest,\
+          GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
+          GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 300 \
+            --concurrency 80
 
       - name: Get Cloud Run URL
-        id: get-url
         run: |
           URL=$(gcloud run services describe crm-gmail --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-gmail Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-gmail:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "### crm-gmail Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** crm-gmail:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-web ─────────────────────────────────────────────────────
   deploy-web:
     needs: detect-changes
     if: |
@@ -221,46 +236,45 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web
-          docker build \
-            -f apps/web/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
-            .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web"
+          docker build -f apps/web/Dockerfile -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
           gcloud run deploy crm-web \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
-            --allow-unauthenticated \
             --port 8080 \
+            --service-account "crm-web-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress private-ranges-only \
+            --ingress internal-and-cloud-load-balancing \
+            --allow-unauthenticated \
             --min-instances 0 \
             --max-instances 10 \
             --memory 256Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 30 \
+            --concurrency 1000
 
       - name: Get Cloud Run URL
-        id: get-url
         run: |
           URL=$(gcloud run services describe crm-web --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-web Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-web:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "### crm-web Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** crm-web:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-analysis ────────────────────────────────────────────────
   deploy-analysis:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.deploy-all == 'true' ||
       needs.detect-changes.outputs.analysis == 'true' ||
-      needs.detect-changes.outputs.packages == 'true' ||
       (github.event_name == 'workflow_dispatch' && contains(github.event.inputs.services, 'analysis'))
     runs-on: ubuntu-latest
     permissions:
@@ -284,45 +298,49 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis
-          docker build \
-            -f apps/analysis/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
-            .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis"
+          docker build -f apps/analysis/Dockerfile -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
           gcloud run deploy crm-analysis \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
-            --allow-unauthenticated \
+            --service-account "crm-analysis-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress internal \
+            --no-allow-unauthenticated \
+            --set-secrets "\
+          DATABASE_URL=DATABASE_URL:latest,\
+          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
+          HUGGINGFACE_API_TOKEN=HUGGINGFACE_TOKEN:latest" \
             --min-instances 0 \
             --max-instances 10 \
-            --memory 512Mi \
-            --cpu 1 \
-            --timeout 300
+            --memory 1Gi \
+            --cpu 2 \
+            --timeout 600 \
+            --concurrency 50
 
       - name: Get Cloud Run URL
-        id: get-url
         run: |
           URL=$(gcloud run services describe crm-analysis --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-analysis Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-analysis:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "### crm-analysis Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** crm-analysis:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
+  # ─── Deploy: crm-notifications ───────────────────────────────────────────
   deploy-notifications:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.deploy-all == 'true' ||
       needs.detect-changes.outputs.notifications == 'true' ||
-      needs.detect-changes.outputs.packages == 'true' ||
       (github.event_name == 'workflow_dispatch' && contains(github.event.inputs.services, 'notifications'))
     runs-on: ubuntu-latest
     permissions:
@@ -346,35 +364,39 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications
-          docker build \
-            -f apps/notifications/Dockerfile \
-            -t ${IMAGE_NAME}:${{ github.sha }} \
-            -t ${IMAGE_NAME}:latest \
-            .
-          docker push ${IMAGE_NAME}:${{ github.sha }}
-          docker push ${IMAGE_NAME}:latest
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications"
+          docker build -f apps/notifications/Dockerfile -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
 
       - name: Deploy to Cloud Run
         run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
           gcloud run deploy crm-notifications \
-            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
+            --service-account "crm-notifications-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress all \
             --allow-unauthenticated \
+            --set-secrets "\
+          DATABASE_URL=DATABASE_URL:latest,\
+          INTERNAL_API_KEY=INTERNAL_API_KEY:latest,\
+          INNGEST_EVENT_KEY=INNGEST_EVENT_KEY:latest,\
+          INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 300
+            --timeout 300 \
+            --concurrency 80
 
       - name: Get Cloud Run URL
-        id: get-url
         run: |
           URL=$(gcloud run services describe crm-notifications --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "### crm-notifications Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service URL:** $URL" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-notifications:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "### crm-notifications Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** crm-notifications:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
