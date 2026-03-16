@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import LogRocket from 'logrocket';
 import { authClient, getSession, signOut } from '../lib/auth';
 import { authService } from '@/lib/auth/auth-service';
 import { Permission, hasPermission, isAdmin, type PermissionType } from '@crm/shared';
@@ -81,6 +82,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           tenantId: userData.tenantId || '',
           email: userData.email,
           name: userData.name || undefined,
+        });
+
+        // Identify user in LogRocket
+        LogRocket.identify(userData.id, {
+          name: userData.name || '',
+          email: userData.email,
         });
 
         // Fetch user permissions
