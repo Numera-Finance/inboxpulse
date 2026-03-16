@@ -12,13 +12,21 @@ Our CRM processes customer emails through an intelligent multi-stage pipeline th
 Gmail Inbox
     │
     ▼
-┌──────────────────────────┐
-│  1. GMAIL SYNC SERVICE   │  (apps/gmail)
-│  Pub/Sub webhook trigger │
-│  Fetch via Gmail API     │
-│  Blacklist filtering     │
-│  Draft/spam exclusion    │
-└───────────┬──────────────┘
+┌──────────────────────────────────────────────────────┐
+│  1. GMAIL SYNC + PRE-FILTERING                       │  (apps/gmail)
+│  Pub/Sub webhook trigger                             │
+│                                                      │
+│  ★ FILTER GATE 1: Blacklist (sender + domain)        │
+│    Headers-only fetch → check blacklist → skip       │
+│    Avoids fetching full content for blocked senders  │
+│                                                      │
+│  ★ FILTER GATE 2: Gmail labels                       │
+│    Discard drafts (DRAFT label)                      │
+│    Discard spam (SPAM label)                         │
+│    Discard emails with no recipients                 │
+│                                                      │
+│  Only non-blacklisted, non-spam emails fetched fully │
+└───────────┬──────────────────────────────────────────┘
             │
             ▼
 ┌──────────────────────────┐
@@ -41,14 +49,37 @@ Gmail Inbox
             ▼
 ┌──────────────────────────────────────────────────────┐
 │  4. EMAIL CLASSIFICATION (5-Stage Cascade)           │  (apps/analysis)
-│  Stage 1: Pattern matching          [FREE - instant] │
-│  Stage 2: Sender/domain matching    [FREE - instant] │
-│  Stage 3: HuggingFace spam model    [FREE - API]    │
-│  Stage 4: HuggingFace zero-shot     [FREE - API]    │
-│  Stage 5: LLM classification        [PAID - fallback]│
+│  ★ FILTER GATE 3: Content-based classification       │
 │                                                      │
-│  Only business emails proceed to analysis ───────────┤
-│  Spam/marketing/transactional/automated → skip       │
+│  Stage 1: Body pattern matching     [FREE - instant] │
+│    Regex scan for unsubscribe links, marketing       │
+│    phrases, transactional keywords, auto-generated   │
+│    messages (see detailed patterns below)            │
+│                                                      │
+│  Stage 2: Sender/domain matching    [FREE - instant] │
+│    Known marketing platforms (Mailchimp, SendGrid…)  │
+│    Social notifications (LinkedIn, GitHub, Slack…)   │
+│    Calendar services (Google Calendar, Calendly…)    │
+│    Chat notifications (Teams, Discord, Zoom…)        │
+│    Noreply/automated sender patterns                 │
+│                                                      │
+│  Stage 3: HuggingFace spam model    [FREE - API]    │
+│    mshenoda/roberta-spam — ML spam detection         │
+│                                                      │
+│  Stage 4: HuggingFace zero-shot     [FREE - API]    │
+│    facebook/bart-large-mnli — multi-class classify   │
+│    Labels: business, marketing, spam, transactional, │
+│            automated                                 │
+│                                                      │
+│  Stage 5: LLM classification        [PAID - fallback]│
+│    gemini-2.0-flash — only for ambiguous emails      │
+│                                                      │
+│  RESULT → category assigned to every email:          │
+│    business | spam | marketing | transactional |     │
+│    automated                                         │
+│                                                      │
+│  ✗ Non-business emails: analysis results DISCARDED   │
+│  ✓ Business emails: proceed to AI analysis           │
 └───────────┬──────────────────────────────────────────┘
             │ (business emails only)
             ▼
@@ -91,19 +122,35 @@ Gmail Inbox
 
 ## 2. Stage-by-Stage Detail
 
-### 2.1 Gmail Sync (apps/gmail)
+### 2.1 Gmail Sync + Pre-Filtering (apps/gmail)
 
-Emails arrive via Google Pub/Sub webhooks when new messages land in connected Gmail accounts.
+Emails arrive via Google Pub/Sub webhooks when new messages land in connected Gmail accounts. Before we even fetch email content, we apply two filter gates that prevent unwanted emails from entering the system at all.
 
-**Processing steps:**
-1. Receive Pub/Sub notification with Gmail `historyId`
-2. Fetch message list from Gmail API (headers first if blacklist is configured)
-3. Filter out blacklisted senders/domains before fetching full content — avoids unnecessary API calls
-4. Filter out drafts and spam using Gmail labels
-5. Fetch full message content for non-blacklisted messages (batched in chunks of 50)
-6. Parse headers: Subject, From, To, CC, BCC, Priority, RFC Message-ID, References
-7. Extract body: prefer HTML, fall back to plain text, base64-decode
-8. Send parsed emails to API service via `bulkInsertWithThreads`
+**Filter Gate 1 — Blacklist (sender + domain):**
+
+Tenants can configure a blacklist of email addresses and domains. When a blacklist is configured, we use a **two-phase fetch strategy** to avoid wasting Gmail API quota on blocked senders:
+
+1. **Phase 1: Headers only** — Fetch just the `From` header and `historyId` for each message (lightweight metadata call)
+2. **Check blacklist** — Compare sender against email blacklist (`noreply@vendor.com`) and domain blacklist (`vendor.com`)
+3. **Skip blocked** — Blacklisted messages are never fetched in full. We still checkpoint the `historyId` so future syncs don't re-process them
+4. **Phase 2: Full content** — Only non-blacklisted messages proceed to full content fetch
+
+This means a tenant who blacklists 10 noisy automated senders pays zero processing cost for those emails — no content fetch, no storage, no analysis.
+
+**Filter Gate 2 — Gmail label filtering:**
+
+During parsing, emails are further filtered out if they match any of:
+- **DRAFT label** — Gmail drafts are excluded
+- **SPAM label** — Gmail's own spam detection is respected
+- **No recipients** — Malformed emails with empty To/CC/BCC are discarded
+- **Blacklisted senders** (second check at parse level for additional coverage)
+
+**Remaining processing:**
+1. Fetch full message content for surviving messages (batched in chunks of 50)
+2. Parse headers: Subject, From, To, CC, BCC, Priority, RFC Message-ID, References
+3. Extract body: prefer HTML, fall back to plain text, base64-decode
+4. Group by Gmail `threadId` and sort chronologically
+5. Send parsed emails to API service via `bulkInsertWithThreads`
 
 ### 2.2 Deduplication & Single-Copy Storage (apps/api)
 
@@ -155,7 +202,7 @@ interface EmailExtractionResult {
 
 ### 2.4 Email Classification — 5-Stage Cascade (apps/analysis)
 
-The classification cascade is designed so that most non-business emails never reach a paid LLM. Each stage acts as a progressively more expensive filter.
+This is **Filter Gate 3** and our most sophisticated cost-saving mechanism. The cascade is designed so that most non-business emails never reach a paid LLM. Each stage acts as a progressively more expensive filter. An email exits the cascade as soon as any stage reaches the confidence threshold.
 
 | Stage | Method | Cost | Confidence Threshold | What It Catches |
 |-------|--------|------|---------------------|-----------------|
@@ -165,9 +212,47 @@ The classification cascade is designed so that most non-business emails never re
 | 4. HuggingFace zero-shot | `facebook/bart-large-mnli` | Free API | 0.70 | Marketing, transactional, automated categories |
 | 5. LLM classification | `gemini-2.0-flash` | Paid | N/A (final) | Ambiguous emails only |
 
-**Key insight**: In a typical business inbox, 40–60% of emails are non-business (newsletters, notifications, automated messages). Stages 1–2 catch the majority instantly and for free. Stages 3–4 catch most remaining non-business emails using free HuggingFace inference. Only truly ambiguous emails (typically <10% of volume) reach the paid LLM.
+**Stage 1 — Body pattern matching (FREE):**
 
-**Result**: Only emails classified as `business` proceed to AI analysis. Spam, marketing, transactional, and automated emails are tagged with classification signals and skipped.
+We scan the email subject and body against curated regex patterns for each non-business category:
+
+- **Spam patterns**: `unsubscribe`, `opt out`, `click here to stop`, `manage preferences/subscriptions`, `no longer wish to receive`, `remove from`
+- **Marketing patterns**: `limited time offer`, `act now`, `exclusive deal`, `free trial`, `newsletter`, `% off`, `discount/promo code`, `upcoming events/webinars`, `don't miss`, `register now`, `join us for`, `save your spot`, `RSVP`
+- **Transactional patterns**: `order confirmed/receipt/shipped`, `invoice #`, `payment confirmed/received/processed`, `tracking number`, `delivery update/status`, `receipt for`, `your order/purchase`
+- **Automated patterns**: `auto-generated`, `do not reply`, `noreply`, `automated message/notification`, `system notification/alert`
+- **Calendar invites**: `BEGIN:VCALENDAR` (ICS format detection)
+
+A single high-confidence pattern match (>0.85) immediately classifies the email. Multiple weaker matches combine for a boosted confidence score (up to 0.90).
+
+**Stage 2 — Sender/domain matching (FREE):**
+
+We maintain curated lists of known non-business senders:
+
+- **Automated senders**: `noreply@`, `no-reply@`, `notifications@`, `alerts@`, `mailer-daemon@`, `postmaster@`
+- **Marketing platforms**: Mailchimp, SendGrid, Constant Contact, HubSpot, Marketo, Pardot, Klaviyo, Mailgun, Amazon SES, Sendinblue
+- **Social/dev tool notifications**: Facebook, LinkedIn, Twitter/X, GitHub, GitLab, Slack, Notion, Figma, Asana, Trello, Jira, Monday, ClickUp, Linear, Discord, Reddit, Medium, Substack
+- **Chat platform notifications**: Google Chat, Microsoft Teams, Slack, Discord, Zoom, WebEx, RingCentral
+- **Calendar services**: Google Calendar, Outlook/Office 365, Calendly, Zoom
+
+**Stage 3 — HuggingFace spam detection (FREE API):**
+
+Calls the `mshenoda/roberta-spam` model via HuggingFace Inference API. This is a RoBERTa model specifically trained for email spam detection. Includes retry logic (3 retries with exponential backoff) to handle model cold-start delays.
+
+**Stage 4 — HuggingFace zero-shot classification (FREE API):**
+
+Calls `facebook/bart-large-mnli` for zero-shot classification with candidate labels: `business email`, `marketing email`, `spam`, `transactional notification`, `automated system message`. This catches emails that have the "feel" of marketing or automation but don't match explicit patterns.
+
+**Stage 5 — LLM classification (PAID, last resort):**
+
+Only reached when Stages 1–4 all return below-threshold confidence. Uses `gemini-2.0-flash` with structured output (temperature: 0.3, maxTokens: 500) for a definitive classification. In practice, <10% of emails reach this stage.
+
+**What happens after classification:**
+
+The classification result (`business`, `spam`, `marketing`, `transactional`, or `automated`) is stored as a signal on the email record. Critically, **all analysis results for non-business emails are discarded** — even if keyword pre-screening had flagged something. This prevents false business signals from marketing and automated emails polluting the CRM data.
+
+Only emails classified as `business` have their AI analysis results persisted. Non-business emails are still stored (for the inbox view) but carry only their classification signal, not sentiment/escalation/upsell data.
+
+**Key insight**: In a typical business inbox, 40–60% of emails are non-business (newsletters, notifications, automated messages). Stages 1–2 catch the majority instantly and for free. Stages 3–4 catch most remaining non-business emails using free HuggingFace inference. Only truly ambiguous emails (typically <10% of volume) reach the paid LLM.
 
 ### 2.5 Keyword Pre-Screening (apps/api)
 
@@ -224,47 +309,62 @@ For emails that pass classification and keyword screening, we run AI-powered ana
 
 ### Current Measures (Implemented)
 
-| Strategy | Mechanism | Estimated Savings |
-|----------|-----------|-------------------|
-| **Single-copy dedup** | RFC Message-ID + content hash dedup | ~3–5x reduction for shared mailboxes |
-| **Content stripping** | HTML removal, quoted reply stripping, signature separation | 30–70% token reduction per email |
-| **5-stage classification cascade** | Free pattern/sender matching → free HuggingFace → paid LLM | ~90% of non-business emails classified for free |
-| **Keyword pre-screening** | Tenant keyword rules resolve analyses without LLM | 20–40% reduction for well-configured tenants |
-| **Batch analysis calls** | N analyses in 1 LLM request instead of N separate calls | ~40–60% fewer API calls, lower per-request overhead |
-| **7-day result caching** | PostgreSQL cache avoids re-analyzing unchanged emails | 100% savings on cache hits |
-| **Low-cost model selection** | Gemini 2.0 Flash as primary (cheapest tier) | ~10–20x cheaper than GPT-4 or Claude Opus per token |
-| **Configurable analysis types** | Tenants enable only analyses they need | Proportional savings per disabled type |
-| **Non-LLM extraction** | Domain and contact extraction use regex, not LLM | Zero LLM cost for these always-on features |
-| **Signature gating** | Only signatures with analyzable content (phone, title, etc.) trigger LLM extraction | Skips ~60–70% of signatures |
-| **Thread summaries** | Summarized thread context instead of full email history | Significant token reduction for long threads |
-| **Blacklist filtering** | Skip blacklisted senders before fetching full content | Saves Gmail API quota and processing cost |
+| # | Strategy | Mechanism | Estimated Savings |
+|---|----------|-----------|-------------------|
+| 1 | **Blacklist filtering** | Headers-only fetch → check sender/domain blacklist → skip before content fetch | Eliminates all cost for blocked senders (API quota + storage + analysis) |
+| 2 | **Gmail label filtering** | Discard drafts, spam, no-recipient emails at parse time | Removes Gmail-detected junk before it enters our pipeline |
+| 3 | **Single-copy dedup** | RFC Message-ID + SHA-256 content hash dedup (2-layer) | ~3–5x reduction for shared mailboxes |
+| 4 | **Content stripping** | HTML→text, quoted reply removal (talonjs + email-reply-parser), signature separation | 30–70% token reduction per email |
+| 5 | **5-stage classification cascade** | Body pattern matching → sender/domain matching → 2x free HuggingFace models → paid LLM only as last resort | ~90% of non-business emails classified for free; analysis results discarded for spam/marketing/transactional/automated |
+| 6 | **Keyword pre-screening** | Tenant-configurable keyword rules resolve analysis categories without LLM | 20–40% fewer LLM calls for well-configured tenants |
+| 7 | **Batch analysis calls** | N analyses in 1 LLM request instead of N separate calls | ~40–60% fewer API calls, lower per-request overhead |
+| 8 | **7-day result caching** | PostgreSQL cache (messageId + modelId key) avoids re-analyzing unchanged emails | 100% savings on cache hits |
+| 9 | **Low-cost model selection** | Gemini 2.0 Flash as primary (cheapest tier with structured output) | ~10–20x cheaper than GPT-4 or Claude Opus per token |
+| 10 | **Configurable analysis types** | Tenants enable only the analyses they need | Proportional savings per disabled type |
+| 11 | **Non-LLM extraction** | Domain and contact extraction use regex, not LLM | Zero LLM cost for these always-on features |
+| 12 | **Signature gating** | Only signatures with analyzable content (phone, title, etc.) trigger LLM extraction | Skips ~60–70% of signatures |
+| 13 | **Thread summaries** | Compact thread context summaries instead of full email history | Significant token reduction for long threads |
 
 ### Cost Flow Illustration
 
-For a hypothetical batch of **1,000 incoming emails**:
+For a hypothetical batch of **1,000 incoming Gmail notifications**:
 
 ```
-1,000 emails synced from Gmail
+1,000 emails arrive via Pub/Sub
   │
-  ├─ 200 duplicates removed (dedup)           → 0 analysis cost
+  │ ★ FILTER GATE 1: Blacklist
+  ├─ 100 blocked by sender/domain blacklist   → 0 cost (headers-only fetch)
   │
-  800 unique emails
+  900 emails fetched in full
+  │
+  │ ★ FILTER GATE 2: Gmail labels
+  ├─  50 discarded (drafts, spam, no-recipient) → 0 cost
+  │
+  850 emails parsed
+  │
+  ├─ 150 duplicates removed (RFC ID + hash)   → 0 analysis cost
+  │
+  700 unique emails stored
   │
   ├─ Content stripped: avg 50% token reduction → 50% savings on all downstream
   │
-  800 emails classified (cascade):
-  │  ├─ 320 caught by patterns (Stage 1-2)    → FREE
-  │  ├─ 120 caught by HuggingFace (Stage 3-4) → FREE
-  │  ├─  40 classified by LLM (Stage 5)       → ~40 LLM calls
-  │  └─ 320 classified as business             → proceed to analysis
+  │ ★ FILTER GATE 3: Classification cascade
+  700 emails classified:
+  │  ├─ 250 caught by body patterns (Stage 1)  → FREE (regex: unsubscribe, % off, invoice, noreply…)
+  │  ├─  80 caught by sender matching (Stage 2) → FREE (Mailchimp, LinkedIn, Google Calendar…)
+  │  ├─  50 caught by HuggingFace (Stage 3-4)  → FREE (ML spam + zero-shot classification)
+  │  ├─  20 classified by LLM (Stage 5)        → ~20 LLM calls (only ambiguous emails)
+  │  └─ 300 classified as business              → proceed to analysis
   │
-  320 business emails:
-  │  ├─  50 resolved by keyword pre-screening  → FREE (for matched categories)
-  │  ├─  30 served from cache                  → FREE
-  │  └─ 240 analyzed by LLM                    → ~240 batch LLM calls
+  │  400 non-business emails: signals stored, analysis DISCARDED
   │
-  Result: ~280 paid LLM calls for 1,000 incoming emails
-  Without optimizations: ~4,000+ calls (deduped users × all analyses × full content)
+  300 business emails:
+  │  ├─  40 resolved by keyword pre-screening  → FREE (for matched categories)
+  │  ├─  25 served from cache                  → FREE
+  │  └─ 235 analyzed by LLM                    → ~235 batch LLM calls
+  │
+  Result: ~255 paid LLM calls for 1,000 incoming emails
+  Without optimizations: ~4,500+ calls (all users × all emails × all analyses × full content)
 ```
 
 ### Model Cost Comparison
