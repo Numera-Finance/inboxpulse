@@ -87,7 +87,6 @@ Gmail Inbox
 │  5. KEYWORD PRE-SCREENING                            │  (apps/api)
 │  Tenant-configurable keyword rules                   │
 │  Matches keywords → skips LLM for that category     │
-│  Cached per tenant (5-min TTL)                       │
 │  Categories: sentiment, escalation, upsell,          │
 │              churn, kudos, competitor                 │
 └───────────┬──────────────────────────────────────────┘
@@ -260,8 +259,8 @@ Before calling the LLM for business signal analysis, we check tenant-configured 
 
 **How it works:**
 - Tenants configure keywords per category (e.g., escalation: `"cancel subscription" urgent`, upsell: `"upgrade" "premium plan"`)
-- Keywords are cached per tenant with a 5-minute TTL
 - If an email matches keywords for a category, that category's analysis is resolved via keyword match — no LLM call needed
+- Matched categories are excluded from the LLM batch call, so the LLM only analyzes categories that keywords couldn't resolve
 
 **Categories supported**: sentiment (positive/negative), escalation, upsell, churn, kudos, competitor
 
@@ -297,11 +296,14 @@ For emails that pass classification and keyword screening, we run AI-powered ana
 - Models are configurable per tenant and per analysis type
 
 **Batch execution strategy:**
-1. **Check cache first**: 7-day TTL cache keyed by `(messageId, modelId)`. Cache hit = zero LLM cost
-2. **Try batch call**: Combine all enabled analyses into a single LLM request with a combined schema. One API call instead of N
-3. **Fallback to parallel individual calls**: If batch fails (e.g., schema too complex), execute each analysis type in parallel
+1. **Check cache first**: 7-day TTL PostgreSQL cache keyed by `(messageId, modelId)`. Cache hit = zero LLM cost
+2. **Try batch call**: Combine all enabled analyses into a single LLM request with a combined JSON schema. One API call instead of N — the system prompt and email content are sent once, and the model produces structured output for all analysis types in a single response
+3. **Fallback to parallel individual calls**: If the batch call fails (e.g., model can't produce the combined schema), each analysis type is executed as a separate parallel LLM call. This ensures resilience but costs more API calls
 
-**Thread context**: For emails within a thread, the system maintains thread-level summaries (stored in `thread_analyses` table). These summaries provide conversation context to the LLM without sending all previous emails — another token optimization.
+**Thread context**: For emails within a thread, the system maintains thread-level analysis summaries (stored in `thread_analyses` table). When a new email arrives in an existing thread:
+- **First email**: Thread summary is initialized directly from the email's analysis results (no LLM call)
+- **Subsequent emails**: An LLM call merges the existing thread summary with the new email's analysis to produce an updated summary
+- These compact summaries are passed as context to future email analyses, giving the model conversation awareness without sending all previous emails — a significant token optimization for long threads
 
 ---
 
@@ -316,8 +318,8 @@ For emails that pass classification and keyword screening, we run AI-powered ana
 | 3 | **Single-copy dedup** | RFC Message-ID + SHA-256 content hash dedup (2-layer) | ~3–5x reduction for shared mailboxes |
 | 4 | **Content stripping** | HTML→text, quoted reply removal (talonjs + email-reply-parser), signature separation | 30–70% token reduction per email |
 | 5 | **5-stage classification cascade** | Body pattern matching → sender/domain matching → 2x free HuggingFace models → paid LLM only as last resort | ~90% of non-business emails classified for free; analysis results discarded for spam/marketing/transactional/automated |
-| 6 | **Keyword pre-screening** | Tenant-configurable keyword rules resolve analysis categories without LLM | 20–40% fewer LLM calls for well-configured tenants |
-| 7 | **Batch analysis calls** | N analyses in 1 LLM request instead of N separate calls | ~40–60% fewer API calls, lower per-request overhead |
+| 6 | **Keyword pre-screening** | Tenant-configurable keyword rules resolve individual analysis categories without LLM; matched types excluded from batch call | 20–40% fewer LLM calls for well-configured tenants |
+| 7 | **Batch analysis calls** | N analyses in 1 LLM request with combined JSON schema; falls back to parallel individual calls only on failure | ~40–60% fewer API calls, lower per-request overhead |
 | 8 | **7-day result caching** | PostgreSQL cache (messageId + modelId key) avoids re-analyzing unchanged emails | 100% savings on cache hits |
 | 9 | **Low-cost model selection** | Gemini 2.0 Flash as primary (cheapest tier with structured output) | ~10–20x cheaper than GPT-4 or Claude Opus per token |
 | 10 | **Configurable analysis types** | Tenants enable only the analyses they need | Proportional savings per disabled type |
@@ -405,7 +407,7 @@ By defaulting to Gemini 2.0 Flash, our per-email analysis cost is approximately 
 
 | Opportunity | Description | Estimated Impact |
 |-------------|-------------|-----------------|
-| **Prompt caching** | Leverage Gemini/provider prompt caching for repeated system instructions. A `PromptBuilder` framework already exists in codebase but is not yet active | 30–50% input token reduction |
+| **Prompt caching (prefix caching)** | Leverage Gemini/Anthropic/OpenAI prompt caching for repeated system instructions. The batch strategy already sends the same system prompt + email content across analysis types, making it a strong candidate for prefix caching. Not yet active | 30–50% input token reduction |
 | **Aggressive signature caching** | Cache signature extraction results per contact (signatures rarely change) | Eliminate repeat extractions for known contacts |
 | **Cost dashboard** | Aggregate token usage from `email_analyses` table into a per-tenant cost dashboard | Better visibility enables optimization decisions |
 | **Expand keyword rules** | Auto-suggest keywords based on historical LLM results to shift more classifications to free keyword matching | 10–20% additional LLM call reduction |
