@@ -478,44 +478,34 @@ export class CustomerRepository extends ScopedRepository {
    * If customer with externalId exists, update it; otherwise create new
    * Returns customer with domains array
    */
-  async upsertByExternalId(
+  async upsertCustomer(
     data: {
       tenantId: string;
-      externalId: string;
+      existingCustomerId?: string;
+      externalId?: string;
       name?: string;
       website?: string;
       domains: string[];
     }
   ): Promise<Customer & { domains: string[] }> {
     return await this.db.transaction(async (tx) => {
-      // Check if customer with externalId exists
-      const existing = await tx
-        .select()
-        .from(customers)
-        .where(
-          and(
-            eq(customers.tenantId, data.tenantId),
-            eq(customers.externalId, data.externalId)
-          )
-        )
-        .limit(1);
-
       let customer: Customer;
 
-      if (existing.length > 0) {
-        // Update existing customer
+      if (data.existingCustomerId) {
+        // Update existing customer (matched by externalId or domain in service layer)
+        const updateSet: Record<string, unknown> = { updatedAt: new Date() };
+        if (data.name) updateSet.name = data.name;
+        if (data.website) updateSet.website = data.website;
+        if (data.externalId) updateSet.externalId = data.externalId;
+
         const updated = await tx
           .update(customers)
-          .set({
-            name: data.name,
-            website: data.website,
-            updatedAt: new Date(),
-          })
-          .where(eq(customers.id, existing[0].id))
+          .set(updateSet)
+          .where(eq(customers.id, data.existingCustomerId))
           .returning();
 
         customer = updated[0];
-        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Updated customer by externalId');
+        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Updated existing customer');
       } else {
         // Create new customer
         const created = await tx
@@ -529,16 +519,14 @@ export class CustomerRepository extends ScopedRepository {
           .returning();
 
         customer = created[0];
-        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Created customer with externalId');
+        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Created new customer');
       }
 
       // Replace domains
-      // First delete existing domains
       await tx
         .delete(customerDomains)
         .where(eq(customerDomains.customerId, customer.id));
 
-      // Then insert new domains
       for (const domain of data.domains) {
         await tx.insert(customerDomains).values({
           customerId: customer.id,
