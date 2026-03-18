@@ -600,21 +600,12 @@ export class CustomerService {
     // Process each row
     for (const row of importRows) {
       try {
-        // Validate required fields
-        if (!row.externalId) {
+        // Validate: need at least externalId or a domain to match on
+        if (!row.externalId && row.domains.length === 0) {
           result.errors.push({
             row: row.rowNumber,
             externalId: '',
-            error: 'Client ID is required',
-          });
-          continue;
-        }
-
-        if (row.domains.length === 0) {
-          result.errors.push({
-            row: row.rowNumber,
-            externalId: row.externalId,
-            error: 'At least one domain is required',
+            error: 'Either Client ID or at least one domain is required',
           });
           continue;
         }
@@ -639,10 +630,26 @@ export class CustomerService {
         }
         const validAssignments = Array.from(assignmentsByUserId.values());
 
-        // Check if customer exists
-        const existing = await this.customerRepository.findByExternalId(tenantId, row.externalId);
+        // Match customer: try externalId first, then fall back to domain
+        let existing: Customer | undefined;
+        let matchedBy: 'externalId' | 'domain' | null = null;
 
-        // Check for domain conflicts (domain belongs to different customer)
+        if (row.externalId) {
+          existing = await this.customerRepository.findByExternalId(tenantId, row.externalId);
+          if (existing) matchedBy = 'externalId';
+        }
+
+        if (!existing && row.domains.length > 0) {
+          for (const domain of row.domains) {
+            existing = await this.customerRepository.findByDomain(tenantId, domain);
+            if (existing) {
+              matchedBy = 'domain';
+              break;
+            }
+          }
+        }
+
+        // Check for domain conflicts (domain belongs to a different customer than the one we matched)
         for (const domain of row.domains) {
           const domainOwner = await this.customerRepository.findByDomain(tenantId, domain);
           if (domainOwner && (!existing || domainOwner.id !== existing.id)) {
@@ -660,9 +667,10 @@ export class CustomerService {
         }
 
         // Upsert customer
-        const customer = await this.customerRepository.upsertByExternalId({
+        const customer = await this.customerRepository.upsertCustomer({
           tenantId,
-          externalId: row.externalId,
+          existingCustomerId: existing?.id,
+          externalId: row.externalId || undefined,
           name: row.name || undefined,
           website: row.website || undefined,
           domains: row.domains,
@@ -678,7 +686,7 @@ export class CustomerService {
         }
 
         logger.info(
-          { tenantId, customerId: customer.id, externalId: row.externalId, teamCount: validAssignments.length },
+          { tenantId, customerId: customer.id, externalId: row.externalId, matchedBy, teamCount: validAssignments.length },
           'Imported customer'
         );
       } catch (error: any) {
