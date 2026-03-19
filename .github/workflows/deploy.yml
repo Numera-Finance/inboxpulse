@@ -282,7 +282,7 @@ jobs:
             --network ${{ env.VPC_NAME }} \
             --subnet "${SUBNET}" \
             --vpc-egress private-ranges-only \
-            --ingress internal-and-cloud-load-balancing \
+            --ingress all \
             --allow-unauthenticated \
             --set-env-vars "VITE_API_URL=${{ env.CRM_API_URL }}" \
             --min-instances 0 \
