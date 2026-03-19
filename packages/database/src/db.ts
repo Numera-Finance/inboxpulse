@@ -2,12 +2,29 @@ import { drizzle, type PostgresJsDatabase, type PostgresJsTransaction } from 'dr
 import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import postgres from 'postgres';
 import type { Options } from 'postgres';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
-// Build SSL options from environment variables (cert content from Secret Manager)
+// Read cert content from env var (inline PEM) or file path
+function readCert(envVar: string, pathEnvVar: string): string | undefined {
+  const content = process.env[envVar];
+  if (content) return content;
+
+  const filePath = process.env[pathEnvVar];
+  if (filePath) {
+    const resolved = resolve(filePath);
+    return readFileSync(resolved, 'utf-8');
+  }
+  return undefined;
+}
+
+// Build SSL options from environment variables (inline PEM or file paths)
+// Inline PEM: CLOUDSQL_SERVER_CA, CLOUDSQL_CLIENT_CERT, CLOUDSQL_CLIENT_KEY (used in Cloud Run via Secret Manager)
+// File paths: CLOUDSQL_SERVER_CA_PATH, CLOUDSQL_CLIENT_CERT_PATH, CLOUDSQL_CLIENT_KEY_PATH (used for local dev)
 function getSslOptions(): Options<Record<string, never>>['ssl'] | undefined {
-  const serverCa = process.env.CLOUDSQL_SERVER_CA;
-  const clientCert = process.env.CLOUDSQL_CLIENT_CERT;
-  const clientKey = process.env.CLOUDSQL_CLIENT_KEY;
+  const serverCa = readCert('CLOUDSQL_SERVER_CA', 'CLOUDSQL_SERVER_CA_PATH');
+  const clientCert = readCert('CLOUDSQL_CLIENT_CERT', 'CLOUDSQL_CLIENT_CERT_PATH');
+  const clientKey = readCert('CLOUDSQL_CLIENT_KEY', 'CLOUDSQL_CLIENT_KEY_PATH');
 
   if (serverCa && clientCert && clientKey) {
     console.error('[Drizzle] SSL: Client certificate authentication enabled (mTLS)');
