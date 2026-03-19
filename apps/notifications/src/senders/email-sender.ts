@@ -127,8 +127,8 @@ export class SesEmailSender implements ChannelSender {
           messageIds.push(response.MessageId);
         }
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        logger.error({ error: message, recipient }, 'Failed to send email via SES');
+        const message = error instanceof Error ? error.message : JSON.stringify(error);
+        logger.error({ error: message, errorDetail: error, recipient }, 'Failed to send email via SES');
         errors.push(`${recipient}: ${message}`);
       }
     }
