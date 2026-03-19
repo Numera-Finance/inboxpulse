@@ -55,6 +55,7 @@ drizzle/
 # Secrets and credentials
 *.pem
 *.key
+.ssl/
 credentials.json
 service-account.json
 gcloud-key.json

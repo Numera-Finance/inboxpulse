@@ -16,9 +16,11 @@ const envSchema = z.object({
   // Auth
   SERVICE_API_KEY: z.string().min(1, 'SERVICE_API_KEY is required'),
 
-  // Email (Postmark)
-  POSTMARK_API_TOKEN: z.string().optional(),
-  FROM_EMAIL: z.string().default('hello@9mo.ai'),
+  // Email (AWS SES)
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  AWS_REGION: z.string().default('us-east-1'),
+  FROM_EMAIL: z.string().default('noreply-emailsentiment@mystartupcfo.com'),
   FROM_NAME: z.string().default('MSCFO Email Sentiment'),
 
   // Email override: comma-separated allowlist. All outbound emails are redirected

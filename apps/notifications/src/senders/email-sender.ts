@@ -1,7 +1,7 @@
 /**
- * Postmark Email Sender
+ * SES Email Sender
  *
- * Implements ChannelSender interface for sending emails via Postmark.
+ * Implements ChannelSender interface for sending emails via Amazon SES.
  * Supports EMAIL_OVERRIDE for development/testing.
  */
 
@@ -10,29 +10,48 @@ import { logger } from '../utils/logger';
 import { getEnv } from '../env';
 
 // =============================================================================
-// Postmark Email Sender
+// SES Email Sender
 // =============================================================================
 
-export class PostmarkEmailSender implements ChannelSender {
-  private serverToken: string | undefined;
+export class SesEmailSender implements ChannelSender {
+  private client: unknown | null = null;
+  private initialized = false;
   /** Comma-separated override emails. When set, ALL emails are redirected to these addresses instead of the actual recipient. */
   private overrideEmails: string[];
 
   constructor() {
     const env = getEnv();
-    this.serverToken = env.POSTMARK_API_TOKEN;
     this.overrideEmails = env.EMAIL_OVERRIDE
       .split(',')
       .map(e => e.trim())
       .filter(Boolean);
 
-    if (!this.serverToken) {
-      logger.warn('POSTMARK_API_TOKEN not set - emails will not be sent');
+    if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
+      logger.warn('AWS SES credentials not set - emails will not be sent');
     }
 
     if (this.overrideEmails.length > 0) {
       logger.info({ overrideEmails: this.overrideEmails }, 'EMAIL_OVERRIDE is active - all emails will be redirected');
     }
+  }
+
+  private async getClient() {
+    if (!this.initialized) {
+      const { SESClient } = await import('@aws-sdk/client-ses');
+      const env = getEnv();
+
+      this.client = new SESClient({
+        region: env.AWS_REGION,
+        ...(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY && {
+          credentials: {
+            accessKeyId: env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+          },
+        }),
+      });
+      this.initialized = true;
+    }
+    return this.client;
   }
 
   async send(payload: ChannelPayload): Promise<SendResult> {
@@ -41,15 +60,16 @@ export class PostmarkEmailSender implements ChannelSender {
       return {
         sent: false,
         skipped: true,
-        skipReason: `PostmarkEmailSender only handles email, got: ${payload.channel}`,
+        skipReason: `SesEmailSender only handles email, got: ${payload.channel}`,
       };
     }
 
-    if (!this.serverToken) {
+    const env = getEnv();
+    if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
       return {
         sent: false,
         skipped: true,
-        skipReason: 'POSTMARK_API_TOKEN not configured',
+        skipReason: 'AWS SES credentials not configured',
       };
     }
 
@@ -67,56 +87,48 @@ export class PostmarkEmailSender implements ChannelSender {
 
     const errors: string[] = [];
     const messageIds: string[] = [];
+    const from = payload.from || `${env.FROM_NAME} <${env.FROM_EMAIL}>`;
 
     for (const recipient of recipients) {
       try {
-        const response = await fetch('https://api.postmarkapp.com/email', {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-Postmark-Server-Token': this.serverToken,
+        const { SendEmailCommand } = await import('@aws-sdk/client-ses');
+        const client = await this.getClient() as { send: (cmd: unknown) => Promise<{ MessageId?: string }> };
+
+        const command = new SendEmailCommand({
+          Source: from,
+          Destination: {
+            ToAddresses: [recipient],
           },
-          body: JSON.stringify({
-            From: payload.from || `${getEnv().FROM_NAME} <${getEnv().FROM_EMAIL}>`,
-            To: recipient,
-            Subject: subject,
-            HtmlBody: payload.html,
-            TextBody: payload.text,
-            MessageStream: 'outbound',
-          }),
+          Message: {
+            Subject: { Data: subject, Charset: 'UTF-8' },
+            Body: {
+              ...(payload.html && {
+                Html: { Data: payload.html, Charset: 'UTF-8' },
+              }),
+              ...(payload.text && {
+                Text: { Data: payload.text, Charset: 'UTF-8' },
+              }),
+            },
+          },
         });
 
-        const data = (await response.json()) as {
-          MessageID?: string;
-          ErrorCode?: number;
-          Message?: string;
-        };
-
-        if (!response.ok || (data.ErrorCode && data.ErrorCode !== 0)) {
-          logger.error(
-            { recipient, error: data.Message },
-            'Postmark send failed'
-          );
-          errors.push(`${recipient}: ${data.Message || `HTTP ${response.status}`}`);
-          continue;
-        }
+        const response = await client.send(command);
 
         logger.info(
           {
-            messageId: data.MessageID,
+            messageId: response.MessageId,
             recipient,
             originalRecipient: this.overrideEmails.length > 0 ? actualRecipient : undefined,
           },
-          'Email sent via Postmark'
+          'Email sent via SES'
         );
 
-        if (data.MessageID) {
-          messageIds.push(data.MessageID);
+        if (response.MessageId) {
+          messageIds.push(response.MessageId);
         }
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        logger.error({ error: message, recipient }, 'Failed to send email via Postmark');
+        const message = error instanceof Error ? error.message : JSON.stringify(error);
+        logger.error({ error: message, errorDetail: error, recipient }, 'Failed to send email via SES');
         errors.push(`${recipient}: ${message}`);
       }
     }
@@ -141,11 +153,11 @@ export class PostmarkEmailSender implements ChannelSender {
 // Singleton Instance
 // =============================================================================
 
-let emailSenderInstance: PostmarkEmailSender | null = null;
+let emailSenderInstance: SesEmailSender | null = null;
 
-export function getEmailSender(): PostmarkEmailSender {
+export function getEmailSender(): SesEmailSender {
   if (!emailSenderInstance) {
-    emailSenderInstance = new PostmarkEmailSender();
+    emailSenderInstance = new SesEmailSender();
   }
   return emailSenderInstance;
 }
