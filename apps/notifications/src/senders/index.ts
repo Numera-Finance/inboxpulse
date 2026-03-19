@@ -2,4 +2,4 @@
  * Channel Senders
  */
 
-export { PostmarkEmailSender, getEmailSender } from './email-sender';
+export { SesEmailSender, getEmailSender } from './email-sender';
