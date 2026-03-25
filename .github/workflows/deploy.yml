@@ -22,12 +22,6 @@ env:
   REPOSITORY: crm
   VPC_NAME: crm-vpc
   SUBNET_NAME: crm-subnet
-  # Cloud Run service URLs
-  CRM_API_URL: https://crm-api-203731638840.us-central1.run.app
-  CRM_WEB_URL: https://crm-web-203731638840.us-central1.run.app
-  CRM_GMAIL_URL: https://crm-gmail-203731638840.us-central1.run.app
-  CRM_ANALYSIS_URL: https://crm-analysis-203731638840.us-central1.run.app
-  CRM_NOTIFICATIONS_URL: https://crm-notifications-203731638840.us-central1.run.app
 
 jobs:
   detect-changes:
@@ -125,16 +119,9 @@ jobs:
             --vpc-egress all-traffic \
             --ingress all \
             --allow-unauthenticated \
-            --set-env-vars "\
+            --update-env-vars "\
           NODE_ENV=production,\
-          LOG_LEVEL=info,\
-          WEB_URL=${{ env.CRM_WEB_URL }},\
-          BETTER_AUTH_URL=${{ env.CRM_API_URL }},\
-          SERVICE_API_URL=${{ env.CRM_API_URL }},\
-          SERVICE_GMAIL_URL=${{ env.CRM_GMAIL_URL }},\
-          SERVICE_ANALYSIS_URL=${{ env.CRM_ANALYSIS_URL }},\
-          SERVICE_NOTIFICATIONS_URL=${{ env.CRM_NOTIFICATIONS_URL }},\
-          APP_URL=${{ env.CRM_WEB_URL }}" \
+          LOG_LEVEL=info" \
             --set-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,\
@@ -206,10 +193,9 @@ jobs:
             --vpc-egress all-traffic \
             --ingress all \
             --no-allow-unauthenticated \
-            --set-env-vars "\
+            --update-env-vars "\
           NODE_ENV=production,\
           LOG_LEVEL=info,\
-          SERVICE_API_URL=${{ env.CRM_API_URL }},\
           GMAIL_PUBSUB_TOPIC=projects/project-y-email-sentiment/topics/crm-gmail-push,\
           GOOGLE_CLOUD_PROJECT_ID=project-y-email-sentiment" \
             --set-secrets "\
@@ -284,7 +270,7 @@ jobs:
             --vpc-egress private-ranges-only \
             --ingress all \
             --allow-unauthenticated \
-            --set-env-vars "VITE_API_URL=${{ env.CRM_API_URL }}" \
+            --update-env-vars "NODE_ENV=production" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 256Mi \
@@ -346,10 +332,9 @@ jobs:
             --vpc-egress all-traffic \
             --ingress internal \
             --no-allow-unauthenticated \
-            --set-env-vars "\
+            --update-env-vars "\
           NODE_ENV=production,\
-          LOG_LEVEL=info,\
-          SERVICE_API_URL=${{ env.CRM_API_URL }}" \
+          LOG_LEVEL=info" \
             --set-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
@@ -419,11 +404,9 @@ jobs:
             --vpc-egress all-traffic \
             --ingress all \
             --allow-unauthenticated \
-            --set-env-vars "\
+            --update-env-vars "\
           NODE_ENV=production,\
-          LOG_LEVEL=info,\
-          SERVICE_API_URL=${{ env.CRM_API_URL }},\
-          WEB_URL=${{ env.CRM_WEB_URL }}" \
+          LOG_LEVEL=info" \
             --set-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
