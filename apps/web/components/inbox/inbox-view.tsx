@@ -447,16 +447,16 @@ export function InboxView({
         )}
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
           {/* Search in toolbar when embedded */}
           {config.embedded && config.showSearch && (
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={config.searchPlaceholder || "Search..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-8"
+                className="pl-7 h-7 text-xs"
               />
             </div>
           )}
@@ -464,28 +464,12 @@ export function InboxView({
           {config.showSentimentFilter && (
             <SignalFilter value={sentimentFilter} onChange={setSentimentFilter} />
           )}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={handleRefresh}
-                  disabled={isLoading}
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Refresh</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
           {callbacks.onArchive && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-7 w-7">
-                    <Archive className="h-3.5 w-3.5" />
+                  <Button variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0">
+                    <Archive className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Archive all</TooltipContent>
@@ -494,43 +478,38 @@ export function InboxView({
           )}
           {toolbarActions}
           {!config.embedded && <div className="flex-1" />}
-          {/* Pagination controls */}
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-muted-foreground mr-1">
-              {total > 0 ? `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}` : '0 items'}
+          {/* Pagination: count + arrows, compact */}
+          <div className="flex items-center gap-0 flex-shrink-0 ml-auto">
+            <span className="text-[11px] text-muted-foreground tabular-nums whitespace-nowrap">
+              {total > 0 ? `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)}/${total}` : '0'}
             </span>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={handlePrevPage}
-                    disabled={!canGoBack || isLoading}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Previous page</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={handleNextPage}
-                    disabled={!canGoForward || isLoading}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Next page</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => { handleRefresh(); }}
+              disabled={isLoading}
+            >
+              <RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={handlePrevPage}
+              disabled={!canGoBack || isLoading}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={handleNextPage}
+              disabled={!canGoForward || isLoading}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
           </div>
         </div>
 
