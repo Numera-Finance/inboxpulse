@@ -8,7 +8,10 @@
 #   3. Creates a service account for authenticated push delivery
 #   4. Grants the service account Cloud Run Invoker on crm-gmail
 #   5. Grants the Pub/Sub service agent Token Creator (to mint OIDC tokens)
-#   6. Creates a push subscription pointing to the Cloud Run webhook
+#   6. Grants crm-api service account invoker access on crm-gmail
+#   7. Removes PUBSUB_VERIFICATION_TOKEN (Cloud Run IAM handles auth)
+#   8. Updates SERVICE_GMAIL_URL on crm-api
+#   9. Creates a push subscription pointing to the Cloud Run webhook
 #
 # Usage:
 #   ./scripts/setup-gmail-pubsub.sh <PROJECT_ID> [REGION]
@@ -97,9 +100,72 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --quiet
 echo "    Done."
 
-# 6. Create push subscription
+# 6. Grant crm-api service account invoker access (for service-to-service calls)
 echo ""
-echo "==> Step 6: Creating push subscription '$SUBSCRIPTION'"
+echo "==> Step 6: Granting crm-api invoker access on crm-gmail"
+API_SA=$(gcloud run services describe crm-api \
+  --region="$REGION" \
+  --project="$PROJECT_ID" \
+  --format="value(spec.template.spec.serviceAccountName)" 2>/dev/null || true)
+
+if [ -z "$API_SA" ]; then
+  echo "    WARNING: crm-api service not found or has no custom SA. Skipping."
+  echo "    You may need to manually grant roles/run.invoker to the API service account."
+else
+  gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --member="serviceAccount:$API_SA" \
+    --role="roles/run.invoker" \
+    --quiet
+  echo "    Granted to $API_SA"
+fi
+
+# 7. Remove PUBSUB_VERIFICATION_TOKEN if set (Cloud Run IAM handles auth)
+echo ""
+echo "==> Step 7: Removing PUBSUB_VERIFICATION_TOKEN (Cloud Run IAM handles auth)"
+if gcloud run services describe "$CLOUD_RUN_SERVICE" \
+  --region="$REGION" \
+  --project="$PROJECT_ID" \
+  --format="yaml(spec.template.spec.containers[0].env)" 2>/dev/null | grep -q "PUBSUB_VERIFICATION_TOKEN"; then
+  gcloud run services update "$CLOUD_RUN_SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --remove-secrets=PUBSUB_VERIFICATION_TOKEN \
+    --quiet 2>/dev/null || \
+  gcloud run services update "$CLOUD_RUN_SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --remove-env-vars=PUBSUB_VERIFICATION_TOKEN \
+    --quiet 2>/dev/null || true
+  echo "    Removed."
+else
+  echo "    Not set, skipping."
+fi
+
+# 8. Update SERVICE_GMAIL_URL on crm-api
+echo ""
+echo "==> Step 8: Updating SERVICE_GMAIL_URL on crm-api"
+# Re-fetch URL in case it changed after step 7
+GMAIL_SERVICE_URL=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+  --region="$REGION" \
+  --project="$PROJECT_ID" \
+  --format="value(status.url)" 2>/dev/null || true)
+
+if gcloud run services describe crm-api --region="$REGION" --project="$PROJECT_ID" &>/dev/null; then
+  gcloud run services update crm-api \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --update-env-vars="SERVICE_GMAIL_URL=$GMAIL_SERVICE_URL" \
+    --quiet
+  echo "    Set SERVICE_GMAIL_URL=$GMAIL_SERVICE_URL"
+else
+  echo "    WARNING: crm-api service not found. Skipping."
+fi
+
+# 9. Create push subscription
+echo ""
+echo "==> Step 9: Creating push subscription '$SUBSCRIPTION'"
 PUSH_ENDPOINT="$GMAIL_SERVICE_URL/webhooks/pubsub"
 
 if gcloud pubsub subscriptions describe "$SUBSCRIPTION" --project="$PROJECT_ID" &>/dev/null; then
@@ -132,7 +198,5 @@ echo ""
 echo "Next steps:"
 echo "  1. Ensure GMAIL_PUBSUB_TOPIC env var on crm-gmail is set to:"
 echo "     projects/$PROJECT_ID/topics/$TOPIC"
-echo "  2. Ensure SERVICE_GMAIL_URL env var on crm-api points to:"
-echo "     $GMAIL_SERVICE_URL"
-echo "  3. Connect Gmail via OAuth in the web UI — watch + initial sync happen automatically."
+echo "  2. Connect Gmail via OAuth in the web UI — watch + initial sync happen automatically."
 echo ""
