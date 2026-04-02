@@ -478,11 +478,8 @@ export function InboxView({
           )}
           {toolbarActions}
           {!config.embedded && <div className="flex-1" />}
-          {/* Pagination: count + arrows, compact */}
+          {/* Pagination: refresh + arrows */}
           <div className="flex items-center gap-0 flex-shrink-0 ml-auto">
-            <span className="text-[11px] text-muted-foreground tabular-nums whitespace-nowrap">
-              {total > 0 ? `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)}/${total}` : '0'}
-            </span>
             <Button
               variant="ghost"
               size="icon"
