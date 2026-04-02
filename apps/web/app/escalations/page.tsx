@@ -62,7 +62,8 @@ export default function EscalationsPage() {
   const dateFromUrl = searchParams.get("dateFrom")
   const dateToUrl = searchParams.get("dateTo")
   const signalFromUrl = searchParams.get("signal") as TaskFilter['signal'] | null
-  const effectiveSignal = signalFromUrl || 'negative'
+  // Default to 'negative' on initial load, but 'all' is explicitly set via signal=all in URL
+  const effectiveSignal = (signalFromUrl as string) === 'all' ? undefined : (signalFromUrl || 'negative')
 
   // Task filter state (synced with URL params)
   const taskFilters = React.useMemo<TaskFilter>(() => {
@@ -286,11 +287,11 @@ export default function EscalationsPage() {
         params.delete("dateTo")
       }
 
-      // Signal
+      // Signal - use 'all' explicitly so it doesn't fall back to 'negative' default
       if (newFilters.signal) {
         params.set("signal", newFilters.signal)
       } else {
-        params.delete("signal")
+        params.set("signal", "all")
       }
 
       return params
