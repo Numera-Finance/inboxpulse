@@ -151,6 +151,7 @@ export function DateRangeFilter({
             selected={dateRange}
             onSelect={handleDateRangeChange}
             numberOfMonths={2}
+            showOutsideDays={false}
             defaultMonth={dateRange?.from}
           />
         </div>
