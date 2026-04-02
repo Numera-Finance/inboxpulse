@@ -13,6 +13,16 @@ getEnv();
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { google } from 'googleapis';
+import { configureIdTokenProvider } from '@crm/clients';
+
+// Configure OIDC token provider for Cloud Run service-to-service auth
+const gauth = new google.auth.GoogleAuth();
+configureIdTokenProvider(async (targetUrl: string) => {
+  const client = await gauth.getIdTokenClient(targetUrl);
+  const headers = await client.getRequestHeaders();
+  return headers.get('Authorization') ?? null;
+});
 import { logger as honoLogger } from 'hono/logger';
 import { createServer } from 'http';
 import { setupContainer } from './di/container';
