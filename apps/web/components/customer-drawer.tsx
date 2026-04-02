@@ -242,7 +242,9 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       dateTo?: string;
     } = { limit, offset };
 
-    const sentimentVal = filter.sentiment || emailSentimentFilter;
+    // filter.sentiment is undefined when "All" is selected (from InboxView)
+    // Only fall back to emailSentimentFilter if filter has no sentiment key at all
+    const sentimentVal = filter.sentiment || undefined;
     if (sentimentVal && sentimentVal !== 'all') {
       if (sentimentVal === 'upsell' || sentimentVal === 'churn') {
         options.signal = sentimentVal;
@@ -265,13 +267,13 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     }
 
     return options;
-  }, [emailSentimentFilter, dateFrom, dateTo])
+  }, [dateFrom, dateTo])
 
   // Helper: build cache key from filter + page
   const getCacheKey = React.useCallback((filter: InboxFilter, page: number, limit: number) => {
-    const sentiment = filter.sentiment || emailSentimentFilter || 'all';
+    const sentiment = filter.sentiment || 'all';
     return `${page}_${limit}_${sentiment}_${filter.query || ''}_${dateFrom || ''}_${dateTo || ''}`;
-  }, [emailSentimentFilter, dateFrom, dateTo])
+  }, [dateFrom, dateTo])
 
   // Fetch 2 pages from API starting at `startPage`, split and cache each page individually.
   // Deduplicates in-flight requests: if a prefetch is already running for this page,
@@ -313,6 +315,18 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       }
 
       setEmailTotal(result.total);
+      // If no emails were cached (empty result), cache an empty page
+      if (!pageCacheRef.current.has(cacheKey)) {
+        const emptyPage: EmailsByCustomerResponse = {
+          emails: [],
+          total: result.total,
+          count: 0,
+          limit: pageSize,
+          offset: (startPage - 1) * pageSize,
+          hasMore: false,
+        };
+        pageCacheRef.current.set(cacheKey, emptyPage);
+      }
       return pageCacheRef.current.get(cacheKey)!;
     })();
 
