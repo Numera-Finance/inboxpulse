@@ -122,7 +122,7 @@ jobs:
             --update-env-vars "\
           NODE_ENV=production,\
           LOG_LEVEL=info" \
-            --set-secrets "\
+            --update-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,\
           GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
@@ -198,11 +198,10 @@ jobs:
           LOG_LEVEL=info,\
           GMAIL_PUBSUB_TOPIC=projects/project-y-email-sentiment/topics/crm-gmail-push,\
           GOOGLE_CLOUD_PROJECT_ID=project-y-email-sentiment" \
-            --set-secrets "\
+            --update-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
-          PUBSUB_VERIFICATION_TOKEN=PUBSUB_VERIFICATION_TOKEN:latest,\
           GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,\
           GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,\
           CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
@@ -335,7 +334,7 @@ jobs:
             --update-env-vars "\
           NODE_ENV=production,\
           LOG_LEVEL=info" \
-            --set-secrets "\
+            --update-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           ENCRYPTION_SECRET=ENCRYPTION_SECRET:latest,\
@@ -407,7 +406,7 @@ jobs:
             --update-env-vars "\
           NODE_ENV=production,\
           LOG_LEVEL=info" \
-            --set-secrets "\
+            --update-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           INNGEST_EVENT_KEY=INNGEST_EVENT_KEY:latest,\
