@@ -619,21 +619,23 @@ export class EmailAnalysisService {
           allContacts
         );
 
-        // Step 3: Persist analysis results
+        // Step 3: Update email signals (classification, sentiment, escalation, upsell, churn, etc.)
+        // Always run — classification signals must be stored even for non-business emails
+        // so TAT breach filter can exclude them
+        await this.updateEmailSignalsInTransaction(
+          tx,
+          ctx.emailId,
+          data.analysisResults || {},
+          data.classificationResult
+        );
+
+        // Step 4: Persist analysis results
         if (data.analysisResults && Object.keys(data.analysisResults).length > 0) {
           await this.persistAnalysisResultsInTransaction(
             tx,
             ctx.tenantId,
             ctx.emailId,
             data.analysisResults
-          );
-
-          // Step 4: Update email signals (classification, sentiment, escalation, upsell, churn, etc.)
-          await this.updateEmailSignalsInTransaction(
-            tx,
-            ctx.emailId,
-            data.analysisResults,
-            data.classificationResult
           );
 
           // Step 5: Enrich contacts from signature
