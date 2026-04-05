@@ -62,6 +62,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/005_task_problem_resolution.sql
 
 # Apply tenant domains array migration (migrates domain VARCHAR to domains TEXT[])
 psql $DATABASE_URL -f apps/api/sql/migrations/006_tenant_domains_array.sql
+
+# Add GIN index on emails.signals for efficient signal filtering queries
+psql $DATABASE_URL -f apps/api/sql/migrations/007_emails_signals_gin_index.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
