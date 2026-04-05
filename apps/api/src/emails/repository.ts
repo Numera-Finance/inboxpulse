@@ -1587,7 +1587,24 @@ export class EmailRepository extends ScopedRepository {
       case 'churn':
         return sql`e.signals && ARRAY[${Signal.CHURN_LOW}, ${Signal.CHURN_MEDIUM}, ${Signal.CHURN_HIGH}, ${Signal.CHURN_CRITICAL}]::integer[]`;
       case 'tat':
-        return sql`e.is_customer_email = true AND e.first_reply_at IS NULL`;
+        // TAT breach: customer emails unreplied for >= 1 business day,
+        // excluding non-business emails (spam, marketing, transactional, automated)
+        return sql`e.is_customer_email = true
+          AND e.first_reply_at IS NULL
+          AND NOT (e.signals && ARRAY[${Signal.CLASSIFICATION_SPAM}, ${Signal.CLASSIFICATION_MARKETING}, ${Signal.CLASSIFICATION_TRANSACTIONAL}, ${Signal.CLASSIFICATION_AUTOMATED}]::integer[])
+          AND (
+            SELECT GREATEST(0, COUNT(*) - 1)::int
+            FROM generate_series(
+              e.received_at::date,
+              CURRENT_DATE,
+              '1 day'::interval
+            ) d
+            WHERE EXTRACT(dow FROM d) BETWEEN 1 AND 5
+              AND d::date NOT IN (
+                SELECT h.date::date FROM holiday_calendars h
+                WHERE h.tenant_id = e.tenant_id
+              )
+          ) >= 1`;
       case 'all':
         return null;
       default:
