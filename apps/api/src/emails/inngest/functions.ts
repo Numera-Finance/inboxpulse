@@ -28,6 +28,9 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
       id: 'analyze-email',
       name: 'Analyze Email After Insertion',
       retries: 9, // Retry up to 9 times with exponential backoff
+      concurrency: [
+        { limit: 5 }, // Max 5 concurrent analyses per container to stay within 512MB
+      ],
       // Idempotency: normal events dedupe on emailId, retry events include retryKey to bypass
       // CEL syntax: has() checks field existence, ternary provides default
       idempotency: 'event.data.emailId + (has(event.data.retryKey) ? event.data.retryKey : "")',
