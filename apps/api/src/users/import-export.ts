@@ -154,6 +154,7 @@ export function generateCSV(
     'firstName',
     'lastName',
     'email',
+    'canLogin',
     'managerEmails',
     'customerDomain',
     'role',
@@ -173,6 +174,7 @@ export function generateCSV(
         item.user.firstName,
         item.user.lastName,
         item.user.email,
+        item.user.canLogin ? 'true' : 'false',
         managerEmails,
         '', // No customer
         '', // No role
@@ -186,6 +188,7 @@ export function generateCSV(
           item.user.firstName,
           item.user.lastName,
           item.user.email,
+          item.user.canLogin ? 'true' : 'false',
           managerEmails,
           customer.domain,
           customer.roleName,
