@@ -248,15 +248,20 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
   return (
     <div className="space-y-2">
       <div className="rounded-lg border border-border overflow-hidden">
-        <Table>
+        <Table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            {table.getHeaderGroups()[0]?.headers.map((header) => (
+              <col
+                key={header.id}
+                style={header.column.id === 'name' ? undefined : { width: header.column.getSize() }}
+              />
+            ))}
+          </colgroup>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id} className="bg-muted/50">
                 {headerGroup.headers.map((header) => (
-                  <TableHead
-                    key={header.id}
-                    style={{ width: header.column.getSize() }}
-                  >
+                  <TableHead key={header.id}>
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
                 ))}
@@ -274,7 +279,7 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}
-                      style={{ width: cell.column.getSize() }}
+                      className="overflow-hidden text-ellipsis whitespace-nowrap"
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
