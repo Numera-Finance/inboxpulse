@@ -202,7 +202,7 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
         </Button>
       ),
       cell: ({ row }) => <span className="text-sm text-muted-foreground">{row.getValue("lastContact")}</span>,
-      size: 130,
+      size: 150,
     },
   ]
 
@@ -253,7 +253,7 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
             {table.getHeaderGroups()[0]?.headers.map((header) => (
               <col
                 key={header.id}
-                style={header.column.id === 'name' ? undefined : { width: header.column.getSize() }}
+                style={header.column.id === 'name' ? { width: '22%' } : { width: header.column.getSize() }}
               />
             ))}
           </colgroup>
