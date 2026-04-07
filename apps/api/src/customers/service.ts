@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
-import { ConflictError, isAdmin, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
+import { ConflictError, isAdmin, Signal, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
@@ -150,29 +150,94 @@ export class CustomerService {
 
     const where = and(...conditions);
 
-    // Determine sort column
-    const sortBy = searchRequest.sortBy as keyof typeof this.fieldMapping | undefined;
-    const sortColumn = sortBy && this.fieldMapping[sortBy]
-      ? this.fieldMapping[sortBy]
-      : customers.createdAt;
-    const orderByClause = searchRequest.sortOrder === 'asc'
-      ? asc(sortColumn)
-      : desc(sortColumn);
-
     // Pagination
     const limit = searchRequest.limit || 20;
     const offset = searchRequest.offset || 0;
+    const sortOrder = searchRequest.sortOrder || 'asc';
+
+    // Determine sort: direct column or computed (requires subquery)
+    const sortBy = searchRequest.sortBy || 'name';
+    const directColumn = this.fieldMapping[sortBy as keyof typeof this.fieldMapping];
+
+    // Date filter SQL fragments for computed sort subqueries
+    const dateFrom = searchRequest.dateFrom;
+    const dateTo = searchRequest.dateTo;
+    const dateSql = sql.join([
+      dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``,
+      dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``,
+    ], sql` `);
+
+    // Build computed sort subquery for email-based metrics
+    const computedSortFields: Record<string, ReturnType<typeof sql>> = {
+      emailCount: sql`(
+        SELECT COUNT(DISTINCT e.id)::int
+        FROM email_participants ep
+        INNER JOIN emails e ON e.id = ep.email_id
+        WHERE ep.customer_id = ${customers.id}
+          AND e.tenant_id = ${requestHeader.tenantId}
+          ${dateSql}
+      )`,
+      negativeCount: sql`(
+        SELECT COUNT(DISTINCT e.id)::int
+        FROM email_participants ep
+        INNER JOIN emails e ON e.id = ep.email_id
+        WHERE ep.customer_id = ${customers.id}
+          AND e.tenant_id = ${requestHeader.tenantId}
+          AND e.signals @> ARRAY[${Signal.SENTIMENT_NEGATIVE}]::integer[]
+          ${dateSql}
+      )`,
+      upsellCount: sql`(
+        SELECT COUNT(DISTINCT e.id)::int
+        FROM email_participants ep
+        INNER JOIN emails e ON e.id = ep.email_id
+        WHERE ep.customer_id = ${customers.id}
+          AND e.tenant_id = ${requestHeader.tenantId}
+          AND e.signals @> ARRAY[${Signal.UPSELL}]::integer[]
+          ${dateSql}
+      )`,
+      churnCount: sql`(
+        SELECT COUNT(DISTINCT e.id)::int
+        FROM email_participants ep
+        INNER JOIN emails e ON e.id = ep.email_id
+        WHERE ep.customer_id = ${customers.id}
+          AND e.tenant_id = ${requestHeader.tenantId}
+          AND e.signals && ARRAY[${Signal.CHURN_LOW}, ${Signal.CHURN_MEDIUM}, ${Signal.CHURN_HIGH}, ${Signal.CHURN_CRITICAL}]::integer[]
+          ${dateSql}
+      )`,
+      positiveCount: sql`(
+        SELECT COUNT(DISTINCT e.id)::int
+        FROM email_participants ep
+        INNER JOIN emails e ON e.id = ep.email_id
+        WHERE ep.customer_id = ${customers.id}
+          AND e.tenant_id = ${requestHeader.tenantId}
+          AND e.signals @> ARRAY[${Signal.SENTIMENT_POSITIVE}]::integer[]
+          ${dateSql}
+      )`,
+      lastContactDate: sql`(
+        SELECT MAX(e.received_at)
+        FROM email_participants ep
+        INNER JOIN emails e ON e.id = ep.email_id
+        WHERE ep.customer_id = ${customers.id}
+          AND e.tenant_id = ${requestHeader.tenantId}
+          ${dateSql}
+      )`,
+    };
+
+    const computedExpr = computedSortFields[sortBy];
+    const orderByClause = computedExpr
+      ? (sortOrder === 'asc' ? asc(computedExpr) : desc(computedExpr))
+      : (sortOrder === 'asc' ? asc(directColumn || customers.name) : desc(directColumn || customers.name));
 
     // Execute search with sorting and pagination
     const items = await this.db
       .select()
       .from(customers)
       .where(where)
-      .orderBy(orderByClause)
+      .orderBy(orderByClause, asc(customers.name)) // secondary sort by name for stable ordering
       .limit(limit)
       .offset(offset);
 
-    // Get total count
+    // Get total count (no sort subquery needed)
     const countResult = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(customers)

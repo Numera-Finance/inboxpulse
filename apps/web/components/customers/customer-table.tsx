@@ -24,11 +24,15 @@ interface CustomerTableProps {
   onSignalClick?: (customer: Customer, signal: string) => void
   pagination?: { pageIndex: number; pageSize: number }
   onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
+  sorting?: SortingState
+  onSortingChange?: (sorting: SortingState) => void
   totalCount?: number
 }
 
-export function CustomerTable({ customers, onSelect, onSignalClick, pagination, onPaginationChange, totalCount }: CustomerTableProps) {
-  const [sorting, setSorting] = useState<SortingState>([])
+export function CustomerTable({ customers, onSelect, onSignalClick, pagination, onPaginationChange, sorting: controlledSorting, onSortingChange, totalCount }: CustomerTableProps) {
+  const [internalSorting, setInternalSorting] = useState<SortingState>([])
+  const sorting = controlledSorting ?? internalSorting
+  const setSorting = onSortingChange ?? setInternalSorting
 
   // Use server-side pagination if props are provided
   const isServerSide = pagination !== undefined && onPaginationChange !== undefined
@@ -209,10 +213,14 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      const newSorting = typeof updater === 'function' ? updater(sorting) : updater;
+      setSorting(newSorting);
+    },
     ...(isServerSide
       ? {
           manualPagination: true,
+          manualSorting: true,
           pageCount: Math.ceil((totalCount ?? 0) / (pagination?.pageSize ?? 50)),
           state: {
             sorting,
