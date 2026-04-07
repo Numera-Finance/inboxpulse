@@ -77,19 +77,19 @@ export function UserTableSkeleton({ rows = 8 }: { rows?: number }) {
   )
 }
 
-export function CustomerTableSkeleton({ rows = 8 }: { rows?: number }) {
+export function CustomerTableSkeleton({ rows = 15 }: { rows?: number }) {
   return (
     <TableSkeleton
       rows={rows}
       columns={[
-        { headerWidth: 'w-16', cellWidth: 'w-36' },      // Customer
-        { headerWidth: 'w-12', cellWidth: 'w-20' },      // Labels
-        { headerWidth: 'w-12', cellWidth: 'w-12' },      // Emails
-        { headerWidth: 'w-14', cellWidth: 'w-12' },      // Avg TAT
-        { headerWidth: 'w-20', cellWidth: 'w-10' },      // Escalations
-        { headerWidth: 'w-16', cellWidth: 'w-16' },      // Sentiment
-        { headerWidth: 'w-10', cellWidth: 'w-12' },      // Risk
-        { headerWidth: 'w-20', cellWidth: 'w-16' },      // Last Contact
+        { width: '22%', headerWidth: 'w-20', cellWidth: 'w-36' },  // Customer
+        { headerWidth: 'w-12', cellWidth: 'w-8' },                  // Emails
+        { headerWidth: 'w-14', cellWidth: 'w-8' },                  // Avg TAT
+        { headerWidth: 'w-12', cellWidth: 'w-8' },                  // Upsell
+        { headerWidth: 'w-12', cellWidth: 'w-8' },                  // Churn
+        { headerWidth: 'w-14', cellWidth: 'w-8' },                  // Negative
+        { headerWidth: 'w-14', cellWidth: 'w-8' },                  // Positive
+        { headerWidth: 'w-20', cellWidth: 'w-20' },                 // Last Email
       ]}
     />
   )

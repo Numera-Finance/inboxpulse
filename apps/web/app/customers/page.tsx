@@ -268,7 +268,7 @@ export default function CustomersPage() {
 
         {/* Loading state */}
         {isLoading && (
-          <CustomerTableSkeleton rows={8} />
+          <CustomerTableSkeleton rows={15} />
         )}
 
         {/* Error state */}
