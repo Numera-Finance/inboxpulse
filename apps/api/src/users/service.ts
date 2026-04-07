@@ -317,6 +317,7 @@ export class UserService {
           email: participant.email.toLowerCase(),
           roleId: userRole?.id,
           rowStatus: RowStatus.ACTIVE,
+          canLogin: false, // System-created users cannot login until explicitly enabled
         });
 
         result.set(participant.email.toLowerCase(), newUser);
