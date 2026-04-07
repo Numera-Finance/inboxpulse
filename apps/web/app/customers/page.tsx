@@ -24,6 +24,17 @@ import type { SignalFilterType } from "@crm/clients"
 import { toast } from "sonner"
 import { PermissionGate, Permission } from "@/src/components/PermissionGate"
 
+// Map table column accessorKeys to API sortBy field names
+const COLUMN_TO_SORT_FIELD: Record<string, string> = {
+  name: 'name',
+  totalEmails: 'emailCount',
+  escalations: 'negativeCount',
+  upsellCount: 'upsellCount',
+  churnCount: 'churnCount',
+  positiveCount: 'positiveCount',
+  lastContact: 'lastContactDate',
+}
+
 // Debounce hook for search
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = React.useState(value)
@@ -54,8 +65,11 @@ export default function CustomersPage() {
   const [importResults, setImportResults] = React.useState<ImportResults | null>(null)
   const [importResultsOpen, setImportResultsOpen] = React.useState(false)
 
-  // Pagination state
+  // Pagination and sorting state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
+  const [sorting, setSorting] = React.useState<Array<{ id: string; desc: boolean }>>([])
+  const sortBy = sorting.length > 0 ? (COLUMN_TO_SORT_FIELD[sorting[0].id] || 'name') : 'name'
+  const sortOrder = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : 'asc'
 
   // Date filter state (default to Last 30 days)
   const [dateFrom, setDateFrom] = React.useState(() => startOfDay(subDays(new Date(), 30)).toISOString())
@@ -70,17 +84,18 @@ export default function CustomersPage() {
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
-  // Reset pagination when search changes
+  // Reset pagination when search or sorting changes
   React.useEffect(() => {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
-  }, [debouncedSearch])
+  }, [debouncedSearch, sorting])
 
   // Fetch customers using React Query with server-side pagination
   const { data, isLoading, isError, error } = useCustomers({
     queries: debouncedSearch
       ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
       : [],
-    sortOrder: 'asc',
+    sortBy,
+    sortOrder,
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     include: ['emailCount', 'lastContactDate', 'sentiment', 'escalationCount', 'upsellCount', 'churnCount', 'positiveCount', 'averageTat'],
@@ -253,7 +268,7 @@ export default function CustomersPage() {
 
         {/* Loading state */}
         {isLoading && (
-          <CustomerTableSkeleton rows={8} />
+          <CustomerTableSkeleton rows={15} />
         )}
 
         {/* Error state */}
@@ -284,6 +299,8 @@ export default function CustomersPage() {
                 onSignalClick={handleSignalClick}
                 pagination={pagination}
                 onPaginationChange={setPagination}
+                sorting={sorting}
+                onSortingChange={setSorting}
                 totalCount={totalCount}
               />
             )}
