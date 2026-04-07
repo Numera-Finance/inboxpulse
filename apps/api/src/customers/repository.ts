@@ -3,6 +3,7 @@ import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
 import type { Database } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
+import type { MergeCustomerResponse } from '@crm/clients';
 import { customers, customerDomains, type Customer, type NewCustomer, type NewCustomerDomain } from './schema';
 import { logger } from '../utils/logger';
 
@@ -48,6 +49,7 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        archivedAt: customers.archivedAt,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
       })
@@ -396,6 +398,7 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        archivedAt: customers.archivedAt,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
       })
@@ -564,5 +567,126 @@ export class CustomerRepository extends ScopedRepository {
       ...customer,
       domains: domainsMap.get(customer.id) || [],
     }));
+  }
+
+  // ===========================================================================
+  // Customer Merge
+  // ===========================================================================
+
+  /**
+   * Merge source customer into target customer within a single transaction.
+   *
+   * Moves: domains, contacts, email_participants, tasks, user_customers.
+   * Archives source (sets archived_at). Locks both rows with FOR UPDATE
+   * to prevent concurrent merges.
+   *
+   * Transaction flow:
+   *   BEGIN
+   *     SELECT FOR UPDATE on source + target (lock + validate not archived)
+   *     1. customer_domains → target (skip duplicates, delete remaining)
+   *     2. contacts → target (safe: unique is tenant_id+email, not customer_id)
+   *     3. email_participants → target
+   *     4. tasks → target
+   *     5. user_customers → target (ON CONFLICT DO NOTHING), delete source
+   *     6. archive source (set archived_at)
+   *   COMMIT
+   */
+  async mergeCustomer(
+    tenantId: string,
+    sourceId: string,
+    targetId: string
+  ): Promise<MergeCustomerResponse> {
+    return await this.db.transaction(async (tx) => {
+      // Lock both customer rows to prevent concurrent merges or archival
+      const locked = await tx.execute<{ id: string; archived_at: Date | null }>(sql`
+        SELECT id, archived_at FROM customers
+        WHERE id IN (${sourceId}, ${targetId}) AND tenant_id = ${tenantId}
+        FOR UPDATE
+      `);
+
+      const lockedRows = locked as unknown as Array<{ id: string; archived_at: Date | null }>;
+      const sourceRow = lockedRows.find(r => r.id === sourceId);
+      const targetRow = lockedRows.find(r => r.id === targetId);
+
+      if (!sourceRow || !targetRow) {
+        throw new Error('Source or target customer not found');
+      }
+      if (sourceRow.archived_at) {
+        throw new Error('Source customer is already archived');
+      }
+      if (targetRow.archived_at) {
+        throw new Error('Target customer is already archived');
+      }
+
+      // Step 1: Move domains — skip duplicates, delete remaining source domains
+      const domainResult = await tx.execute(sql`
+        UPDATE customer_domains
+        SET customer_id = ${targetId}, updated_at = NOW()
+        WHERE customer_id = ${sourceId}
+          AND tenant_id = ${tenantId}
+          AND domain NOT IN (
+            SELECT domain FROM customer_domains
+            WHERE customer_id = ${targetId} AND tenant_id = ${tenantId}
+          )
+      `);
+      await tx.execute(sql`
+        DELETE FROM customer_domains
+        WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
+      `);
+
+      // Step 2: Move contacts to target
+      // Safe: unique constraint is (tenant_id, email), not (tenant_id, customer_id, email)
+      // so updating customer_id cannot violate uniqueness
+      const contactResult = await tx.execute(sql`
+        UPDATE contacts
+        SET customer_id = ${targetId}, updated_at = NOW()
+        WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
+      `);
+
+      // Step 3: Move email participants
+      const epResult = await tx.execute(sql`
+        UPDATE email_participants
+        SET customer_id = ${targetId}
+        WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
+      `);
+
+      // Step 4: Move tasks
+      const taskResult = await tx.execute(sql`
+        UPDATE tasks
+        SET customer_id = ${targetId}, updated_at = NOW()
+        WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
+      `);
+
+      // Step 5: Move user assignments — insert with ON CONFLICT DO NOTHING, then delete source
+      const ucResult = await tx.execute(sql`
+        INSERT INTO user_customers (user_id, customer_id, role_id, created_at)
+        SELECT user_id, ${targetId}, role_id, NOW()
+        FROM user_customers
+        WHERE customer_id = ${sourceId}
+        ON CONFLICT (user_id, customer_id) DO NOTHING
+      `);
+      await tx.execute(sql`
+        DELETE FROM user_customers
+        WHERE customer_id = ${sourceId}
+          AND customer_id IN (SELECT id FROM customers WHERE tenant_id = ${tenantId})
+      `);
+
+      // Step 6: Archive source customer
+      await tx.execute(sql`
+        UPDATE customers
+        SET archived_at = NOW(), updated_at = NOW()
+        WHERE id = ${sourceId} AND tenant_id = ${tenantId}
+      `);
+
+      return {
+        targetCustomerId: targetId,
+        sourceCustomerId: sourceId,
+        movedDomains: (domainResult as any).rowCount ?? 0,
+        movedContacts: (contactResult as any).rowCount ?? 0,
+        movedTasks: (taskResult as any).rowCount ?? 0,
+        movedEmailParticipants: (epResult as any).rowCount ?? 0,
+        movedUserAssignments: (ucResult as any).rowCount ?? 0,
+      };
+    });
   }
 }

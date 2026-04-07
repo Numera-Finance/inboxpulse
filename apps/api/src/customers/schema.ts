@@ -21,6 +21,9 @@ export const customers = pgTable(
     // Metadata
     metadata: jsonb('metadata').$type<Record<string, any>>(),
 
+    // Soft-archive (set when merged into another customer)
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+
     // Tracking
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),

@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
-import { ConflictError, isAdmin, Signal, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
+import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
@@ -10,7 +10,7 @@ import { inngest } from '../inngest/instance';
 import { logger } from '../utils/logger';
 import { customers, customerDomains } from './schema';
 import type { Customer, NewCustomer } from './schema';
-import type { Customer as ClientCustomer, CreateCustomerRequest } from '@crm/clients';
+import type { Customer as ClientCustomer, CreateCustomerRequest, MergeCustomerResponse } from '@crm/clients';
 import type { CustomerImportResult, CustomerExportData } from './import-export';
 
 /**
@@ -192,7 +192,10 @@ export class CustomerService {
       .build();
 
     // Build conditions including freeform search and customer access control
-    const conditions = [scopedWhere];
+    const conditions = [
+      scopedWhere,
+      sql`${customers.archivedAt} IS NULL`, // Exclude archived (merged) customers
+    ];
 
     // Add customer access filter (admins see all, others only see assigned customers)
     if (!isAdmin(requestHeader.permissions)) {
@@ -255,6 +258,7 @@ export class CustomerService {
         FROM customers c
         LEFT JOIN (${sortSubquery}) sort_sub ON sort_sub.customer_id = c.id
         WHERE c.tenant_id = ${requestHeader.tenantId}
+          AND c.archived_at IS NULL
           ${accessFilter}
           ${searchFilter}
         ORDER BY COALESCE(sort_sub.sort_val, ${sortBy === 'lastContactDate' ? sql`'1970-01-01'::timestamp` : sql`0`}) ${sortDir}, c.name ASC
@@ -265,6 +269,7 @@ export class CustomerService {
         SELECT count(*)::int AS count
         FROM customers c
         WHERE c.tenant_id = ${requestHeader.tenantId}
+          AND c.archived_at IS NULL
           ${accessFilter}
           ${searchFilter}
       `);
@@ -386,6 +391,63 @@ export class CustomerService {
     }
 
     return clientCustomers;
+  }
+
+  // ===========================================================================
+  // Customer Merge
+  // ===========================================================================
+
+  /**
+   * Merge source customer into target customer.
+   * All related data moves to target, source is archived.
+   */
+  async mergeCustomer(
+    requestHeader: RequestHeader,
+    sourceId: string,
+    targetId: string
+  ): Promise<MergeCustomerResponse> {
+    if (sourceId === targetId) {
+      throw new ValidationError('Cannot merge a customer into itself');
+    }
+
+    // Validate both exist and user has access
+    const source = await this.customerRepository.findByIdScoped(requestHeader, sourceId);
+    if (!source) {
+      throw new NotFoundError('Source customer', sourceId);
+    }
+
+    const target = await this.customerRepository.findByIdScoped(requestHeader, targetId);
+    if (!target) {
+      throw new NotFoundError('Target customer', targetId);
+    }
+
+    // Validate neither is archived (also checked inside transaction with FOR UPDATE)
+    if (source.archivedAt) {
+      throw new ValidationError('Source customer is already archived');
+    }
+    if (target.archivedAt) {
+      throw new ValidationError('Cannot merge into an archived customer');
+    }
+
+    // Execute transactional merge
+    const result = await this.customerRepository.mergeCustomer(
+      requestHeader.tenantId,
+      sourceId,
+      targetId
+    );
+
+    logger.info(
+      { tenantId: requestHeader.tenantId, sourceId, targetId, ...result },
+      'Customer merge completed'
+    );
+
+    // Trigger async rebuild of user accessible customers
+    await inngest.send({
+      name: 'user/access.rebuild',
+      data: { tenantId: requestHeader.tenantId },
+    });
+
+    return result;
   }
 
   // ===========================================================================
