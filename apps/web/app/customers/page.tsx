@@ -24,6 +24,17 @@ import type { SignalFilterType } from "@crm/clients"
 import { toast } from "sonner"
 import { PermissionGate, Permission } from "@/src/components/PermissionGate"
 
+// Map table column accessorKeys to API sortBy field names
+const COLUMN_TO_SORT_FIELD: Record<string, string> = {
+  name: 'name',
+  totalEmails: 'emailCount',
+  escalations: 'negativeCount',
+  upsellCount: 'upsellCount',
+  churnCount: 'churnCount',
+  positiveCount: 'positiveCount',
+  lastContact: 'lastContactDate',
+}
+
 // Debounce hook for search
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = React.useState(value)
@@ -57,19 +68,7 @@ export default function CustomersPage() {
   // Pagination and sorting state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
   const [sorting, setSorting] = React.useState<Array<{ id: string; desc: boolean }>>([])
-
-  // Map table column accessorKeys to API sortBy values
-  const SORT_FIELD_MAP: Record<string, string> = {
-    name: 'name',
-    totalEmails: 'emailCount',
-    escalations: 'negativeCount',
-    upsellCount: 'upsellCount',
-    churnCount: 'churnCount',
-    positiveCount: 'positiveCount',
-    lastContact: 'lastContactDate',
-  }
-
-  const sortBy = sorting.length > 0 ? (SORT_FIELD_MAP[sorting[0].id] || 'name') : 'name'
+  const sortBy = sorting.length > 0 ? (COLUMN_TO_SORT_FIELD[sorting[0].id] || 'name') : 'name'
   const sortOrder = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : 'asc'
 
   // Date filter state (default to Last 30 days)

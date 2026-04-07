@@ -68,6 +68,71 @@ export class CustomerService {
     updatedAt: customers.updatedAt,
   };
 
+  /**
+   * Computed sort field builders — each returns a subquery that produces
+   * (customer_id, sort_val) rows. Used via LEFT JOIN for O(1) sort computation.
+   */
+  private computedSortBuilders: Record<string, (tenantId: string, dateFrom?: string, dateTo?: string) => ReturnType<typeof sql>> = {
+    emailCount: (tenantId, dateFrom, dateTo) => sql`
+      SELECT ep.customer_id, COUNT(DISTINCT e.id)::int AS sort_val
+      FROM email_participants ep
+      INNER JOIN emails e ON e.id = ep.email_id
+      WHERE e.tenant_id = ${tenantId}
+        ${dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``}
+        ${dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``}
+      GROUP BY ep.customer_id
+    `,
+    negativeCount: (tenantId, dateFrom, dateTo) => sql`
+      SELECT ep.customer_id, COUNT(DISTINCT e.id)::int AS sort_val
+      FROM email_participants ep
+      INNER JOIN emails e ON e.id = ep.email_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.signals @> ARRAY[${Signal.SENTIMENT_NEGATIVE}]::integer[]
+        ${dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``}
+        ${dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``}
+      GROUP BY ep.customer_id
+    `,
+    upsellCount: (tenantId, dateFrom, dateTo) => sql`
+      SELECT ep.customer_id, COUNT(DISTINCT e.id)::int AS sort_val
+      FROM email_participants ep
+      INNER JOIN emails e ON e.id = ep.email_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.signals @> ARRAY[${Signal.UPSELL}]::integer[]
+        ${dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``}
+        ${dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``}
+      GROUP BY ep.customer_id
+    `,
+    churnCount: (tenantId, dateFrom, dateTo) => sql`
+      SELECT ep.customer_id, COUNT(DISTINCT e.id)::int AS sort_val
+      FROM email_participants ep
+      INNER JOIN emails e ON e.id = ep.email_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.signals && ARRAY[${Signal.CHURN_LOW}, ${Signal.CHURN_MEDIUM}, ${Signal.CHURN_HIGH}, ${Signal.CHURN_CRITICAL}]::integer[]
+        ${dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``}
+        ${dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``}
+      GROUP BY ep.customer_id
+    `,
+    positiveCount: (tenantId, dateFrom, dateTo) => sql`
+      SELECT ep.customer_id, COUNT(DISTINCT e.id)::int AS sort_val
+      FROM email_participants ep
+      INNER JOIN emails e ON e.id = ep.email_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.signals @> ARRAY[${Signal.SENTIMENT_POSITIVE}]::integer[]
+        ${dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``}
+        ${dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``}
+      GROUP BY ep.customer_id
+    `,
+    lastContactDate: (tenantId, dateFrom, dateTo) => sql`
+      SELECT ep.customer_id, MAX(e.received_at) AS sort_val
+      FROM email_participants ep
+      INNER JOIN emails e ON e.id = ep.email_id
+      WHERE e.tenant_id = ${tenantId}
+        ${dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``}
+        ${dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``}
+      GROUP BY ep.customer_id
+    `,
+  };
+
   constructor(
     @inject(CustomerRepository) private customerRepository: CustomerRepository,
     @inject(EmailRepository) private emailRepository: EmailRepository,
@@ -155,89 +220,89 @@ export class CustomerService {
     const offset = searchRequest.offset || 0;
     const sortOrder = searchRequest.sortOrder || 'asc';
 
-    // Determine sort: direct column or computed (requires subquery)
+    // Determine sort: direct column or computed (requires LEFT JOIN subquery)
     const sortBy = searchRequest.sortBy || 'name';
     const directColumn = this.fieldMapping[sortBy as keyof typeof this.fieldMapping];
+    const isComputedSort = !directColumn && sortBy in this.computedSortBuilders;
 
-    // Date filter SQL fragments for computed sort subqueries
-    const dateFrom = searchRequest.dateFrom;
-    const dateTo = searchRequest.dateTo;
-    const dateSql = sql.join([
-      dateFrom ? sql`AND e.received_at >= ${dateFrom}::timestamp` : sql``,
-      dateTo ? sql`AND e.received_at <= ${dateTo}::timestamp` : sql``,
-    ], sql` `);
+    if (isComputedSort) {
+      // Computed sort: use raw SQL with LEFT JOIN subquery (runs once, not per-row)
+      const dateFrom = searchRequest.dateFrom;
+      const dateTo = searchRequest.dateTo;
+      const sortSubquery = this.computedSortBuilders[sortBy](requestHeader.tenantId, dateFrom, dateTo);
+      const sortDir = sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
 
-    // Build computed sort subquery for email-based metrics
-    const computedSortFields: Record<string, ReturnType<typeof sql>> = {
-      emailCount: sql`(
-        SELECT COUNT(DISTINCT e.id)::int
-        FROM email_participants ep
-        INNER JOIN emails e ON e.id = ep.email_id
-        WHERE ep.customer_id = ${customers.id}
-          AND e.tenant_id = ${requestHeader.tenantId}
-          ${dateSql}
-      )`,
-      negativeCount: sql`(
-        SELECT COUNT(DISTINCT e.id)::int
-        FROM email_participants ep
-        INNER JOIN emails e ON e.id = ep.email_id
-        WHERE ep.customer_id = ${customers.id}
-          AND e.tenant_id = ${requestHeader.tenantId}
-          AND e.signals @> ARRAY[${Signal.SENTIMENT_NEGATIVE}]::integer[]
-          ${dateSql}
-      )`,
-      upsellCount: sql`(
-        SELECT COUNT(DISTINCT e.id)::int
-        FROM email_participants ep
-        INNER JOIN emails e ON e.id = ep.email_id
-        WHERE ep.customer_id = ${customers.id}
-          AND e.tenant_id = ${requestHeader.tenantId}
-          AND e.signals @> ARRAY[${Signal.UPSELL}]::integer[]
-          ${dateSql}
-      )`,
-      churnCount: sql`(
-        SELECT COUNT(DISTINCT e.id)::int
-        FROM email_participants ep
-        INNER JOIN emails e ON e.id = ep.email_id
-        WHERE ep.customer_id = ${customers.id}
-          AND e.tenant_id = ${requestHeader.tenantId}
-          AND e.signals && ARRAY[${Signal.CHURN_LOW}, ${Signal.CHURN_MEDIUM}, ${Signal.CHURN_HIGH}, ${Signal.CHURN_CRITICAL}]::integer[]
-          ${dateSql}
-      )`,
-      positiveCount: sql`(
-        SELECT COUNT(DISTINCT e.id)::int
-        FROM email_participants ep
-        INNER JOIN emails e ON e.id = ep.email_id
-        WHERE ep.customer_id = ${customers.id}
-          AND e.tenant_id = ${requestHeader.tenantId}
-          AND e.signals @> ARRAY[${Signal.SENTIMENT_POSITIVE}]::integer[]
-          ${dateSql}
-      )`,
-      lastContactDate: sql`(
-        SELECT MAX(e.received_at)
-        FROM email_participants ep
-        INNER JOIN emails e ON e.id = ep.email_id
-        WHERE ep.customer_id = ${customers.id}
-          AND e.tenant_id = ${requestHeader.tenantId}
-          ${dateSql}
-      )`,
-    };
+      // Build WHERE clause as raw SQL for the raw query
+      const accessFilter = isAdmin(requestHeader.permissions)
+        ? sql``
+        : sql`AND c.id IN (SELECT uac.customer_id FROM user_accessible_customers uac WHERE uac.user_id = ${requestHeader.userId})`;
 
-    const computedExpr = computedSortFields[sortBy];
-    const orderByClause = computedExpr
-      ? (sortOrder === 'asc' ? asc(computedExpr) : desc(computedExpr))
-      : (sortOrder === 'asc' ? asc(directColumn || customers.name) : desc(directColumn || customers.name));
+      // Freeform search filter
+      let searchFilter = sql``;
+      if (searchQueries.length > 0) {
+        const searchConditions = searchQueries.map(query => {
+          const term = `%${query.value}%`;
+          return sql`(c.name ILIKE ${term} OR c.id IN (
+            SELECT cd.customer_id FROM customer_domains cd
+            WHERE cd.tenant_id = ${requestHeader.tenantId} AND cd.domain ILIKE ${term}
+          ))`;
+        });
+        searchFilter = sql`AND (${sql.join(searchConditions, sql` AND `)})`;
+      }
+
+      const rawItems = await this.db.execute<Customer>(sql`
+        SELECT c.*
+        FROM customers c
+        LEFT JOIN (${sortSubquery}) sort_sub ON sort_sub.customer_id = c.id
+        WHERE c.tenant_id = ${requestHeader.tenantId}
+          ${accessFilter}
+          ${searchFilter}
+        ORDER BY COALESCE(sort_sub.sort_val, ${sortBy === 'lastContactDate' ? sql`'1970-01-01'::timestamp` : sql`0`}) ${sortDir}, c.name ASC
+        LIMIT ${limit} OFFSET ${offset}
+      `);
+
+      const rawCount = await this.db.execute<{ count: number }>(sql`
+        SELECT count(*)::int AS count
+        FROM customers c
+        WHERE c.tenant_id = ${requestHeader.tenantId}
+          ${accessFilter}
+          ${searchFilter}
+      `);
+
+      const items = rawItems as unknown as Customer[];
+      const total = (rawCount as unknown as Array<{ count: number }>)[0]?.count ?? 0;
+
+      // Convert to client customers (with domains)
+      let clientCustomers = await this.toClientCustomers(items);
+
+      // Handle include parameter for additional data
+      const includes = searchRequest.include || [];
+      const dateFilters = (searchRequest.dateFrom || searchRequest.dateTo)
+        ? { dateFrom: searchRequest.dateFrom, dateTo: searchRequest.dateTo }
+        : undefined;
+
+      if (clientCustomers.length > 0) {
+        clientCustomers = await this.enrichCustomers(requestHeader, clientCustomers, includes, dateFilters);
+      }
+
+      return { items: clientCustomers, total, limit, offset };
+    }
+
+    // Direct column sort: use Drizzle query builder
+    const orderByClause = sortOrder === 'asc'
+      ? asc(directColumn || customers.name)
+      : desc(directColumn || customers.name);
 
     // Execute search with sorting and pagination
     const items = await this.db
       .select()
       .from(customers)
       .where(where)
-      .orderBy(orderByClause, asc(customers.name)) // secondary sort by name for stable ordering
+      .orderBy(orderByClause, asc(customers.name))
       .limit(limit)
       .offset(offset);
 
-    // Get total count (no sort subquery needed)
+    // Get total count
     const countResult = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(customers)
@@ -257,119 +322,7 @@ export class CustomerService {
       : undefined;
 
     if (clientCustomers.length > 0) {
-      const customerIds = clientCustomers.map(c => c.id);
-
-      // Fetch email counts if requested (using scoped method for consistency)
-      if (includes.includes('emailCount')) {
-        const emailCounts = await this.emailRepository.getCountsByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          emailCount: emailCounts[customer.id] || 0,
-        }));
-      }
-
-      // Fetch last contact dates if requested (using scoped method for consistency)
-      if (includes.includes('lastContactDate')) {
-        const lastContactDates = await this.emailRepository.getLastContactDatesByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          lastContactDate: lastContactDates[customer.id],
-        }));
-      }
-
-      // Fetch aggregate sentiment if requested (using scoped method for consistency)
-      if (includes.includes('sentiment')) {
-        const sentiments = await this.emailRepository.getAggregateSentimentByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          sentiment: sentiments[customer.id],
-        }));
-      }
-
-      // Fetch escalation counts if requested (using scoped method for consistency)
-      if (includes.includes('escalationCount')) {
-        const escalationCounts = await this.emailRepository.getEscalationCountsByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          escalationCount: escalationCounts[customer.id] || 0,
-        }));
-      }
-
-      // Fetch upsell counts if requested
-      if (includes.includes('upsellCount')) {
-        const upsellCounts = await this.emailRepository.getUpsellCountsByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          upsellCount: upsellCounts[customer.id] || 0,
-        }));
-      }
-
-      // Fetch churn counts if requested
-      if (includes.includes('churnCount')) {
-        const churnCounts = await this.emailRepository.getChurnCountsByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          churnCount: churnCounts[customer.id] || 0,
-        }));
-      }
-
-      // Fetch positive sentiment counts if requested
-      if (includes.includes('positiveCount')) {
-        const positiveCounts = await this.emailRepository.getPositiveCountsByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          positiveCount: positiveCounts[customer.id] || 0,
-        }));
-      }
-
-      // Fetch average TAT (Turn Around Time) if requested
-      if (includes.includes('averageTat')) {
-        const averageTats = await this.emailRepository.getAverageTatByCustomerIdsScoped(
-          requestHeader,
-          customerIds,
-          dateFilters
-        );
-
-        clientCustomers = clientCustomers.map(customer => ({
-          ...customer,
-          averageTat: averageTats[customer.id] ?? null,
-        }));
-      }
+      clientCustomers = await this.enrichCustomers(requestHeader, clientCustomers, includes, dateFilters);
     }
 
     return {
@@ -378,6 +331,61 @@ export class CustomerService {
       limit,
       offset,
     };
+  }
+
+  /**
+   * Enrich client customers with computed fields (email counts, sentiment, etc.)
+   * Shared by both direct-sort and computed-sort code paths.
+   */
+  private async enrichCustomers(
+    requestHeader: RequestHeader,
+    clientCustomers: ClientCustomer[],
+    includes: string[],
+    dateFilters?: { dateFrom?: string; dateTo?: string }
+  ): Promise<ClientCustomer[]> {
+    const customerIds = clientCustomers.map(c => c.id);
+
+    if (includes.includes('emailCount')) {
+      const emailCounts = await this.emailRepository.getCountsByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, emailCount: emailCounts[c.id] || 0 }));
+    }
+
+    if (includes.includes('lastContactDate')) {
+      const lastContactDates = await this.emailRepository.getLastContactDatesByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, lastContactDate: lastContactDates[c.id] }));
+    }
+
+    if (includes.includes('sentiment')) {
+      const sentiments = await this.emailRepository.getAggregateSentimentByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, sentiment: sentiments[c.id] }));
+    }
+
+    if (includes.includes('escalationCount')) {
+      const escalationCounts = await this.emailRepository.getEscalationCountsByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, escalationCount: escalationCounts[c.id] || 0 }));
+    }
+
+    if (includes.includes('upsellCount')) {
+      const upsellCounts = await this.emailRepository.getUpsellCountsByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, upsellCount: upsellCounts[c.id] || 0 }));
+    }
+
+    if (includes.includes('churnCount')) {
+      const churnCounts = await this.emailRepository.getChurnCountsByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, churnCount: churnCounts[c.id] || 0 }));
+    }
+
+    if (includes.includes('positiveCount')) {
+      const positiveCounts = await this.emailRepository.getPositiveCountsByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, positiveCount: positiveCounts[c.id] || 0 }));
+    }
+
+    if (includes.includes('averageTat')) {
+      const averageTats = await this.emailRepository.getAverageTatByCustomerIdsScoped(requestHeader, customerIds, dateFilters);
+      clientCustomers = clientCustomers.map(c => ({ ...c, averageTat: averageTats[c.id] ?? null }));
+    }
+
+    return clientCustomers;
   }
 
   // ===========================================================================

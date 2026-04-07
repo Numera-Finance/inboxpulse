@@ -210,7 +210,7 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
     data: customers,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    ...(!isServerSide && { getSortedRowModel: getSortedRowModel() }),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: (updater) => {
