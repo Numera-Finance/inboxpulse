@@ -10,6 +10,11 @@ export function extractAnalysisFields(
 ): Partial<NewEmailAnalysis> {
   const extracted: Partial<NewEmailAnalysis> = {};
 
+  // Guard against null/undefined results from failed LLM calls
+  if (!result || typeof result !== 'object') {
+    return extracted;
+  }
+
   // Extract confidence (applies to all analysis types)
   if ('confidence' in result && typeof result.confidence === 'number') {
     extracted.confidence = result.confidence.toString();
