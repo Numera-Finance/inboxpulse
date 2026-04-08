@@ -15,6 +15,7 @@ export const createCustomerRequestSchema = z.object({
   industry: z.string().max(100).optional(),
   externalId: z.string().max(255).optional(), // External system identifier (e.g., Client ID)
   metadata: z.record(z.string(), z.any()).optional(),
+  isAutoCreated: z.boolean().optional(), // Set by email analysis, not by manual creation
 });
 
 export type CreateCustomerRequest = z.infer<typeof createCustomerRequestSchema>;
@@ -35,6 +36,7 @@ export const customerSchema = z.object({
   labels: z.array(z.string()).optional(), // Customer labels/tags
   externalId: z.string().nullable().optional(), // External system identifier (e.g., Client ID)
   metadata: z.record(z.string(), z.any()).nullable().optional(),
+  isAutoCreated: z.boolean().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   // Optional aggregated fields (populated when requested via include parameter)

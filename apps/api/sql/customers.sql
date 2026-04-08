@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS customers (
     -- Metadata
     metadata JSONB, -- Additional customer data
 
+    -- True if created automatically during email analysis (domain extraction)
+    is_auto_created BOOLEAN NOT NULL DEFAULT false,
+
     -- Status: 0=ACTIVE, 1=INACTIVE, 2=ARCHIVED (consistent with users.row_status)
     row_status SMALLINT NOT NULL DEFAULT 0,
 

@@ -48,6 +48,7 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        isAutoCreated: customers.isAutoCreated,
         rowStatus: customers.rowStatus,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
@@ -177,7 +178,7 @@ export class CustomerRepository extends ScopedRepository {
       if (existingDomain.length > 0) {
         // Update existing customer
         const customerId = existingDomain[0].customerId;
-        const { domains, id, createdAt, ...customerData } = data;
+        const { domains, id, createdAt, isAutoCreated, ...customerData } = data;
 
         const updated = await tx
           .update(customers)
@@ -397,6 +398,7 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        isAutoCreated: customers.isAutoCreated,
         rowStatus: customers.rowStatus,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
