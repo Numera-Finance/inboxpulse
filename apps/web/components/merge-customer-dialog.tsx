@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { GitMerge, AlertTriangle } from "lucide-react"
+import { GitMerge, AlertTriangle, Search, Check } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -11,9 +11,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
-import { useMergeCustomer } from "@/lib/hooks"
+import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { useCustomers, useMergeCustomer } from "@/lib/hooks"
 import { toast } from "sonner"
+import { cn } from "@/lib/utils"
 import type { Customer } from "@/lib/types"
 import type { MergeCustomerResponse } from "@crm/clients"
 
@@ -33,7 +35,28 @@ export function MergeCustomerDialog({
   const [targetId, setTargetId] = React.useState<string | null>(null)
   const [targetName, setTargetName] = React.useState<string | null>(null)
   const [step, setStep] = React.useState<"select" | "confirm">("select")
+  const [search, setSearch] = React.useState("")
   const mergeMutation = useMergeCustomer()
+
+  // Fetch customers for the picker
+  const { data: customersData } = useCustomers({
+    queries: [],
+    sortBy: 'name',
+    sortOrder: 'asc',
+    limit: 2000,
+    offset: 0,
+  })
+
+  const customers = React.useMemo(() => {
+    const items = customersData?.items ?? []
+    const filtered = items.filter(c => c.id !== sourceCustomer.id)
+    if (!search) return filtered
+    const term = search.toLowerCase()
+    return filtered.filter(c =>
+      c.name?.toLowerCase().includes(term) ||
+      c.domains?.some(d => d.toLowerCase().includes(term))
+    )
+  }, [customersData?.items, sourceCustomer.id, search])
 
   // Reset state when dialog opens/closes
   React.useEffect(() => {
@@ -41,13 +64,9 @@ export function MergeCustomerDialog({
       setTargetId(null)
       setTargetName(null)
       setStep("select")
+      setSearch("")
     }
   }, [open])
-
-  const handleSelectTarget = (customerId: string | null, customerName?: string) => {
-    setTargetId(customerId)
-    setTargetName(customerName ?? null)
-  }
 
   const handleConfirm = async () => {
     if (!targetId) return
@@ -88,14 +107,45 @@ export function MergeCustomerDialog({
         </DialogHeader>
 
         {step === "select" ? (
-          <div className="py-4">
-            <label className="text-sm font-medium mb-2 block">Merge into</label>
-            <CustomerAutocomplete
-              value={targetId}
-              onChange={handleSelectTarget}
-              placeholder="Search for target customer..."
-              excludeIds={[sourceCustomer.id]}
-            />
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Merge into</label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search customers..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8"
+                autoFocus
+              />
+            </div>
+            <ScrollArea className="h-[300px] rounded-md border">
+              <div className="p-1">
+                {customers.map((c) => (
+                  <button
+                    key={c.id}
+                    className={cn(
+                      "flex items-center w-full rounded-sm px-2 py-1.5 text-sm cursor-pointer hover:bg-accent",
+                      targetId === c.id && "bg-accent"
+                    )}
+                    onClick={() => {
+                      setTargetId(c.id)
+                      setTargetName(c.name ?? c.domains?.[0] ?? c.id)
+                    }}
+                  >
+                    <Check className={cn("mr-2 h-4 w-4 flex-shrink-0", targetId === c.id ? "opacity-100" : "opacity-0")} />
+                    <span className="truncate">
+                      {c.name}{c.domains?.[0] ? ` (${c.domains[0]})` : ''}
+                    </span>
+                  </button>
+                ))}
+                {customers.length === 0 && (
+                  <div className="py-6 text-center text-sm text-muted-foreground">
+                    No customers found.
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
           </div>
         ) : (
           <div className="py-4 space-y-3">
