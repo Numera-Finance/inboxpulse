@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS customers (
     -- Metadata
     metadata JSONB, -- Additional customer data
 
+    -- Status: 0=ACTIVE, 1=INACTIVE, 2=ARCHIVED (consistent with users.row_status)
+    row_status SMALLINT NOT NULL DEFAULT 0,
+
     -- Tracking
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -24,3 +27,7 @@ CREATE TABLE IF NOT EXISTS customers (
 -- Unique index on external_id per tenant (allows null)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_tenant_external_id
     ON customers(tenant_id, external_id) WHERE external_id IS NOT NULL;
+
+-- Index for filtering by status
+CREATE INDEX IF NOT EXISTS idx_customers_row_status
+    ON customers(tenant_id, row_status);
