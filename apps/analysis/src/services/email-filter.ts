@@ -620,7 +620,7 @@ export class EmailFilterService {
     // Default model config if not provided
     const model: ModelConfig = modelConfig || {
       provider: 'google',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       temperature: 0.3,
       maxTokens: 500,
     };
