@@ -124,7 +124,7 @@ export function VirtualizedCombobox({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-h-[min(350px,var(--radix-popover-content-available-height))] p-0" align="start" sideOffset={4}>
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={searchPlaceholder}
@@ -139,7 +139,7 @@ export function VirtualizedCombobox({
           ) : filteredItems.length === 0 ? (
             <CommandEmpty>{emptyText}</CommandEmpty>
           ) : (
-            <div ref={parentRef} className="max-h-[300px] overflow-y-auto">
+            <div ref={parentRef} className="max-h-[280px] overflow-y-auto overflow-x-hidden">
               <div
                 key={filteredItems.length}
                 style={{
