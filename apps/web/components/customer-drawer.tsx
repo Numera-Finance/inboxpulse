@@ -9,7 +9,7 @@ import {
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table"
-import { X, Plus, Search, Pencil, Trash2, Mail, Phone, Building2, Globe, Check, Loader2, ArrowUpDown, Users } from "lucide-react"
+import { X, Plus, Search, Pencil, Trash2, Mail, Phone, Building2, Globe, Check, Loader2, ArrowUpDown, Users, GitMerge } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -40,11 +40,14 @@ import { getCustomerRoleName } from "@crm/shared"
 import { UserAutocomplete } from "@/components/ui/user-autocomplete"
 import { RoleSelect } from "@/components/ui/role-select"
 import { useQueryClient } from "@tanstack/react-query"
+import { PermissionGate, Permission } from "@/src/components/PermissionGate"
+import { MergeCustomerDialog } from "@/components/merge-customer-dialog"
 
 interface CustomerDrawerProps {
   customer: Customer | null
   open: boolean
   onClose: () => void
+  onMerged?: (targetCustomerId: string) => void
   activeTab?: "emails" | "contacts" | "team"
   onTabChange?: (tab: string) => void
   isLoading?: boolean
@@ -56,7 +59,7 @@ interface CustomerDrawerProps {
   dateTo?: string
 }
 
-export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter, dateFrom, dateTo }: CustomerDrawerProps) {
+export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter, dateFrom, dateTo }: CustomerDrawerProps) {
   // Track visibility separately from open to allow exit animation
   const [isVisible, setIsVisible] = React.useState(open)
   const [shouldRender, setShouldRender] = React.useState(open)
@@ -99,6 +102,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const [isEditingName, setIsEditingName] = React.useState(false)
   const [editName, setEditName] = React.useState("")
   const [isEditingDomains, setIsEditingDomains] = React.useState(false)
+  const [mergeDialogOpen, setMergeDialogOpen] = React.useState(false)
   const [editDomains, setEditDomains] = React.useState<string[]>([])
   const [newDomainInput, setNewDomainInput] = React.useState("")
   const [contactSorting, setContactSorting] = React.useState<SortingState>([])
@@ -1097,9 +1101,16 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
 
               </div>
             </div>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="h-5 w-5" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <PermissionGate permission={Permission.CUSTOMER_EDIT}>
+                <Button variant="ghost" size="icon" onClick={() => setMergeDialogOpen(true)} title="Merge customer">
+                  <GitMerge className="h-5 w-5" />
+                </Button>
+              </PermissionGate>
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
           </div>
 
           {/* Content */}
@@ -1511,6 +1522,18 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         open={emailDrawerOpen}
         onClose={() => setEmailDrawerOpen(false)}
       />
+
+      {customer && (
+        <MergeCustomerDialog
+          sourceCustomer={customer}
+          open={mergeDialogOpen}
+          onClose={() => setMergeDialogOpen(false)}
+          onMerged={(targetId) => {
+            setMergeDialogOpen(false)
+            onMerged?.(targetId)
+          }}
+        />
+      )}
     </>
   )
 }

@@ -1,9 +1,9 @@
 import { eq, and, sql, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
-import { customers, customerDomains, type Customer, type NewCustomer, type NewCustomerDomain } from './schema';
+import { customers, customerDomains, CustomerRowStatus, type Customer, type NewCustomer, type NewCustomerDomain } from './schema';
 import { logger } from '../utils/logger';
 
 @injectable()
@@ -48,6 +48,7 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        rowStatus: customers.rowStatus,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
       })
@@ -396,6 +397,7 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        rowStatus: customers.rowStatus,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
       })
@@ -564,5 +566,57 @@ export class CustomerRepository extends ScopedRepository {
       ...customer,
       domains: domainsMap.get(customer.id) || [],
     }));
+  }
+
+  // ===========================================================================
+  // Customer Merge Support
+  // ===========================================================================
+
+  /**
+   * Lock both customer rows for merge (prevents concurrent merges/archival).
+   * Returns locked rows for validation. Must be called inside a transaction.
+   */
+  async lockForMerge(tenantId: string, sourceId: string, targetId: string, tx: Transaction): Promise<Array<{ id: string; row_status: number }>> {
+    const locked = await tx.execute<{ id: string; row_status: number }>(sql`
+      SELECT id, row_status FROM customers
+      WHERE id IN (${sourceId}, ${targetId}) AND tenant_id = ${tenantId}
+      FOR UPDATE
+    `);
+    return locked as unknown as Array<{ id: string; row_status: number }>;
+  }
+
+  /**
+   * Reassign domains from source to target customer.
+   * Moves non-conflicting domains, deletes remaining source duplicates.
+   */
+  async reassignDomains(tenantId: string, sourceId: string, targetId: string, tx?: Transaction): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      UPDATE customer_domains
+      SET customer_id = ${targetId}, updated_at = NOW()
+      WHERE customer_id = ${sourceId}
+        AND tenant_id = ${tenantId}
+        AND domain NOT IN (
+          SELECT domain FROM customer_domains
+          WHERE customer_id = ${targetId} AND tenant_id = ${tenantId}
+        )
+    `);
+    await db.execute(sql`
+      DELETE FROM customer_domains
+      WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
+    `);
+    return (result as any).rowCount ?? 0;
+  }
+
+  /**
+   * Archive a customer (set row_status to ARCHIVED).
+   */
+  async archive(tenantId: string, customerId: string, tx?: Transaction): Promise<void> {
+    const db = tx ?? this.db;
+    await db.execute(sql`
+      UPDATE customers
+      SET row_status = ${CustomerRowStatus.ARCHIVED}, updated_at = NOW()
+      WHERE id = ${customerId} AND tenant_id = ${tenantId}
+    `);
   }
 }

@@ -28,6 +28,7 @@ export {
   useImportCustomers,
   useExportCustomers,
   useImportTemplate,
+  useMergeCustomer,
   customerKeys,
 } from './use-customers';
 

@@ -53,3 +53,22 @@ export const customerSchema = z.object({
 });
 
 export type Customer = z.infer<typeof customerSchema>;
+
+// Merge customer types
+export const mergeCustomerRequestSchema = z.object({
+  sourceCustomerId: z.string().uuid(),
+});
+
+export type MergeCustomerRequest = z.infer<typeof mergeCustomerRequestSchema>;
+
+export const mergeCustomerResponseSchema = z.object({
+  targetCustomerId: z.string().uuid(),
+  sourceCustomerId: z.string().uuid(),
+  movedDomains: z.number().int(),
+  movedContacts: z.number().int(),
+  movedTasks: z.number().int(),
+  movedEmailParticipants: z.number().int(),
+  movedUserAssignments: z.number().int(),
+});
+
+export type MergeCustomerResponse = z.infer<typeof mergeCustomerResponseSchema>;

@@ -1,16 +1,18 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
-import { ConflictError, isAdmin, Signal, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
+import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
+import { ContactRepository } from '../contacts/repository';
 import { EmailRepository } from '../emails/repository';
+import { TaskRepository } from '../tasks/repository';
 import { UserRepository } from '../users/repository';
 import { inngest } from '../inngest/instance';
 import { logger } from '../utils/logger';
-import { customers, customerDomains } from './schema';
+import { customers, customerDomains, CustomerRowStatus } from './schema';
 import type { Customer, NewCustomer } from './schema';
-import type { Customer as ClientCustomer, CreateCustomerRequest } from '@crm/clients';
+import type { Customer as ClientCustomer, CreateCustomerRequest, MergeCustomerResponse } from '@crm/clients';
 import type { CustomerImportResult, CustomerExportData } from './import-export';
 
 /**
@@ -135,7 +137,9 @@ export class CustomerService {
 
   constructor(
     @inject(CustomerRepository) private customerRepository: CustomerRepository,
+    @inject(ContactRepository) private contactRepository: ContactRepository,
     @inject(EmailRepository) private emailRepository: EmailRepository,
+    @inject(TaskRepository) private taskRepository: TaskRepository,
     @inject(UserRepository) private userRepository: UserRepository,
     @inject('Database') private db: Database
   ) {}
@@ -192,7 +196,10 @@ export class CustomerService {
       .build();
 
     // Build conditions including freeform search and customer access control
-    const conditions = [scopedWhere];
+    const conditions = [
+      scopedWhere,
+      sql`${customers.rowStatus} = ${CustomerRowStatus.ACTIVE}`, // Exclude archived (merged) customers
+    ];
 
     // Add customer access filter (admins see all, others only see assigned customers)
     if (!isAdmin(requestHeader.permissions)) {
@@ -255,6 +262,7 @@ export class CustomerService {
         FROM customers c
         LEFT JOIN (${sortSubquery}) sort_sub ON sort_sub.customer_id = c.id
         WHERE c.tenant_id = ${requestHeader.tenantId}
+          AND c.row_status = ${CustomerRowStatus.ACTIVE}
           ${accessFilter}
           ${searchFilter}
         ORDER BY COALESCE(sort_sub.sort_val, ${sortBy === 'lastContactDate' ? sql`'1970-01-01'::timestamp` : sql`0`}) ${sortDir}, c.name ASC
@@ -265,6 +273,7 @@ export class CustomerService {
         SELECT count(*)::int AS count
         FROM customers c
         WHERE c.tenant_id = ${requestHeader.tenantId}
+          AND c.row_status = ${CustomerRowStatus.ACTIVE}
           ${accessFilter}
           ${searchFilter}
       `);
@@ -386,6 +395,108 @@ export class CustomerService {
     }
 
     return clientCustomers;
+  }
+
+  // ===========================================================================
+  // Customer Merge
+  // ===========================================================================
+
+  /**
+   * Merge source customer into target customer.
+   * All related data moves to target, source is archived.
+   */
+  /**
+   * Merge source customer into target customer.
+   * All related data moves to target in a single transaction, source is archived.
+   *
+   *   BEGIN
+   *     SELECT FOR UPDATE on source + target (lock + validate)
+   *     1. customer_domains → target
+   *     2. contacts → target
+   *     3. email_participants → target
+   *     4. tasks → target
+   *     5. user_customers → target
+   *     6. archive source (row_status = ARCHIVED)
+   *   COMMIT
+   *   Inngest: user/access.rebuild
+   */
+  async mergeCustomer(
+    requestHeader: RequestHeader,
+    sourceId: string,
+    targetId: string
+  ): Promise<MergeCustomerResponse> {
+    const tenantId = requestHeader.tenantId;
+
+    if (sourceId === targetId) {
+      throw new ValidationError('Cannot merge a customer into itself');
+    }
+
+    // Pre-validate access (also validated inside transaction with FOR UPDATE)
+    const source = await this.customerRepository.findByIdScoped(requestHeader, sourceId);
+    if (!source) {
+      throw new NotFoundError('Source customer', sourceId);
+    }
+    const target = await this.customerRepository.findByIdScoped(requestHeader, targetId);
+    if (!target) {
+      throw new NotFoundError('Target customer', targetId);
+    }
+    if (source.rowStatus === CustomerRowStatus.ARCHIVED) {
+      throw new ValidationError('Source customer is already archived');
+    }
+    if (target.rowStatus === CustomerRowStatus.ARCHIVED) {
+      throw new ValidationError('Cannot merge into an archived customer');
+    }
+
+    // Execute merge in a single transaction
+    const result = await this.db.transaction(async (tx) => {
+      // Lock both rows to prevent concurrent merges
+      const lockedRows = await this.customerRepository.lockForMerge(tenantId, sourceId, targetId, tx);
+      const sourceRow = lockedRows.find(r => r.id === sourceId);
+      const targetRow = lockedRows.find(r => r.id === targetId);
+
+      if (!sourceRow || !targetRow) {
+        throw new Error('Source or target customer not found');
+      }
+      if (sourceRow.row_status === CustomerRowStatus.ARCHIVED) {
+        throw new Error('Source customer is already archived');
+      }
+      if (targetRow.row_status === CustomerRowStatus.ARCHIVED) {
+        throw new Error('Target customer is already archived');
+      }
+
+      // Each repository handles its own table
+      const movedDomains = await this.customerRepository.reassignDomains(tenantId, sourceId, targetId, tx);
+      // Safe: unique constraint is (tenant_id, email), not (tenant_id, customer_id, email)
+      const movedContacts = await this.contactRepository.reassignCustomer(tenantId, sourceId, targetId, tx);
+      const movedEmailParticipants = await this.emailRepository.reassignParticipantCustomer(tenantId, sourceId, targetId, tx);
+      const movedTasks = await this.taskRepository.reassignCustomer(tenantId, sourceId, targetId, tx);
+      const movedUserAssignments = await this.userRepository.reassignCustomer(tenantId, sourceId, targetId, tx);
+
+      await this.customerRepository.archive(tenantId, sourceId, tx);
+
+      return {
+        targetCustomerId: targetId,
+        sourceCustomerId: sourceId,
+        movedDomains,
+        movedContacts,
+        movedTasks,
+        movedEmailParticipants,
+        movedUserAssignments,
+      };
+    });
+
+    logger.info(
+      { tenantId, sourceId, targetId, ...result },
+      'Customer merge completed'
+    );
+
+    // Trigger async rebuild of user accessible customers
+    await inngest.send({
+      name: 'user/access.rebuild',
+      data: { tenantId },
+    });
+
+    return result;
   }
 
   // ===========================================================================

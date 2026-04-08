@@ -3,7 +3,7 @@ import { container } from 'tsyringe';
 import { NotFoundError, searchRequestSchema, Permission, ValidationError } from '@crm/shared';
 import { CustomerService } from './service';
 import type { ApiResponse, RequestHeader } from '@crm/shared';
-import { createCustomerRequestSchema, type CreateCustomerRequest } from '@crm/clients';
+import { createCustomerRequestSchema, mergeCustomerRequestSchema, type CreateCustomerRequest } from '@crm/clients';
 import { requirePermission } from '../middleware/require-permission';
 import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { getRequestHeader } from '../utils/request-header';
@@ -150,6 +150,27 @@ customerRoutes.get('/import/template', async (c) => {
 
   // Convert Node.js Buffer to Uint8Array for Hono
   return c.body(new Uint8Array(buffer));
+});
+
+/**
+ * POST /api/customers/:id/merge - Merge another customer into this one
+ * :id is the TARGET customer (survives). Body contains sourceCustomerId (archived).
+ * Requires CUSTOMER_EDIT permission
+ */
+customerRoutes.post('/:id/merge', requirePermission(Permission.CUSTOMER_EDIT), async (c) => {
+  return handleApiRequestWithParams(
+    c,
+    z.object({ id: z.uuid() }),
+    mergeCustomerRequestSchema,
+    async (requestHeader: RequestHeader, params, body) => {
+      const service = container.resolve(CustomerService);
+      return await service.mergeCustomer(
+        requestHeader,
+        body.sourceCustomerId,
+        params.id
+      );
+    }
+  );
 });
 
 /**

@@ -317,6 +317,9 @@ export default function CustomersPage() {
           customer={selectedCustomer}
           open={drawerOpen}
           onClose={handleCloseDrawer}
+          onMerged={(targetId) => {
+            navigate(`/customers/${targetId}/emails`)
+          }}
           activeTab={tab === 'contacts' ? 'contacts' : tab === 'team' ? 'team' : 'emails'}
           onTabChange={handleTabChange}
           isLoading={Boolean(customerId) && !selectedCustomer && isLoadingCustomer}

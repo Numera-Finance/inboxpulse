@@ -1,6 +1,6 @@
 import { BaseClient } from '../base-client';
 import type { ApiResponse, SearchRequest, SearchResponse } from '@crm/shared';
-import type { Customer, CreateCustomerRequest } from './types';
+import type { Customer, CreateCustomerRequest, MergeCustomerResponse } from './types';
 
 /**
  * Client for customer-related API operations
@@ -125,6 +125,28 @@ export class CustomerClient extends BaseClient {
    */
   async getImportTemplate(signal?: AbortSignal): Promise<Blob> {
     return this.getBlob('/api/customers/import/template', signal);
+  }
+
+  /**
+   * Merge source customer into target customer.
+   * All data moves to target, source is archived.
+   */
+  async mergeCustomer(
+    targetCustomerId: string,
+    sourceCustomerId: string,
+    signal?: AbortSignal
+  ): Promise<MergeCustomerResponse> {
+    const response = await this.post<ApiResponse<MergeCustomerResponse>>(
+      `/api/customers/${targetCustomerId}/merge`,
+      { sourceCustomerId },
+      signal
+    );
+
+    if (!response?.data) {
+      throw new Error('Invalid API response: missing data');
+    }
+
+    return response.data;
   }
 }
 
