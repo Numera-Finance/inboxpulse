@@ -1,6 +1,6 @@
 import { eq, and, sql, SQL, desc, asc, inArray } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository, type Database } from '@crm/database';
+import { ScopedRepository, type Database, type Transaction } from '@crm/database';
 import { Permission, Signal, type RequestHeader } from '@crm/shared';
 import { tasks, taskComments, userSubordinates, type Task, type NewTask, type TaskComment, type NewTaskComment, TaskStatus } from './schema';
 import { users } from '../users/schema';
@@ -621,5 +621,18 @@ export class TaskRepository extends ScopedRepository {
       .orderBy(sql`lower(${users.firstName})`, sql`lower(${users.lastName})`);
 
     return result;
+  }
+
+  /**
+   * Reassign all tasks from one customer to another.
+   */
+  async reassignCustomer(tenantId: string, sourceCustomerId: string, targetCustomerId: string, tx?: Transaction): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      UPDATE tasks
+      SET customer_id = ${targetCustomerId}, updated_at = NOW()
+      WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
+    `);
+    return (result as any).rowCount ?? 0;
   }
 }

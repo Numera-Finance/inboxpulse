@@ -2307,4 +2307,17 @@ export class EmailRepository extends ScopedRepository {
 
     return rowCount;
   }
+
+  /**
+   * Reassign all email participants from one customer to another.
+   */
+  async reassignParticipantCustomer(tenantId: string, sourceCustomerId: string, targetCustomerId: string, tx?: Transaction): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      UPDATE email_participants
+      SET customer_id = ${targetCustomerId}
+      WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
+    `);
+    return (result as any).rowCount ?? 0;
+  }
 }

@@ -1,7 +1,7 @@
 import { eq, and, asc, sql } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
 import { contacts, type Contact, type NewContact } from './schema';
 
@@ -264,5 +264,19 @@ export class ContactRepository extends ScopedRepository {
 
     // Check access to contact's customer (handles admin bypass)
     return this.hasCustomerAccess(header, contact.customerId);
+  }
+
+  /**
+   * Reassign all contacts from one customer to another.
+   * Safe: unique constraint is (tenant_id, email), not (tenant_id, customer_id, email).
+   */
+  async reassignCustomer(tenantId: string, sourceCustomerId: string, targetCustomerId: string, tx?: Transaction): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      UPDATE contacts
+      SET customer_id = ${targetCustomerId}, updated_at = NOW()
+      WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
+    `);
+    return (result as any).rowCount ?? 0;
   }
 }
