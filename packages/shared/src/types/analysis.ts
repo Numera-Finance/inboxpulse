@@ -199,40 +199,40 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
   },
   modelConfigs: {
     'domain-extraction': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'contact-extraction': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'signature-extraction': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'sentiment': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'escalation': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'upsell': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'churn': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'kudos': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
     'competitor': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: 'gemini-2.5-flash',
+      fallback: 'gemini-2.0-flash-lite',
     },
   },
   promptVersions: {

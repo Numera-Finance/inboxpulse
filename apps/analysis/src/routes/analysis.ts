@@ -536,7 +536,7 @@ app.post('/filter', async (c) => {
 const summarizeRequestSchema = z.object({
   analysisType: z.string(),
   prompt: z.string(),
-  model: z.string().optional().default('gemini-2.0-flash'),
+  model: z.string().optional().default('gemini-2.5-flash'),
 });
 
 /**

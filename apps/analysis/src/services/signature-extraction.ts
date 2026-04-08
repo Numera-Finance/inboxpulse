@@ -106,7 +106,7 @@ export class SignatureExtractionService {
   }
 
   /**
-   * Step 2: Extract signature details using SLM (gemini-1.5-flash)
+   * Step 2: Extract signature details using SLM (gemini-2.5-pro)
    */
   async extractSignature(
     tenantId: string,
