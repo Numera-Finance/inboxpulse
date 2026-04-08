@@ -29,16 +29,22 @@ function toClientCustomerWithDomains(
     return undefined;
   }
 
+  // Append "(Auto)" to name for auto-created customers so they're easily identifiable
+  const displayName = customer.isAutoCreated && customer.name
+    ? `${customer.name} (Auto)`
+    : customer.name;
+
   return {
     id: customer.id,
     tenantId: customer.tenantId,
     domains, // Array of domains from customer_domains table
-    name: customer.name,
+    name: displayName,
     website: customer.website,
     industry: customer.industry,
     labels: customer.labels || [],
     externalId: customer.externalId,
     metadata: customer.metadata,
+    isAutoCreated: customer.isAutoCreated,
     createdAt: customer.createdAt,
     updatedAt: customer.updatedAt,
   } as ClientCustomer;
@@ -674,15 +680,20 @@ export class CustomerService {
         throw new Error('Failed to convert customer to client format after upsert - no domains found');
       }
 
+      const displayName = customerWithDomains.isAutoCreated && customerWithDomains.name
+        ? `${customerWithDomains.name} (Auto)`
+        : customerWithDomains.name;
+
       return {
         id: customerWithDomains.id,
         tenantId: customerWithDomains.tenantId,
         domains: customerWithDomains.domains,
-        name: customerWithDomains.name,
+        name: displayName,
         website: customerWithDomains.website,
         industry: customerWithDomains.industry,
         externalId: customerWithDomains.externalId,
         metadata: customerWithDomains.metadata,
+        isAutoCreated: customerWithDomains.isAutoCreated,
         createdAt: customerWithDomains.createdAt,
         updatedAt: customerWithDomains.updatedAt,
       } as ClientCustomer;

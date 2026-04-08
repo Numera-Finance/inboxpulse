@@ -18,6 +18,7 @@ const updateCustomerSchema = z.object({
   labels: z.array(z.string()).optional(),
   metadata: z.record(z.string(), z.any()).optional().nullable(),
   domains: z.array(z.string()).min(1).optional(),
+  isAutoCreated: z.boolean().optional(),
 });
 
 export const customerRoutes = new Hono();

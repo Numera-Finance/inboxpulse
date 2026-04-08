@@ -164,6 +164,7 @@ export class DomainExtractionService {
             tenantId,
             domains: [domain], // Single domain in array
             name: inferredName,
+            isAutoCreated: true,
           });
 
           logger.debug({
