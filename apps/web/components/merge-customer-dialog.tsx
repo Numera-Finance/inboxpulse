@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { useCustomers, useMergeCustomer } from "@/lib/hooks"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -92,7 +91,7 @@ export function MergeCustomerDialog({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose() }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <GitMerge className="h-5 w-5" />
@@ -119,8 +118,7 @@ export function MergeCustomerDialog({
                 autoFocus
               />
             </div>
-            <ScrollArea className="h-[300px] rounded-md border">
-              <div className="p-1">
+            <div className="h-[300px] overflow-y-auto rounded-md border p-1">
                 {customers.map((c) => (
                   <button
                     key={c.id}
@@ -144,8 +142,7 @@ export function MergeCustomerDialog({
                     No customers found.
                   </div>
                 )}
-              </div>
-            </ScrollArea>
+            </div>
           </div>
         ) : (
           <div className="py-4 space-y-3">
