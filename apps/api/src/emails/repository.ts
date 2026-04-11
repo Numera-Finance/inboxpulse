@@ -1758,7 +1758,7 @@ export class EmailRepository extends ScopedRepository {
         LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
         LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
         WHERE ${whereClause}
-        ORDER BY e.id
+        ORDER BY e.id, (CASE WHEN ep.direction = 'from' THEN 0 ELSE 1 END)
       ) sub
       ORDER BY ${sortColumn} ${sortDir}
       LIMIT ${limit}
@@ -1910,7 +1910,7 @@ export class EmailRepository extends ScopedRepository {
         LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
         LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
         WHERE ${whereClause}
-        ORDER BY e.id
+        ORDER BY e.id, (CASE WHEN ep.direction = 'from' THEN 0 ELSE 1 END)
       ) sub
       ORDER BY sub.received_at DESC
     `);
@@ -2047,7 +2047,7 @@ export class EmailRepository extends ScopedRepository {
       LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
       LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
       WHERE ${whereClause}
-      ORDER BY e.id
+      ORDER BY e.id, (CASE WHEN ep.direction = 'from' THEN 0 ELSE 1 END)
       LIMIT 1
     `);
 
