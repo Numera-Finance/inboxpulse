@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, and, sql } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
-import { type RequestHeader, getServiceAuthHeaders } from '@crm/shared';
+import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
@@ -278,7 +278,8 @@ export class TaskService {
   }
 
   /**
-   * Create task from negative email (system-created)
+   * Create task from negative email (system-created).
+   * Auto-assigns to the customer's controller or account manager if available.
    */
   async createFromEmail(
     tenantId: string,
@@ -295,13 +296,71 @@ export class TaskService {
 
     logger.info({ emailId, customerId }, 'Auto-creating task from negative email');
 
-    return this.taskRepository.create({
+    const task = await this.taskRepository.create({
       tenantId,
       customerId,
       emailId,
       title: emailSubject || 'Negative sentiment email',
       createdBySystem: true,
     });
+
+    // Auto-assign to customer's controller or account manager
+    await this.autoAssignTask(tenantId, task.id, customerId, emailId);
+
+    return task;
+  }
+
+  /**
+   * Auto-assign a system-created task to the customer's team member.
+   *
+   * Priority: Controller > Account Manager.
+   * Uses a system RequestHeader to call reassign() with the same semantics
+   * as the UI (notifications, logging).
+   * Non-blocking — logs and continues on failure.
+   */
+  private async autoAssignTask(
+    tenantId: string,
+    taskId: string,
+    customerId: string,
+    emailId: string
+  ): Promise<void> {
+    try {
+      const teamMembers = await this.userRepository.getUsersByCustomer(customerId);
+      if (teamMembers.length === 0) {
+        logger.debug({ taskId, customerId }, 'No team members for customer, skipping auto-assign');
+        return;
+      }
+
+      // Priority 1: Controller
+      const controller = teamMembers.find(m => m.roleId === CUSTOMER_ROLES.CONTROLLER.id);
+      // Priority 2: Account Manager
+      const accountManager = teamMembers.find(m => m.roleId === CUSTOMER_ROLES.ACCOUNT_MANAGER.id);
+
+      const assignee = controller || accountManager;
+      if (!assignee) {
+        logger.debug({ taskId, customerId }, 'No controller or account manager found, skipping auto-assign');
+        return;
+      }
+
+      const systemHeader: RequestHeader = {
+        tenantId,
+        userId: '00000000-0000-0000-0000-000000000000',
+        permissions: [Permission.ADMIN],
+      };
+
+      await this.reassign(systemHeader, taskId, assignee.id);
+
+      logger.info(
+        { taskId, emailId, customerId, assigneeId: assignee.id, role: controller ? 'Controller' : 'Account Manager' },
+        'Auto-assigned task to customer team member'
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { taskId, emailId, customerId, error: message },
+        'Failed to auto-assign task (non-blocking)'
+      );
+    }
   }
 
   /**
