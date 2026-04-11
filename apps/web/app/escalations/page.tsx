@@ -544,6 +544,7 @@ export default function EscalationsPage() {
             key={searchParams.toString()}
             config={inboxConfig}
             callbacks={inboxCallbacks}
+            initialSelectedId={emailIdFromUrl}
             initialFilter={{
               status: effectiveStatus === 'all' ? 'all' : 'open',
             }}
