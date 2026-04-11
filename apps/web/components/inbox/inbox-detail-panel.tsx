@@ -13,7 +13,6 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { SentimentIndicator } from "@/components/ui/sentiment-indicator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -330,8 +329,8 @@ export function InboxDetailPanel({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 h-0 min-h-0 border-0 border-t-0">
-        <div className="px-4 pb-4 pt-2 min-w-0 overflow-hidden">
+      <div className="flex-1 h-0 min-h-0 overflow-y-auto overflow-x-hidden">
+        <div className="px-4 pb-4 pt-2">
           {/* Header */}
           <div className="mb-4">
             <div className="flex items-start gap-2 mb-2">
@@ -416,7 +415,7 @@ export function InboxDetailPanel({
           {afterContent}
 
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
