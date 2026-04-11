@@ -161,10 +161,10 @@ function MessageContent({ message }: { message: InboxItemContent }) {
         )}
 
         {/* Body */}
-        <div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto [&_*]:border-0">
+        <div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto [&_*]:border-0 [&_*]:max-w-full">
           {message.bodyFormat === "html" ? (
             <div
-              className="text-sm leading-relaxed break-words overflow-wrap-anywhere"
+              className="text-sm leading-relaxed break-words [overflow-wrap:anywhere]"
               dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(message.body) }}
             />
           ) : (
@@ -331,7 +331,7 @@ export function InboxDetailPanel({
       </div>
 
       <ScrollArea className="flex-1 h-0 min-h-0 border-0 border-t-0">
-        <div className="px-4 pb-4 pt-2">
+        <div className="px-4 pb-4 pt-2 min-w-0 overflow-hidden">
           {/* Header */}
           <div className="mb-4">
             <div className="flex items-start gap-2 mb-2">
