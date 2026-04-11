@@ -161,10 +161,10 @@ function MessageContent({ message }: { message: InboxItemContent }) {
         )}
 
         {/* Body */}
-        <div className="prose prose-sm dark:prose-invert max-w-none [&_*]:border-0">
+        <div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto [&_*]:border-0">
           {message.bodyFormat === "html" ? (
             <div
-              className="text-sm leading-relaxed"
+              className="text-sm leading-relaxed break-words overflow-wrap-anywhere"
               dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(message.body) }}
             />
           ) : (
@@ -334,13 +334,15 @@ export function InboxDetailPanel({
         <div className="px-4 pb-4 pt-2">
           {/* Header */}
           <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <h2 className="text-xl font-semibold flex-1">{item.subject}</h2>
-              {item.sentiment && (
-                <SentimentIndicator sentiment={item.sentiment} size="md" showLabel />
-              )}
-              {/* Header actions slot (e.g., "Done" button for tasks) */}
-              {headerActions}
+            <div className="flex items-start gap-2 mb-2">
+              <h2 className="text-xl font-semibold min-w-0 flex-1">{item.subject}</h2>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {item.sentiment && (
+                  <SentimentIndicator sentiment={item.sentiment} size="md" showLabel />
+                )}
+                {/* Header actions slot (e.g., "Done" button for tasks) */}
+                {headerActions}
+              </div>
             </div>
             {(item.isStarred || item.priority || item.status || headerBadges) && (
               <div className="flex items-center gap-2 flex-wrap">
