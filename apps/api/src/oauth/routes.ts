@@ -221,6 +221,9 @@ app.get('/gmail/callback', async (c) => {
 
     logger.info({ tenantId, email }, 'OAuth integration created/updated successfully');
 
+    // Auto-add tenant domains to blacklist to prevent collecting internal emails
+    await integrationService.ensureTenantDomainsBlacklisted(tenantId, 'gmail');
+
     // Setup Gmail watch automatically
     try {
       const gmailServiceUrl = getEnv().SERVICE_GMAIL_URL;
