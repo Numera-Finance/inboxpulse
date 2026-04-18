@@ -741,12 +741,12 @@ export class CustomerService {
     tx: Transaction,
     tenantId: string,
     domain: string,
-    options: { signatureCompany?: string | null; defaultName: string }
+    options: { signatureCompany?: string | null; defaultName?: string }
   ): Promise<Customer> {
     const normalizedDomain = domain.toLowerCase();
-    const proposedRaw = options.signatureCompany?.trim() || options.defaultName.trim();
+    const proposedRaw = options.signatureCompany?.trim() || options.defaultName?.trim() || '';
     if (!proposedRaw) {
-      throw new ValidationError('ensureCustomerForEmail requires a non-empty defaultName or signatureCompany');
+      throw new ValidationError('ensureCustomerForEmail requires at least one of defaultName or signatureCompany');
     }
     const proposedName = withAutoCustomerSuffix(proposedRaw);
 

@@ -10,11 +10,22 @@
  */
 export const AUTO_CUSTOMER_NAME_SUFFIX = ' (Auto)';
 
-/** Build the stored name for an auto-created customer from a base name. */
+/** Lowercase form used for case-insensitive suffix detection. Single source. */
+const AUTO_SUFFIX_LOWER = AUTO_CUSTOMER_NAME_SUFFIX.toLowerCase();
+/** Whitespace-tolerant fallback — catches "Foo(Auto)" without a leading space. */
+const AUTO_SUFFIX_LOWER_TIGHT = AUTO_CUSTOMER_NAME_SUFFIX.trim().toLowerCase();
+
+/**
+ * Build the stored name for an auto-created customer from a base name.
+ * Idempotent: never double-appends, including when the input already carries
+ * the suffix in any common formatting (with or without the leading space, any
+ * letter case).
+ */
 export function withAutoCustomerSuffix(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return trimmed;
-  if (trimmed.toLowerCase().endsWith(AUTO_CUSTOMER_NAME_SUFFIX.toLowerCase().trim())) {
+  const lower = trimmed.toLowerCase();
+  if (lower.endsWith(AUTO_SUFFIX_LOWER) || lower.endsWith(AUTO_SUFFIX_LOWER_TIGHT)) {
     return trimmed; // already suffixed; don't double-append
   }
   return `${trimmed}${AUTO_CUSTOMER_NAME_SUFFIX}`;

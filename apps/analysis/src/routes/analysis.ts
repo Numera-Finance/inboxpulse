@@ -167,19 +167,11 @@ app.post('/analyze', async (c) => {
       ...validated.config,
     });
 
-    // Determine which analyses to run
-    let analysisTypes: AnalysisType[];
-    if (validated.analysisTypes && validated.analysisTypes.length > 0) {
-      analysisTypes = validated.analysisTypes as AnalysisType[];
-    } else {
-      // Use enabled analyses from config; domain-extraction and
-      // contact-extraction are no longer LLM analyses (they're regex,
-      // returned in `extracted`), so exclude them from the executor.
-      const enabledTypes = configLoader.getEnabledAnalysisTypes(config) as AnalysisType[];
-      analysisTypes = enabledTypes.filter(
-        (type) => type !== 'domain-extraction' && type !== 'contact-extraction'
-      );
-    }
+    // Determine which analyses to run.
+    const analysisTypes: AnalysisType[] = (validated.analysisTypes &&
+      validated.analysisTypes.length > 0)
+      ? (validated.analysisTypes as AnalysisType[])
+      : (configLoader.getEnabledAnalysisTypes(config) as AnalysisType[]);
 
     // Always include extraction in the response, even when no analyses are
     // requested.

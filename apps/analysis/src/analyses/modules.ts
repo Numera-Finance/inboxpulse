@@ -288,42 +288,8 @@ Other rules:
 };
 
 /**
- * Domain Extraction Module (placeholder - handled by DomainExtractionService)
- * Note: Domain extraction doesn't use LLM, it's regex-based
- */
-export const domainExtractionModule: AnalysisModule = {
-  name: 'domain-extraction',
-  description: 'Extract company domains from email addresses',
-  instructions: 'Extract company domains from email addresses (handled by DomainExtractionService)',
-  schema: z.object({
-    domains: z.array(z.object({
-      domain: z.string(),
-    })),
-  }),
-  version: 'v1.0',
-};
-
-/**
- * Contact Extraction Module (placeholder - handled by ContactExtractionService)
- * Note: Contact extraction doesn't use LLM, it's regex-based
- */
-export const contactExtractionModule: AnalysisModule = {
-  name: 'contact-extraction',
-  description: 'Extract contacts from email addresses',
-  instructions: 'Extract contacts from email addresses (handled by ContactExtractionService)',
-  schema: z.object({
-    contacts: z.array(z.object({
-      id: z.string(),
-      email: z.string(),
-      name: z.string().optional(),
-      companyId: z.string().optional(),
-    })),
-  }),
-  version: 'v1.0',
-};
-
-/**
- * All analysis modules
+ * All analysis modules (LLM analyses only — domain and contact extraction are
+ * pure regex on the analyze handler, not analyses).
  */
 export const allModules: AnalysisModule[] = [
   sentimentModule,
@@ -333,8 +299,6 @@ export const allModules: AnalysisModule[] = [
   kudosModule,
   competitorModule,
   signatureModule,
-  domainExtractionModule,
-  contactExtractionModule,
 ];
 
 /**
@@ -348,6 +312,4 @@ export const modulesByName: Record<string, AnalysisModule> = {
   'kudos': kudosModule,
   'competitor': competitorModule,
   'signature-extraction': signatureModule,
-  'domain-extraction': domainExtractionModule,
-  'contact-extraction': contactExtractionModule,
 };

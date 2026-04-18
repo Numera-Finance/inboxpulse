@@ -137,11 +137,14 @@ export function getSignalFromClassification(classification: EmailClassification)
 // =============================================================================
 
 /**
- * Analysis types that can be enabled/disabled per tenant
+ * LLM analysis types that can be enabled/disabled per tenant.
+ *
+ * Note: domain extraction and contact extraction are NOT analyses — they are
+ * pure regex performed on every email and returned in the `extracted` field of
+ * the /analyze response. They were previously listed here as "always run"
+ * pseudo-analyses; that was misleading and has been removed.
  */
 export type AnalysisType =
-  | 'domain-extraction'      // Always run (sync)
-  | 'contact-extraction'     // Always run (sync)
   | 'signature-extraction'   // Conditional (if signature detected)
   | 'sentiment'              // Conditional (if enabled)
   | 'escalation'             // Conditional (if enabled)
@@ -187,8 +190,6 @@ export interface AnalysisConfig {
  */
 export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
   enabledAnalyses: {
-    'domain-extraction': true,      // Always enabled
-    'contact-extraction': true,     // Always enabled
     'signature-extraction': true,   // Enable signature extraction
     'sentiment': true,               // Enable sentiment analysis
     'escalation': false,              // Disabled — negative sentiment drives escalation workflow
@@ -198,14 +199,6 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'competitor': false,              // Enable competitor mentions
   },
   modelConfigs: {
-    'domain-extraction': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
-    },
-    'contact-extraction': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
-    },
     'signature-extraction': {
       primary: 'gemini-2.5-flash',
       fallback: 'gemini-2.0-flash-lite',
@@ -236,8 +229,6 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     },
   },
   promptVersions: {
-    'domain-extraction': 'v1.0',
-    'contact-extraction': 'v1.0',
     'signature-extraction': 'v1.0',
     'sentiment': 'v1.1',
     'escalation': 'v1.0',
@@ -247,8 +238,6 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'competitor': 'v1.0',
   },
   analysisSettings: {
-    'domain-extraction': {},
-    'contact-extraction': {},
     'signature-extraction': {
       requireLLMIfRegexFieldsMissing: 2,
       alwaysUseLLM: false,

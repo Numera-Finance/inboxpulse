@@ -132,12 +132,8 @@ since we don't log `cachedInputTokens` we can't tell.
 
 ## Diagnostic scripts
 
-- `apps/analysis/check-gemini-cache.ts` — sends the same prompt prefix multiple
-  times to verify Gemini implicit cache behaviour (today: not firing on test
-  prompts because they're below the 4096-token threshold).
-- `apps/api/debug-extractor-vs-llm.ts` — compares talon's signature slice to
-  what the LLM extracts on a sample of emails.
-- `apps/api/debug-signature-proposal.ts` — dumps proposed signature inputs to a
-  file for manual review.
+- `scripts/diagnostic/check-gemini-cache.ts` — sends the same prompt prefix
+  multiple times to verify Gemini implicit cache behaviour (today: not firing
+  on test prompts because they're below the 4096-token threshold).
 - `packages/database/debug-escalation-customer.ts` — explains why a specific
   email was attributed to the customer it was attributed to.

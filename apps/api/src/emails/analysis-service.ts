@@ -80,7 +80,6 @@ interface CollectedData {
 
   // Data prepared for DB writes during the transaction
   participantsToCreate?: NewEmailParticipant[];
-  contactsToEnsure?: Array<{ email: string; name?: string }>;
   ensuredContacts?: Array<{ id: string; email: string; name?: string; customerId?: string; created: boolean }>;
   /** Customers ensured in the transaction. Tracked so we can return counts to API callers. */
   ensuredCustomers?: Array<{ id: string; domains: string[] }>;
@@ -192,14 +191,10 @@ export class EmailAnalysisService {
   private async gatherDataFromExternalServices(ctx: AnalysisContext): Promise<CollectedData> {
     const data: CollectedData = {};
 
-    // Step 2a: Prepare participant list for in-transaction contact creation.
-    //          (Independent of /analyze — operates on the raw participant arrays.)
-    data.contactsToEnsure = this.collectEmailParticipantsForContacts(ctx.email);
-
-    // Step 2b: Strip quoted content / surface signature for analyses.
+    // Step 2a: Strip quoted content / surface signature for analyses.
     this.extractEmailContent(ctx);
 
-    // Step 2c: Cheap keyword-based analyses (in-process; resolves some signals
+    // Step 2b: Cheap keyword-based analyses (in-process; resolves some signals
     //          without an LLM call).
     const keywordResults = await this.runKeywordAnalysis(ctx);
     const excludeTypes = new Set(Object.keys(keywordResults));
@@ -493,9 +488,10 @@ export class EmailAnalysisService {
       'Starting database transaction for all writes'
     );
 
-    // Step 0: Ensure users exist for tenant domain email addresses
-    // This runs outside the transaction since user creation is idempotent
-    const participants = this.collectEmailParticipantsForContacts(ctx.email);
+    // Step 0: Ensure users exist for tenant domain email addresses.
+    //         Runs outside the transaction since user creation is idempotent.
+    //         Participants come from the same /analyze extraction as everything else.
+    const participants = data.extracted?.contacts ?? [];
     await this.userService.ensureUsersFromEmails(ctx.tenantId, participants);
 
     try {
@@ -515,7 +511,7 @@ export class EmailAnalysisService {
           tx,
           ctx.tenantId,
           ctx.email,
-          data.contactsToEnsure || []
+          data.extracted?.contacts ?? []
         );
         data.ensuredContacts = ensuredContacts;
 
@@ -1125,8 +1121,8 @@ export class EmailAnalysisService {
     if (!senderEntry) return;
 
     try {
+      // Refine path: signatureCompany wins, defaultName not needed.
       await this.customerService.ensureCustomerForEmail(tx, ctx.tenantId, senderDomain, {
-        defaultName: senderEntry.inferredName,
         signatureCompany: company,
       });
     } catch (error: any) {
@@ -1325,56 +1321,6 @@ export class EmailAnalysisService {
       );
       return undefined;
     }
-  }
-
-  /**
-   * Collect email participants for contact creation
-   */
-  private collectEmailParticipantsForContacts(
-    email: Email
-  ): Array<{ email: string; name?: string }> {
-    const participants: Array<{ email: string; name?: string }> = [];
-    const seen = new Set<string>();
-
-    if (email.from?.email) {
-      const emailLower = email.from.email.toLowerCase();
-      if (!seen.has(emailLower)) {
-        seen.add(emailLower);
-        participants.push({ email: email.from.email, name: email.from.name });
-      }
-    }
-
-    for (const to of email.tos || []) {
-      if (to.email) {
-        const emailLower = to.email.toLowerCase();
-        if (!seen.has(emailLower)) {
-          seen.add(emailLower);
-          participants.push({ email: to.email, name: to.name });
-        }
-      }
-    }
-
-    for (const cc of email.ccs || []) {
-      if (cc.email) {
-        const emailLower = cc.email.toLowerCase();
-        if (!seen.has(emailLower)) {
-          seen.add(emailLower);
-          participants.push({ email: cc.email, name: cc.name });
-        }
-      }
-    }
-
-    for (const bcc of email.bccs || []) {
-      if (bcc.email) {
-        const emailLower = bcc.email.toLowerCase();
-        if (!seen.has(emailLower)) {
-          seen.add(emailLower);
-          participants.push({ email: bcc.email, name: bcc.name });
-        }
-      }
-    }
-
-    return participants;
   }
 
   /**

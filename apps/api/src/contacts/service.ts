@@ -36,6 +36,35 @@ export const signatureEnrichmentResultSchema = z.object({
 
 export type SignatureEnrichmentResult = z.infer<typeof signatureEnrichmentResultSchema>;
 
+/**
+ * Sender ownership guard. Returns true when the LLM-extracted signature
+ * appears to belong to the email's sender, false when it clearly belongs to
+ * a different person (an embedded forwarded/quoted signature).
+ *
+ * Defense-in-depth in case the LLM didn't apply its own ownership rule. The
+ * rule is conservative: only reject when the signature email differs from the
+ * sender both in mailbox AND in domain. Mailbox-only differences (e.g.
+ * sender `mike@foo.com` with sig `mike.r@foo.com`) are accepted because
+ * same-domain mismatches can be a legitimate alias or formatting variation.
+ *
+ * Inputs are case-insensitive; whitespace is trimmed.
+ */
+export function signatureBelongsToSender(
+  signatureEmail: string | undefined | null,
+  senderEmail: string
+): boolean {
+  if (!senderEmail) return false; // can't validate without a sender
+  const sigEmail = signatureEmail?.trim().toLowerCase();
+  if (!sigEmail) return true; // no claim to verify; accept
+  const sender = senderEmail.toLowerCase();
+  if (sigEmail === sender) return true; // exact match
+  const senderDomain = sender.split('@')[1] ?? '';
+  const sigDomain = sigEmail.split('@')[1] ?? '';
+  if (!senderDomain || !sigDomain) return true; // malformed inputs; don't reject
+  if (senderDomain === sigDomain) return true; // same domain, mailbox alias
+  return false;
+}
+
 @injectable()
 export class ContactService {
   constructor(
@@ -264,29 +293,18 @@ export class ContactService {
       return null;
     }
 
-    // Sender ownership guard: defense in depth in case the LLM didn't apply the
-    // ownership rule itself. If the signature carries an email address that is
-    // clearly someone else (different mailbox AND different domain than the
-    // sender), this is almost certainly an embedded forwarded/quoted signature
-    // (e.g., Sanjeevani's signature inside Kira's reply). Reject the whole
-    // extraction rather than attribute it to the wrong contact.
-    const sigEmail = signatureData.email?.trim().toLowerCase();
-    if (sigEmail && sigEmail !== senderEmail) {
-      const senderDomain = senderEmail.split('@')[1] ?? '';
-      const sigDomain = sigEmail.split('@')[1] ?? '';
-      if (senderDomain && sigDomain && senderDomain !== sigDomain) {
-        logger.info(
-          {
-            emailId,
-            senderEmail,
-            sigEmail,
-            tenantId,
-            logType: 'SIGNATURE_REJECTED_SENDER_MISMATCH',
-          },
-          'Signature email belongs to a different person, rejecting extraction'
-        );
-        return null;
-      }
+    if (!signatureBelongsToSender(signatureData.email, senderEmail)) {
+      logger.info(
+        {
+          emailId,
+          senderEmail,
+          sigEmail: signatureData.email?.trim().toLowerCase(),
+          tenantId,
+          logType: 'SIGNATURE_REJECTED_SENDER_MISMATCH',
+        },
+        'Signature email belongs to a different person, rejecting extraction'
+      );
+      return null;
     }
 
     // Check if we have any meaningful signature data to apply
