@@ -255,10 +255,10 @@ userRoutes.patch('/:id', requirePermission(Permission.USER_EDIT), async (c) => {
 });
 
 /**
- * PATCH /api/users/:id/active - Mark user as active
+ * PATCH /api/users/:id/activate - Mark user as active (rowStatus=0)
  * Requires USER_EDIT permission
  */
-userRoutes.patch('/:id/active', requirePermission(Permission.USER_EDIT), async (c) => {
+userRoutes.patch('/:id/activate', requirePermission(Permission.USER_EDIT), async (c) => {
   return handleGetRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
@@ -270,10 +270,10 @@ userRoutes.patch('/:id/active', requirePermission(Permission.USER_EDIT), async (
 });
 
 /**
- * PATCH /api/users/:id/inactive - Mark user as inactive
+ * PATCH /api/users/:id/deactivate - Mark user as inactive (rowStatus=1)
  * Requires USER_DEL permission (deactivating is a form of deletion)
  */
-userRoutes.patch('/:id/inactive', requirePermission(Permission.USER_DEL), async (c) => {
+userRoutes.patch('/:id/deactivate', requirePermission(Permission.USER_DEL), async (c) => {
   return handleGetRequestWithParams(
     c,
     z.object({ id: z.uuid() }),

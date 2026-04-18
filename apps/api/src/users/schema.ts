@@ -16,16 +16,9 @@ import { tenants } from '../tenants/schema';
 import { customers } from '../customers/schema';
 import { roles } from '../roles/schema';
 
-/**
- * Row status enum values
- */
-export const RowStatus = {
-  ACTIVE: 0,
-  INACTIVE: 1,
-  ARCHIVED: 2,
-} as const;
-
-export type RowStatusType = (typeof RowStatus)[keyof typeof RowStatus];
+// Re-export shared RowStatus enum
+export { RowStatus } from '@crm/shared';
+export type { RowStatusValue as RowStatusType } from '@crm/shared';
 
 /**
  * Users - Core user entity (merged from employees)
