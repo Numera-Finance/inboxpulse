@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils"
 import { type User } from "@/lib/types"
 import { TablePagination } from "@/components/ui/table-pagination"
 import { TransferUserDialog } from "./transfer-user-dialog"
-import { useTransferUser, useUpdateUser } from "@/lib/hooks"
+import { useTransferUser, useActivateUser, useDeactivateUser } from "@/lib/hooks"
 import { toast } from "sonner"
 
 interface UserTableProps {
@@ -42,7 +42,8 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [transferUser, setTransferUser] = React.useState<User | null>(null)
   const transferMutation = useTransferUser()
-  const updateUserMutation = useUpdateUser()
+  const activateMutation = useActivateUser()
+  const deactivateMutation = useDeactivateUser()
 
   // Use server-side pagination if props are provided
   const isServerSide = pagination !== undefined && onPaginationChange !== undefined
@@ -209,13 +210,10 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
                     className="text-destructive"
                     onClick={(e) => {
                       e.stopPropagation()
-                      updateUserMutation.mutate(
-                        { id: user.id, data: { canLogin: false } },
-                        {
-                          onSuccess: () => toast.success(`${user.name} has been deactivated`),
-                          onError: () => toast.error("Failed to deactivate user"),
-                        }
-                      )
+                      deactivateMutation.mutate(user.id, {
+                        onSuccess: () => toast.success(`${user.name} has been deactivated`),
+                        onError: () => toast.error("Failed to deactivate user"),
+                      })
                     }}
                   >
                     Deactivate
@@ -224,13 +222,10 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
                   <DropdownMenuItem
                     onClick={(e) => {
                       e.stopPropagation()
-                      updateUserMutation.mutate(
-                        { id: user.id, data: { canLogin: true } },
-                        {
-                          onSuccess: () => toast.success(`${user.name} has been activated`),
-                          onError: () => toast.error("Failed to activate user"),
-                        }
-                      )
+                      activateMutation.mutate(user.id, {
+                        onSuccess: () => toast.success(`${user.name} has been activated`),
+                        onError: () => toast.error("Failed to activate user"),
+                      })
                     }}
                   >
                     Activate

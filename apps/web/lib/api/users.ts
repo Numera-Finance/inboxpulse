@@ -59,17 +59,17 @@ export async function updateUser(
 }
 
 /**
- * Mark a user as active
+ * Activate a user (rowStatus = active)
  */
-export async function markUserActive(id: string, signal?: AbortSignal): Promise<UserResponse> {
-  return getUserClient().markActive(id, signal);
+export async function activateUser(id: string, signal?: AbortSignal): Promise<UserResponse> {
+  return getUserClient().activate(id, signal);
 }
 
 /**
- * Mark a user as inactive
+ * Deactivate a user (rowStatus = inactive)
  */
-export async function markUserInactive(id: string, signal?: AbortSignal): Promise<UserResponse> {
-  return getUserClient().markInactive(id, signal);
+export async function deactivateUser(id: string, signal?: AbortSignal): Promise<UserResponse> {
+  return getUserClient().deactivate(id, signal);
 }
 
 /**

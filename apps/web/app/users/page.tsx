@@ -5,6 +5,7 @@ import { useParams, useNavigate } from "react-router-dom"
 import { Search, Plus, Upload } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ViewToggle } from "@/components/view-toggle"
+import { cn } from "@/lib/utils"
 import { UserCard } from "@/components/users/user-card"
 import { UserTable } from "@/components/users/user-table"
 import { UserDrawer } from "@/components/user-drawer"
@@ -45,6 +46,7 @@ export default function UsersPage() {
   const navigate = useNavigate()
 
   const [view, setView] = React.useState<"grid" | "table">("table")
+  const [statusFilter, setStatusFilter] = React.useState<"active" | "inactive">("active")
   const [searchQuery, setSearchQuery] = React.useState("")
   const [addDrawerOpen, setAddDrawerOpen] = React.useState(false)
   const [importDialogOpen, setImportDialogOpen] = React.useState(false)
@@ -57,16 +59,19 @@ export default function UsersPage() {
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
-  // Reset pagination when search changes
+  // Reset pagination when search or status filter changes
   React.useEffect(() => {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
-  }, [debouncedSearch])
+  }, [debouncedSearch, statusFilter])
 
   // Fetch users using React Query with server-side pagination
   const { data, isLoading, isError, error } = useUsers({
-    queries: debouncedSearch
-      ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
-      : [],
+    queries: [
+      { field: 'rowStatus', operator: SearchOperator.EQUALS, value: statusFilter === "active" ? 0 : 1 },
+      ...(debouncedSearch
+        ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
+        : []),
+    ],
     sortOrder: 'asc',
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
@@ -248,7 +253,27 @@ export default function UsersPage() {
               className="pl-9"
             />
           </div>
-          <ViewToggle view={view} onViewChange={setView} />
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-lg border border-border bg-muted p-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStatusFilter("active")}
+                className={cn("h-8 px-3", statusFilter === "active" && "bg-background shadow-sm")}
+              >
+                Active
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStatusFilter("inactive")}
+                className={cn("h-8 px-3", statusFilter === "inactive" && "bg-background shadow-sm")}
+              >
+                Inactive
+              </Button>
+            </div>
+            <ViewToggle view={view} onViewChange={setView} />
+          </div>
         </div>
 
         {/* Loading state */}

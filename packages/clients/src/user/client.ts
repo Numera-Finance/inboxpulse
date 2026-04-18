@@ -95,11 +95,11 @@ export class UserClient extends BaseClient {
   }
 
   /**
-   * Mark user as active
+   * Activate user (sets rowStatus to active)
    */
-  async markActive(id: string, signal?: AbortSignal): Promise<UserResponse> {
+  async activate(id: string, signal?: AbortSignal): Promise<UserResponse> {
     const response = await this.patch<ApiResponse<UserResponse>>(
-      `/api/users/${id}/mark-active`,
+      `/api/users/${id}/activate`,
       {},
       signal
     );
@@ -110,11 +110,11 @@ export class UserClient extends BaseClient {
   }
 
   /**
-   * Mark user as inactive
+   * Deactivate user (sets rowStatus to inactive)
    */
-  async markInactive(id: string, signal?: AbortSignal): Promise<UserResponse> {
+  async deactivate(id: string, signal?: AbortSignal): Promise<UserResponse> {
     const response = await this.patch<ApiResponse<UserResponse>>(
-      `/api/users/${id}/mark-inactive`,
+      `/api/users/${id}/deactivate`,
       {},
       signal
     );
