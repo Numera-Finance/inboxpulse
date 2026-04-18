@@ -6,7 +6,7 @@ import { EmailRepository } from './repository';
 import { ThreadAnalysisService } from './thread-analysis-service';
 import { createEmailAnalysisRecord } from './analysis-utils';
 import type { Email, AnalysisType } from '@crm/shared';
-import { Signal } from '@crm/shared';
+import { Signal, isPersonalEmailDomain, inferCustomerNameFromDomain } from '@crm/shared';
 import type { AnalysisType as EmailAnalysisType } from './analysis-schema';
 import { EmailAnalysisStatus, type NewEmailParticipant } from './schema';
 import { UserService } from '../users/service';
@@ -16,53 +16,27 @@ import { TaskService } from '../tasks/service';
 import { TenantService } from '../tenants/service';
 import { KeywordService } from '../keywords/service';
 import { logger } from '../utils/logger';
-import { extractLatestReply, hasAnalyzableSignatureContent } from './extraction/extractor';
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * Personal email providers to exclude from customer creation
- * Contacts from these domains are created but not linked to customers
- */
-const PERSONAL_DOMAINS = new Set([
-  'gmail.com',
-  'googlemail.com',
-  'outlook.com',
-  'hotmail.com',
-  'live.com',
-  'msn.com',
-  'yahoo.com',
-  'yahoo.co.uk',
-  'yahoo.co.in',
-  'ymail.com',
-  'aol.com',
-  'icloud.com',
-  'me.com',
-  'mac.com',
-  'protonmail.com',
-  'proton.me',
-  'zoho.com',
-  'mail.com',
-  'gmx.com',
-  'gmx.net',
-  'fastmail.com',
-  'tutanota.com',
-  'hey.com',
-]);
+import { extractLatestReply } from './extraction/extractor';
 
 // =============================================================================
 // Types
 // =============================================================================
 
+/**
+ * Extracted participants returned from the analysis service. Mirrors the
+ * `extracted` payload of /analyze. Used to drive customer + contact writes
+ * in the api transaction.
+ */
+interface ExtractedPayload {
+  domains: Array<{ domain: string; inferredName: string }>;
+  contacts: Array<{ email: string; name?: string }>;
+}
+
 export interface AnalysisExecutionResult {
-  domainResult?: {
-    customers?: Array<{ id: string; domains: string[] }>;
-  };
-  contactResult?: {
-    contacts?: Array<{ id: string; email: string; name?: string; customerId?: string }>;
-  };
+  /** Customers ensured during the email's transaction (created or pre-existing). */
+  customers?: Array<{ id: string; domains: string[] }>;
+  /** Contacts ensured during the email's transaction. */
+  contacts?: Array<{ id: string; email: string; name?: string; customerId?: string }>;
   analysisResults?: Record<string, any>;
 }
 
@@ -93,20 +67,22 @@ interface AnalysisContext {
 }
 
 /**
- * Data collected during Phase 1 (gather phase)
- * This data will be written to DB in Phase 2 (commit phase)
+ * Data collected during Phase 1 (gather phase) from a single /analyze call.
+ * Phase 2 takes this and persists everything in a single transaction.
  */
 interface CollectedData {
-  // From external API calls
-  domainResult?: { customers?: Array<{ id: string; domains: string[] }> };
-  contactResult?: { contacts?: Array<{ id: string; email: string; name?: string; customerId?: string }> };
+  /** Pure-data extraction (domains + contacts) from /analyze response. */
+  extracted?: ExtractedPayload;
+  /** LLM analysis results from /analyze response (sentiment, escalation, …, signature-extraction). */
   analysisResults?: Record<string, any>;
+  /** Email classifier verdict (business / spam / marketing / …) from /analyze response. */
   classificationResult?: ClassificationResult;
 
-  // Data prepared for DB writes
+  // Data prepared for DB writes during the transaction
   participantsToCreate?: NewEmailParticipant[];
-  contactsToEnsure?: Array<{ email: string; name?: string }>;
   ensuredContacts?: Array<{ id: string; email: string; name?: string; customerId?: string; created: boolean }>;
+  /** Customers ensured in the transaction. Tracked so we can return counts to API callers. */
+  ensuredCustomers?: Array<{ id: string; domains: string[] }>;
 }
 
 // =============================================================================
@@ -183,8 +159,13 @@ export class EmailAnalysisService {
 
     // Build result
     ctx.result = {
-      domainResult: collectedData.domainResult,
-      contactResult: collectedData.contactResult,
+      customers: collectedData.ensuredCustomers,
+      contacts: collectedData.ensuredContacts?.map((c) => ({
+        id: c.id,
+        email: c.email,
+        name: c.name,
+        customerId: c.customerId,
+      })),
       analysisResults: collectedData.analysisResults,
     };
 
@@ -210,30 +191,26 @@ export class EmailAnalysisService {
   private async gatherDataFromExternalServices(ctx: AnalysisContext): Promise<CollectedData> {
     const data: CollectedData = {};
 
-    // Step 2a: Extract domains (external API call)
-    data.domainResult = await this.callDomainExtraction(ctx);
-
-    // Step 2b: Extract contacts (external API call)
-    data.contactResult = await this.callContactExtraction(ctx, data.domainResult?.customers);
-
-    // Step 2c: Prepare contacts to ensure for all email participants
-    data.contactsToEnsure = this.collectEmailParticipantsForContacts(ctx.email);
-
-    // Step 2d: Extract reply and signature from email body
-    // This strips quoted content and separates signature for token savings
+    // Step 2a: Strip quoted content / surface signature for analyses.
     this.extractEmailContent(ctx);
 
-    // Step 2d½: Check keyword-based analysis before calling LLM
+    // Step 2b: Cheap keyword-based analyses (in-process; resolves some signals
+    //          without an LLM call).
     const keywordResults = await this.runKeywordAnalysis(ctx);
     const excludeTypes = new Set(Object.keys(keywordResults));
 
-    // Step 2e: Run main analyses (external API call) with classification
-    // Exclude types already resolved by keywords
-    const { results, classificationResult } = await this.callMainAnalyses(ctx, excludeTypes);
+    // Step 2d: ONE call to apps/analysis. Returns:
+    //          - extracted: { domains, contacts } — used by Phase 2 to ensure customers/contacts.
+    //          - results:   { sentiment, escalation, …, signature-extraction }
+    //          - filterResult: classification verdict (business / spam / …)
+    //          apps/analysis does NOT touch the business DB; everything is persisted
+    //          here in apps/api inside the Phase-2 transaction.
+    const { extracted, results, classificationResult } = await this.callMainAnalyses(ctx, excludeTypes);
+    data.extracted = extracted;
     data.classificationResult = classificationResult;
 
     // Discard keyword results for non-business emails — keyword matches on
-    // marketing/transactional/spam/automated emails produce false signals
+    // marketing/transactional/spam/automated emails produce false signals.
     const NON_BUSINESS_CATEGORIES = ['spam', 'marketing', 'transactional', 'automated'];
     if (classificationResult?.category && NON_BUSINESS_CATEGORIES.includes(classificationResult.category)) {
       data.analysisResults = {};
@@ -247,58 +224,45 @@ export class EmailAnalysisService {
   /**
    * Extract reply and signature from email body
    * Updates ctx.email with:
-   * - body: stripped of quoted content (reply only)
-   * - signature: only if it has analyzable content (phone, title, company, etc.)
+   * - body: stripped of quoted content (reply only, signature also stripped if talon detected one)
+   * - signature: the dequoted reply WITH signature attached. We let the LLM find the signature
+   *   inside this text rather than trying to slice it out heuristically (talon's signature
+   *   slice is unreliable and was previously dropping ~84% of real signatures).
    */
   private extractEmailContent(ctx: AnalysisContext): void {
     const originalBody = ctx.email.body;
     if (!originalBody) return;
 
-    // Check if body looks like HTML
     const isHtml = /<\/?[a-z][\s\S]*>/i.test(originalBody);
 
     try {
       const extraction = extractLatestReply(originalBody, isHtml);
 
-      // Update body with extracted reply (quotes stripped)
+      // Build the signature input: dequoted reply + (talon's signature slice if any).
+      // If talon's signature slice already trails the messageBody (or is empty), no-op.
+      const sig = extraction.signature?.trim();
+      const reply = extraction.messageBody.trim();
+      const signatureInput =
+        sig && !reply.endsWith(sig) ? `${reply}\n\n${sig}` : reply;
+
       ctx.email = {
         ...ctx.email,
         body: extraction.messageBody,
+        signature: signatureInput || undefined,
       };
 
-      // Only set signature if it has analyzable content (not just a name)
-      if (extraction.signature && hasAnalyzableSignatureContent(extraction.signature)) {
-        ctx.email = {
-          ...ctx.email,
-          signature: extraction.signature,
-        };
-
-        logger.debug(
-          {
-            tenantId: ctx.tenantId,
-            emailId: ctx.emailId,
-            originalLength: extraction.originalLength,
-            replyLength: extraction.messageBody.length,
-            signatureLength: extraction.signature.length,
-            tokenSavingsPercent: extraction.tokenSavingsPercent,
-            logType: 'EMAIL_EXTRACTION_WITH_SIGNATURE',
-          },
-          'Email content extracted with analyzable signature'
-        );
-      } else {
-        logger.debug(
-          {
-            tenantId: ctx.tenantId,
-            emailId: ctx.emailId,
-            originalLength: extraction.originalLength,
-            replyLength: extraction.messageBody.length,
-            tokenSavingsPercent: extraction.tokenSavingsPercent,
-            hasSignature: !!extraction.signature,
-            logType: 'EMAIL_EXTRACTION_NO_SIGNATURE',
-          },
-          'Email content extracted (no analyzable signature)'
-        );
-      }
+      logger.debug(
+        {
+          tenantId: ctx.tenantId,
+          emailId: ctx.emailId,
+          originalLength: extraction.originalLength,
+          replyLength: extraction.messageBody.length,
+          signatureInputLength: signatureInput.length,
+          tokenSavingsPercent: extraction.tokenSavingsPercent,
+          logType: 'EMAIL_EXTRACTION',
+        },
+        'Email content extracted'
+      );
     } catch (error: any) {
       logger.warn(
         { error: error.message, tenantId: ctx.tenantId, emailId: ctx.emailId },
@@ -418,85 +382,20 @@ export class EmailAnalysisService {
   }
 
   /**
-   * Call domain extraction API
+   * Call /analyze on apps/analysis. Returns the LLM analysis results, the
+   * classifier verdict, AND the regex-extracted participant data (domains +
+   * contacts) used by Phase 2 to drive customer + contact persistence.
+   *
+   * apps/analysis is a pure analyzer — it does NOT touch the business DB.
    */
-  private async callDomainExtraction(
-    ctx: AnalysisContext
-  ): Promise<{ customers?: Array<{ id: string; domains: string[] }> } | undefined> {
-    const startTime = Date.now();
-
-    logger.info(
-      { tenantId: ctx.tenantId, emailId: ctx.emailId, logType: 'DOMAIN_EXTRACTION_START' },
-      'Starting domain extraction'
-    );
-
-    try {
-      const result = await this.analysisClient.extractDomains(ctx.tenantId, ctx.email);
-
-      logger.info(
-        {
-          tenantId: ctx.tenantId,
-          emailId: ctx.emailId,
-          durationMs: Date.now() - startTime,
-          customersCreated: result?.customers?.length || 0,
-          logType: 'DOMAIN_EXTRACTION_COMPLETE',
-        },
-        'Domain extraction completed'
-      );
-
-      return result;
-    } catch (error: any) {
-      logger.error(
-        { tenantId: ctx.tenantId, emailId: ctx.emailId, error: error.message },
-        'Domain extraction FAILED'
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Call contact extraction API
-   */
-  private async callContactExtraction(
+  private async callMainAnalyses(
     ctx: AnalysisContext,
-    customers?: Array<{ id: string; domains: string[] }>
-  ): Promise<{ contacts?: Array<{ id: string; email: string; name?: string; customerId?: string }> } | undefined> {
-    const startTime = Date.now();
-
-    logger.info(
-      { tenantId: ctx.tenantId, emailId: ctx.emailId, logType: 'CONTACT_EXTRACTION_START' },
-      'Starting contact extraction'
-    );
-
-    try {
-      const result = await this.analysisClient.extractContacts(ctx.tenantId, ctx.email, customers);
-
-      logger.info(
-        {
-          tenantId: ctx.tenantId,
-          emailId: ctx.emailId,
-          durationMs: Date.now() - startTime,
-          contactsCreated: result?.contacts?.length || 0,
-          logType: 'CONTACT_EXTRACTION_COMPLETE',
-        },
-        'Contact extraction completed'
-      );
-
-      return result;
-    } catch (error: any) {
-      logger.error(
-        { tenantId: ctx.tenantId, emailId: ctx.emailId, error: error.message },
-        'Contact extraction FAILED'
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Call main analyses API (sentiment, escalation, signature-extraction)
-   * Also runs email classification via filter (classify but don't skip)
-   */
-  private async callMainAnalyses(ctx: AnalysisContext, excludeTypes?: Set<string>): Promise<{ results: Record<string, any>; classificationResult?: ClassificationResult }> {
+    excludeTypes?: Set<string>
+  ): Promise<{
+    results: Record<string, any>;
+    classificationResult?: ClassificationResult;
+    extracted: ExtractedPayload;
+  }> {
     const startTime = Date.now();
 
     // Filter out types already resolved by keyword analysis
@@ -508,19 +407,16 @@ export class EmailAnalysisService {
           { tenantId: ctx.tenantId, emailId: ctx.emailId, logType: 'SKIP_LLM_ALL_KEYWORD_RESOLVED' },
           'All analysis types resolved by keywords, skipping LLM call'
         );
-        return { results: {} };
-      }
-    }
-
-    // Filter out signature-extraction if no signature available (saves tokens)
-    if (analysisTypes && !ctx.email.signature) {
-      const filtered = analysisTypes.filter(t => t !== 'signature-extraction');
-      if (filtered.length < analysisTypes.length) {
-        logger.debug(
-          { tenantId: ctx.tenantId, emailId: ctx.emailId, logType: 'SKIP_SIGNATURE_ANALYSIS' },
-          'Skipping signature-extraction (no analyzable signature)'
-        );
-        analysisTypes = filtered.length > 0 ? filtered : undefined;
+        // Even when we skip LLM, we still need extracted participants from
+        // /analyze for the in-transaction customer/contact creation. Make a
+        // minimal call with no analysis types to get just the extraction.
+        const extractionOnly = await this.analysisClient.analyze(ctx.tenantId, ctx.email, {
+          analysisTypes: [],
+        });
+        return {
+          results: {},
+          extracted: extractionOnly?.extracted ?? { domains: [], contacts: [] },
+        };
       }
     }
 
@@ -548,6 +444,7 @@ export class EmailAnalysisService {
 
       const results = response?.results || {};
       const classificationResult = response?.filterResult;
+      const extracted: ExtractedPayload = response?.extracted ?? { domains: [], contacts: [] };
 
       logger.info(
         {
@@ -555,6 +452,8 @@ export class EmailAnalysisService {
           emailId: ctx.emailId,
           durationMs: Date.now() - startTime,
           analysisTypes: Object.keys(results),
+          extractedDomains: extracted.domains.length,
+          extractedContacts: extracted.contacts.length,
           classification: classificationResult?.category,
           classificationConfidence: classificationResult?.confidence,
           classificationStage: classificationResult?.stage,
@@ -563,13 +462,13 @@ export class EmailAnalysisService {
         'Main analysis completed'
       );
 
-      return { results, classificationResult };
+      return { results, classificationResult, extracted };
     } catch (error: any) {
       logger.warn(
         { error: error.message, tenantId: ctx.tenantId, emailId: ctx.emailId },
         'Main analysis failed (non-blocking)'
       );
-      return { results: {} };
+      return { results: {}, extracted: { domains: [], contacts: [] } };
     }
   }
 
@@ -589,39 +488,43 @@ export class EmailAnalysisService {
       'Starting database transaction for all writes'
     );
 
-    // Step 0: Ensure users exist for tenant domain email addresses
-    // This runs outside the transaction since user creation is idempotent
-    const participants = this.collectEmailParticipantsForContacts(ctx.email);
+    // Step 0: Ensure users exist for tenant domain email addresses.
+    //         Runs outside the transaction since user creation is idempotent.
+    //         Participants come from the same /analyze extraction as everything else.
+    const participants = data.extracted?.contacts ?? [];
     await this.userService.ensureUsersFromEmails(ctx.tenantId, participants);
 
     try {
       await this.db.transaction(async (tx) => {
-        // Step 1: Ensure all email participants have contacts and customers
+        // Step 1: Ensure customers exist for each non-personal participant
+        //         domain. Sender's customer name will be refined further down
+        //         from signature.company (if any).
+        data.ensuredCustomers = await this.ensureCustomersFromExtractedDomains(
+          tx,
+          ctx,
+          data.extracted?.domains || []
+        );
+
+        // Step 2: Ensure all email-participant contacts exist (links to
+        //         the customers we just ensured).
         const ensuredContacts = await this.ensureContactsInTransaction(
           tx,
           ctx.tenantId,
           ctx.email,
-          data.contactsToEnsure || []
+          data.extracted?.contacts ?? []
         );
+        data.ensuredContacts = ensuredContacts;
 
-        // Merge with contacts from external API
-        const allContacts = this.mergeContacts(
-          data.contactResult?.contacts || [],
-          ensuredContacts
-        );
-
-        // Step 2: Create email participants
+        // Step 3: Create email_participants rows
         await this.createEmailParticipantsInTransaction(
           tx,
           ctx.tenantId,
           ctx.emailId,
           ctx.email,
-          allContacts
+          ensuredContacts
         );
 
-        // Step 3: Update email signals (classification, sentiment, escalation, upsell, churn, etc.)
-        // Always run — classification signals must be stored even for non-business emails
-        // so TAT breach filter can exclude them
+        // Step 4: Update email signals (classification + analyses)
         await this.updateEmailSignalsInTransaction(
           tx,
           ctx.emailId,
@@ -629,7 +532,7 @@ export class EmailAnalysisService {
           data.classificationResult
         );
 
-        // Step 4: Persist analysis results
+        // Step 5: Persist analysis results
         if (data.analysisResults && Object.keys(data.analysisResults).length > 0) {
           await this.persistAnalysisResultsInTransaction(
             tx,
@@ -638,17 +541,35 @@ export class EmailAnalysisService {
             data.analysisResults
           );
 
-          // Step 5: Enrich contacts from signature
+          // Step 6: Enrich contacts from signature data
           await this.enrichContactsFromSignatureInTransaction(
             tx,
             ctx.tenantId,
             ctx.emailId,
             ctx.email,
             data.analysisResults['signature-extraction'],
-            allContacts
+            ensuredContacts
           );
 
-          // Step 6: Update thread summaries
+          // Step 7: Refine sender's auto-created customer name from
+          //         signature.company. Same single entry point as Step 1, so
+          //         the suffix logic and race-safety live in one place.
+          await this.refineCustomerNameFromSignature(
+            tx,
+            ctx,
+            data.extracted?.domains || [],
+            data.analysisResults['signature-extraction']
+          );
+
+          // Step 8: Thread summaries.
+          //
+          // ⚠ NOT tx-aware. ThreadAnalysisService.updateThreadSummaries opens
+          // its own transactions (see updateThreadSummariesInTransaction below)
+          // and writes outside the email tx — so a rollback here would NOT roll
+          // them back. Currently `useThreadSummaries` is hard-coded to false at
+          // both call sites (routes.ts and inngest/functions.ts), so this code
+          // path is effectively dead. Do NOT enable thread summaries until
+          // ThreadAnalysisService is refactored to accept and use `tx`.
           if (ctx.useThreadSummaries) {
             await this.updateThreadSummariesInTransaction(
               tx,
@@ -661,7 +582,7 @@ export class EmailAnalysisService {
           }
         }
 
-        // Step 7: Always mark email as analyzed (regardless of sentiment)
+        // Step 9: Mark email as analyzed
         await this.emailRepo.updateAnalysisStatus(ctx.emailId, EmailAnalysisStatus.Completed, tx);
       });
 
@@ -757,17 +678,20 @@ export class EmailAnalysisService {
         let contact = await this.contactService.findByEmail(tenantId, emailLower);
         let created = false;
 
-        // Find customer for this participant
-        // Priority: 1) Domain lookup, 2) Existing contact's customer, 3) Create new
-        if (domain && !PERSONAL_DOMAINS.has(domain)) {
+        // Find customer for this participant.
+        // Priority: 1) Domain lookup (sees customers ensured in Step 1 via tx),
+        //           2) Existing contact's customer link (manual mapping),
+        //           3) Last-resort ensureCustomerForEmail (race-safe + suffixed
+        //              — should rarely fire because Step 1 already ensured
+        //              customers for every non-personal extracted domain).
+        if (domain && !isPersonalEmailDomain(domain)) {
           try {
-            // First try to find existing customer by domain
-            let customer = await this.customerService.findByDomain(tenantId, domain);
+            // tx-aware lookup so we see the customer Step 1 just created in
+            // this transaction.
+            let customer = await this.customerService.findByDomain(tenantId, domain, tx);
 
             if (!customer && contact?.customerId) {
-              // Fallback: Use existing contact's customer link
-              // Handles cases where contact was manually linked to a customer
-              // whose domain doesn't match (e.g., consultant with personal email)
+              // Fallback: use the existing contact's manual customer link.
               customerId = contact.customerId;
               logger.info(
                 {
@@ -781,31 +705,32 @@ export class EmailAnalysisService {
                 'Using customer from existing contact (domain lookup found no match)'
               );
             } else if (!customer) {
-              // Create new customer for this domain
-              const inferredName = this.inferCustomerName(domain);
-              customer = await this.customerService.createFromDomain(tenantId, inferredName, domain);
+              // Last-resort: Step 1 didn't ensure a customer for this domain
+              // (e.g., the domain wasn't in extracted.domains for some reason).
+              // Use the same single entry point so we get the advisory lock,
+              // (Auto) suffix, and idempotency for free.
+              customer = await this.customerService.ensureCustomerForEmail(
+                tx,
+                tenantId,
+                domain,
+                { defaultName: inferCustomerNameFromDomain(domain) }
+              );
               customerId = customer.id;
             } else {
               customerId = customer.id;
             }
           } catch (customerError: any) {
-            // If customer creation fails (e.g., unique constraint), try to find it again
-            if (customerError.code === '23505') {
-              const existingCustomer = await this.customerService.findByDomain(tenantId, domain);
-              customerId = existingCustomer?.id;
-            } else {
-              logger.warn(
-                {
-                  tenantId,
-                  domain,
-                  error: customerError.message,
-                },
-                'Failed to create customer for domain, contact will be created without customer link'
-              );
-            }
+            logger.warn(
+              {
+                tenantId,
+                domain,
+                error: customerError.message,
+              },
+              'Failed to ensure customer for domain, contact will be created without customer link'
+            );
           }
         } else if (contact?.customerId) {
-          // Personal email domain but contact has a customer link - use it
+          // Personal email domain but contact has a customer link — use it.
           customerId = contact.customerId;
         }
 
@@ -898,18 +823,6 @@ export class EmailAnalysisService {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * Infer customer name from domain
-   * e.g., "acme-corp" -> "Acme Corp"
-   */
-  private inferCustomerName(domain: string): string {
-    const namePart = domain.split('.')[0];
-    return namePart
-      .split('-')
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ');
   }
 
   /**
@@ -1116,7 +1029,10 @@ export class EmailAnalysisService {
   }
 
   /**
-   * Enrich contacts from signature (within transaction)
+   * Enrich contacts from signature (within transaction). Passes the tx all
+   * the way through to contactRepository, so writes participate in the email
+   * transaction — if the email tx rolls back, the contact enrichment is
+   * rolled back too.
    */
   private async enrichContactsFromSignatureInTransaction(
     tx: Transaction,
@@ -1130,20 +1046,91 @@ export class EmailAnalysisService {
       return;
     }
 
-    // Use ContactService - it has its own upsert logic
-    // TODO: Refactor to accept transaction
     try {
       await this.contactService.enrichFromSignature(
         tenantId,
         emailId,
         email,
         signatureData,
-        contacts
+        contacts,
+        tx
       );
     } catch (error: any) {
       logger.warn(
         { error: error.message, tenantId, emailId },
         'Failed to enrich contacts from signature (non-blocking within transaction)'
+      );
+    }
+  }
+
+  /**
+   * Ensure a Customer row exists for each non-personal participant domain.
+   * Runs at the start of the email transaction so subsequent steps (contacts,
+   * email_participants) can safely reference the customer IDs.
+   *
+   * Single entry point: customerService.ensureCustomerForEmail. Same method
+   * used by the post-signature refinement step below.
+   */
+  private async ensureCustomersFromExtractedDomains(
+    tx: Transaction,
+    ctx: AnalysisContext,
+    domains: Array<{ domain: string; inferredName: string }>
+  ): Promise<Array<{ id: string; domains: string[] }>> {
+    const ensured: Array<{ id: string; domains: string[] }> = [];
+    for (const { domain, inferredName } of domains) {
+      try {
+        const customer = await this.customerService.ensureCustomerForEmail(
+          tx,
+          ctx.tenantId,
+          domain,
+          { defaultName: inferredName }
+        );
+        ensured.push({ id: customer.id, domains: [domain] });
+      } catch (error: any) {
+        logger.error(
+          { tenantId: ctx.tenantId, emailId: ctx.emailId, domain, error: error.message },
+          'Failed to ensure customer for domain (non-blocking)'
+        );
+      }
+    }
+    return ensured;
+  }
+
+  /**
+   * Refine the sender's auto-created customer name using `signature.company`.
+   * Goes through the same single entry point
+   * (CustomerService.ensureCustomerForEmail) that initial creation uses, so
+   * there is exactly one code path for creating or updating an auto-created
+   * customer from email context.
+   *
+   * Only fires when the sender's domain is in the extracted (non-personal)
+   * domain list — i.e., the customer we'd update was actually ensured above.
+   */
+  private async refineCustomerNameFromSignature(
+    tx: Transaction,
+    ctx: AnalysisContext,
+    extractedDomains: Array<{ domain: string; inferredName: string }>,
+    signatureData: SignatureData | undefined
+  ): Promise<void> {
+    const company = signatureData?.company?.trim();
+    if (!company) return;
+    const senderDomain = ctx.email.from?.email?.toLowerCase().split('@')[1];
+    if (!senderDomain) return;
+
+    // Only refine if the sender's domain was in the extracted set (i.e., a
+    // non-personal domain that we actually have a customer for).
+    const senderEntry = extractedDomains.find((d) => d.domain === senderDomain);
+    if (!senderEntry) return;
+
+    try {
+      // Refine path: signatureCompany wins, defaultName not needed.
+      await this.customerService.ensureCustomerForEmail(tx, ctx.tenantId, senderDomain, {
+        signatureCompany: company,
+      });
+    } catch (error: any) {
+      logger.warn(
+        { error: error.message, tenantId: ctx.tenantId, emailId: ctx.emailId },
+        'Failed to refine customer name from signature (non-blocking)'
       );
     }
   }
@@ -1339,56 +1326,6 @@ export class EmailAnalysisService {
   }
 
   /**
-   * Collect email participants for contact creation
-   */
-  private collectEmailParticipantsForContacts(
-    email: Email
-  ): Array<{ email: string; name?: string }> {
-    const participants: Array<{ email: string; name?: string }> = [];
-    const seen = new Set<string>();
-
-    if (email.from?.email) {
-      const emailLower = email.from.email.toLowerCase();
-      if (!seen.has(emailLower)) {
-        seen.add(emailLower);
-        participants.push({ email: email.from.email, name: email.from.name });
-      }
-    }
-
-    for (const to of email.tos || []) {
-      if (to.email) {
-        const emailLower = to.email.toLowerCase();
-        if (!seen.has(emailLower)) {
-          seen.add(emailLower);
-          participants.push({ email: to.email, name: to.name });
-        }
-      }
-    }
-
-    for (const cc of email.ccs || []) {
-      if (cc.email) {
-        const emailLower = cc.email.toLowerCase();
-        if (!seen.has(emailLower)) {
-          seen.add(emailLower);
-          participants.push({ email: cc.email, name: cc.name });
-        }
-      }
-    }
-
-    for (const bcc of email.bccs || []) {
-      if (bcc.email) {
-        const emailLower = bcc.email.toLowerCase();
-        if (!seen.has(emailLower)) {
-          seen.add(emailLower);
-          participants.push({ email: bcc.email, name: bcc.name });
-        }
-      }
-    }
-
-    return participants;
-  }
-
-  /**
    * Collect all email addresses from email with their directions
    */
   private collectEmailParticipants(
@@ -1422,25 +1359,6 @@ export class EmailAnalysisService {
     }
 
     return participants;
-  }
-
-  /**
-   * Merge contacts from API response with ensured contacts
-   */
-  private mergeContacts(
-    apiContacts: Array<{ id: string; email: string; name?: string; customerId?: string }>,
-    ensuredContacts: Array<{ id: string; email: string; name?: string; customerId?: string }>
-  ): Array<{ id: string; email: string; name?: string; customerId?: string }> {
-    const result = [...apiContacts];
-    const existingEmails = new Set(apiContacts.map((c) => c.email.toLowerCase()));
-
-    for (const contact of ensuredContacts) {
-      if (!existingEmails.has(contact.email.toLowerCase())) {
-        result.push(contact);
-      }
-    }
-
-    return result;
   }
 
   /**

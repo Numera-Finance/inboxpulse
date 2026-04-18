@@ -2,14 +2,13 @@ import { Hono } from 'hono';
 import { toStructuredError, sanitizeErrorForClient } from '@crm/shared';
 import { DomainExtractionService } from '../services/domain-extraction';
 import { ContactExtractionService } from '../services/contact-extraction';
-import { SignatureExtractionService } from '../services/signature-extraction';
 import { EmailFilterService, type ClassificationResult, type EmailCategory } from '../services/email-filter';
 import { AnalysisExecutor } from '../framework/executor';
 import { AnalysisConfigLoader } from '../framework/config-loader';
 import { AIService, type ModelConfig } from '../services/ai-service';
 import { analysisRegistry } from '../framework/registry';
 import { analysisCacheService } from '../services/cache-service';
-import { emailSchema, DEFAULT_ANALYSIS_CONFIG } from '@crm/shared';
+import { emailSchema, analysisTypeSchema } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { z } from 'zod';
 import type { ApiResponse } from '@crm/shared';
@@ -17,32 +16,13 @@ import type { AnalysisType, AnalysisConfig } from '@crm/shared';
 
 const app = new Hono();
 
-// Create service instances (no DI needed)
+// Pure-extraction services. These do NOT touch the DB — they only return
+// extracted data, which apps/api persists in its own transaction.
 const domainService = new DomainExtractionService();
 const contactService = new ContactExtractionService();
 const aiService = new AIService();
-const signatureService = new SignatureExtractionService(aiService);
 const analysisExecutor = new AnalysisExecutor(aiService, analysisRegistry);
 const emailFilterService = new EmailFilterService(aiService);
-
-const domainExtractRequestSchema = z.object({
-  tenantId: z.uuid(),
-  email: emailSchema,
-});
-
-const contactExtractRequestSchema = z.object({
-  tenantId: z.uuid(),
-  email: emailSchema,
-  customers: z.array(z.object({
-    id: z.uuid(),
-    domains: z.array(z.string()), // Array of domains
-  })).optional(),
-});
-
-const signatureExtractRequestSchema = z.object({
-  tenantId: z.uuid(),
-  email: emailSchema,
-});
 
 // Schema for model config
 const modelConfigSchema = z.object({
@@ -50,7 +30,7 @@ const modelConfigSchema = z.object({
   fallback: z.string().optional(),
 });
 
-// Schema for analysis config (partial - will merge with defaults)
+// Schema for analysis config (partial — will merge with defaults)
 const analysisConfigSchema = z.object({
   enabledAnalyses: z.record(z.string(), z.boolean()).optional(),
   modelConfigs: z.record(z.string(), modelConfigSchema).optional(),
@@ -69,204 +49,55 @@ const filterModelConfigSchema = z.object({
 
 // Schema for filter options
 const filterOptionsSchema = z.object({
-  enabled: z.boolean().default(false), // Whether to run email filter before analysis
-  skipHuggingFace: z.boolean().default(false), // Skip HuggingFace stages
-  skipLLM: z.boolean().default(false), // Skip LLM classification stage
-  filterCategories: z.array(z.enum(['spam', 'marketing', 'automated', 'transactional'])).default(['spam', 'marketing']), // Categories to filter out
-  llmModel: filterModelConfigSchema, // Optional model override for LLM classification
+  enabled: z.boolean().default(false),
+  skipHuggingFace: z.boolean().default(false),
+  skipLLM: z.boolean().default(false),
+  filterCategories: z.array(z.enum(['spam', 'marketing', 'automated', 'transactional'])).default(['spam', 'marketing']),
+  llmModel: filterModelConfigSchema,
 }).optional();
 
 const analyzeRequestSchema = z.object({
   tenantId: z.uuid(),
   email: emailSchema,
-  threadContext: z.string().optional(), // Thread context string (API service should build this)
-  analysisTypes: z.array(z.string()).optional(), // Which analyses to run
-  config: analysisConfigSchema, // Optional: override model configs, settings, etc.
-  filter: filterOptionsSchema, // Optional: email filter settings
+  threadContext: z.string().optional(),
+  // Strict — unknown / removed types fail at the boundary with a 400
+  // instead of being silently filtered out by the executor.
+  analysisTypes: z.array(analysisTypeSchema).optional(),
+  config: analysisConfigSchema,
+  filter: filterOptionsSchema,
 });
 
 /**
- * POST /api/analysis/domain-extract
- * Extract domains from email and create/update customers
+ * Build the extracted-participants payload that the API service uses to drive
+ * its DB writes (customers + contacts) inside a single transaction.
  */
-app.post('/domain-extract', async (c) => {
-  try {
-    const body = await c.req.json();
-    const validated = domainExtractRequestSchema.parse(body);
-
-    logger.info({ tenantId: validated.tenantId, emailId: validated.email.messageId }, 'Domain extraction request received');
-
-    const customers = await domainService.extractAndCreateCustomers(validated.tenantId, validated.email);
-
-    logger.info({ tenantId: validated.tenantId, customersCreated: customers.length }, 'Domain extraction completed');
-
-    return c.json<ApiResponse<{ customers: typeof customers }>>({
-      success: true,
-      data: {
-        customers,
-      },
-    });
-  } catch (error: unknown) {
-    const structuredError = toStructuredError(error);
-
-    // Log full error details internally
-    logger.error(
-      {
-        error: structuredError,
-        path: c.req.path,
-        method: c.req.method,
-      },
-      'Domain extraction failed'
-    );
-
-    // Sanitize error before sending to client
-    const sanitizedError = sanitizeErrorForClient(structuredError);
-
-    return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: sanitizedError,
-      },
-      sanitizedError.statusCode as any
-    );
-  }
-});
-
-/**
- * POST /api/analysis/contact-extract
- * Extract contacts from email and create/update them, linking to customers
- */
-app.post('/contact-extract', async (c) => {
-  try {
-    const body = await c.req.json();
-    const validated = contactExtractRequestSchema.parse(body);
-
-    logger.info({ tenantId: validated.tenantId, emailId: validated.email.messageId }, 'Contact extraction request received');
-
-    // If customers are provided, use them; otherwise extract domains first
-    let customers: Array<{ id: string; domains: string[] }> = validated.customers || [];
-
-    if (customers.length === 0) {
-      logger.info({ tenantId: validated.tenantId }, 'No customers provided, extracting domains first');
-      customers = await domainService.extractAndCreateCustomers(validated.tenantId, validated.email);
-    }
-
-    const contacts = await contactService.extractAndCreateContacts(validated.tenantId, validated.email, customers);
-
-    logger.info({ tenantId: validated.tenantId, contactsCreated: contacts.length }, 'Contact extraction completed');
-
-    return c.json<ApiResponse<{ contacts: typeof contacts; customers: typeof customers }>>({
-      success: true,
-      data: {
-        contacts,
-        customers,
-      },
-    });
-  } catch (error: unknown) {
-    const structuredError = toStructuredError(error);
-
-    // Log full error details internally
-    logger.error(
-      {
-        error: structuredError,
-        path: c.req.path,
-        method: c.req.method,
-      },
-      'Contact extraction failed'
-    );
-
-    // Sanitize error before sending to client
-    const sanitizedError = sanitizeErrorForClient(structuredError);
-
-    return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: sanitizedError,
-      },
-      sanitizedError.statusCode as any
-    );
-  }
-});
-
-/**
- * POST /api/analysis/signature-extract
- * Detect and extract signature from email, update contact if found
- */
-app.post('/signature-extract', async (c) => {
-  try {
-    const body = await c.req.json();
-    const validated = signatureExtractRequestSchema.parse(body);
-
-    logger.info({ tenantId: validated.tenantId, emailId: validated.email.messageId }, 'Signature extraction request received');
-
-    // Detect and extract signature (two-step process)
-    const result = await signatureService.detectAndExtractSignature(
-      validated.tenantId,
-      validated.email,
-      { tenantId: validated.tenantId }
-    );
-
-    if (!result) {
-      logger.info({ tenantId: validated.tenantId, emailId: validated.email.messageId }, 'No signature detected');
-      return c.json<ApiResponse<{ hasSignature: false }>>({
-        success: true,
-        data: {
-          hasSignature: false,
-        },
-      });
-    }
-
-    logger.info(
-      {
-        tenantId: validated.tenantId,
-        emailId: validated.email.messageId,
-        contactId: result.contactId,
-        signatureFields: Object.keys(result.signature).filter((k) => result.signature[k as keyof typeof result.signature]),
-      },
-      'Signature extraction completed'
-    );
-
-    return c.json<ApiResponse<typeof result>>({
-      success: true,
-      data: result,
-    });
-  } catch (error: unknown) {
-    const structuredError = toStructuredError(error);
-
-    // Log full error details internally
-    logger.error(
-      {
-        error: structuredError,
-        path: c.req.path,
-        method: c.req.method,
-      },
-      'Signature extraction failed'
-    );
-
-    // Sanitize error before sending to client
-    const sanitizedError = sanitizeErrorForClient(structuredError);
-
-    return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: sanitizedError,
-      },
-      sanitizedError.statusCode as any
-    );
-  }
-});
+function buildExtractedPayload(email: Parameters<typeof domainService.extractDomains>[0]) {
+  return {
+    domains: domainService.extractDomains(email).map((d) => ({
+      domain: d.domain,
+      inferredName: d.inferredName,
+    })),
+    contacts: contactService.extractContacts(email),
+  };
+}
 
 /**
  * POST /api/analysis/analyze
- * Unified analysis endpoint using the new framework
- * Uses registry + executor + config loader
- * Includes caching to avoid duplicate LLM costs on retries
+ *
+ * Pure analysis — runs domain/contact extraction (regex) and the LLM analyses
+ * (sentiment / escalation / upsell / churn / kudos / competitor /
+ * signature-extraction) and returns the structured result. Does NOT persist
+ * anything to the business database. All writes happen in apps/api inside a
+ * single transaction so partial-write inconsistency is impossible.
+ *
+ * Note: this endpoint still uses its own analysis_cache table to avoid
+ * re-running expensive LLM calls on retries — that's local cache, not
+ * business data.
  */
 app.post('/analyze', async (c) => {
   try {
     const body = await c.req.json();
     const validated = analyzeRequestSchema.parse(body);
-
     const messageId = validated.email.messageId;
 
     logger.info(
@@ -284,8 +115,8 @@ app.post('/analyze', async (c) => {
         tenantId: validated.tenantId,
       });
 
-      // Check if email should be filtered out
-      const categoriesToFilter: readonly EmailCategory[] = filterOptions.filterCategories || ['spam', 'marketing'];
+      const categoriesToFilter: readonly EmailCategory[] =
+        filterOptions.filterCategories || ['spam', 'marketing'];
       if (categoriesToFilter.includes(filterResult.category)) {
         logger.info(
           {
@@ -298,15 +129,20 @@ app.post('/analyze', async (c) => {
           'Email filtered out, skipping analysis'
         );
 
+        // Even when filtered, return the extraction so apps/api can still
+        // create the participant rows (they're business-correct regardless
+        // of the analysis verdict).
         return c.json<ApiResponse<{
           filtered: true;
           filterResult: ClassificationResult;
+          extracted: ReturnType<typeof buildExtractedPayload>;
           results: Record<string, any>;
         }>>({
           success: true,
           data: {
             filtered: true,
             filterResult,
+            extracted: buildExtractedPayload(validated.email),
             results: {},
           },
         });
@@ -323,7 +159,6 @@ app.post('/analyze', async (c) => {
         'Email passed filter, proceeding with analysis'
       );
 
-      // Store filterResult to return with response (even when not filtered)
       (c as any).filterResult = filterResult;
     }
 
@@ -334,64 +169,62 @@ app.post('/analyze', async (c) => {
       ...validated.config,
     });
 
-    // Determine which analyses to run
-    let analysisTypes: AnalysisType[];
-    if (validated.analysisTypes && validated.analysisTypes.length > 0) {
-      // Use provided types
-      analysisTypes = validated.analysisTypes as AnalysisType[];
-    } else {
-      // Use enabled analyses from config, but exclude domain-extraction and contact-extraction
-      // These are handled separately via /domain-extract and /contact-extract endpoints
-      const enabledTypes = configLoader.getEnabledAnalysisTypes(config) as AnalysisType[];
-      analysisTypes = enabledTypes.filter(
-        (type) => type !== 'domain-extraction' && type !== 'contact-extraction'
-      );
-    }
+    // Determine which analyses to run. `analysisTypes` is already validated
+    // by the schema (analysisTypeSchema), so no cast is needed.
+    const analysisTypes: AnalysisType[] = (validated.analysisTypes &&
+      validated.analysisTypes.length > 0)
+      ? validated.analysisTypes
+      : (configLoader.getEnabledAnalysisTypes(config) as AnalysisType[]);
+
+    // Always include extraction in the response, even when no analyses are
+    // requested.
+    const extracted = buildExtractedPayload(validated.email);
 
     if (analysisTypes.length === 0) {
       logger.info({ tenantId: validated.tenantId }, 'No analyses specified or enabled');
-      return c.json<ApiResponse<{ results: Record<string, any> }>>({
+      const filterResult = (c as any).filterResult;
+      return c.json<ApiResponse<{
+        results: Record<string, any>;
+        extracted: ReturnType<typeof buildExtractedPayload>;
+        filterResult?: ClassificationResult;
+      }>>({
         success: true,
         data: {
           results: {},
-        },
-      });
-    }
-
-    // Generate model ID for caching (based on primary models in config)
-    const modelId = analysisTypes
-      .map((type) => config.modelConfigs[type]?.primary || 'default')
-      .sort()
-      .join('|');
-
-    // Check cache first
-    const cachedResults = await analysisCacheService.get(messageId, modelId);
-    if (cachedResults) {
-      logger.info(
-        {
-          tenantId: validated.tenantId,
-          emailId: messageId,
-          modelId,
-        },
-        'Returning cached analysis results'
-      );
-      const filterResult = (c as any).filterResult;
-      return c.json<ApiResponse<{ results: typeof cachedResults; cached: true; filterResult?: ClassificationResult }>>({
-        success: true,
-        data: {
-          results: cachedResults,
-          cached: true,
+          extracted,
           filterResult,
         },
       });
     }
 
-    // Use thread context if provided (API service should build this)
+    // Generate model ID for caching
+    const modelId = analysisTypes
+      .map((type) => config.modelConfigs[type]?.primary || 'default')
+      .sort()
+      .join('|');
+
+    const cachedResults = await analysisCacheService.get(messageId, modelId);
+    if (cachedResults) {
+      logger.info(
+        { tenantId: validated.tenantId, emailId: messageId, modelId },
+        'Returning cached analysis results'
+      );
+      const filterResult = (c as any).filterResult;
+      return c.json<ApiResponse<{
+        results: typeof cachedResults;
+        cached: true;
+        extracted: ReturnType<typeof buildExtractedPayload>;
+        filterResult?: ClassificationResult;
+      }>>({
+        success: true,
+        data: { results: cachedResults, cached: true, extracted, filterResult },
+      });
+    }
+
     const threadContext = validated.threadContext
       ? { threadContext: validated.threadContext }
       : undefined;
 
-    // Execute analyses
     const results = await analysisExecutor.executeBatch(
       analysisTypes,
       validated.email,
@@ -400,13 +233,11 @@ app.post('/analyze', async (c) => {
       threadContext
     );
 
-    // Convert Map to object for JSON response
     const resultsObject: Record<string, any> = {};
     for (const [type, result] of results.entries()) {
       resultsObject[type] = result.result;
     }
 
-    // Cache the results for future retries
     await analysisCacheService.set(messageId, modelId, validated.tenantId, resultsObject);
 
     logger.info(
@@ -420,33 +251,27 @@ app.post('/analyze', async (c) => {
     );
 
     const filterResult = (c as any).filterResult;
-    return c.json<ApiResponse<{ results: typeof resultsObject; cached: false; filterResult?: ClassificationResult }>>({
+    return c.json<ApiResponse<{
+      results: typeof resultsObject;
+      cached: false;
+      extracted: ReturnType<typeof buildExtractedPayload>;
+      filterResult?: ClassificationResult;
+    }>>({
       success: true,
-      data: {
-        results: resultsObject,
-        cached: false,
-        filterResult,
-      },
+      data: { results: resultsObject, cached: false, extracted, filterResult },
     });
   } catch (error: unknown) {
     const structuredError = toStructuredError(error);
 
     logger.error(
-      {
-        error: structuredError,
-        path: c.req.path,
-        method: c.req.method,
-      },
+      { error: structuredError, path: c.req.path, method: c.req.method },
       'Analysis failed'
     );
 
     const sanitizedError = sanitizeErrorForClient(structuredError);
 
     return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: sanitizedError,
-      },
+      { success: false, error: sanitizedError },
       sanitizedError.statusCode as any
     );
   }
@@ -457,8 +282,6 @@ app.post('/analyze', async (c) => {
  * Async analysis endpoint (same logic, different route for future Inngest integration)
  */
 app.post('/async/analyze', async (c) => {
-  // For now, same implementation as /analyze
-  // In the future, this will queue the analysis via Inngest
   return app.fetch(c.req.raw);
 });
 
@@ -505,29 +328,17 @@ app.post('/filter', async (c) => {
 
     return c.json<ApiResponse<{ classification: ClassificationResult }>>({
       success: true,
-      data: {
-        classification: result,
-      },
+      data: { classification: result },
     });
   } catch (error: unknown) {
     const structuredError = toStructuredError(error);
-
     logger.error(
-      {
-        error: structuredError,
-        path: c.req.path,
-        method: c.req.method,
-      },
+      { error: structuredError, path: c.req.path, method: c.req.method },
       'Email filter failed'
     );
-
     const sanitizedError = sanitizeErrorForClient(structuredError);
-
     return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: sanitizedError,
-      },
+      { success: false, error: sanitizedError },
       sanitizedError.statusCode as any
     );
   }
@@ -554,15 +365,13 @@ app.post('/summarize', async (c) => {
       'Thread summarization request received'
     );
 
-    // Determine provider from model name
     const getProviderFromModel = (model: string): 'openai' | 'anthropic' | 'google' => {
       if (model.includes('gpt') || model.includes('openai')) return 'openai';
       if (model.includes('claude') || model.includes('anthropic')) return 'anthropic';
       if (model.includes('gemini') || model.includes('google')) return 'google';
-      return 'google'; // Default to Google Gemini
+      return 'google';
     };
 
-    // Generate summary using LLM
     const response = await aiService.generateText({
       model: {
         provider: getProviderFromModel(validated.model),
@@ -575,14 +384,9 @@ app.post('/summarize', async (c) => {
           role: 'system',
           content: `You are a thread summarizer for ${validated.analysisType} analysis. Generate concise, informative summaries that capture trends and key insights.`,
         },
-        {
-          role: 'user',
-          content: validated.prompt,
-        },
+        { role: 'user', content: validated.prompt },
       ],
-      labels: {
-        tenantId: validated.analysisType, // Use analysisType as identifier
-      },
+      labels: { tenantId: validated.analysisType },
     });
 
     const summary = response.text.trim();
@@ -603,32 +407,22 @@ app.post('/summarize', async (c) => {
         modelUsed: validated.model,
         tokens: response.usage
           ? {
-            prompt: response.usage.promptTokens || 0,
-            completion: response.usage.completionTokens || 0,
-            total: response.usage.totalTokens || 0,
-          }
+              prompt: response.usage.promptTokens || 0,
+              completion: response.usage.completionTokens || 0,
+              total: response.usage.totalTokens || 0,
+            }
           : undefined,
       },
     });
   } catch (error: unknown) {
     const structuredError = toStructuredError(error);
-
     logger.error(
-      {
-        error: structuredError,
-        path: c.req.path,
-        method: c.req.method,
-      },
+      { error: structuredError, path: c.req.path, method: c.req.method },
       'Thread summarization failed'
     );
-
     const sanitizedError = sanitizeErrorForClient(structuredError);
-
     return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: sanitizedError,
-      },
+      { success: false, error: sanitizedError },
       sanitizedError.statusCode as any
     );
   }

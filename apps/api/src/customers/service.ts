@@ -1,7 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
-import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
-import type { Database } from '@crm/database';
+import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, withAutoCustomerSuffix, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
+import type { Database, Transaction } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
 import { ContactRepository } from '../contacts/repository';
@@ -713,6 +713,100 @@ export class CustomerService {
     }
   }
 
+  /**
+   * Single entry point for customer creation/refinement from the email pipeline.
+   *
+   * Both the eager domain-extraction step (no signature info) and the
+   * post-signature refinement step (with `signatureCompany`) call this.
+   * Idempotent.
+   *
+   * Name precedence (best name wins):
+   *   1. options.signatureCompany — extracted from the sender's email signature
+   *   2. options.defaultName       — caller's domain-derived inference
+   *
+   * Behavior:
+   *   - No customer for `domain`     → create with suffixed best-name, isAutoCreated=true
+   *   - Exists & auto-created & name differs from proposed → update name
+   *   - Exists & auto-created & name matches → no-op
+   *   - Exists & manually created    → leave alone, just return
+   *
+   * Race safety: requires a transaction (`tx`) and acquires an advisory
+   * transaction lock keyed on (tenantId, domain). Concurrent calls for the
+   * same domain serialize on the lock, so no two concurrent transactions can
+   * both insert and conflict on the unique constraint.
+   *
+   * The "(Auto)" suffix is always applied via `withAutoCustomerSuffix` — never built inline.
+   */
+  async ensureCustomerForEmail(
+    tx: Transaction,
+    tenantId: string,
+    domain: string,
+    options: { signatureCompany?: string | null; defaultName?: string }
+  ): Promise<Customer> {
+    const normalizedDomain = domain.toLowerCase();
+    const proposedRaw = options.signatureCompany?.trim() || options.defaultName?.trim() || '';
+    if (!proposedRaw) {
+      throw new ValidationError('ensureCustomerForEmail requires at least one of defaultName or signatureCompany');
+    }
+    const proposedName = withAutoCustomerSuffix(proposedRaw);
+
+    // Serialize concurrent calls for the same (tenant, domain) within their
+    // transactions. The lock auto-releases at end of transaction.
+    const lockKey = `customer:${tenantId}:${normalizedDomain}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+
+    const existing = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
+
+    if (existing) {
+      if (
+        existing.isAutoCreated &&
+        (existing.name ?? '').trim().toLowerCase() !== proposedName.toLowerCase()
+      ) {
+        const updated = await this.customerRepository.update(
+          existing.id,
+          { name: proposedName },
+          tx
+        );
+        logger.info(
+          {
+            tenantId,
+            customerId: existing.id,
+            domain: normalizedDomain,
+            previousName: existing.name,
+            newName: proposedName,
+            source: options.signatureCompany ? 'signature' : 'domain',
+            logType: 'CUSTOMER_NAME_REFINED',
+          },
+          'Auto-created customer name updated'
+        );
+        return updated ?? existing;
+      }
+      return existing;
+    }
+
+    const created = await this.customerRepository.create(
+      {
+        tenantId,
+        name: proposedName,
+        isAutoCreated: true,
+        domain: normalizedDomain,
+      } as NewCustomer & { domain: string },
+      tx
+    );
+    logger.info(
+      {
+        tenantId,
+        customerId: created.id,
+        domain: normalizedDomain,
+        name: proposedName,
+        source: options.signatureCompany ? 'signature' : 'domain',
+        logType: 'CUSTOMER_AUTO_CREATED',
+      },
+      'Auto-created customer from email'
+    );
+    return created;
+  }
+
   async replaceDomains(customerId: string, tenantId: string, domains: string[]): Promise<void> {
     return this.customerRepository.replaceDomains(customerId, tenantId, domains);
   }
@@ -725,8 +819,12 @@ export class CustomerService {
    * Find customer by domain (internal use)
    * Returns raw Customer entity or undefined
    */
-  async findByDomain(tenantId: string, domain: string): Promise<Customer | undefined> {
-    return this.customerRepository.findByDomain(tenantId, domain);
+  async findByDomain(
+    tenantId: string,
+    domain: string,
+    tx?: Transaction
+  ): Promise<Customer | undefined> {
+    return this.customerRepository.findByDomain(tenantId, domain, tx);
   }
 
   /**

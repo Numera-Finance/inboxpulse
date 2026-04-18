@@ -57,6 +57,7 @@ customerRoutes.post('/', requirePermission(Permission.CUSTOMER_ADD), async (c) =
   );
 });
 
+
 /**
  * GET /api/customers - List all customers for tenant (with access control)
  */

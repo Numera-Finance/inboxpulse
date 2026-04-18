@@ -4,6 +4,7 @@ import { ContactRepository } from './repository';
 import { logger } from '../utils/logger';
 import type { Contact, NewContact } from './schema';
 import type { Email, RequestHeader } from '@crm/shared';
+import type { Transaction } from '@crm/database';
 
 /**
  * Signature data extracted from email signatures
@@ -35,6 +36,35 @@ export const signatureEnrichmentResultSchema = z.object({
 });
 
 export type SignatureEnrichmentResult = z.infer<typeof signatureEnrichmentResultSchema>;
+
+/**
+ * Sender ownership guard. Returns true when the LLM-extracted signature
+ * appears to belong to the email's sender, false when it clearly belongs to
+ * a different person (an embedded forwarded/quoted signature).
+ *
+ * Defense-in-depth in case the LLM didn't apply its own ownership rule. The
+ * rule is conservative: only reject when the signature email differs from the
+ * sender both in mailbox AND in domain. Mailbox-only differences (e.g.
+ * sender `mike@foo.com` with sig `mike.r@foo.com`) are accepted because
+ * same-domain mismatches can be a legitimate alias or formatting variation.
+ *
+ * Inputs are case-insensitive; whitespace is trimmed.
+ */
+export function signatureBelongsToSender(
+  signatureEmail: string | undefined | null,
+  senderEmail: string
+): boolean {
+  if (!senderEmail) return false; // can't validate without a sender
+  const sigEmail = signatureEmail?.trim().toLowerCase();
+  if (!sigEmail) return true; // no claim to verify; accept
+  const sender = senderEmail.toLowerCase();
+  if (sigEmail === sender) return true; // exact match
+  const senderDomain = sender.split('@')[1] ?? '';
+  const sigDomain = sigEmail.split('@')[1] ?? '';
+  if (!senderDomain || !sigDomain) return true; // malformed inputs; don't reject
+  if (senderDomain === sigDomain) return true; // same domain, mailbox alias
+  return false;
+}
 
 @injectable()
 export class ContactService {
@@ -255,12 +285,27 @@ export class ContactService {
     emailId: string,
     email: Email,
     signatureData: SignatureData,
-    existingContacts: Array<{ id: string; email: string; name?: string; customerId?: string }>
+    existingContacts: Array<{ id: string; email: string; name?: string; customerId?: string }>,
+    tx?: Transaction
   ): Promise<SignatureEnrichmentResult | null> {
     // The signature belongs to the sender of the email
     const senderEmail = email.from?.email?.toLowerCase();
     if (!senderEmail) {
       logger.debug({ emailId }, 'No sender email, skipping signature enrichment');
+      return null;
+    }
+
+    if (!signatureBelongsToSender(signatureData.email, senderEmail)) {
+      logger.info(
+        {
+          emailId,
+          senderEmail,
+          sigEmail: signatureData.email?.trim().toLowerCase(),
+          tenantId,
+          logType: 'SIGNATURE_REJECTED_SENDER_MISMATCH',
+        },
+        'Signature email belongs to a different person, rejecting extraction'
+      );
       return null;
     }
 
@@ -284,7 +329,7 @@ export class ContactService {
 
     // If contact doesn't exist in the provided list, try to find it in the database
     if (!contactId) {
-      const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail);
+      const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail, tx);
       contactId = dbContact?.id;
     }
 
@@ -324,7 +369,7 @@ export class ContactService {
           x: signatureData.x,
           linktree: signatureData.linktree,
           customerId: customerId || null,
-        });
+        }, tx);
 
         const fieldsSet = Object.entries(signatureData)
           .filter(([k, v]) => v && k !== 'email' && k !== 'company')
@@ -352,7 +397,7 @@ export class ContactService {
       } catch (createError: any) {
         // Contact might have been created by another process, try to find it again
         if (createError.code === '23505') { // Unique violation
-          const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail);
+          const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail, tx);
           contactId = dbContact?.id;
           if (!contactId) {
             throw createError;
@@ -364,7 +409,7 @@ export class ContactService {
     }
 
     // Enrich existing contact with signature data
-    const enrichResult = await this.contactRepository.enrichFromSignature(contactId, signatureData);
+    const enrichResult = await this.contactRepository.enrichFromSignature(contactId, signatureData, tx);
 
     if (enrichResult.updated) {
       logger.info(

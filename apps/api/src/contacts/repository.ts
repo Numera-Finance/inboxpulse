@@ -11,8 +11,13 @@ export class ContactRepository extends ScopedRepository {
     super(db);
   }
 
-  async findByEmail(tenantId: string, email: string): Promise<Contact | undefined> {
-    const result = await this.db
+  async findByEmail(
+    tenantId: string,
+    email: string,
+    tx?: Transaction
+  ): Promise<Contact | undefined> {
+    const dbHandle = (tx ?? this.db) as Database;
+    const result = await dbHandle
       .select()
       .from(contacts)
       .where(and(eq(contacts.tenantId, tenantId), eq(contacts.email, email)));
@@ -46,8 +51,9 @@ export class ContactRepository extends ScopedRepository {
     return emailMap;
   }
 
-  async findById(id: string): Promise<Contact | undefined> {
-    const result = await this.db.select().from(contacts).where(eq(contacts.id, id));
+  async findById(id: string, tx?: Transaction): Promise<Contact | undefined> {
+    const dbHandle = (tx ?? this.db) as Database;
+    const result = await dbHandle.select().from(contacts).where(eq(contacts.id, id));
     return result[0];
   }
 
@@ -63,8 +69,9 @@ export class ContactRepository extends ScopedRepository {
       .orderBy(asc(contacts.name), asc(contacts.title), asc(contacts.email));
   }
 
-  async create(data: NewContact): Promise<Contact> {
-    const result = await this.db.insert(contacts).values(data).returning();
+  async create(data: NewContact, tx?: Transaction): Promise<Contact> {
+    const dbHandle = (tx ?? this.db) as Database;
+    const result = await dbHandle.insert(contacts).values(data).returning();
     return result[0];
   }
 
@@ -93,8 +100,13 @@ export class ContactRepository extends ScopedRepository {
     return result[0];
   }
 
-  async update(id: string, data: Partial<NewContact>): Promise<Contact | undefined> {
-    const result = await this.db
+  async update(
+    id: string,
+    data: Partial<NewContact>,
+    tx?: Transaction
+  ): Promise<Contact | undefined> {
+    const dbHandle = (tx ?? this.db) as Database;
+    const result = await dbHandle
       .update(contacts)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(contacts.id, id))
@@ -123,10 +135,11 @@ export class ContactRepository extends ScopedRepository {
       linkedin?: string;
       x?: string;
       linktree?: string;
-    }
+    },
+    tx?: Transaction
   ): Promise<{ updated: boolean; fieldsUpdated: string[]; contact?: Contact }> {
     // First get the current contact to check which fields are empty
-    const current = await this.findById(id);
+    const current = await this.findById(id, tx);
     if (!current) {
       return { updated: false, fieldsUpdated: [] };
     }
@@ -157,7 +170,7 @@ export class ContactRepository extends ScopedRepository {
       return { updated: false, fieldsUpdated: [], contact: current };
     }
 
-    const updatedContact = await this.update(id, updates);
+    const updatedContact = await this.update(id, updates, tx);
     return { updated: true, fieldsUpdated, contact: updatedContact };
   }
 

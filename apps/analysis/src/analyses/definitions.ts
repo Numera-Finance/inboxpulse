@@ -9,8 +9,6 @@ import {
   kudosModule,
   competitorModule,
   signatureModule,
-  domainExtractionModule,
-  contactExtractionModule,
 } from './modules';
 
 /**
@@ -119,44 +117,10 @@ export const signatureExtractionAnalysisDefinition: AnalysisDefinition = {
 };
 
 /**
- * Domain Extraction Definition
- * Note: This is always-run and handled by DomainExtractionService
- * The executor framework is not used for this analysis type
- */
-export const domainExtractionAnalysisDefinition: AnalysisDefinition = {
-  type: 'domain-extraction',
-  name: 'Domain Extraction',
-  module: domainExtractionModule,
-  models: DEFAULT_ANALYSIS_CONFIG.modelConfigs['domain-extraction'],
-  settings: {
-    alwaysRun: true,
-    priority: 100, // Highest priority - runs first
-  },
-};
-
-/**
- * Contact Extraction Definition
- * Note: This is always-run and handled by ContactExtractionService
- * The executor framework is not used for this analysis type
- */
-export const contactExtractionAnalysisDefinition: AnalysisDefinition = {
-  type: 'contact-extraction',
-  name: 'Contact Extraction',
-  module: contactExtractionModule,
-  models: DEFAULT_ANALYSIS_CONFIG.modelConfigs['contact-extraction'],
-  settings: {
-    alwaysRun: true,
-    priority: 90, // High priority - runs after domain extraction
-    dependencies: ['domain-extraction'], // Depends on domain extraction
-  },
-};
-
-/**
- * All analysis definitions
+ * All analysis definitions (LLM analyses only — domain and contact extraction
+ * are pure regex on the analyze handler and not part of this list).
  */
 export const allAnalysisDefinitions: AnalysisDefinition[] = [
-  domainExtractionAnalysisDefinition,
-  contactExtractionAnalysisDefinition,
   sentimentAnalysisDefinition,
   escalationAnalysisDefinition,
   upsellAnalysisDefinition,
@@ -170,8 +134,6 @@ export const allAnalysisDefinitions: AnalysisDefinition[] = [
  * Definitions by type for easy lookup
  */
 export const definitionsByType: Record<AnalysisType, AnalysisDefinition | undefined> = {
-  'domain-extraction': domainExtractionAnalysisDefinition,
-  'contact-extraction': contactExtractionAnalysisDefinition,
   'sentiment': sentimentAnalysisDefinition,
   'escalation': escalationAnalysisDefinition,
   'upsell': upsellAnalysisDefinition,

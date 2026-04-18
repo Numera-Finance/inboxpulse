@@ -24,6 +24,7 @@ export class CustomerClient extends BaseClient {
     return apiResponse.data;
   }
 
+
   /**
    * Get customer by domain
    */

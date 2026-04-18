@@ -32,13 +32,19 @@ export class CustomerRepository extends ScopedRepository {
   }
 
   /**
-   * Find customer by domain (queries customer_domains table internally)
-   * Domain is automatically lowercased
+   * Find customer by domain (queries customer_domains table internally).
+   * Domain is automatically lowercased. Accepts an optional transaction so
+   * the read participates in a wider transaction (used by the email pipeline).
    */
-  async findByDomain(tenantId: string, domain: string): Promise<Customer | undefined> {
+  async findByDomain(
+    tenantId: string,
+    domain: string,
+    tx?: Transaction
+  ): Promise<Customer | undefined> {
     const normalizedDomain = domain.toLowerCase();
+    const dbHandle = (tx ?? this.db) as Database;
 
-    const result = await this.db
+    const result = await dbHandle
       .select({
         id: customers.id,
         tenantId: customers.tenantId,
@@ -76,20 +82,21 @@ export class CustomerRepository extends ScopedRepository {
   }
 
   /**
-   * Create customer and automatically create domain record in customer_domains
-   * Domain is required and will be stored in lowercase
+   * Create customer and automatically create the corresponding row in
+   * customer_domains. Domain is required and stored lowercased.
+   *
+   * Accepts an optional outer transaction. When provided, the writes happen
+   * within the caller's transaction (used by the email pipeline so a customer
+   * created here participates in the same atomic email write).
    */
-  async create(data: NewCustomer & { domain: string }): Promise<Customer> {
+  async create(data: NewCustomer & { domain: string }, tx?: Transaction): Promise<Customer> {
     const normalizedDomain = data.domain.toLowerCase();
-
-    return await this.db.transaction(async (tx) => {
-      // Create customer (without domain column)
+    const runner = async (innerTx: Transaction): Promise<Customer> => {
       const { domain, ...customerData } = data;
-      const customerResult = await tx.insert(customers).values(customerData).returning();
+      const customerResult = await innerTx.insert(customers).values(customerData).returning();
       const customer = customerResult[0];
 
-      // Create domain record
-      await tx.insert(customerDomains).values({
+      await innerTx.insert(customerDomains).values({
         customerId: customer.id,
         tenantId: customer.tenantId,
         domain: normalizedDomain,
@@ -98,7 +105,10 @@ export class CustomerRepository extends ScopedRepository {
 
       logger.debug({ customerId: customer.id, domain: normalizedDomain }, 'Created customer with domain');
       return customer;
-    });
+    };
+
+    if (tx) return runner(tx);
+    return await this.db.transaction(runner);
   }
 
   /**
@@ -142,8 +152,13 @@ export class CustomerRepository extends ScopedRepository {
     });
   }
 
-  async update(id: string, data: Partial<NewCustomer>): Promise<Customer | undefined> {
-    const result = await this.db
+  async update(
+    id: string,
+    data: Partial<NewCustomer>,
+    tx?: Transaction
+  ): Promise<Customer | undefined> {
+    const dbHandle = (tx ?? this.db) as Database;
+    const result = await dbHandle
       .update(customers)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(customers.id, id))
