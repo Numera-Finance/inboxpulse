@@ -31,16 +31,40 @@ describe('AnalysisExecutor', () => {
   };
 
   beforeEach(() => {
-    // Mock AIService
+    // Mock AIService. Smart implementation: looks at the requested Zod schema
+    // shape to figure out whether the call is single (one module's schema) or
+    // batched (object with one entry per module), and returns a matching value.
     mockAIService = {
-      generateStructuredOutput: vi.fn().mockResolvedValue({
-        object: { value: 'positive', confidence: 0.9 },
-        reasoning: undefined,
-        usage: {
-          promptTokens: 100,
-          completionTokens: 50,
-          totalTokens: 150,
-        },
+      generateStructuredOutput: vi.fn().mockImplementation(async (opts: any) => {
+        const stub: Record<string, any> = {
+          sentiment: { value: 'positive', confidence: 0.9 },
+          escalation: { detected: false, confidence: 0.9 },
+          upsell: { detected: false, confidence: 0.9 },
+          churn: { riskLevel: 'low', confidence: 0.9, indicators: [] },
+          kudos: { detected: false, confidence: 0.9 },
+          competitor: { detected: false, confidence: 0.9 },
+          'signature-extraction': {},
+        };
+        // Derive object keys from the Zod schema shape (works for batched
+        // calls — z.object({sentiment: …, escalation: …})). For single-analysis
+        // calls the schema doesn't have our analysis keys, so fall back to a
+        // generic sentiment-shaped result.
+        const shape =
+          (opts.schema?._def?.shape && typeof opts.schema._def.shape === 'function'
+            ? opts.schema._def.shape()
+            : opts.schema?._def?.shape) ?? null;
+        let object: Record<string, any> = stub.sentiment;
+        if (shape && Object.keys(shape).some((k) => k in stub)) {
+          object = {};
+          for (const k of Object.keys(shape)) {
+            object[k] = stub[k] ?? {};
+          }
+        }
+        return {
+          object,
+          reasoning: undefined,
+          usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        };
       }),
     };
 
