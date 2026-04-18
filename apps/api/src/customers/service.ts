@@ -45,9 +45,6 @@ function toClientCustomerWithDomains(
   } as ClientCustomer;
 }
 
-/** Suffix appended to auto-created customer names so they're easy to identify in lists, search, and exports. */
-export const AUTO_CREATED_NAME_SUFFIX = ' (Auto)';
-
 /**
  * Convert internal Customer (from database) to client-facing Customer
  * Serializes customer_domains table to domains array
@@ -669,16 +666,11 @@ export class CustomerService {
         }
       }
 
-      // Step 3: Normalize the name field based on the create-vs-update path.
-      // - Creating a new auto-created customer: bake the "(Auto)" suffix into the stored name
-      //   so it's searchable and included in exports.
-      // - Updating an existing auto-created customer: preserve the stored name (which already
-      //   carries the suffix, or was edited by the user) — don't let a re-run of the email
-      //   pipeline clobber it with the raw inferred name.
+      // Step 3: Never rewrite the name of an existing customer through upsert.
+      // Name is set once at creation (including the pipeline's "(Auto)" suffix) and only
+      // ever changes afterwards through the explicit updateCustomer (PATCH) endpoint.
       let normalizedData: CreateCustomerRequest = data;
-      if (!targetCustomerId && data.isAutoCreated && data.name) {
-        normalizedData = { ...data, name: `${data.name}${AUTO_CREATED_NAME_SUFFIX}` };
-      } else if (targetCustomerId && existingCustomerForFirstDomain?.isAutoCreated) {
+      if (targetCustomerId) {
         const { name: _ignored, ...rest } = data;
         normalizedData = rest as CreateCustomerRequest;
       }

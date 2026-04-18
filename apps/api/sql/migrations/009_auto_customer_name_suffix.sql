@@ -3,8 +3,7 @@
 -- Idempotent: only appends the suffix to rows that don't already carry it.
 
 UPDATE customers
-SET name = name || ' (Auto)',
-    updated_at = NOW()
+SET name = name || ' (Auto)'
 WHERE is_auto_created = TRUE
   AND name IS NOT NULL
   AND name <> ''
