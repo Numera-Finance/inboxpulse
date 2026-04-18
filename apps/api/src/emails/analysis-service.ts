@@ -1,12 +1,12 @@
 import { injectable, inject } from 'tsyringe';
-import { AnalysisClient, type ClassificationResult } from '@crm/clients';
+import { AnalysisClient, type ClassificationResult, type ExtractedPayload } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
 import { EmailAnalysisRepository } from './analysis-repository';
 import { EmailRepository } from './repository';
 import { ThreadAnalysisService } from './thread-analysis-service';
 import { createEmailAnalysisRecord } from './analysis-utils';
 import type { Email, AnalysisType } from '@crm/shared';
-import { Signal, isPersonalEmailDomain, inferCustomerNameFromDomain } from '@crm/shared';
+import { Signal, resolveCustomerKeyForEmail } from '@crm/shared';
 import type { AnalysisType as EmailAnalysisType } from './analysis-schema';
 import { EmailAnalysisStatus, type NewEmailParticipant } from './schema';
 import { UserService } from '../users/service';
@@ -21,16 +21,6 @@ import { extractLatestReply } from './extraction/extractor';
 // =============================================================================
 // Types
 // =============================================================================
-
-/**
- * Extracted participants returned from the analysis service. Mirrors the
- * `extracted` payload of /analyze. Used to drive customer + contact writes
- * in the api transaction.
- */
-interface ExtractedPayload {
-  domains: Array<{ domain: string; inferredName: string }>;
-  contacts: Array<{ email: string; name?: string }>;
-}
 
 export interface AnalysisExecutionResult {
   /** Customers ensured during the email's transaction (created or pre-existing). */
@@ -557,7 +547,7 @@ export class EmailAnalysisService {
           await this.refineCustomerNameFromSignature(
             tx,
             ctx,
-            data.extracted?.domains || [],
+            data.extracted?.contacts || [],
             data.analysisResults['signature-extraction']
           );
 
@@ -612,69 +602,29 @@ export class EmailAnalysisService {
     tx: Transaction,
     tenantId: string,
     email: Email,
-    participantsToEnsure: Array<{ email: string; name?: string }>
+    participantsToEnsure: ExtractedPayload['contacts']
   ): Promise<Array<{ id: string; email: string; name?: string; customerId?: string; created: boolean }>> {
     const results: Array<{ id: string; email: string; name?: string; customerId?: string; created: boolean }> = [];
-
-    // Collect all unique email addresses from the email
-    const participants = new Map<string, { email: string; name?: string }>();
-
-    // From sender
-    if (email.from?.email) {
-      participants.set(email.from.email.toLowerCase(), {
-        email: email.from.email,
-        name: email.from.name,
-      });
-    }
-
-    // To recipients
-    for (const addr of email.tos || []) {
-      if (addr.email && !participants.has(addr.email.toLowerCase())) {
-        participants.set(addr.email.toLowerCase(), {
-          email: addr.email,
-          name: addr.name,
-        });
-      }
-    }
-
-    // CC recipients
-    for (const addr of email.ccs || []) {
-      if (addr.email && !participants.has(addr.email.toLowerCase())) {
-        participants.set(addr.email.toLowerCase(), {
-          email: addr.email,
-          name: addr.name,
-        });
-      }
-    }
-
-    // BCC recipients
-    for (const addr of email.bccs || []) {
-      if (addr.email && !participants.has(addr.email.toLowerCase())) {
-        participants.set(addr.email.toLowerCase(), {
-          email: addr.email,
-          name: addr.name,
-        });
-      }
-    }
 
     logger.info(
       {
         tenantId,
         emailId: email.messageId,
-        participantsCount: participants.size,
+        participantsCount: participantsToEnsure.length,
         logType: 'CONTACT_ENSURE_START',
       },
       'Ensuring contacts for all email participants'
     );
 
-    // Process each participant
-    for (const [emailLower, participant] of participants) {
-      try {
-        // Extract domain from email
-        const domain = this.extractDomain(participant.email);
-        let customerId: string | undefined;
+    // Analysis has already deduped participants and assigned each a
+    // customerDomain (top-level for corporate, pseudo for personal). The api
+    // side treats both uniformly — no branching, no re-extraction.
+    for (const participant of participantsToEnsure) {
+      const emailLower = participant.email.toLowerCase();
+      const lookupDomain = participant.customerDomain;
 
-        // Check if contact already exists (needed for fallback customer lookup)
+      try {
+        let customerId: string | undefined;
         let contact = await this.contactService.findByEmail(tenantId, emailLower);
         let created = false;
 
@@ -683,55 +633,47 @@ export class EmailAnalysisService {
         //           2) Existing contact's customer link (manual mapping),
         //           3) Last-resort ensureCustomerForEmail (race-safe + suffixed
         //              — should rarely fire because Step 1 already ensured
-        //              customers for every non-personal extracted domain).
-        if (domain && !isPersonalEmailDomain(domain)) {
-          try {
-            // tx-aware lookup so we see the customer Step 1 just created in
-            // this transaction.
-            let customer = await this.customerService.findByDomain(tenantId, domain, tx);
+        //              customers for every extracted domain).
+        try {
+          let customer = await this.customerService.findByDomain(tenantId, lookupDomain, tx);
 
-            if (!customer && contact?.customerId) {
-              // Fallback: use the existing contact's manual customer link.
-              customerId = contact.customerId;
-              logger.info(
-                {
-                  tenantId,
-                  contactId: contact.id,
-                  email: emailLower,
-                  customerId,
-                  domain,
-                  logType: 'CUSTOMER_FROM_EXISTING_CONTACT',
-                },
-                'Using customer from existing contact (domain lookup found no match)'
-              );
-            } else if (!customer) {
-              // Last-resort: Step 1 didn't ensure a customer for this domain
-              // (e.g., the domain wasn't in extracted.domains for some reason).
-              // Use the same single entry point so we get the advisory lock,
-              // (Auto) suffix, and idempotency for free.
-              customer = await this.customerService.ensureCustomerForEmail(
-                tx,
-                tenantId,
-                domain,
-                { defaultName: inferCustomerNameFromDomain(domain) }
-              );
-              customerId = customer.id;
-            } else {
-              customerId = customer.id;
-            }
-          } catch (customerError: any) {
-            logger.warn(
+          if (!customer && contact?.customerId) {
+            customerId = contact.customerId;
+            logger.info(
               {
                 tenantId,
-                domain,
-                error: customerError.message,
+                contactId: contact.id,
+                email: emailLower,
+                customerId,
+                domain: lookupDomain,
+                logType: 'CUSTOMER_FROM_EXISTING_CONTACT',
               },
-              'Failed to ensure customer for domain, contact will be created without customer link'
+              'Using customer from existing contact (domain lookup found no match)'
             );
+          } else if (!customer) {
+            // Last-resort — Step 1 missed this domain. Same single entry
+            // point gives us the advisory lock, (Auto) suffix, idempotency.
+            // inferredName is recomputed from the domain as a last-resort
+            // fallback; typical path re-uses the row Step 1 just created.
+            customer = await this.customerService.ensureCustomerForEmail(
+              tx,
+              tenantId,
+              lookupDomain,
+              { defaultName: participant.name?.trim() || lookupDomain }
+            );
+            customerId = customer.id;
+          } else {
+            customerId = customer.id;
           }
-        } else if (contact?.customerId) {
-          // Personal email domain but contact has a customer link — use it.
-          customerId = contact.customerId;
+        } catch (customerError: any) {
+          logger.warn(
+            {
+              tenantId,
+              domain: lookupDomain,
+              error: customerError.message,
+            },
+            'Failed to ensure customer for domain, contact will be created without customer link'
+          );
         }
 
         if (!contact) {
@@ -795,7 +737,7 @@ export class EmailAnalysisService {
       {
         tenantId,
         emailId: email.messageId,
-        totalParticipants: participants.size,
+        totalParticipants: participantsToEnsure.length,
         contactsCreated: results.filter(r => r.created).length,
         contactsExisting: results.filter(r => !r.created).length,
         logType: 'CONTACT_ENSURE_COMPLETE',
@@ -804,25 +746,6 @@ export class EmailAnalysisService {
     );
 
     return results;
-  }
-
-  /**
-   * Extract domain from email address
-   * Returns top-level domain (e.g., subdomain.example.com -> example.com)
-   */
-  private extractDomain(email: string): string | null {
-    try {
-      const domain = email.split('@')[1]?.toLowerCase();
-      if (!domain) return null;
-
-      const parts = domain.split('.');
-      if (parts.length >= 2) {
-        return parts.slice(-2).join('.');
-      }
-      return domain;
-    } catch {
-      return null;
-    }
   }
 
   /**
@@ -1109,22 +1032,23 @@ export class EmailAnalysisService {
   private async refineCustomerNameFromSignature(
     tx: Transaction,
     ctx: AnalysisContext,
-    extractedDomains: Array<{ domain: string; inferredName: string }>,
+    extractedContacts: ExtractedPayload['contacts'],
     signatureData: SignatureData | undefined
   ): Promise<void> {
     const company = signatureData?.company?.trim();
     if (!company) return;
-    const senderDomain = ctx.email.from?.email?.toLowerCase().split('@')[1];
-    if (!senderDomain) return;
+    const senderEmail = ctx.email.from?.email?.toLowerCase();
+    if (!senderEmail) return;
 
-    // Only refine if the sender's domain was in the extracted set (i.e., a
-    // non-personal domain that we actually have a customer for).
-    const senderEntry = extractedDomains.find((d) => d.domain === senderDomain);
-    if (!senderEntry) return;
+    // Find the sender entry analysis produced — it already carries the
+    // customer-domain key (top-level for corporate, pseudo for personal).
+    // No re-derivation in the api: we just refine the customer that was
+    // ensured in Step 1 under this exact domain.
+    const senderContact = extractedContacts.find((c) => c.email.toLowerCase() === senderEmail);
+    if (!senderContact) return;
 
     try {
-      // Refine path: signatureCompany wins, defaultName not needed.
-      await this.customerService.ensureCustomerForEmail(tx, ctx.tenantId, senderDomain, {
+      await this.customerService.ensureCustomerForEmail(tx, ctx.tenantId, senderContact.customerDomain, {
         signatureCompany: company,
       });
     } catch (error: any) {

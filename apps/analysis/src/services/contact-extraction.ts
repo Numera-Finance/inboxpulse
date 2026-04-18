@@ -1,10 +1,9 @@
 import type { Email } from '@crm/shared';
+import { resolveCustomerKeyForEmail } from '@crm/shared';
+import type { ExtractedContact } from '@crm/clients';
 import { logger } from '../utils/logger';
 
-export interface ExtractedContact {
-  email: string;
-  name?: string;
-}
+export type { ExtractedContact } from '@crm/clients';
 
 /**
  * Pure-extraction service. Returns participants found in an email. Performs
@@ -22,10 +21,12 @@ export class ContactExtractionService {
 
     const add = (addr: { email: string; name?: string } | undefined) => {
       if (!addr?.email) return;
-      const key = addr.email.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      contacts.push({ email: addr.email, name: addr.name });
+      const emailKey = addr.email.toLowerCase();
+      if (seen.has(emailKey)) return;
+      const customerKey = resolveCustomerKeyForEmail(addr.email, addr.name);
+      if (!customerKey) return; // malformed address — skip
+      seen.add(emailKey);
+      contacts.push({ email: addr.email, name: addr.name, customerDomain: customerKey.domain });
     };
 
     try {

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { PERSONAL_DOMAINS, isPersonalEmailDomain } from '../personal-domains';
+import {
+  PERSONAL_DOMAINS,
+  isPersonalEmailDomain,
+  personalEmailToPseudoDomain,
+  inferNameFromEmailLocalPart,
+} from '../personal-domains';
 
 describe('isPersonalEmailDomain', () => {
   it('returns true for the major consumer providers', () => {
@@ -61,5 +66,63 @@ describe('isPersonalEmailDomain', () => {
     ]) {
       expect(PERSONAL_DOMAINS.has(d)).toBe(true);
     }
+  });
+});
+
+describe('personalEmailToPseudoDomain', () => {
+  it('joins local part and provider with a dash', () => {
+    expect(personalEmailToPseudoDomain('uzi.dutta@gmail.com')).toBe('uzi.dutta-gmail.com');
+    expect(personalEmailToPseudoDomain('alice@yahoo.co.uk')).toBe('alice-yahoo.co.uk');
+  });
+
+  it('lowercases both sides', () => {
+    expect(personalEmailToPseudoDomain('ALICE@Gmail.COM')).toBe('alice-gmail.com');
+  });
+
+  it('preserves gmail plus-addressing (no normalization)', () => {
+    // Gmail treats alice+work@gmail.com and alice@gmail.com as the same
+    // inbox, but we intentionally keep them as distinct pseudo-domains so
+    // the user can merge later. Normalizing here would be provider-specific.
+    expect(personalEmailToPseudoDomain('alice+work@gmail.com')).toBe('alice+work-gmail.com');
+  });
+
+  it('returns null for malformed input', () => {
+    expect(personalEmailToPseudoDomain('')).toBeNull();
+    expect(personalEmailToPseudoDomain(null)).toBeNull();
+    expect(personalEmailToPseudoDomain(undefined)).toBeNull();
+    expect(personalEmailToPseudoDomain('no-at-sign')).toBeNull();
+    expect(personalEmailToPseudoDomain('@gmail.com')).toBeNull();   // no local part
+    expect(personalEmailToPseudoDomain('alice@')).toBeNull();        // no domain
+  });
+});
+
+describe('inferNameFromEmailLocalPart', () => {
+  it('title-cases dot-separated local parts', () => {
+    expect(inferNameFromEmailLocalPart('uzi.dutta@gmail.com')).toBe('Uzi Dutta');
+    expect(inferNameFromEmailLocalPart('first.middle.last@foo.com')).toBe('First Middle Last');
+  });
+
+  it('handles underscore and dash separators', () => {
+    expect(inferNameFromEmailLocalPart('john_doe@yahoo.com')).toBe('John Doe');
+    expect(inferNameFromEmailLocalPart('firstname-lastname@gmail.com')).toBe('Firstname Lastname');
+  });
+
+  it('strips gmail-style +tag segments', () => {
+    expect(inferNameFromEmailLocalPart('alice+work@gmail.com')).toBe('Alice Work');
+  });
+
+  it('falls back to the local part when not splittable', () => {
+    expect(inferNameFromEmailLocalPart('alice@gmail.com')).toBe('Alice');
+  });
+
+  it('returns empty string for malformed input', () => {
+    expect(inferNameFromEmailLocalPart('')).toBe('');
+    expect(inferNameFromEmailLocalPart(null)).toBe('');
+    expect(inferNameFromEmailLocalPart(undefined)).toBe('');
+    expect(inferNameFromEmailLocalPart('@gmail.com')).toBe('');
+  });
+
+  it('treats input without @ as the whole local part', () => {
+    expect(inferNameFromEmailLocalPart('alice.smith')).toBe('Alice Smith');
   });
 });

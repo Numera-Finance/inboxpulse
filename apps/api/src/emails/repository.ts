@@ -1624,14 +1624,19 @@ export class EmailRepository extends ScopedRepository {
     const limit = request.limit ?? 50;
     const offset = request.offset ?? 0;
 
-    // Build raw SQL WHERE conditions (using table aliases e, ep, t, c)
+    // Build raw SQL WHERE conditions (using table aliases e, ep, t, c).
+    // The join to email_participants is restricted to the sender
+    // (direction='from') so the displayed customer, the customer-access
+    // filter, and the customer-dropdown filter all reflect the sender's
+    // customer — never a recipient's. This matches the product rule that
+    // customer attribution follows the sender exclusively.
     const whereParts: SQL[] = [
       sql`e.tenant_id = ${header.tenantId}`,
       sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
       sql`ep.customer_id IS NOT NULL`,
     ];
 
-    // Customer access filter
+    // Customer access filter — sender's customer must be accessible.
     if (!isAdmin(header.permissions)) {
       whereParts.push(sql`ep.customer_id IN (
         SELECT uac.customer_id FROM user_accessible_customers uac
@@ -1662,7 +1667,7 @@ export class EmailRepository extends ScopedRepository {
       }
     }
 
-    // Customer filter
+    // Customer filter — matches the sender's customer (ep is sender only).
     if (request.customerId) {
       whereParts.push(sql`ep.customer_id = ${request.customerId}`);
     }
@@ -1690,14 +1695,15 @@ export class EmailRepository extends ScopedRepository {
     const whereClause = sql.join(whereParts, sql` AND `);
 
     // Sort direction
-    const sortColumn = request.sortBy === 'createdAt' ? sql`sub.created_at` : sql`sub.received_at`;
+    const sortColumn = request.sortBy === 'createdAt' ? sql`e.created_at` : sql`e.received_at`;
     const sortDir = request.sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
 
-    // Count query
+    // Count query — ep is sender-only (direction='from'), so each email
+    // contributes exactly one row; DISTINCT isn't needed but harmless.
     const countResult = await this.db.execute<{ count: number }>(sql`
       SELECT count(DISTINCT e.id)::int AS count
       FROM emails e
-      INNER JOIN email_participants ep ON ep.email_id = e.id
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
       INNER JOIN customers c ON c.id = ep.customer_id
       LEFT JOIN tasks t ON t.email_id = e.id
       WHERE ${whereClause}
@@ -1728,38 +1734,35 @@ export class EmailRepository extends ScopedRepository {
       completed_by_name: string | null;
       task_created_at: Date | null;
     }>(sql`
-      SELECT * FROM (
-        SELECT DISTINCT ON (e.id)
-          e.id,
-          e.subject,
-          e.body,
-          e.from_email,
-          e.from_name,
-          e.received_at,
-          e.created_at,
-          e.signals,
-          ep.customer_id,
-          c.name AS customer_name,
-          t.id AS task_id,
-          t.status AS task_status,
-          t.assigned_to_id,
-          CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
-          assignee_u.email AS assigned_to_email,
-          t.problem,
-          t.resolution,
-          t.completed_at,
-          t.completed_by_id,
-          CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
-          t.created_at AS task_created_at
-        FROM emails e
-        INNER JOIN email_participants ep ON ep.email_id = e.id
-        INNER JOIN customers c ON c.id = ep.customer_id
-        LEFT JOIN tasks t ON t.email_id = e.id
-        LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
-        LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
-        WHERE ${whereClause}
-        ORDER BY e.id, (CASE WHEN ep.direction = 'from' THEN 0 ELSE 1 END)
-      ) sub
+      SELECT
+        e.id,
+        e.subject,
+        e.body,
+        e.from_email,
+        e.from_name,
+        e.received_at,
+        e.created_at,
+        e.signals,
+        ep.customer_id,
+        c.name AS customer_name,
+        t.id AS task_id,
+        t.status AS task_status,
+        t.assigned_to_id,
+        CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
+        assignee_u.email AS assigned_to_email,
+        t.problem,
+        t.resolution,
+        t.completed_at,
+        t.completed_by_id,
+        CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
+        t.created_at AS task_created_at
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+      LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+      WHERE ${whereClause}
       ORDER BY ${sortColumn} ${sortDir}
       LIMIT ${limit}
       OFFSET ${offset}
@@ -1880,39 +1883,36 @@ export class EmailRepository extends ScopedRepository {
       completed_by_name: string | null;
       task_created_at: Date | null;
     }>(sql`
-      SELECT * FROM (
-        SELECT DISTINCT ON (e.id)
-          e.id,
-          e.subject,
-          e.body,
-          e.from_email,
-          e.from_name,
-          e.received_at,
-          e.created_at,
-          e.signals,
-          ep.customer_id,
-          c.name AS customer_name,
-          t.id AS task_id,
-          t.status AS task_status,
-          t.assigned_to_id,
-          CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
-          assignee_u.email AS assigned_to_email,
-          t.problem,
-          t.resolution,
-          t.completed_at,
-          t.completed_by_id,
-          CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
-          t.created_at AS task_created_at
-        FROM emails e
-        INNER JOIN email_participants ep ON ep.email_id = e.id
-        INNER JOIN customers c ON c.id = ep.customer_id
-        LEFT JOIN tasks t ON t.email_id = e.id
-        LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
-        LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
-        WHERE ${whereClause}
-        ORDER BY e.id, (CASE WHEN ep.direction = 'from' THEN 0 ELSE 1 END)
-      ) sub
-      ORDER BY sub.received_at DESC
+      SELECT
+        e.id,
+        e.subject,
+        e.body,
+        e.from_email,
+        e.from_name,
+        e.received_at,
+        e.created_at,
+        e.signals,
+        ep.customer_id,
+        c.name AS customer_name,
+        t.id AS task_id,
+        t.status AS task_status,
+        t.assigned_to_id,
+        CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
+        assignee_u.email AS assigned_to_email,
+        t.problem,
+        t.resolution,
+        t.completed_at,
+        t.completed_by_id,
+        CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
+        t.created_at AS task_created_at
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+      LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+      WHERE ${whereClause}
+      ORDER BY e.received_at DESC
     `);
 
     if (rows.length === 0) {
@@ -2019,7 +2019,7 @@ export class EmailRepository extends ScopedRepository {
       completed_by_name: string | null;
       task_created_at: Date | null;
     }>(sql`
-      SELECT DISTINCT ON (e.id)
+      SELECT
         e.id,
         e.subject,
         e.body,
@@ -2041,13 +2041,12 @@ export class EmailRepository extends ScopedRepository {
         CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
         t.created_at AS task_created_at
       FROM emails e
-      INNER JOIN email_participants ep ON ep.email_id = e.id
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
       INNER JOIN customers c ON c.id = ep.customer_id
       LEFT JOIN tasks t ON t.email_id = e.id
       LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
       LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
       WHERE ${whereClause}
-      ORDER BY e.id, (CASE WHEN ep.direction = 'from' THEN 0 ELSE 1 END)
       LIMIT 1
     `);
 

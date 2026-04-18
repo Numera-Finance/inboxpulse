@@ -24,7 +24,19 @@ function email(overrides: Partial<Email> = {}): Email {
 describe('extractContacts', () => {
   it('returns the sender as the first contact', () => {
     const result = svc.extractContacts(email());
-    expect(result[0]).toEqual({ email: 'sender@acme.com', name: 'Sender' });
+    expect(result[0]).toEqual({ email: 'sender@acme.com', name: 'Sender', customerDomain: 'acme.com' });
+  });
+
+  it('attaches a pseudo-domain customerDomain for personal-email participants', () => {
+    const result = svc.extractContacts(email({
+      from: { email: 'uzi.dutta@gmail.com', name: 'Uzi Dutta' },
+      tos: [{ email: 'work@acme.com' }],
+    }));
+    const by = Object.fromEntries(result.map((c) => [c.email, c.customerDomain]));
+    expect(by).toEqual({
+      'uzi.dutta@gmail.com': 'uzi.dutta-gmail.com',
+      'work@acme.com': 'acme.com',
+    });
   });
 
   it('includes recipients across to / cc / bcc', () => {
@@ -49,8 +61,8 @@ describe('extractContacts', () => {
       from: { email: 'sender@acme.com' }, // no name
       tos: [{ email: 'plain@x.com' }],
     }));
-    expect(result[0]).toEqual({ email: 'sender@acme.com', name: undefined });
-    expect(result[1]).toEqual({ email: 'plain@x.com', name: undefined });
+    expect(result[0]).toEqual({ email: 'sender@acme.com', name: undefined, customerDomain: 'acme.com' });
+    expect(result[1]).toEqual({ email: 'plain@x.com', name: undefined, customerDomain: 'x.com' });
   });
 
   it('dedupes by lowercase email — different cases of the same address collapse', () => {
@@ -77,7 +89,7 @@ describe('extractContacts', () => {
       from: { email: '' as any, name: 'Empty' },
       tos: [{ email: 'good@x.com' }, { email: undefined as any, name: 'Bad' }],
     }));
-    expect(result).toEqual([{ email: 'good@x.com', name: undefined }]);
+    expect(result).toEqual([{ email: 'good@x.com', name: undefined, customerDomain: 'x.com' }]);
   });
 
   it('handles missing recipient arrays without throwing', () => {
@@ -87,7 +99,7 @@ describe('extractContacts', () => {
       ccs: undefined as any,
       bccs: undefined as any,
     }));
-    expect(result).toEqual([{ email: 'a@x.com', name: undefined }]);
+    expect(result).toEqual([{ email: 'a@x.com', name: undefined, customerDomain: 'x.com' }]);
   });
 
   it('returns an empty array when the email has no usable participants', () => {

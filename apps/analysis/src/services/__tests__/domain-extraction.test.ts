@@ -87,22 +87,44 @@ describe('extractDomains', () => {
     expect(result).toEqual([{ domain: 'acme-corp.com', inferredName: 'Acme Corp' }]);
   });
 
-  it('skips personal-email participants entirely', () => {
+  it('emits a per-address pseudo-domain for personal-email participants', () => {
     const result = svc.extractDomains(email({
-      from: { email: 'kira@gmail.com' },
+      from: { email: 'kira@gmail.com', name: 'Kira Tanaka' },
       tos: [{ email: 'work@acme.com' }],
       ccs: [{ email: 'friend@yahoo.com' }],
     }));
-    expect(result).toEqual([{ domain: 'acme.com', inferredName: 'Acme' }]);
+    const byDomain = Object.fromEntries(result.map((r) => [r.domain, r.inferredName]));
+    expect(byDomain).toEqual({
+      'kira-gmail.com': 'Kira Tanaka',
+      'acme.com': 'Acme',
+      'friend-yahoo.com': 'Friend',
+    });
   });
 
-  it('returns an empty array when every participant is on a personal domain', () => {
+  it('prefers the participant header name over a local-part-derived name', () => {
+    const result = svc.extractDomains(email({
+      from: { email: 'uzi.dutta@gmail.com', name: '  Uzi Dutta  ' },
+      tos: [],
+    }));
+    expect(result).toEqual([{ domain: 'uzi.dutta-gmail.com', inferredName: 'Uzi Dutta' }]);
+  });
+
+  it('falls back to the email local part when no header name is provided', () => {
+    const result = svc.extractDomains(email({
+      from: { email: 'uzi.dutta@gmail.com' },
+      tos: [],
+    }));
+    expect(result).toEqual([{ domain: 'uzi.dutta-gmail.com', inferredName: 'Uzi Dutta' }]);
+  });
+
+  it('creates one pseudo-domain per personal-email sender, no collapsing', () => {
     const result = svc.extractDomains(email({
       from: { email: 'a@gmail.com' },
       tos: [{ email: 'b@yahoo.com' }],
       ccs: [{ email: 'c@hotmail.com' }],
     }));
-    expect(result).toEqual([]);
+    const domains = result.map((d) => d.domain).sort();
+    expect(domains).toEqual(['a-gmail.com', 'b-yahoo.com', 'c-hotmail.com']);
   });
 
   it('handles missing/empty recipient arrays without throwing', () => {
