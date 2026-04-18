@@ -29,16 +29,11 @@ function toClientCustomerWithDomains(
     return undefined;
   }
 
-  // Append "(Auto)" to name for auto-created customers so they're easily identifiable
-  const displayName = customer.isAutoCreated && customer.name
-    ? `${customer.name} (Auto)`
-    : customer.name;
-
   return {
     id: customer.id,
     tenantId: customer.tenantId,
     domains, // Array of domains from customer_domains table
-    name: displayName,
+    name: customer.name,
     website: customer.website,
     industry: customer.industry,
     labels: customer.labels || [],
@@ -671,24 +666,29 @@ export class CustomerService {
         }
       }
 
-      // Step 3: Perform upsert with all domains in a single transaction
+      // Step 3: Never rewrite the name of an existing customer through upsert.
+      // Name is set once at creation (including the pipeline's "(Auto)" suffix) and only
+      // ever changes afterwards through the explicit updateCustomer (PATCH) endpoint.
+      let normalizedData: CreateCustomerRequest = data;
+      if (targetCustomerId) {
+        const { name: _ignored, ...rest } = data;
+        normalizedData = rest as CreateCustomerRequest;
+      }
+
+      // Step 4: Perform upsert with all domains in a single transaction
       // This ensures atomicity - if anything fails, everything rolls back
-      const customerWithDomains = await this.customerRepository.upsertWithDomains(data);
+      const customerWithDomains = await this.customerRepository.upsertWithDomains(normalizedData);
 
       // The repository now returns the customer with domains array already populated
       if (!customerWithDomains.domains || customerWithDomains.domains.length === 0) {
         throw new Error('Failed to convert customer to client format after upsert - no domains found');
       }
 
-      const displayName = customerWithDomains.isAutoCreated && customerWithDomains.name
-        ? `${customerWithDomains.name} (Auto)`
-        : customerWithDomains.name;
-
       return {
         id: customerWithDomains.id,
         tenantId: customerWithDomains.tenantId,
         domains: customerWithDomains.domains,
-        name: displayName,
+        name: customerWithDomains.name,
         website: customerWithDomains.website,
         industry: customerWithDomains.industry,
         externalId: customerWithDomains.externalId,

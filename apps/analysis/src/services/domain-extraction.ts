@@ -154,8 +154,10 @@ export class DomainExtractionService {
             continue;
           }
 
-          // Infer customer name from domain (simple approach)
-          inferredName = this.inferCustomerName(domain);
+          // Infer customer name from domain and suffix with "(Auto)" so it's
+          // searchable and shows up in exports. The suffix is applied once, at
+          // creation — subsequent upserts never overwrite an existing customer's name.
+          inferredName = `${this.inferCustomerName(domain)} (Auto)`;
 
           logger.debug({ tenantId, domain, inferredName }, 'Attempting to upsert customer');
 
