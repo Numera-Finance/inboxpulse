@@ -3,6 +3,8 @@
  * Shared types for the modular analysis system
  */
 
+import { z } from 'zod';
+
 // =============================================================================
 // Email Signals - Integer constants for the signals[] array on emails table
 // Using ranges to group related signals and leave room for future additions
@@ -143,15 +145,28 @@ export function getSignalFromClassification(classification: EmailClassification)
  * pure regex performed on every email and returned in the `extracted` field of
  * the /analyze response. They were previously listed here as "always run"
  * pseudo-analyses; that was misleading and has been removed.
+ *
+ * Single source of truth — both the TS type and the Zod schema are derived
+ * from `ANALYSIS_TYPES` so they cannot drift.
  */
-export type AnalysisType =
-  | 'signature-extraction'   // Conditional (if signature detected)
-  | 'sentiment'              // Conditional (if enabled)
-  | 'escalation'             // Conditional (if enabled)
-  | 'upsell'                 // Conditional (if enabled)
-  | 'churn'                  // Conditional (if enabled)
-  | 'kudos'                  // Conditional (if enabled)
-  | 'competitor';            // Conditional (if enabled)
+export const ANALYSIS_TYPES = [
+  'signature-extraction',  // Conditional (if signature detected)
+  'sentiment',             // Conditional (if enabled)
+  'escalation',            // Conditional (if enabled)
+  'upsell',                // Conditional (if enabled)
+  'churn',                 // Conditional (if enabled)
+  'kudos',                 // Conditional (if enabled)
+  'competitor',            // Conditional (if enabled)
+] as const;
+
+export type AnalysisType = (typeof ANALYSIS_TYPES)[number];
+
+/**
+ * Zod schema mirroring `AnalysisType`. Use at the API boundary so callers
+ * sending unknown / removed types get a clean validation error instead of
+ * the executor silently ignoring them.
+ */
+export const analysisTypeSchema = z.enum(ANALYSIS_TYPES);
 
 /**
  * Model configuration with primary and optional fallback

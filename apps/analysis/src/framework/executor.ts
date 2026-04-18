@@ -293,10 +293,25 @@ export class AnalysisExecutor {
     config: AnalysisConfig,
     threadContext?: ThreadContext
   ): Promise<BatchAnalysisResult> {
-    // Get definitions for requested types
-    const definitions = types
-      .map((type) => this.registry.get(type))
-      .filter((def): def is AnalysisDefinition => def !== undefined);
+    // Get definitions for requested types. Schema validation at the route
+    // boundary should already reject unknown types — this fallback exists as
+    // defense-in-depth (e.g., for internal callers that bypass HTTP). Warn
+    // loudly when it fires so any drift between the type union and the
+    // registry is visible in logs.
+    const definitions: AnalysisDefinition[] = [];
+    const unknownTypes: string[] = [];
+    for (const type of types) {
+      const def = this.registry.get(type);
+      if (def) definitions.push(def);
+      else unknownTypes.push(type);
+    }
+    if (unknownTypes.length > 0) {
+      logger.warn(
+        { tenantId, unknownTypes, requestedTypes: types },
+        'Unknown analysis types passed to executor — these were skipped. ' +
+        'This is likely a bug: the route schema should have rejected these.'
+      );
+    }
 
     if (definitions.length === 0) {
       logger.warn({ tenantId, types }, 'No valid analysis definitions found for requested types');

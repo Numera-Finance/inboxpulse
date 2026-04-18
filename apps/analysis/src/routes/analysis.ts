@@ -8,7 +8,7 @@ import { AnalysisConfigLoader } from '../framework/config-loader';
 import { AIService, type ModelConfig } from '../services/ai-service';
 import { analysisRegistry } from '../framework/registry';
 import { analysisCacheService } from '../services/cache-service';
-import { emailSchema } from '@crm/shared';
+import { emailSchema, analysisTypeSchema } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { z } from 'zod';
 import type { ApiResponse } from '@crm/shared';
@@ -60,7 +60,9 @@ const analyzeRequestSchema = z.object({
   tenantId: z.uuid(),
   email: emailSchema,
   threadContext: z.string().optional(),
-  analysisTypes: z.array(z.string()).optional(),
+  // Strict — unknown / removed types fail at the boundary with a 400
+  // instead of being silently filtered out by the executor.
+  analysisTypes: z.array(analysisTypeSchema).optional(),
   config: analysisConfigSchema,
   filter: filterOptionsSchema,
 });
@@ -167,10 +169,11 @@ app.post('/analyze', async (c) => {
       ...validated.config,
     });
 
-    // Determine which analyses to run.
+    // Determine which analyses to run. `analysisTypes` is already validated
+    // by the schema (analysisTypeSchema), so no cast is needed.
     const analysisTypes: AnalysisType[] = (validated.analysisTypes &&
       validated.analysisTypes.length > 0)
-      ? (validated.analysisTypes as AnalysisType[])
+      ? validated.analysisTypes
       : (configLoader.getEnabledAnalysisTypes(config) as AnalysisType[]);
 
     // Always include extraction in the response, even when no analyses are

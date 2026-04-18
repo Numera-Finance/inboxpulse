@@ -10,9 +10,26 @@ data. It does **not** write to the business database. It uses its own
 `analysis_cache` table for LLM-result memoization, but nothing else.
 
 `apps/api` owns all business persistence. It calls `apps/analysis` once per
-email, receives JSON, and writes everything to the database inside a single
-transaction. If anything in the write path fails, the whole transaction rolls
-back — no partial state.
+email, receives JSON, and writes the email's data to the database inside a
+single transaction. The customer + contact + email-participant + signal +
+analysis-result + signature-enrichment writes all participate in the same tx
+— if any of them fails, all roll back.
+
+Two write paths run **outside** that transaction (with their own connections):
+
+1. `userService.ensureUsersFromEmails` — runs **before** the email tx as Step 0.
+   User rows for tenant-domain participants are created idempotently. If the
+   email tx later fails, those user rows persist; that's deliberate (users
+   are tenant-domain employees, not email-scoped).
+2. `threadAnalysisService.updateThreadSummaries` — runs **inside** the email
+   tx (Step 8) but its inner repo opens its own transactions. It's currently
+   gated off (`useThreadSummaries: false` at both call sites) and must not be
+   enabled until that service is refactored to accept and use the email tx.
+
+Everything else — customer ensure, contact ensure, email participants,
+signals, analysis-result rows, signature-enrichment of contacts, and the
+sender's customer-name refinement from `signature.company` — is inside the
+single email transaction.
 
 There is now exactly **one** HTTP endpoint exposed by `apps/analysis` for the
 email pipeline:
@@ -57,19 +74,23 @@ EmailAnalysisService.analyze(email)                    [apps/api/src/emails/anal
         ↑
       response: { extracted, results, filterResult, cached }
 
-  Phase 2 — commit (all writes inside one db.transaction):
+  Phase 2 — commit (writes inside one db.transaction unless marked):
   ├── ensureCustomersFromExtractedDomains(tx)         CustomerService.ensureCustomerForEmail
   │                                                    advisory-lock per (tenant, domain)
   │                                                    name = withAutoCustomerSuffix(inferredName)
-  ├── ensureContactsInTransaction(tx, …)              one row per participant
+  ├── ensureContactsInTransaction(tx, …)              one row per participant; uses tx
+  │                                                    for customer lookup so it sees Step 1
   ├── createEmailParticipantsInTransaction(tx, …)     links email ↔ contact ↔ customer
   ├── updateEmailSignalsInTransaction(tx, …)
   ├── persistAnalysisResultsInTransaction(tx, …)
-  ├── enrichContactsFromSignatureInTransaction(tx, …) sender-email guard then enrich
+  ├── enrichContactsFromSignatureInTransaction(tx, …) sender-email guard then enrich;
+  │                                                    contactRepository.enrichFromSignature
+  │                                                    now accepts and uses tx
   ├── refineCustomerNameFromSignature(tx, …)          CustomerService.ensureCustomerForEmail
-  │                                                    same single entry point as step 1,
+  │                                                    same single entry point as Step 1,
   │                                                    now with signatureCompany set
-  ├── updateThreadSummariesInTransaction(tx, …)       (when useThreadSummaries)
+  ├── updateThreadSummariesInTransaction(tx, …)       ⚠ NOT tx-aware (own connection);
+  │                                                    gated off — useThreadSummaries=false
   └── updateAnalysisStatus(emailId, Completed, tx)
 ```
 

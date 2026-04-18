@@ -561,7 +561,15 @@ export class EmailAnalysisService {
             data.analysisResults['signature-extraction']
           );
 
-          // Step 8: Thread summaries
+          // Step 8: Thread summaries.
+          //
+          // ⚠ NOT tx-aware. ThreadAnalysisService.updateThreadSummaries opens
+          // its own transactions (see updateThreadSummariesInTransaction below)
+          // and writes outside the email tx — so a rollback here would NOT roll
+          // them back. Currently `useThreadSummaries` is hard-coded to false at
+          // both call sites (routes.ts and inngest/functions.ts), so this code
+          // path is effectively dead. Do NOT enable thread summaries until
+          // ThreadAnalysisService is refactored to accept and use `tx`.
           if (ctx.useThreadSummaries) {
             await this.updateThreadSummariesInTransaction(
               tx,
@@ -1021,7 +1029,10 @@ export class EmailAnalysisService {
   }
 
   /**
-   * Enrich contacts from signature (within transaction)
+   * Enrich contacts from signature (within transaction). Passes the tx all
+   * the way through to contactRepository, so writes participate in the email
+   * transaction — if the email tx rolls back, the contact enrichment is
+   * rolled back too.
    */
   private async enrichContactsFromSignatureInTransaction(
     tx: Transaction,
@@ -1035,15 +1046,14 @@ export class EmailAnalysisService {
       return;
     }
 
-    // Use ContactService - it has its own upsert logic
-    // TODO: Refactor to accept transaction
     try {
       await this.contactService.enrichFromSignature(
         tenantId,
         emailId,
         email,
         signatureData,
-        contacts
+        contacts,
+        tx
       );
     } catch (error: any) {
       logger.warn(

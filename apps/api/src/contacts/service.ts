@@ -4,6 +4,7 @@ import { ContactRepository } from './repository';
 import { logger } from '../utils/logger';
 import type { Contact, NewContact } from './schema';
 import type { Email, RequestHeader } from '@crm/shared';
+import type { Transaction } from '@crm/database';
 
 /**
  * Signature data extracted from email signatures
@@ -284,7 +285,8 @@ export class ContactService {
     emailId: string,
     email: Email,
     signatureData: SignatureData,
-    existingContacts: Array<{ id: string; email: string; name?: string; customerId?: string }>
+    existingContacts: Array<{ id: string; email: string; name?: string; customerId?: string }>,
+    tx?: Transaction
   ): Promise<SignatureEnrichmentResult | null> {
     // The signature belongs to the sender of the email
     const senderEmail = email.from?.email?.toLowerCase();
@@ -327,7 +329,7 @@ export class ContactService {
 
     // If contact doesn't exist in the provided list, try to find it in the database
     if (!contactId) {
-      const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail);
+      const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail, tx);
       contactId = dbContact?.id;
     }
 
@@ -367,7 +369,7 @@ export class ContactService {
           x: signatureData.x,
           linktree: signatureData.linktree,
           customerId: customerId || null,
-        });
+        }, tx);
 
         const fieldsSet = Object.entries(signatureData)
           .filter(([k, v]) => v && k !== 'email' && k !== 'company')
@@ -395,7 +397,7 @@ export class ContactService {
       } catch (createError: any) {
         // Contact might have been created by another process, try to find it again
         if (createError.code === '23505') { // Unique violation
-          const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail);
+          const dbContact = await this.contactRepository.findByEmail(tenantId, senderEmail, tx);
           contactId = dbContact?.id;
           if (!contactId) {
             throw createError;
@@ -407,7 +409,7 @@ export class ContactService {
     }
 
     // Enrich existing contact with signature data
-    const enrichResult = await this.contactRepository.enrichFromSignature(contactId, signatureData);
+    const enrichResult = await this.contactRepository.enrichFromSignature(contactId, signatureData, tx);
 
     if (enrichResult.updated) {
       logger.info(
