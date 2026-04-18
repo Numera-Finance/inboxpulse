@@ -99,10 +99,48 @@ export function UserForm({
     return managers.filter(m => m.label.toLowerCase().includes(q))
   }, [managers, managerSearch])
 
-  // Reset search when closing
+  // Highlighted row index for keyboard navigation inside the managers popover
+  const [managerHighlight, setManagerHighlight] = React.useState(0)
+  const managerListRef = React.useRef<HTMLDivElement | null>(null)
+
+  // Reset search + highlight when closing
   React.useEffect(() => {
-    if (!managerPopoverOpen) setManagerSearch("")
+    if (!managerPopoverOpen) {
+      setManagerSearch("")
+      setManagerHighlight(0)
+    }
   }, [managerPopoverOpen])
+
+  // Clamp highlight when the filtered list shrinks
+  React.useEffect(() => {
+    setManagerHighlight(prev => {
+      if (filteredManagers.length === 0) return 0
+      return Math.min(prev, filteredManagers.length - 1)
+    })
+  }, [filteredManagers.length])
+
+  // Keep the highlighted row in view as the user arrow-navigates
+  React.useEffect(() => {
+    if (!managerPopoverOpen) return
+    const container = managerListRef.current
+    if (!container) return
+    const el = container.querySelector<HTMLElement>(`[data-index="${managerHighlight}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [managerHighlight, managerPopoverOpen])
+
+  const handleManagerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (filteredManagers.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setManagerHighlight(i => (i + 1) % filteredManagers.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setManagerHighlight(i => (i - 1 + filteredManagers.length) % filteredManagers.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      toggleManager(filteredManagers[managerHighlight].value)
+    }
+  }
 
   // Get already selected customer IDs to exclude from dropdown
   const selectedCustomerIds = React.useMemo(() => {
@@ -304,26 +342,37 @@ export function UserForm({
                   <SearchIcon className="size-4 shrink-0 opacity-50" />
                   <input
                     type="text"
+                    autoFocus
                     value={managerSearch}
-                    onChange={(e) => setManagerSearch(e.target.value)}
+                    onChange={(e) => {
+                      setManagerSearch(e.target.value)
+                      setManagerHighlight(0)
+                    }}
+                    onKeyDown={handleManagerKeyDown}
                     placeholder="Search managers..."
                     className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                   />
                 </div>
-                <div className="flex-1 overflow-y-auto overscroll-contain p-1">
+                <div ref={managerListRef} className="flex-1 overflow-y-auto overscroll-contain p-1">
                   {filteredManagers.length === 0 ? (
                     <div className="py-6 text-center text-sm text-muted-foreground">
                       No managers found.
                     </div>
                   ) : (
-                    filteredManagers.map((manager) => {
+                    filteredManagers.map((manager, index) => {
                       const selected = managerEmails.includes(manager.value)
+                      const highlighted = index === managerHighlight
                       return (
                         <button
                           type="button"
                           key={manager.value}
+                          data-index={index}
                           onClick={() => toggleManager(manager.value)}
-                          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                          onMouseEnter={() => setManagerHighlight(index)}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm",
+                            highlighted && "bg-accent text-accent-foreground"
+                          )}
                         >
                           <div
                             className={cn(

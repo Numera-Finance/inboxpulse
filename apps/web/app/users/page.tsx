@@ -20,7 +20,7 @@ import { createXlsxBlob } from "@/lib/utils/export"
 import { UserTableSkeleton } from "@/components/ui/table-skeleton"
 import { useUsers, useCreateUser, useImportUsers, useUpdateUser, useSetUserCustomerAssignments } from "@/lib/hooks"
 import { type User, mapUserToUser } from "@/lib/types"
-import { SearchOperator } from "@crm/shared"
+import { SearchOperator, RowStatus } from "@crm/shared"
 import { toast } from "sonner"
 import { PermissionGate, usePermission, Permission } from "@/src/components/PermissionGate"
 
@@ -64,10 +64,15 @@ export default function UsersPage() {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
   }, [debouncedSearch, statusFilter])
 
+  // Status filter query — Inactive tab also includes archived users (rowStatus=2)
+  const statusQuery = statusFilter === "active"
+    ? { field: 'rowStatus', operator: SearchOperator.EQUALS, value: RowStatus.ACTIVE }
+    : { field: 'rowStatus', operator: SearchOperator.IN, value: [RowStatus.INACTIVE, RowStatus.ARCHIVED] }
+
   // Fetch users using React Query with server-side pagination
   const { data, isLoading, isError, error } = useUsers({
     queries: [
-      { field: 'rowStatus', operator: SearchOperator.EQUALS, value: statusFilter === "active" ? 0 : 1 },
+      statusQuery,
       ...(debouncedSearch
         ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
         : []),
