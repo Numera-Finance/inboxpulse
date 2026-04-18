@@ -62,25 +62,6 @@ describe('extractTopLevelDomain', () => {
   });
 });
 
-describe('inferCustomerName', () => {
-  it('capitalizes the first label', () => {
-    expect(svc.inferCustomerName('acme.com')).toBe('Acme');
-  });
-
-  it('splits on hyphens and capitalizes each segment', () => {
-    expect(svc.inferCustomerName('acme-corp.com')).toBe('Acme Corp');
-    expect(svc.inferCustomerName('global-tech-solutions.io')).toBe('Global Tech Solutions');
-  });
-
-  it('falls back to the raw domain when the label is empty', () => {
-    expect(svc.inferCustomerName('.com')).toBe('.com');
-  });
-
-  it('handles single-label domains', () => {
-    expect(svc.inferCustomerName('localhost')).toBe('Localhost');
-  });
-});
-
 describe('extractDomains', () => {
   it('extracts the from-domain when no recipients overlap', () => {
     const result = svc.extractDomains(email({ from: { email: 'a@acme.com' }, tos: [], ccs: [], bccs: [] }));

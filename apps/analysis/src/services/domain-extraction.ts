@@ -1,5 +1,5 @@
 import type { Email } from '@crm/shared';
-import { isPersonalEmailDomain } from '@crm/shared';
+import { isPersonalEmailDomain, inferCustomerNameFromDomain } from '@crm/shared';
 import { logger } from '../utils/logger';
 
 export interface ExtractedDomain {
@@ -50,7 +50,7 @@ export class DomainExtractionService {
       const d = this.extractTopLevelDomain(addr.email);
       if (!d || seen.has(d)) return;
       seen.add(d);
-      results.push({ domain: d, inferredName: this.inferCustomerName(d) });
+      results.push({ domain: d, inferredName: inferCustomerNameFromDomain(d) });
     };
 
     consider(email.from);
@@ -69,21 +69,4 @@ export class DomainExtractionService {
     return results;
   }
 
-  /**
-   * Naive customer-name inference from a domain.
-   *   acme-corp.com → "Acme Corp"
-   */
-  inferCustomerName(domain: string): string {
-    try {
-      const namePart = domain.split('.')[0];
-      if (!namePart) return domain;
-      return namePart
-        .split('-')
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
-    } catch (error: any) {
-      logger.warn({ error: error.message, domain }, 'Failed to infer customer name from domain');
-      return domain;
-    }
-  }
 }

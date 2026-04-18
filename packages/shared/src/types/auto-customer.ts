@@ -10,6 +10,28 @@
  */
 export const AUTO_CUSTOMER_NAME_SUFFIX = ' (Auto)';
 
+/**
+ * Naive customer-name inference from a domain. Single source of truth for
+ * both apps/analysis (extraction time) and apps/api (last-resort customer
+ * creation in the email transaction).
+ *
+ *   acme-corp.com → "Acme Corp"
+ *   global-tech-solutions.io → "Global Tech Solutions"
+ *
+ * Falls back to the raw domain if the first label is empty (defensive — the
+ * caller should never pass an empty/malformed domain, but this is the safest
+ * thing if they do).
+ */
+export function inferCustomerNameFromDomain(domain: string): string {
+  if (!domain) return domain;
+  const namePart = domain.split('.')[0];
+  if (!namePart) return domain;
+  return namePart
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 /** Lowercase form used for case-insensitive suffix detection. Single source. */
 const AUTO_SUFFIX_LOWER = AUTO_CUSTOMER_NAME_SUFFIX.toLowerCase();
 /** Whitespace-tolerant fallback — catches "Foo(Auto)" without a leading space. */

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { AUTO_CUSTOMER_NAME_SUFFIX, withAutoCustomerSuffix } from '../auto-customer';
+import {
+  AUTO_CUSTOMER_NAME_SUFFIX,
+  withAutoCustomerSuffix,
+  inferCustomerNameFromDomain,
+} from '../auto-customer';
 
 describe('withAutoCustomerSuffix', () => {
   it('appends the canonical " (Auto)" suffix to a plain name', () => {
@@ -51,5 +55,43 @@ describe('withAutoCustomerSuffix', () => {
 
   it('does not depend on the suffix constant being mutable', () => {
     expect(AUTO_CUSTOMER_NAME_SUFFIX).toBe(' (Auto)');
+  });
+});
+
+describe('inferCustomerNameFromDomain', () => {
+  it('capitalizes the first label of the domain', () => {
+    expect(inferCustomerNameFromDomain('acme.com')).toBe('Acme');
+    expect(inferCustomerNameFromDomain('foo.io')).toBe('Foo');
+  });
+
+  it('splits on hyphens and title-cases each segment', () => {
+    expect(inferCustomerNameFromDomain('acme-corp.com')).toBe('Acme Corp');
+    expect(inferCustomerNameFromDomain('global-tech-solutions.io')).toBe('Global Tech Solutions');
+    expect(inferCustomerNameFromDomain('a-b-c-d-e.io')).toBe('A B C D E');
+  });
+
+  it('preserves an already-capitalized label', () => {
+    expect(inferCustomerNameFromDomain('ACME.com')).toBe('ACME');
+  });
+
+  it('handles single-label hostnames', () => {
+    expect(inferCustomerNameFromDomain('localhost')).toBe('Localhost');
+  });
+
+  it('returns the raw input for empty / malformed inputs', () => {
+    expect(inferCustomerNameFromDomain('')).toBe('');
+    expect(inferCustomerNameFromDomain('.com')).toBe('.com'); // first label is empty
+  });
+
+  it('does not lowercase domain TLDs (operates on the first label only)', () => {
+    expect(inferCustomerNameFromDomain('mystartupcfo.COM')).toBe('Mystartupcfo');
+  });
+
+  // Documented behaviour: the function does not know about multi-part TLDs.
+  // Caller is expected to give it a registrable domain (e.g., output of
+  // extractTopLevelDomain). Given a multi-part TLD that's already collapsed
+  // upstream, the inference still produces something sensible:
+  it('on a multi-part TLD result (e.g. "co.uk") returns the first label', () => {
+    expect(inferCustomerNameFromDomain('co.uk')).toBe('Co');
   });
 });

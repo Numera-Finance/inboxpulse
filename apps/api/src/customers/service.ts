@@ -819,8 +819,12 @@ export class CustomerService {
    * Find customer by domain (internal use)
    * Returns raw Customer entity or undefined
    */
-  async findByDomain(tenantId: string, domain: string): Promise<Customer | undefined> {
-    return this.customerRepository.findByDomain(tenantId, domain);
+  async findByDomain(
+    tenantId: string,
+    domain: string,
+    tx?: Transaction
+  ): Promise<Customer | undefined> {
+    return this.customerRepository.findByDomain(tenantId, domain, tx);
   }
 
   /**

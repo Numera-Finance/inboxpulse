@@ -6,7 +6,7 @@ import { EmailRepository } from './repository';
 import { ThreadAnalysisService } from './thread-analysis-service';
 import { createEmailAnalysisRecord } from './analysis-utils';
 import type { Email, AnalysisType } from '@crm/shared';
-import { Signal, isPersonalEmailDomain } from '@crm/shared';
+import { Signal, isPersonalEmailDomain, inferCustomerNameFromDomain } from '@crm/shared';
 import type { AnalysisType as EmailAnalysisType } from './analysis-schema';
 import { EmailAnalysisStatus, type NewEmailParticipant } from './schema';
 import { UserService } from '../users/service';
@@ -670,17 +670,20 @@ export class EmailAnalysisService {
         let contact = await this.contactService.findByEmail(tenantId, emailLower);
         let created = false;
 
-        // Find customer for this participant
-        // Priority: 1) Domain lookup, 2) Existing contact's customer, 3) Create new
+        // Find customer for this participant.
+        // Priority: 1) Domain lookup (sees customers ensured in Step 1 via tx),
+        //           2) Existing contact's customer link (manual mapping),
+        //           3) Last-resort ensureCustomerForEmail (race-safe + suffixed
+        //              — should rarely fire because Step 1 already ensured
+        //              customers for every non-personal extracted domain).
         if (domain && !isPersonalEmailDomain(domain)) {
           try {
-            // First try to find existing customer by domain
-            let customer = await this.customerService.findByDomain(tenantId, domain);
+            // tx-aware lookup so we see the customer Step 1 just created in
+            // this transaction.
+            let customer = await this.customerService.findByDomain(tenantId, domain, tx);
 
             if (!customer && contact?.customerId) {
-              // Fallback: Use existing contact's customer link
-              // Handles cases where contact was manually linked to a customer
-              // whose domain doesn't match (e.g., consultant with personal email)
+              // Fallback: use the existing contact's manual customer link.
               customerId = contact.customerId;
               logger.info(
                 {
@@ -694,31 +697,32 @@ export class EmailAnalysisService {
                 'Using customer from existing contact (domain lookup found no match)'
               );
             } else if (!customer) {
-              // Create new customer for this domain
-              const inferredName = this.inferCustomerName(domain);
-              customer = await this.customerService.createFromDomain(tenantId, inferredName, domain);
+              // Last-resort: Step 1 didn't ensure a customer for this domain
+              // (e.g., the domain wasn't in extracted.domains for some reason).
+              // Use the same single entry point so we get the advisory lock,
+              // (Auto) suffix, and idempotency for free.
+              customer = await this.customerService.ensureCustomerForEmail(
+                tx,
+                tenantId,
+                domain,
+                { defaultName: inferCustomerNameFromDomain(domain) }
+              );
               customerId = customer.id;
             } else {
               customerId = customer.id;
             }
           } catch (customerError: any) {
-            // If customer creation fails (e.g., unique constraint), try to find it again
-            if (customerError.code === '23505') {
-              const existingCustomer = await this.customerService.findByDomain(tenantId, domain);
-              customerId = existingCustomer?.id;
-            } else {
-              logger.warn(
-                {
-                  tenantId,
-                  domain,
-                  error: customerError.message,
-                },
-                'Failed to create customer for domain, contact will be created without customer link'
-              );
-            }
+            logger.warn(
+              {
+                tenantId,
+                domain,
+                error: customerError.message,
+              },
+              'Failed to ensure customer for domain, contact will be created without customer link'
+            );
           }
         } else if (contact?.customerId) {
-          // Personal email domain but contact has a customer link - use it
+          // Personal email domain but contact has a customer link — use it.
           customerId = contact.customerId;
         }
 
@@ -811,18 +815,6 @@ export class EmailAnalysisService {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * Infer customer name from domain
-   * e.g., "acme-corp" -> "Acme Corp"
-   */
-  private inferCustomerName(domain: string): string {
-    const namePart = domain.split('.')[0];
-    return namePart
-      .split('-')
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ');
   }
 
   /**
