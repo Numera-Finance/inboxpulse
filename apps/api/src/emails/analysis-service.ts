@@ -22,6 +22,26 @@ import { extractLatestReply } from './extraction/extractor';
 // Types
 // =============================================================================
 
+/**
+ * Find the customer-domain key for an email's sender by looking them up in
+ * the extracted-contacts list. Exported for unit testing — keeps the
+ * signature-refinement lookup pure so we can assert its behaviour without
+ * instantiating the full service.
+ *
+ * Matching is case-insensitive on the email address. Returns null when the
+ * sender is missing from the email header or absent from `extractedContacts`
+ * (which should be rare — analysis adds the sender to its contacts list).
+ */
+export function findSenderCustomerDomain(
+  senderEmail: string | null | undefined,
+  extractedContacts: Array<{ email: string; customerDomain: string }>
+): string | null {
+  if (!senderEmail) return null;
+  const normalized = senderEmail.toLowerCase();
+  const match = extractedContacts.find((c) => c.email.toLowerCase() === normalized);
+  return match?.customerDomain ?? null;
+}
+
 export interface AnalysisExecutionResult {
   /** Customers ensured during the email's transaction (created or pre-existing). */
   customers?: Array<{ id: string; domains: string[] }>;
@@ -1037,18 +1057,16 @@ export class EmailAnalysisService {
   ): Promise<void> {
     const company = signatureData?.company?.trim();
     if (!company) return;
-    const senderEmail = ctx.email.from?.email?.toLowerCase();
-    if (!senderEmail) return;
 
     // Find the sender entry analysis produced — it already carries the
     // customer-domain key (top-level for corporate, pseudo for personal).
     // No re-derivation in the api: we just refine the customer that was
     // ensured in Step 1 under this exact domain.
-    const senderContact = extractedContacts.find((c) => c.email.toLowerCase() === senderEmail);
-    if (!senderContact) return;
+    const senderDomain = findSenderCustomerDomain(ctx.email.from?.email, extractedContacts);
+    if (!senderDomain) return;
 
     try {
-      await this.customerService.ensureCustomerForEmail(tx, ctx.tenantId, senderContact.customerDomain, {
+      await this.customerService.ensureCustomerForEmail(tx, ctx.tenantId, senderDomain, {
         signatureCompany: company,
       });
     } catch (error: any) {

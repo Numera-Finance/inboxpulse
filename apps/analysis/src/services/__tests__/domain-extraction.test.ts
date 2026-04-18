@@ -21,46 +21,12 @@ function email(overrides: Partial<Email> = {}): Email {
   };
 }
 
-describe('extractTopLevelDomain', () => {
-  it('strips the local part and returns the registrable domain', () => {
-    expect(svc.extractTopLevelDomain('john@acme.com')).toBe('acme.com');
-  });
-
-  it('reduces a subdomain to its last two parts', () => {
-    expect(svc.extractTopLevelDomain('john@mail.acme.com')).toBe('acme.com');
-    expect(svc.extractTopLevelDomain('alice@deep.subdomain.example.org')).toBe('example.org');
-  });
-
-  it('returns null for personal-email providers', () => {
-    expect(svc.extractTopLevelDomain('foo@gmail.com')).toBeNull();
-    expect(svc.extractTopLevelDomain('foo@yahoo.co.in')).toBeNull();
-    expect(svc.extractTopLevelDomain('foo@hey.com')).toBeNull();
-  });
-
-  it('lowercases the result', () => {
-    expect(svc.extractTopLevelDomain('USER@Acme.COM')).toBe('acme.com');
-  });
-
-  it('returns null for malformed input', () => {
-    expect(svc.extractTopLevelDomain('')).toBeNull();
-    expect(svc.extractTopLevelDomain('not-an-email')).toBeNull();
-    expect(svc.extractTopLevelDomain('@')).toBeNull();
-    expect(svc.extractTopLevelDomain(null as unknown as string)).toBeNull();
-    expect(svc.extractTopLevelDomain(undefined as unknown as string)).toBeNull();
-  });
-
-  it('returns the bare hostname when no dot is present (single-label TLD)', () => {
-    // Edge case — not real-world, but the regex should not crash.
-    expect(svc.extractTopLevelDomain('user@localhost')).toBe('localhost');
-  });
-
-  // Documented limitation: naive last-two-parts heuristic doesn't handle
-  // multi-part TLDs. Fixing requires the Public Suffix List (e.g. tldts).
-  it('KNOWN LIMITATION: multi-part TLDs are reduced to the wrong domain', () => {
-    expect(svc.extractTopLevelDomain('john@something.co.uk')).toBe('co.uk');
-    expect(svc.extractTopLevelDomain('john@something.com.au')).toBe('com.au');
-  });
-});
+// `extractTopLevelDomain` used to be a public method on DomainExtractionService
+// but was dropped when all branching moved into
+// `@crm/shared.resolveCustomerKeyForEmail`. See that helper's tests in
+// `packages/shared/src/types/__tests__/personal-domains.test.ts` for the
+// per-case behaviour (corporate top-level, personal pseudo, malformed input,
+// known multi-part TLD limitation).
 
 describe('extractDomains', () => {
   it('extracts the from-domain when no recipients overlap', () => {

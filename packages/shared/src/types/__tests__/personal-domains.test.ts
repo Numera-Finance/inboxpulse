@@ -4,6 +4,7 @@ import {
   isPersonalEmailDomain,
   personalEmailToPseudoDomain,
   inferNameFromEmailLocalPart,
+  resolveCustomerKeyForEmail,
 } from '../personal-domains';
 
 describe('isPersonalEmailDomain', () => {
@@ -124,5 +125,87 @@ describe('inferNameFromEmailLocalPart', () => {
 
   it('treats input without @ as the whole local part', () => {
     expect(inferNameFromEmailLocalPart('alice.smith')).toBe('Alice Smith');
+  });
+});
+
+describe('resolveCustomerKeyForEmail', () => {
+  it('returns the top-level domain + domain-derived name for corporate addresses', () => {
+    expect(resolveCustomerKeyForEmail('alice@acme.com')).toEqual({
+      domain: 'acme.com',
+      defaultName: 'Acme',
+    });
+  });
+
+  it('reduces subdomains to the last two parts', () => {
+    expect(resolveCustomerKeyForEmail('alice@mail.acme.com')).toEqual({
+      domain: 'acme.com',
+      defaultName: 'Acme',
+    });
+  });
+
+  it('splits hyphenated corporate names into title case', () => {
+    expect(resolveCustomerKeyForEmail('user@acme-corp.io')).toEqual({
+      domain: 'acme-corp.io',
+      defaultName: 'Acme Corp',
+    });
+  });
+
+  it('emits a per-address pseudo-domain for personal-email addresses', () => {
+    expect(resolveCustomerKeyForEmail('uzi.dutta@gmail.com')).toEqual({
+      domain: 'uzi.dutta-gmail.com',
+      defaultName: 'Uzi Dutta',
+    });
+  });
+
+  it('prefers the header name over the local-part-derived name for personal addresses', () => {
+    expect(resolveCustomerKeyForEmail('uzi.dutta@gmail.com', '  Uzi Dutta Pro  ')).toEqual({
+      domain: 'uzi.dutta-gmail.com',
+      defaultName: 'Uzi Dutta Pro',
+    });
+  });
+
+  it('ignores the header name for corporate addresses (domain decides the customer row)', () => {
+    // The defaultName on the corporate path is derived from the domain so
+    // that two senders from the same company don't fight to rename the row.
+    expect(resolveCustomerKeyForEmail('alice@acme.com', 'Alice Smith')).toEqual({
+      domain: 'acme.com',
+      defaultName: 'Acme',
+    });
+  });
+
+  it('lowercases the domain half', () => {
+    expect(resolveCustomerKeyForEmail('Alice@ACME.com')).toEqual({
+      domain: 'acme.com',
+      defaultName: 'Acme',
+    });
+    expect(resolveCustomerKeyForEmail('UZI@Gmail.COM')).toEqual({
+      domain: 'uzi-gmail.com',
+      defaultName: 'Uzi',
+    });
+  });
+
+  it('falls back to an empty header name and still produces a key', () => {
+    expect(resolveCustomerKeyForEmail('plain@gmail.com', '')).toEqual({
+      domain: 'plain-gmail.com',
+      defaultName: 'Plain',
+    });
+  });
+
+  it('returns null for malformed input', () => {
+    expect(resolveCustomerKeyForEmail('')).toBeNull();
+    expect(resolveCustomerKeyForEmail(null)).toBeNull();
+    expect(resolveCustomerKeyForEmail(undefined)).toBeNull();
+    expect(resolveCustomerKeyForEmail('no-at-sign')).toBeNull();
+    expect(resolveCustomerKeyForEmail('alice@')).toBeNull();
+  });
+
+  // Documented limitation shared with the old extractTopLevelDomain path:
+  // naive last-two-parts heuristic mis-handles multi-part TLDs. Fixing
+  // requires the Public Suffix List (e.g. tldts).
+  it('KNOWN LIMITATION: multi-part TLDs are reduced to the wrong domain', () => {
+    expect(resolveCustomerKeyForEmail('john@something.co.uk')).toEqual({
+      domain: 'co.uk',
+      defaultName: 'Co',
+    });
   });
 });

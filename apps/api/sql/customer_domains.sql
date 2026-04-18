@@ -7,8 +7,10 @@ CREATE TABLE IF NOT EXISTS customer_domains (
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     tenant_id UUID NOT NULL REFERENCES tenants(id),
     
-    -- Domain (lowercase enforced in API layer)
-    domain VARCHAR(255) NOT NULL,
+    -- Domain (lowercase enforced in API layer).
+    -- Width fits personal-email pseudo-domains (<local>-<provider>.tld,
+    -- up to 64+1+253 chars per RFC 5321). See migration 010.
+    domain VARCHAR(320) NOT NULL,
     
     -- Metadata
     verified BOOLEAN NOT NULL DEFAULT false, -- Whether domain is verified

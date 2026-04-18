@@ -1,5 +1,5 @@
 import type { Email } from '@crm/shared';
-import { isPersonalEmailDomain, resolveCustomerKeyForEmail } from '@crm/shared';
+import { resolveCustomerKeyForEmail } from '@crm/shared';
 import type { ExtractedDomain } from '@crm/clients';
 import { logger } from '../utils/logger';
 
@@ -10,30 +10,12 @@ export type { ExtractedDomain } from '@crm/clients';
  * default name for each. Performs NO database writes — apps/api is responsible
  * for all customer persistence so the entire email-write happens in a single
  * transaction.
+ *
+ * All domain/personal branching lives in
+ * `@crm/shared.resolveCustomerKeyForEmail`; this class only iterates the
+ * participants and dedupes.
  */
 export class DomainExtractionService {
-  /**
-   * Extract the top-level domain from a corporate email address. Returns
-   * null for personal-domain addresses (they flow through
-   * `extractPseudoDomainFromPersonalEmail` instead) and for malformed input.
-   */
-  extractTopLevelDomain(email: string): string | null {
-    try {
-      const domain = email?.split('@')[1]?.toLowerCase();
-      if (!domain) {
-        logger.warn({ email }, 'No domain found in email address');
-        return null;
-      }
-      if (isPersonalEmailDomain(domain)) return null;
-      const parts = domain.split('.');
-      if (parts.length >= 2) return parts.slice(-2).join('.');
-      return domain;
-    } catch (error: any) {
-      logger.error({ error: error.message, stack: error.stack, email }, 'Failed to extract top-level domain');
-      return null;
-    }
-  }
-
   /**
    * Extract domains for every participant (from + tos + ccs + bccs).
    * Corporate participants collapse to one entry per top-level domain.

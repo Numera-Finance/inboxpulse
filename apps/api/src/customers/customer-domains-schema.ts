@@ -15,8 +15,10 @@ export const customerDomains = pgTable(
     customerId: uuid('customer_id').notNull(), // References customers table, column named customer_id for backwards compatibility
     tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
 
-    // Domain stored in lowercase for consistency
-    domain: varchar('domain', { length: 255 }).notNull(),
+    // Domain stored in lowercase for consistency.
+    // Widened to 320 to fit personal-email pseudo-domains
+    // (`<local>-<provider>.tld`, up to 64+1+253 chars per RFC 5321).
+    domain: varchar('domain', { length: 320 }).notNull(),
 
     // Metadata
     verified: boolean('verified').notNull().default(false), // Whether domain is verified
