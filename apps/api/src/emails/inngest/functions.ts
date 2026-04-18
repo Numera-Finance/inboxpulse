@@ -180,8 +180,8 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
             executionEndTime,
             executionDurationMs,
             analysisTypesExecuted: result.analysisResults ? Object.keys(result.analysisResults) : [],
-            customersCreated: result.domainResult?.customers?.length || 0,
-            contactsCreated: result.contactResult?.contacts?.length || 0,
+            customersCreated: result.customers?.length || 0,
+            contactsCreated: result.contacts?.length || 0,
             logType: 'ANALYSIS_EXECUTION_COMPLETE',
           },
           `Inngest: Analysis execution completed in ${executionDurationMs}ms`

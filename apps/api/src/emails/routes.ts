@@ -477,11 +477,11 @@ app.post('/:emailId/analyze', async (c) => {
       emailId,
       persist,
       result: {
-        customersCreated: result.domainResult?.customers?.length || 0,
-        contactsCreated: result.contactResult?.contacts?.length || 0,
+        customersCreated: result.customers?.length || 0,
+        contactsCreated: result.contacts?.length || 0,
         analyses: result.analysisResults || {},
-        customers: result.domainResult?.customers || [],
-        contacts: result.contactResult?.contacts || [],
+        customers: result.customers || [],
+        contacts: result.contacts || [],
       },
     });
   } catch (error: any) {

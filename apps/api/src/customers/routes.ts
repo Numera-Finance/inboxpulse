@@ -57,33 +57,6 @@ customerRoutes.post('/', requirePermission(Permission.CUSTOMER_ADD), async (c) =
   );
 });
 
-/**
- * POST /api/customers/from-email - Internal endpoint used by the email pipeline
- * to create or refine an auto-created customer from a sender's domain (and
- * optionally the company name extracted from the sender's email signature).
- * Idempotent — see CustomerService.ensureCustomerForEmail for behavior.
- */
-const ensureCustomerForEmailRequestSchema = z.object({
-  tenantId: z.string().uuid(),
-  domain: z.string().min(1),
-  defaultName: z.string().min(1),
-  signatureCompany: z.string().optional().nullable(),
-});
-
-customerRoutes.post('/from-email', async (c) => {
-  const body = await c.req.json();
-  const validated = ensureCustomerForEmailRequestSchema.parse(body);
-  const customerService = container.resolve(CustomerService);
-  const customer = await customerService.ensureCustomerForEmail(
-    validated.tenantId,
-    validated.domain,
-    {
-      defaultName: validated.defaultName,
-      signatureCompany: validated.signatureCompany ?? undefined,
-    }
-  );
-  return c.json<ApiResponse<typeof customer>>({ success: true, data: customer });
-});
 
 /**
  * GET /api/customers - List all customers for tenant (with access control)

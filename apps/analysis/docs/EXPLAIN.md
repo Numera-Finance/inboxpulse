@@ -1,7 +1,34 @@
 # Email Analysis & Signature Extraction — Architecture
 
-How an inbound email gets analyzed, how its signature gets extracted, and how the sender's
-customer record is created/refined. Covers the path across `crm-api` and `crm-analysis`.
+How an inbound email gets analyzed and how its derived data (customers, contacts,
+signature, signals) gets persisted.
+
+## Service contract
+
+`apps/analysis` is a **pure analyzer**. Given an email, it returns structured
+data. It does **not** write to the business database. It uses its own
+`analysis_cache` table for LLM-result memoization, but nothing else.
+
+`apps/api` owns all business persistence. It calls `apps/analysis` once per
+email, receives JSON, and writes everything to the database inside a single
+transaction. If anything in the write path fails, the whole transaction rolls
+back — no partial state.
+
+There is now exactly **one** HTTP endpoint exposed by `apps/analysis` for the
+email pipeline:
+
+```
+POST /api/analysis/analyze
+  → { extracted: { domains, contacts },
+      results:   { sentiment, escalation, …, signature-extraction },
+      filtered?: bool, filterResult?: ClassificationResult,
+      cached?:   bool }
+```
+
+The previously-separate `/domain-extract`, `/contact-extract`, and
+`/extract-signature` routes have been removed; their data is now part of
+`/analyze`'s response. `/filter` and `/summarize` remain for debugging and
+thread-summary helpers respectively.
 
 ## End-to-end flow
 
@@ -11,151 +38,106 @@ ingestion (Gmail/Pub/Sub)
 emails table + Inngest job
   ↓
 EmailAnalysisService.analyze(email)                    [apps/api/src/emails/analysis-service.ts]
-  ↓
-  ├── extractEmailContent(ctx)
-  │     extractLatestReply(body, isHtml) — talon + email-reply-parser
-  │     ctx.email.body      = dequoted reply (signature stripped, what other analyses see)
-  │     ctx.email.signature = dequoted reply WITH signature attached
-  │                            (LLM finds the signature inside it)
-  │
-  ├── runKeywordAnalysis(ctx)                          (cheap regex; resolves some signals)
-  │
-  └── callMainAnalyses(ctx, excludeTypes)              (HTTP → analysis service /analyze)
-            ↓
-            POST /analyze                              [apps/analysis/src/routes/analysis.ts]
-              ├── classifier filter (spam/marketing)   [emailFilterService]
-              ├── if non-business → skip               (returns filtered=true)
-              └── analysisExecutor.executeBatch(types) [apps/analysis/src/framework/executor.ts]
-                    ├── try executeBatchCall          (ONE LLM call; combined Zod schema)
-                    │     buildBatchedSchema  → z.object({sentiment, escalation, …, signature-extraction})
-                    │     buildBatchedPrompt  → instructions ‖ "From: …" ‖ Email Body ‖ Email Signature
-                    │     aiService.generateStructuredOutput(...)  → Gemini-2.5-pro
-                    └── on failure → executeIndividualCalls (parallel per analysis)
-            ↑
-        results (Map<AnalysisType, AnalysisResult>)
-  ↑
-  ├── update emails.signals from analyses
-  │
-  ├── enrichContactsFromSignatureInTransaction         (writes title/phone/etc. to contacts)
-  │     contactRepository.enrichFromSignature          (only fills empty fields)
-  │     pre-step: sender-email guard rejects extraction if signature.email's
-  │               domain ≠ sender's domain (defense vs. embedded forwards)
-  │
-  └── refineCustomerNameFromSignature                  (sender's customer name from signature.company)
-        customerService.ensureCustomerForEmail(...)    (single entry point)
+
+  Phase 1 — gather (no DB writes):
+  ├── ensureUsersFromEmails(...)                      (idempotent; outside transaction)
+  ├── collectEmailParticipantsForContacts(email)
+  ├── extractEmailContent(ctx)                        (talon quote-strip + signature-attached input)
+  ├── runKeywordAnalysis(ctx)                         (cheap regex)
+  └── callMainAnalyses(ctx) → POST /api/analysis/analyze
+        ↓
+        apps/analysis (pure):
+          ├── DomainExtractionService.extractDomains(email)   → ExtractedDomain[]
+          ├── ContactExtractionService.extractContacts(email) → ExtractedContact[]
+          ├── EmailFilterService.classify(email)               → ClassificationResult
+          └── AnalysisExecutor.executeBatch(types, …)         → ONE LLM call
+                                                                  combined Zod schema
+                                                                  returns sentiment, escalation,
+                                                                  …, signature-extraction
+        ↑
+      response: { extracted, results, filterResult, cached }
+
+  Phase 2 — commit (all writes inside one db.transaction):
+  ├── ensureCustomersFromExtractedDomains(tx)         CustomerService.ensureCustomerForEmail
+  │                                                    advisory-lock per (tenant, domain)
+  │                                                    name = withAutoCustomerSuffix(inferredName)
+  ├── ensureContactsInTransaction(tx, …)              one row per participant
+  ├── createEmailParticipantsInTransaction(tx, …)     links email ↔ contact ↔ customer
+  ├── updateEmailSignalsInTransaction(tx, …)
+  ├── persistAnalysisResultsInTransaction(tx, …)
+  ├── enrichContactsFromSignatureInTransaction(tx, …) sender-email guard then enrich
+  ├── refineCustomerNameFromSignature(tx, …)          CustomerService.ensureCustomerForEmail
+  │                                                    same single entry point as step 1,
+  │                                                    now with signatureCompany set
+  ├── updateThreadSummariesInTransaction(tx, …)       (when useThreadSummaries)
+  └── updateAnalysisStatus(emailId, Completed, tx)
 ```
 
-## Customer creation/refinement (the one-method rule)
+## Customer creation/refinement (single entry point)
 
-There is **one** path for creating or refining auto-created customers from email
-context: `CustomerService.ensureCustomerForEmail(tenantId, domain, options)`.
+```
+customerService.ensureCustomerForEmail(tx, tenantId, domain, options)
+```
 
-| Caller | When | What it passes |
+Both call sites use this:
+
+| Caller | When | Options passed |
 |---|---|---|
-| `apps/analysis/src/services/domain-extraction.ts` | During domain extraction (early) | `defaultName: inferFromDomain(domain)` |
-| `apps/api/src/emails/analysis-service.ts:refineCustomerNameFromSignature` | After signature analysis (later) | `signatureCompany: signature.company` (and same `defaultName` for completeness, unused since signature wins) |
+| Phase-2 step "ensure customers" | every email, for every non-personal participant domain | `{ defaultName: <inferred from domain> }` |
+| Phase-2 step "refine from signature" | every email where `signature.company` is non-empty, for the sender's domain | `{ defaultName: <inferred>, signatureCompany: <signature.company> }` |
 
-`ensureCustomerForEmail` is idempotent:
-- Doesn't exist → create with `withAutoCustomerSuffix(signatureCompany ?? defaultName)`, `isAutoCreated=true`.
-- Exists & `isAutoCreated=true` & current name ≠ proposed name → update.
-- Exists & `isAutoCreated=false` (manually created or already refined) → leave alone.
-- Exists & names match → no-op.
+Behavior (idempotent):
+- No customer for `domain` → create with `withAutoCustomerSuffix(name)`, `isAutoCreated=true`.
+- Exists & auto-created & current name ≠ proposed name → update.
+- Exists & auto-created & names match → no-op.
+- Exists & manually created → leave alone, return as-is.
 
-The "(Auto)" suffix is applied via `withAutoCustomerSuffix` in `@crm/shared`. Single
-source of truth — neither caller assembles the suffix inline.
+Race safety: each call acquires a `pg_advisory_xact_lock` keyed on
+`(tenantId, domain)` at the start of the function. Concurrent calls for the
+same domain serialize on the lock; the lock auto-releases at end of transaction.
 
-`upsertCustomer` (used by the UI's Add Customer flow) is a separate code path; it
-stays as-is. The two methods serve different use cases — UI manual create vs.
-email-pipeline auto-create.
+The `(Auto)` suffix is applied via `withAutoCustomerSuffix` from `@crm/shared`.
+Single source of truth — no other place builds the suffix inline.
 
-## Key invariants
+## Personal-domain handling
 
-- **One LLM call per email is the happy path.** `executeBatchCall` packs all enabled
-  analyses (including `signature-extraction`) into a single call with a combined
-  Zod schema. Per-analysis parallel calls only happen as a fallback when the
-  batch call's structured output fails to parse.
+`@crm/shared.PERSONAL_DOMAINS` is the canonical list of consumer-grade webmail
+providers (gmail, yahoo, outlook, icloud, protonmail, etc.). Used by:
 
-- **Signature-extraction always runs** (no `hasAnalyzableSignatureContent` gate).
-  The LLM is given the dequoted reply with signature attached and asked to find
-  the signature inside.
+- `apps/analysis` `domain-extraction` to skip those domains during extraction
+  (they don't get a customer auto-created).
+- `apps/api` `analysis-service.ensureContactsInTransaction` to decide that
+  participants on those domains shouldn't be linked to a customer by their
+  email's domain.
 
-- **Quote stripping is the only reliable mechanical part.**
-  `talon.quotations.extractFromPlain` removes quoted history well. Talon's separate
-  signature-detection step is unreliable and we no longer use it; the LLM finds
-  the signature within the reply.
+Single import, no drift.
 
-- **Sender-ownership rule.** Both the prompt and a post-LLM guard ensure that an
-  embedded forwarded signature isn't attributed to the sender.
+## Caching status (informational)
 
-- **Contact enrichment is fill-the-empties.** `enrichFromSignature` only updates
-  contact fields that are currently null/empty — preserves user-edited values.
+`PromptBuilder` (`apps/analysis/src/framework/prompt-builder.ts`) defines
+cache-aware sections; not currently used by `executeBatchCall`. The Vercel AI
+SDK for Google does surface `cachedContentTokenCount` from Gemini's
+`usageMetadata` as `usage.cachedInputTokens`. `AnalysisExecutor` strips it
+before logging, so cache activity is invisible in our own logs.
 
-- **Customer name precedence.** Signature `company` ≻ domain-derived inference,
-  but only for `isAutoCreated=true` customers (manually-set names are untouched).
+To check today: query Langfuse traces for any analysis call; look for
+`cachedInputTokens` in the `usage` block. To make this visible in our own
+logs, expand the usage mapping in `executor.ts`. To enable explicit caching:
+switch `executeBatchCall` to use `PromptBuilder.buildPromptMessages` and pass
+cache hints through `AIService` to the provider.
 
-## Schemas
-
-- Per-analysis: `apps/analysis/src/analyses/schemas.ts`
-- Combined batch schema: built dynamically in `AnalysisExecutor.buildBatchedSchema()` —
-  `z.object({sentiment: …, escalation: …, …, signature-extraction: …})`.
-- Persisted shape: `apps/api/src/emails/analysis-schema.ts` (`email_analyses` table).
-
-## Prompt structure
-
-`buildBatchedPrompt()` produces a single string:
-
-```
-## Sentiment Analysis
-<sentiment instructions>
-
-## Escalation Detection
-<escalation instructions>
-
-…
-
-## Signature Extraction
-<signature instructions, including sender-ownership rule>
-
-From: <from name> <<from email>>
-Email Subject: …
-Email Body: <dequoted reply, signature stripped>
-
-Email Signature: <dequoted reply with signature attached>     ← LLM finds the sig in here
-Thread Context: <…>                                           ← when threadContext is provided
-```
-
-The `From:` line is sender identity and is referenced by the signature module's
-sender-ownership rule. Other modules can use it too; it's harmless.
-
-## Caching status
-
-`PromptBuilder` (`apps/analysis/src/framework/prompt-builder.ts`) defines cache-aware
-sections; it's not used by `executeBatchCall`. The Vercel AI SDK for Google
-(`@ai-sdk/google`) does surface `cachedContentTokenCount` from Gemini's
-`usageMetadata` as `usage.cachedInputTokens`. `AnalysisExecutor` strips it from
-logged usage today, so cache activity is invisible in our own logs. Langfuse
-traces should still capture it.
-
-To verify in your own logs: extend the usage mapping in `executor.ts` to include
-`cachedInputTokens`. To force explicit caching: switch `executeBatchCall` to
-build messages via `PromptBuilder.buildPromptMessages` and pass cache hints
-through `AIService` to the provider.
-
-## Standalone signature service (deprecated path)
-
-`apps/analysis/src/services/signature-extraction.ts` exists as its own endpoint
-(`POST /extract-signature`) called from `routes/analysis.ts:203`. The API service
-does **not** hit this in the standard analyze flow; the production path goes
-through the unified `/analyze` endpoint and the batch call. Confirm no other
-caller before deletion.
+Implicit Gemini-2.5-pro caching requires ≥4,096 input tokens. Production
+prompts (~7 analyses + body + thread context) are likely above this — but
+since we don't log `cachedInputTokens` we can't tell.
 
 ## Diagnostic scripts
 
-- `apps/analysis/check-gemini-cache.ts` — tests Gemini implicit caching by sending
-  the same prompt prefix multiple times and inspecting `usage.cachedInputTokens`.
-- `apps/api/debug-extractor-vs-llm.ts` — compares talon's signature slice to the
-  LLM's output for a sample of emails.
-- `apps/api/debug-signature-proposal.ts` — dumps proposed signature inputs to
-  a file for manual eyeball review.
+- `apps/analysis/check-gemini-cache.ts` — sends the same prompt prefix multiple
+  times to verify Gemini implicit cache behaviour (today: not firing on test
+  prompts because they're below the 4096-token threshold).
+- `apps/api/debug-extractor-vs-llm.ts` — compares talon's signature slice to
+  what the LLM extracts on a sample of emails.
+- `apps/api/debug-signature-proposal.ts` — dumps proposed signature inputs to a
+  file for manual review.
 - `packages/database/debug-escalation-customer.ts` — explains why a specific
-  email's customer attribution is what it is.
+  email was attributed to the customer it was attributed to.

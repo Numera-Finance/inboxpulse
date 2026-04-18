@@ -1,7 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
 import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, withAutoCustomerSuffix, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
 import { ContactRepository } from '../contacts/repository';
@@ -715,22 +715,30 @@ export class CustomerService {
 
   /**
    * Single entry point for customer creation/refinement from the email pipeline.
-   * Both the eager domain-extraction step and the post-signature refinement step
-   * call this. Idempotent.
+   *
+   * Both the eager domain-extraction step (no signature info) and the
+   * post-signature refinement step (with `signatureCompany`) call this.
+   * Idempotent.
    *
    * Name precedence (best name wins):
    *   1. options.signatureCompany — extracted from the sender's email signature
    *   2. options.defaultName       — caller's domain-derived inference
    *
    * Behavior:
-   *   - Customer doesn't exist for `domain` → create with the suffixed best-name and isAutoCreated=true
-   *   - Customer exists, was auto-created, current name differs from the suffixed best-name → update name
-   *   - Customer exists but was manually created (isAutoCreated=false) → leave alone, just return it
-   *   - Customer exists, auto-created, name already matches → no-op
+   *   - No customer for `domain`     → create with suffixed best-name, isAutoCreated=true
+   *   - Exists & auto-created & name differs from proposed → update name
+   *   - Exists & auto-created & name matches → no-op
+   *   - Exists & manually created    → leave alone, just return
+   *
+   * Race safety: requires a transaction (`tx`) and acquires an advisory
+   * transaction lock keyed on (tenantId, domain). Concurrent calls for the
+   * same domain serialize on the lock, so no two concurrent transactions can
+   * both insert and conflict on the unique constraint.
    *
    * The "(Auto)" suffix is always applied via `withAutoCustomerSuffix` — never built inline.
    */
   async ensureCustomerForEmail(
+    tx: Transaction,
     tenantId: string,
     domain: string,
     options: { signatureCompany?: string | null; defaultName: string }
@@ -742,14 +750,23 @@ export class CustomerService {
     }
     const proposedName = withAutoCustomerSuffix(proposedRaw);
 
-    const existing = await this.customerRepository.findByDomain(tenantId, normalizedDomain);
+    // Serialize concurrent calls for the same (tenant, domain) within their
+    // transactions. The lock auto-releases at end of transaction.
+    const lockKey = `customer:${tenantId}:${normalizedDomain}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+
+    const existing = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
 
     if (existing) {
       if (
         existing.isAutoCreated &&
         (existing.name ?? '').trim().toLowerCase() !== proposedName.toLowerCase()
       ) {
-        const updated = await this.customerRepository.update(existing.id, { name: proposedName });
+        const updated = await this.customerRepository.update(
+          existing.id,
+          { name: proposedName },
+          tx
+        );
         logger.info(
           {
             tenantId,
@@ -767,13 +784,15 @@ export class CustomerService {
       return existing;
     }
 
-    // Doesn't exist — create with the best name we have.
-    const created = await this.customerRepository.create({
-      tenantId,
-      name: proposedName,
-      isAutoCreated: true,
-      domain: normalizedDomain,
-    } as NewCustomer & { domain: string });
+    const created = await this.customerRepository.create(
+      {
+        tenantId,
+        name: proposedName,
+        isAutoCreated: true,
+        domain: normalizedDomain,
+      } as NewCustomer & { domain: string },
+      tx
+    );
     logger.info(
       {
         tenantId,

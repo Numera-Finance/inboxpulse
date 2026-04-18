@@ -7,7 +7,6 @@ import { DomainExtractionService } from '../services/domain-extraction';
 import { ContactExtractionService } from '../services/contact-extraction';
 import { DomainEnrichmentService } from '../services/domain-enrichment';
 import { AIService } from '../services/ai-service';
-import { SignatureExtractionService } from '../services/signature-extraction';
 import { EmailFilterService } from '../services/email-filter';
 // Framework components
 import { AnalysisRegistry, analysisRegistry } from '../framework/registry';
@@ -28,7 +27,6 @@ export function setupContainer() {
     container.register(DomainExtractionService, { useClass: DomainExtractionService });
     container.register(ContactExtractionService, { useClass: ContactExtractionService });
     container.register(AIService, { useClass: AIService });
-    container.register(SignatureExtractionService, { useClass: SignatureExtractionService });
     container.register(EmailFilterService, { useClass: EmailFilterService });
 
     logger.info('Analysis service container setup complete');

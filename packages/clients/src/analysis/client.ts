@@ -1,33 +1,6 @@
 import type { Email, AnalysisType, AnalysisConfig } from '@crm/shared';
 import { BaseClient } from '../base-client';
 
-/**
- * Response types from analysis service
- */
-export interface DomainExtractionResponse {
-  success: boolean;
-  data?: {
-    customers: Array<{
-      id: string;
-      domains: string[];
-    }>;
-  };
-  error?: any;
-}
-
-export interface ContactExtractionResponse {
-  success: boolean;
-  data?: {
-    contacts: Array<{
-      id: string;
-      email: string;
-      name?: string;
-      customerId?: string;
-    }>;
-  };
-  error?: any;
-}
-
 export interface ClassificationResult {
   category: 'spam' | 'marketing' | 'transactional' | 'automated' | 'business';
   confidence: number;
@@ -42,10 +15,29 @@ export interface FilterOptions {
   filterCategories?: Array<'spam' | 'marketing' | 'automated' | 'transactional'>;
 }
 
+/** Domain extracted from an email's participants. */
+export interface ExtractedDomain {
+  domain: string;
+  inferredName: string;
+}
+
+/** Contact (participant) extracted from an email. */
+export interface ExtractedContact {
+  email: string;
+  name?: string;
+}
+
+/** Pure-data extraction payload returned in every /analyze response. */
+export interface ExtractedPayload {
+  domains: ExtractedDomain[];
+  contacts: ExtractedContact[];
+}
+
 export interface AnalysisResponse {
   success: boolean;
   data?: {
     results: Record<string, any>;
+    extracted: ExtractedPayload;
     filtered?: boolean;
     filterResult?: ClassificationResult;
     cached?: boolean;
@@ -54,61 +46,27 @@ export interface AnalysisResponse {
 }
 
 /**
- * Client for analysis service API operations
+ * Client for the analysis service.
+ *
+ * The analysis service is a pure analyzer — given an email, it returns
+ * structured extraction + analysis results. It does NOT write to the
+ * business database. All persistence is the API service's job, performed
+ * inside a single transaction so partial-write inconsistency cannot occur.
+ *
+ * Therefore there is exactly one HTTP call exposed here for the email
+ * pipeline: `analyze`. The caller is expected to use the returned
+ * `extracted` payload to drive customer/contact persistence on its side.
  */
 export class AnalysisClient extends BaseClient {
   constructor() {
     super();
-    // Override base URL to point to analysis service
-    // Default to localhost:4003 for development, or use SERVICE_ANALYSIS_URL env var
     this.baseUrl = process.env.SERVICE_ANALYSIS_URL!;
   }
 
   /**
-   * Extract domains from email and create/update customers
-   * Always-run analysis (sync)
-   */
-  async extractDomains(
-    tenantId: string,
-    email: Email
-  ): Promise<DomainExtractionResponse['data']> {
-    const response = await this.post<DomainExtractionResponse>(
-      '/api/analysis/domain-extract',
-      { tenantId, email }
-    );
-
-    if (!response.success || !response.data) {
-      throw new Error(response.error?.message || 'Domain extraction failed');
-    }
-
-    return response.data;
-  }
-
-  /**
-   * Extract contacts from email and create/update them, linking to customers
-   * Always-run analysis (sync)
-   * Optionally pass customers from domain extraction
-   */
-  async extractContacts(
-    tenantId: string,
-    email: Email,
-    customers?: Array<{ id: string; domains: string[] }>
-  ): Promise<ContactExtractionResponse['data']> {
-    const response = await this.post<ContactExtractionResponse>(
-      '/api/analysis/contact-extract',
-      { tenantId, email, customers }
-    );
-
-    if (!response.success || !response.data) {
-      throw new Error(response.error?.message || 'Contact extraction failed');
-    }
-
-    return response.data;
-  }
-
-  /**
-   * Analyze email with specified analysis types
-   * Conditional analyses (can be async)
+   * Run all analyses on an email and return the structured result, including
+   * the extracted participants needed by the API service to persist customers
+   * and contacts.
    */
   async analyze(
     tenantId: string,
@@ -140,8 +98,8 @@ export class AnalysisClient extends BaseClient {
   }
 
   /**
-   * Summarize thread context for a specific analysis type
-   * Used to generate/update thread summaries
+   * Summarize thread context for a specific analysis type.
+   * Used to generate/update thread summaries.
    */
   async summarizeThread(
     analysisType: string,
