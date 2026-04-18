@@ -43,3 +43,4 @@ export * from './analysis';
 export * from './customer-roles';
 export * from './rbac';
 export * from './row-status';
+export * from './auto-customer';

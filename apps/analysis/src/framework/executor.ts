@@ -336,15 +336,26 @@ export class AnalysisExecutor {
 
   /**
    * Helper: Build email context string
-   * - body: contains the reply content (quotes stripped)
-   * - signature: contains extracted signature (if has analyzable content like phone, title, etc.)
+   * - From: sender identity (used by signature-extraction's ownership rule, harmless to others)
+   * - Body: dequoted reply content
+   * - Signature: dequoted reply with signature attached, for signature-extraction to find
+   *             the signature within
+   * - Thread Context: optional prior-thread summary
    */
   private buildEmailContext(email: Email, threadContext?: ThreadContext): string {
-    let context = `Email Subject: ${email.subject}\n\n`;
+    const fromName = email.from?.name?.trim();
+    const fromEmail = email.from?.email?.trim();
+    const fromLine = fromEmail
+      ? fromName
+        ? `From: ${fromName} <${fromEmail}>`
+        : `From: ${fromEmail}`
+      : '';
+
+    let context = '';
+    if (fromLine) context += `${fromLine}\n`;
+    context += `Email Subject: ${email.subject}\n\n`;
     context += `Email Body:\n${email.body || ''}\n\n`;
 
-    // Include signature separately if available
-    // This allows signature-extraction to analyze it without wasting tokens on quoted content
     if (email.signature) {
       context += `Email Signature:\n${email.signature}\n\n`;
     }

@@ -25,6 +25,38 @@ export class CustomerClient extends BaseClient {
   }
 
   /**
+   * Email-pipeline customer creation/refinement.
+   *
+   * - First call (during domain-extraction, no `signatureCompany`): creates the
+   *   auto-customer with a domain-derived `defaultName`.
+   * - Subsequent call (after signature analysis, with `signatureCompany`):
+   *   updates the auto-created customer's name to the signature-provided one.
+   *
+   * Idempotent. Server applies the "(Auto)" suffix; callers pass the raw name.
+   */
+  async ensureCustomerForEmail(
+    tenantId: string,
+    domain: string,
+    options: { defaultName: string; signatureCompany?: string | null },
+    signal?: AbortSignal,
+  ): Promise<Customer> {
+    const response = await this.post<ApiResponse<Customer>>(
+      '/api/customers/from-email',
+      { tenantId, domain, ...options },
+      signal,
+      tenantId,
+    );
+    if (!response) {
+      throw new Error('Invalid API response: response is null');
+    }
+    const apiResponse = response as ApiResponse<Customer>;
+    if (!apiResponse.data) {
+      throw new Error(`Invalid API response: missing data field. Response: ${JSON.stringify(response)}`);
+    }
+    return apiResponse.data;
+  }
+
+  /**
    * Get customer by domain
    */
   async getCustomerByDomain(tenantId: string, domain: string, signal?: AbortSignal): Promise<Customer | null> {

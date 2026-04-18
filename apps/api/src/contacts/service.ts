@@ -264,6 +264,31 @@ export class ContactService {
       return null;
     }
 
+    // Sender ownership guard: defense in depth in case the LLM didn't apply the
+    // ownership rule itself. If the signature carries an email address that is
+    // clearly someone else (different mailbox AND different domain than the
+    // sender), this is almost certainly an embedded forwarded/quoted signature
+    // (e.g., Sanjeevani's signature inside Kira's reply). Reject the whole
+    // extraction rather than attribute it to the wrong contact.
+    const sigEmail = signatureData.email?.trim().toLowerCase();
+    if (sigEmail && sigEmail !== senderEmail) {
+      const senderDomain = senderEmail.split('@')[1] ?? '';
+      const sigDomain = sigEmail.split('@')[1] ?? '';
+      if (senderDomain && sigDomain && senderDomain !== sigDomain) {
+        logger.info(
+          {
+            emailId,
+            senderEmail,
+            sigEmail,
+            tenantId,
+            logType: 'SIGNATURE_REJECTED_SENDER_MISMATCH',
+          },
+          'Signature email belongs to a different person, rejecting extraction'
+        );
+        return null;
+      }
+    }
+
     // Check if we have any meaningful signature data to apply
     const hasSignatureData = Object.entries(signatureData).some(([key, value]) => {
       if (key === 'email' || key === 'company') return false; // Skip email and company for this check

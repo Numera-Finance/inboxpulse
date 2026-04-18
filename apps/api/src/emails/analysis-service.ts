@@ -16,7 +16,7 @@ import { TaskService } from '../tasks/service';
 import { TenantService } from '../tenants/service';
 import { KeywordService } from '../keywords/service';
 import { logger } from '../utils/logger';
-import { extractLatestReply, hasAnalyzableSignatureContent } from './extraction/extractor';
+import { extractLatestReply } from './extraction/extractor';
 
 // =============================================================================
 // Constants
@@ -247,58 +247,45 @@ export class EmailAnalysisService {
   /**
    * Extract reply and signature from email body
    * Updates ctx.email with:
-   * - body: stripped of quoted content (reply only)
-   * - signature: only if it has analyzable content (phone, title, company, etc.)
+   * - body: stripped of quoted content (reply only, signature also stripped if talon detected one)
+   * - signature: the dequoted reply WITH signature attached. We let the LLM find the signature
+   *   inside this text rather than trying to slice it out heuristically (talon's signature
+   *   slice is unreliable and was previously dropping ~84% of real signatures).
    */
   private extractEmailContent(ctx: AnalysisContext): void {
     const originalBody = ctx.email.body;
     if (!originalBody) return;
 
-    // Check if body looks like HTML
     const isHtml = /<\/?[a-z][\s\S]*>/i.test(originalBody);
 
     try {
       const extraction = extractLatestReply(originalBody, isHtml);
 
-      // Update body with extracted reply (quotes stripped)
+      // Build the signature input: dequoted reply + (talon's signature slice if any).
+      // If talon's signature slice already trails the messageBody (or is empty), no-op.
+      const sig = extraction.signature?.trim();
+      const reply = extraction.messageBody.trim();
+      const signatureInput =
+        sig && !reply.endsWith(sig) ? `${reply}\n\n${sig}` : reply;
+
       ctx.email = {
         ...ctx.email,
         body: extraction.messageBody,
+        signature: signatureInput || undefined,
       };
 
-      // Only set signature if it has analyzable content (not just a name)
-      if (extraction.signature && hasAnalyzableSignatureContent(extraction.signature)) {
-        ctx.email = {
-          ...ctx.email,
-          signature: extraction.signature,
-        };
-
-        logger.debug(
-          {
-            tenantId: ctx.tenantId,
-            emailId: ctx.emailId,
-            originalLength: extraction.originalLength,
-            replyLength: extraction.messageBody.length,
-            signatureLength: extraction.signature.length,
-            tokenSavingsPercent: extraction.tokenSavingsPercent,
-            logType: 'EMAIL_EXTRACTION_WITH_SIGNATURE',
-          },
-          'Email content extracted with analyzable signature'
-        );
-      } else {
-        logger.debug(
-          {
-            tenantId: ctx.tenantId,
-            emailId: ctx.emailId,
-            originalLength: extraction.originalLength,
-            replyLength: extraction.messageBody.length,
-            tokenSavingsPercent: extraction.tokenSavingsPercent,
-            hasSignature: !!extraction.signature,
-            logType: 'EMAIL_EXTRACTION_NO_SIGNATURE',
-          },
-          'Email content extracted (no analyzable signature)'
-        );
-      }
+      logger.debug(
+        {
+          tenantId: ctx.tenantId,
+          emailId: ctx.emailId,
+          originalLength: extraction.originalLength,
+          replyLength: extraction.messageBody.length,
+          signatureInputLength: signatureInput.length,
+          tokenSavingsPercent: extraction.tokenSavingsPercent,
+          logType: 'EMAIL_EXTRACTION',
+        },
+        'Email content extracted'
+      );
     } catch (error: any) {
       logger.warn(
         { error: error.message, tenantId: ctx.tenantId, emailId: ctx.emailId },
@@ -512,18 +499,6 @@ export class EmailAnalysisService {
       }
     }
 
-    // Filter out signature-extraction if no signature available (saves tokens)
-    if (analysisTypes && !ctx.email.signature) {
-      const filtered = analysisTypes.filter(t => t !== 'signature-extraction');
-      if (filtered.length < analysisTypes.length) {
-        logger.debug(
-          { tenantId: ctx.tenantId, emailId: ctx.emailId, logType: 'SKIP_SIGNATURE_ANALYSIS' },
-          'Skipping signature-extraction (no analyzable signature)'
-        );
-        analysisTypes = filtered.length > 0 ? filtered : undefined;
-      }
-    }
-
     logger.info(
       {
         tenantId: ctx.tenantId,
@@ -646,6 +621,15 @@ export class EmailAnalysisService {
             ctx.email,
             data.analysisResults['signature-extraction'],
             allContacts
+          );
+
+          // Step 5b: Refine auto-created customer name with signature.company
+          // (signature company > domain-derived name when both are available)
+          await this.refineCustomerNameFromSignature(
+            ctx.tenantId,
+            ctx.emailId,
+            ctx.email,
+            data.analysisResults['signature-extraction']
           );
 
           // Step 6: Update thread summaries
@@ -1144,6 +1128,36 @@ export class EmailAnalysisService {
       logger.warn(
         { error: error.message, tenantId, emailId },
         'Failed to enrich contacts from signature (non-blocking within transaction)'
+      );
+    }
+  }
+
+  /**
+   * Refine the sender's auto-created customer using `signature.company`.
+   * Goes through the same single entry point (CustomerService.ensureCustomerForEmail)
+   * that domain-extraction uses for initial creation — there is exactly one
+   * code path for creating/updating an auto-created customer from email context.
+   */
+  private async refineCustomerNameFromSignature(
+    tenantId: string,
+    emailId: string,
+    email: Email,
+    signatureData: SignatureData | undefined
+  ): Promise<void> {
+    const company = signatureData?.company?.trim();
+    if (!company) return;
+    const senderDomain = email.from?.email?.toLowerCase().split('@')[1];
+    if (!senderDomain) return;
+
+    try {
+      await this.customerService.ensureCustomerForEmail(tenantId, senderDomain, {
+        defaultName: company, // unused since signatureCompany takes precedence
+        signatureCompany: company,
+      });
+    } catch (error: any) {
+      logger.warn(
+        { error: error.message, tenantId, emailId },
+        'Failed to refine customer name from signature (non-blocking)'
       );
     }
   }

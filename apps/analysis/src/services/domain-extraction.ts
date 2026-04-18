@@ -154,20 +154,17 @@ export class DomainExtractionService {
             continue;
           }
 
-          // Infer customer name from domain and suffix with "(Auto)" so it's
-          // searchable and shows up in exports. The suffix is applied once, at
-          // creation — subsequent upserts never overwrite an existing customer's name.
-          inferredName = `${this.inferCustomerName(domain)} (Auto)`;
+          // Domain-derived name. Server applies the "(Auto)" suffix and
+          // handles the create-or-refine logic in one place.
+          inferredName = this.inferCustomerName(domain);
 
-          logger.debug({ tenantId, domain, inferredName }, 'Attempting to upsert customer');
+          logger.debug({ tenantId, domain, inferredName }, 'Ensuring customer for email');
 
-          // Upsert customer
-          const customer = await this.customerClient.upsertCustomer({
+          const customer = await this.customerClient.ensureCustomerForEmail(
             tenantId,
-            domains: [domain], // Single domain in array
-            name: inferredName,
-            isAutoCreated: true,
-          });
+            domain,
+            { defaultName: inferredName }
+          );
 
           logger.debug({
             tenantId,

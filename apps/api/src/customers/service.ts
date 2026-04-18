@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
-import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
+import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, withAutoCustomerSuffix, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
@@ -711,6 +711,81 @@ export class CustomerService {
       logger.error({ error, id }, 'Failed to update customer');
       throw error;
     }
+  }
+
+  /**
+   * Single entry point for customer creation/refinement from the email pipeline.
+   * Both the eager domain-extraction step and the post-signature refinement step
+   * call this. Idempotent.
+   *
+   * Name precedence (best name wins):
+   *   1. options.signatureCompany — extracted from the sender's email signature
+   *   2. options.defaultName       — caller's domain-derived inference
+   *
+   * Behavior:
+   *   - Customer doesn't exist for `domain` → create with the suffixed best-name and isAutoCreated=true
+   *   - Customer exists, was auto-created, current name differs from the suffixed best-name → update name
+   *   - Customer exists but was manually created (isAutoCreated=false) → leave alone, just return it
+   *   - Customer exists, auto-created, name already matches → no-op
+   *
+   * The "(Auto)" suffix is always applied via `withAutoCustomerSuffix` — never built inline.
+   */
+  async ensureCustomerForEmail(
+    tenantId: string,
+    domain: string,
+    options: { signatureCompany?: string | null; defaultName: string }
+  ): Promise<Customer> {
+    const normalizedDomain = domain.toLowerCase();
+    const proposedRaw = options.signatureCompany?.trim() || options.defaultName.trim();
+    if (!proposedRaw) {
+      throw new ValidationError('ensureCustomerForEmail requires a non-empty defaultName or signatureCompany');
+    }
+    const proposedName = withAutoCustomerSuffix(proposedRaw);
+
+    const existing = await this.customerRepository.findByDomain(tenantId, normalizedDomain);
+
+    if (existing) {
+      if (
+        existing.isAutoCreated &&
+        (existing.name ?? '').trim().toLowerCase() !== proposedName.toLowerCase()
+      ) {
+        const updated = await this.customerRepository.update(existing.id, { name: proposedName });
+        logger.info(
+          {
+            tenantId,
+            customerId: existing.id,
+            domain: normalizedDomain,
+            previousName: existing.name,
+            newName: proposedName,
+            source: options.signatureCompany ? 'signature' : 'domain',
+            logType: 'CUSTOMER_NAME_REFINED',
+          },
+          'Auto-created customer name updated'
+        );
+        return updated ?? existing;
+      }
+      return existing;
+    }
+
+    // Doesn't exist — create with the best name we have.
+    const created = await this.customerRepository.create({
+      tenantId,
+      name: proposedName,
+      isAutoCreated: true,
+      domain: normalizedDomain,
+    } as NewCustomer & { domain: string });
+    logger.info(
+      {
+        tenantId,
+        customerId: created.id,
+        domain: normalizedDomain,
+        name: proposedName,
+        source: options.signatureCompany ? 'signature' : 'domain',
+        logType: 'CUSTOMER_AUTO_CREATED',
+      },
+      'Auto-created customer from email'
+    );
+    return created;
   }
 
   async replaceDomains(customerId: string, tenantId: string, domains: string[]): Promise<void> {

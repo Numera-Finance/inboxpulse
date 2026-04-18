@@ -252,25 +252,39 @@ export const signatureModule: AnalysisModule = {
   name: 'signature-extraction',
   description: 'Extract contact information from email signature',
   instructions: `## Signature Extraction
-Extract contact information from the "Email Signature" section provided.
+The "Email Signature" section contains the sender's reply text with the signature
+attached at the end. Find the signature within it and extract the structured fields.
 
-Return:
-- name: full name (if found)
-- title: job title or position (if found)
-- company: company name (if found)
-- email: email address from signature (if different from sender)
-- phone: phone number (if found)
-- mobile: mobile/cell number (if found)
-- address: physical address (if found)
-- website: website URL (if found)
-- linkedin: LinkedIn profile URL (if found)
-- x: X (formerly Twitter) handle or URL (if found)
-- linktree: Linktree profile URL (if found)
+Return (each field nullable; omit if not clearly present):
+- name: full name
+- title: job title or position
+- company: company or organization name
+- email: email address shown in the signature
+- phone: phone number
+- mobile: mobile / cell number
+- address: physical address
+- website: website URL
+- linkedin: LinkedIn profile URL
+- x: X (formerly Twitter) handle or URL
+- linktree: Linktree profile URL
 
-IMPORTANT: Only extract from the "Email Signature" section. If no signature section is provided, return empty values.
-Do NOT extract information from the email body - only from the signature.`,
+CRITICAL — sender ownership rule:
+The signature must belong to the sender of this email. The "From:" line above
+identifies the sender. If the only signature you can find in the text clearly
+belongs to a different person (e.g., a forwarded/quoted message embedded in the
+reply, where the signature names someone other than the sender or carries an
+email address on a different domain), return ALL fields as null. Do not attribute
+someone else's signature to the sender.
+
+Other rules:
+- Do not invent or guess. If a field is not clearly visible in the signature,
+  it must be null.
+- The reply text may be short and contain no real signature (e.g., just "Best,
+  John"). In that case return all fields as null — there is nothing to extract.
+- Do not extract from the email body content above the signature, only from the
+  signature itself.`,
   schema: signatureSchema,
-  version: 'v1.1',
+  version: 'v1.2',
 };
 
 /**

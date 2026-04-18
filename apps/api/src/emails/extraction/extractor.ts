@@ -38,64 +38,6 @@ const SIGNATURE_PATTERNS = [
   /^Get Outlook for/im,
 ];
 
-// Patterns that indicate a signature has useful contact info (more than just a name)
-const SIGNATURE_CONTENT_PATTERNS = [
-  // Phone numbers (various formats)
-  /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/,  // US format
-  /\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}/,  // International format
-
-  // Email addresses
-  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/,
-
-  // URLs/websites
-  /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\/\S*)?/,
-
-  // Job titles (common patterns)
-  /\b(?:CEO|CTO|CFO|COO|VP|Director|Manager|Head of|Lead|Senior|Principal|Engineer|Developer|Designer|Analyst|Consultant|Partner|Founder|President|Owner|Attorney|Lawyer|Doctor|Dr\.|MD|PhD)\b/i,
-
-  // LinkedIn
-  /linkedin\.com\/in\//i,
-
-  // Physical address indicators
-  /\b(?:Street|St\.|Avenue|Ave\.|Road|Rd\.|Boulevard|Blvd\.|Drive|Dr\.|Suite|Ste\.|Floor|Fl\.)\b/i,
-  /\b\d{5}(?:-\d{4})?\b/,  // US ZIP code
-
-  // Company indicators after a name
-  /\||\•|—/,  // Common separators in signatures
-];
-
-/**
- * Check if a signature has content worth analyzing (more than just a name)
- * Returns true if signature contains contact info, title, company, etc.
- */
-export function hasAnalyzableSignatureContent(signature: string | null): boolean {
-  if (!signature) return false;
-
-  // Trim and check minimum length (a name alone is typically < 50 chars)
-  const trimmed = signature.trim();
-  if (trimmed.length < 10) return false;
-
-  // Check if signature has multiple lines (indicates structured content)
-  const lines = trimmed.split(/\n/).filter(line => line.trim().length > 0);
-
-  // Single line with just a name - not worth analyzing
-  if (lines.length === 1) {
-    // Check if the single line has any content patterns
-    return SIGNATURE_CONTENT_PATTERNS.some(pattern => pattern.test(trimmed));
-  }
-
-  // Multiple lines - check if any line has useful content
-  // (not just name + closing like "Thanks,\nJohn")
-  if (lines.length === 2) {
-    // Two lines could be "Best,\nJohn Smith" - check for content patterns
-    return SIGNATURE_CONTENT_PATTERNS.some(pattern => pattern.test(trimmed));
-  }
-
-  // 3+ lines usually indicates structured signature with contact info
-  // But still verify there's actually useful content
-  return SIGNATURE_CONTENT_PATTERNS.some(pattern => pattern.test(trimmed));
-}
-
 /**
  * Convert HTML to plain text for parsing
  */
