@@ -36,16 +36,55 @@ email pipeline:
 
 ```
 POST /api/analysis/analyze
-  → { extracted: { domains, contacts },
+  → { extracted: { domains: [{ domain, inferredName }],
+                   contacts: [{ email, name?, customerDomain }] },
       results:   { sentiment, escalation, …, signature-extraction },
       filtered?: bool, filterResult?: ClassificationResult,
       cached?:   bool }
 ```
 
+**Shape is typed end-to-end.** The extraction schema lives in
+`packages/clients/src/analysis/client.ts` as a Zod schema
+(`extractedPayloadSchema`). The analysis client parses the response through
+this schema, so a shape regression on either side fails at the boundary
+instead of silently breaking customer attribution downstream.
+
+Every extracted contact carries a `customerDomain` field — the lookup key
+the api uses to find the customer row ensured in Step 1. Analysis is the
+only place that decides what `customerDomain` is:
+
+- **Corporate address** → top-level domain (e.g. `mail.acme.com` → `acme.com`).
+- **Personal address** (gmail / yahoo / outlook / etc., from `PERSONAL_DOMAINS`)
+  → a per-address **pseudo-domain** formed by replacing `@` with `-`
+  (`uzi.dutta@gmail.com` → `uzi.dutta-gmail.com`). Each personal-email
+  sender gets its own auto-created customer so that the row can be merged
+  later into a real one if needed.
+
+The api never inspects an email's domain, never branches on personal vs
+corporate, and never calls the personal-domain list. It just does
+`customersByDomain[contact.customerDomain]`.
+
 The previously-separate `/domain-extract`, `/contact-extract`, and
 `/extract-signature` routes have been removed; their data is now part of
 `/analyze`'s response. `/filter` and `/summarize` remain for debugging and
 thread-summary helpers respectively.
+
+## Customer attribution for analyzed emails
+
+The "Customer" column on the AI Analysis list, the detail pane, the export,
+and the customer-dropdown filter **all use the sender's customer only** —
+no tie-breaker, no fallback to other participants. The three queries in
+`apps/api/src/emails/repository.ts` (`searchAnalyzedEmails`,
+`exportAnalyzedEmails`, `getAnalyzedEmailById`) join
+`email_participants` with `direction = 'from'` directly, not as a
+tie-breaker inside `DISTINCT ON`.
+
+Rationale: a thread often has mixed-domain participants (e.g. an end
+customer on gmail.com writing to someone on mytaxfiler.com). Using the
+first-available customer would mis-attribute the email to whichever
+recipient happened to sort first. The sender-only rule gives a single,
+unambiguous answer and aligns with the per-sender pseudo-customer above
+(so the displayed customer is never blank).
 
 ## End-to-end flow
 
@@ -104,8 +143,8 @@ Both call sites use this:
 
 | Caller | When | Options passed |
 |---|---|---|
-| Phase-2 step "ensure customers" | every email, for every non-personal participant domain | `{ defaultName: <inferred from domain> }` |
-| Phase-2 step "refine from signature" | every email where `signature.company` is non-empty, for the sender's domain | `{ defaultName: <inferred>, signatureCompany: <signature.company> }` |
+| Phase-2 step "ensure customers" | every email, for every extracted `domain` (corporate top-level + per-address personal pseudo-domain) | `{ defaultName: <analysis-supplied inferredName> }` |
+| Phase-2 step "refine from signature" | every email where `signature.company` is non-empty; sender's `customerDomain` is looked up from `extracted.contacts` | `{ signatureCompany: <signature.company> }` |
 
 Behavior (idempotent):
 - No customer for `domain` → create with `withAutoCustomerSuffix(name)`, `isAutoCreated=true`.
@@ -122,16 +161,26 @@ Single source of truth — no other place builds the suffix inline.
 
 ## Personal-domain handling
 
-`@crm/shared.PERSONAL_DOMAINS` is the canonical list of consumer-grade webmail
-providers (gmail, yahoo, outlook, icloud, protonmail, etc.). Used by:
+`@crm/shared.PERSONAL_DOMAINS` is the canonical list of consumer-grade
+webmail providers (gmail, yahoo, outlook, icloud, protonmail, etc.). It is
+used **only inside `@crm/shared.resolveCustomerKeyForEmail`**, which is the
+single helper that turns an email address into the `(customerDomain,
+defaultName)` pair the pipeline keys customers on.
 
-- `apps/analysis` `domain-extraction` to skip those domains during extraction
-  (they don't get a customer auto-created).
-- `apps/api` `analysis-service.ensureContactsInTransaction` to decide that
-  participants on those domains shouldn't be linked to a customer by their
-  email's domain.
+Personal-address behaviour:
 
-Single import, no drift.
+- `personalEmailToPseudoDomain(email)` builds the per-address pseudo-domain
+  (`uzi.dutta@gmail.com` → `uzi.dutta-gmail.com`).
+- `inferNameFromEmailLocalPart(email)` builds a human-readable default name
+  from the local part when the email header carries none — otherwise the
+  header's display name wins (e.g. `"Uzi Dutta" <…>` → `"Uzi Dutta"`).
+- No gmail-style normalization (`uzi.dutta@gmail.com` and
+  `uzidutta+anything@gmail.com` stay distinct). Users can merge customers
+  later if that matters.
+
+`apps/api` never imports `PERSONAL_DOMAINS` or the pseudo-domain helpers —
+it just consumes `customerDomain` from the /analyze response. This keeps
+the personal-vs-corporate branching in exactly one place.
 
 ## Caching status (informational)
 

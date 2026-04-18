@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Email, AnalysisType, AnalysisConfig } from '@crm/shared';
 import { BaseClient } from '../base-client';
 
@@ -15,23 +16,36 @@ export interface FilterOptions {
   filterCategories?: Array<'spam' | 'marketing' | 'automated' | 'transactional'>;
 }
 
-/** Domain extracted from an email's participants. */
-export interface ExtractedDomain {
-  domain: string;
-  inferredName: string;
-}
+/**
+ * Zod schemas for the pure-extraction payload returned by /analyze. Single
+ * source of truth used by both the producer (apps/analysis) and the consumer
+ * (apps/api). The client below runs the response through `extractedPayloadSchema`
+ * so a shape regression on either side fails loudly with a validation error.
+ */
+export const extractedDomainSchema = z.object({
+  domain: z.string(),
+  inferredName: z.string(),
+});
 
-/** Contact (participant) extracted from an email. */
-export interface ExtractedContact {
-  email: string;
-  name?: string;
-}
+export const extractedContactSchema = z.object({
+  email: z.string(),
+  name: z.string().optional(),
+  /**
+   * The customer-domain key this contact belongs to (top-level domain for
+   * corporate addresses, pseudo-domain for personal ones). Analysis is the
+   * single source of truth for this mapping — the API consumes it verbatim.
+   */
+  customerDomain: z.string(),
+});
 
-/** Pure-data extraction payload returned in every /analyze response. */
-export interface ExtractedPayload {
-  domains: ExtractedDomain[];
-  contacts: ExtractedContact[];
-}
+export const extractedPayloadSchema = z.object({
+  domains: z.array(extractedDomainSchema),
+  contacts: z.array(extractedContactSchema),
+});
+
+export type ExtractedDomain = z.infer<typeof extractedDomainSchema>;
+export type ExtractedContact = z.infer<typeof extractedContactSchema>;
+export type ExtractedPayload = z.infer<typeof extractedPayloadSchema>;
 
 export interface AnalysisResponse {
   success: boolean;
@@ -94,7 +108,12 @@ export class AnalysisClient extends BaseClient {
       throw new Error(response.error?.message || 'Analysis failed');
     }
 
-    return response.data;
+    // Validate the extraction payload shape at the boundary. If analysis
+    // changes the response shape (e.g., drops `customerDomain`), we fail here
+    // with a descriptive error instead of producing broken customer links
+    // silently downstream.
+    const extracted = extractedPayloadSchema.parse(response.data.extracted);
+    return { ...response.data, extracted };
   }
 
   /**
