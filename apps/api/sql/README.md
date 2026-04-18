@@ -65,6 +65,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/006_tenant_domains_array.sql
 
 # Add GIN index on emails.signals for efficient signal filtering queries
 psql $DATABASE_URL -f apps/api/sql/migrations/007_emails_signals_gin_index.sql
+
+# Bake "(Auto)" suffix into auto-created customer names so it's searchable / exportable
+psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

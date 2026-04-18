@@ -29,16 +29,11 @@ function toClientCustomerWithDomains(
     return undefined;
   }
 
-  // Append "(Auto)" to name for auto-created customers so they're easily identifiable
-  const displayName = customer.isAutoCreated && customer.name
-    ? `${customer.name} (Auto)`
-    : customer.name;
-
   return {
     id: customer.id,
     tenantId: customer.tenantId,
     domains, // Array of domains from customer_domains table
-    name: displayName,
+    name: customer.name,
     website: customer.website,
     industry: customer.industry,
     labels: customer.labels || [],
@@ -49,6 +44,9 @@ function toClientCustomerWithDomains(
     updatedAt: customer.updatedAt,
   } as ClientCustomer;
 }
+
+/** Suffix appended to auto-created customer names so they're easy to identify in lists, search, and exports. */
+export const AUTO_CREATED_NAME_SUFFIX = ' (Auto)';
 
 /**
  * Convert internal Customer (from database) to client-facing Customer
@@ -671,24 +669,34 @@ export class CustomerService {
         }
       }
 
-      // Step 3: Perform upsert with all domains in a single transaction
+      // Step 3: Normalize the name field based on the create-vs-update path.
+      // - Creating a new auto-created customer: bake the "(Auto)" suffix into the stored name
+      //   so it's searchable and included in exports.
+      // - Updating an existing auto-created customer: preserve the stored name (which already
+      //   carries the suffix, or was edited by the user) — don't let a re-run of the email
+      //   pipeline clobber it with the raw inferred name.
+      let normalizedData: CreateCustomerRequest = data;
+      if (!targetCustomerId && data.isAutoCreated && data.name) {
+        normalizedData = { ...data, name: `${data.name}${AUTO_CREATED_NAME_SUFFIX}` };
+      } else if (targetCustomerId && existingCustomerForFirstDomain?.isAutoCreated) {
+        const { name: _ignored, ...rest } = data;
+        normalizedData = rest as CreateCustomerRequest;
+      }
+
+      // Step 4: Perform upsert with all domains in a single transaction
       // This ensures atomicity - if anything fails, everything rolls back
-      const customerWithDomains = await this.customerRepository.upsertWithDomains(data);
+      const customerWithDomains = await this.customerRepository.upsertWithDomains(normalizedData);
 
       // The repository now returns the customer with domains array already populated
       if (!customerWithDomains.domains || customerWithDomains.domains.length === 0) {
         throw new Error('Failed to convert customer to client format after upsert - no domains found');
       }
 
-      const displayName = customerWithDomains.isAutoCreated && customerWithDomains.name
-        ? `${customerWithDomains.name} (Auto)`
-        : customerWithDomains.name;
-
       return {
         id: customerWithDomains.id,
         tenantId: customerWithDomains.tenantId,
         domains: customerWithDomains.domains,
-        name: displayName,
+        name: customerWithDomains.name,
         website: customerWithDomains.website,
         industry: customerWithDomains.industry,
         externalId: customerWithDomains.externalId,
