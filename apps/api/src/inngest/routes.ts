@@ -20,10 +20,14 @@ const inngestHandler = serve({
   // signingKey: process.env.INNGEST_SIGNING_KEY,
 });
 
-// Mount Inngest handler at /api/inngest/*
-// Inngest will call this endpoint to sync functions and trigger execution
-// The handler is already a Hono-compatible function, so we can use it directly
-app.all('/api/inngest', inngestHandler);
-app.all('/api/inngest/*', inngestHandler);
+// Mount Inngest handler at /api/inngest/*.
+// Restrict to GET/POST/PUT only — those are the three methods the Inngest
+// serve handler actually requires (one for discovery, two for event
+// ingestion/sync). Forwarding PATCH/OPTIONS/DELETE was the exploit surface
+// behind the April 2026 TS SDK advisory; the SDK ≥3.54.0 patches it, this
+// restriction is defense-in-depth so a future regression can't reopen it.
+const inngestMethods = ['GET', 'POST', 'PUT'];
+app.on(inngestMethods, '/api/inngest', inngestHandler);
+app.on(inngestMethods, '/api/inngest/*', inngestHandler);
 
 export default app;
