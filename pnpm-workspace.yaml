@@ -52,7 +52,7 @@ catalog:
   'tailwind-merge': ^2.5.5
 
   # Background Jobs
-  inngest: ^3.24.3
+  inngest: ^3.54.0
 
   # AI/LLM
   ai: ^5.0.93
