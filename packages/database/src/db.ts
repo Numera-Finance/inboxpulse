@@ -21,26 +21,35 @@ function readCert(envVar: string, pathEnvVar: string): string | undefined {
 // Build SSL options from environment variables (inline PEM or file paths)
 // Inline PEM: CLOUDSQL_SERVER_CA, CLOUDSQL_CLIENT_CERT, CLOUDSQL_CLIENT_KEY (used in Cloud Run via Secret Manager)
 // File paths: CLOUDSQL_SERVER_CA_PATH, CLOUDSQL_CLIENT_CERT_PATH, CLOUDSQL_CLIENT_KEY_PATH (used for local dev)
+//
+// Cloud SQL's server certificate SAN is the instance's `*.sql.goog` DNS name,
+// which does not resolve to (or match) the private IP we connect to. We verify
+// the certificate chain via `ca` (plus mTLS when a client cert is configured)
+// but skip hostname verification — equivalent to Postgres `sslmode=verify-ca`.
+// Without this override, Node TLS defaults the hostname to `localhost` and
+// rejects the handshake with ERR_TLS_CERT_ALTNAME_INVALID.
 function getSslOptions(): Options<Record<string, never>>['ssl'] | undefined {
   const serverCa = readCert('CLOUDSQL_SERVER_CA', 'CLOUDSQL_SERVER_CA_PATH');
   const clientCert = readCert('CLOUDSQL_CLIENT_CERT', 'CLOUDSQL_CLIENT_CERT_PATH');
   const clientKey = readCert('CLOUDSQL_CLIENT_KEY', 'CLOUDSQL_CLIENT_KEY_PATH');
 
   if (serverCa && clientCert && clientKey) {
-    console.error('[Drizzle] SSL: Client certificate authentication enabled (mTLS)');
+    console.error('[Drizzle] SSL: Client certificate authentication enabled (mTLS, verify-ca)');
     return {
       ca: serverCa,
       cert: clientCert,
       key: clientKey,
       rejectUnauthorized: true,
+      checkServerIdentity: () => undefined,
     };
   }
 
   if (serverCa) {
-    console.error('[Drizzle] SSL: Server CA verification enabled');
+    console.error('[Drizzle] SSL: Server CA verification enabled (verify-ca)');
     return {
       ca: serverCa,
       rejectUnauthorized: true,
+      checkServerIdentity: () => undefined,
     };
   }
 
