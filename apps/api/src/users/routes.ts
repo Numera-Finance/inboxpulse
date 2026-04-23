@@ -117,6 +117,23 @@ userRoutes.get('/me', async (c) => {
 });
 
 /**
+ * GET /api/users/export - Export users to CSV
+ * Registered before /:id so Hono doesn't route "export" as a UUID id.
+ * Uses Hono's c.header + c.body to mirror the customer export handler.
+ */
+userRoutes.get('/export', async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const service = container.resolve(UserService);
+
+  const csvContent = await service.exportUsers(requestHeader.tenantId);
+
+  c.header('Content-Type', 'text/csv; charset=utf-8');
+  c.header('Content-Disposition', 'attachment; filename="users.csv"');
+
+  return c.body(csvContent);
+});
+
+/**
  * GET /api/users/:id - Get user by ID
  */
 userRoutes.get('/:id', async (c) => {
@@ -455,23 +472,6 @@ userRoutes.post('/import', requirePermission(Permission.USER_ADD), async (c) => 
   return c.json<ApiResponse<typeof result>>({
     success: true,
     data: result,
-  });
-});
-
-/**
- * GET /api/users/export - Export users to CSV
- */
-userRoutes.get('/export', async (c) => {
-  const requestHeader = getRequestHeader(c);
-  const service = container.resolve(UserService);
-
-  const csvContent = await service.exportUsers(requestHeader.tenantId);
-
-  return new Response(csvContent, {
-    headers: {
-      'Content-Type': 'text/csv',
-      'Content-Disposition': `attachment; filename="users-${new Date().toISOString().split('T')[0]}.csv"`,
-    },
   });
 });
 

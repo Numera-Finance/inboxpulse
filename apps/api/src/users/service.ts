@@ -163,10 +163,13 @@ export class UserService {
       role: r.role,
     }));
 
-    // Get total count
+    // Get total count. The LEFT JOIN on roles mirrors the main select so that
+    // the shared `where` clause — which may reference roles.name via
+    // buildFreeformSearch — resolves here too.
     const countResult = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(users)
+      .leftJoin(roles, eq(users.roleId, roles.id))
       .where(where);
 
     const total = Number(countResult[0]?.count ?? 0);
