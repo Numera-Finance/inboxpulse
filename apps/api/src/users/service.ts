@@ -3,7 +3,7 @@ import { CustomerRepository } from '../customers/repository';
 import { TenantRepository } from '../tenants/repository';
 import { RoleRepository } from '../roles/repository';
 import { TaskRepository } from '../tasks/repository';
-import { sql, desc, asc, and, isNull, inArray } from 'drizzle-orm';
+import { sql, desc, asc, and, isNull, inArray, type SQL } from 'drizzle-orm';
 import { NotFoundError, ValidationError, isAdmin, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
 import { scopedSearch } from '@crm/database';
 import type { Database } from '@crm/database';
@@ -116,17 +116,27 @@ export class UserService {
 
     const where = and(...conditions);
 
-    // Determine sort column (case-insensitive for text columns)
-    const sortBy = searchRequest.sortBy as keyof typeof this.fieldMapping | undefined;
-    const sortColumn = sortBy && this.fieldMapping[sortBy]
-      ? this.fieldMapping[sortBy]
-      : users.createdAt;
-    const textFields = ['firstName', 'lastName', 'email'] as const;
-    const isTextField = sortBy && (textFields as readonly string[]).includes(sortBy);
-    const orderExpr = isTextField ? sql`lower(${sortColumn})` : sortColumn;
-    const orderByClause = searchRequest.sortOrder === 'asc'
-      ? asc(orderExpr)
-      : desc(orderExpr);
+    // Determine sort expression. Supports:
+    //  - direct columns from fieldMapping (case-insensitive for text)
+    //  - 'name': firstName + lastName, case-insensitive
+    //  - 'role': roles.name (LEFT JOIN, case-insensitive, nulls last via COALESCE)
+    //  - 'lastLoginAt': direct column
+    const sortBy = searchRequest.sortBy;
+    const sortDir = searchRequest.sortOrder === 'desc' ? desc : asc;
+    const textFields = new Set(['firstName', 'lastName', 'email']);
+    let orderByClause: SQL;
+    if (sortBy === 'name') {
+      orderByClause = sortDir(sql`lower(${users.firstName} || ' ' || ${users.lastName})`);
+    } else if (sortBy === 'role') {
+      orderByClause = sortDir(sql`lower(coalesce(${roles.name}, ''))`);
+    } else if (sortBy === 'lastLoginAt') {
+      orderByClause = sortDir(users.lastLoginAt);
+    } else if (sortBy && this.fieldMapping[sortBy as keyof typeof this.fieldMapping]) {
+      const col = this.fieldMapping[sortBy as keyof typeof this.fieldMapping];
+      orderByClause = sortDir(textFields.has(sortBy) ? sql`lower(${col})` : col);
+    } else {
+      orderByClause = sortDir(users.createdAt);
+    }
 
     // Pagination
     const limit = searchRequest.limit || 20;

@@ -213,16 +213,7 @@ export class UserClient extends BaseClient {
    * Export users to CSV
    */
   async export(signal?: AbortSignal): Promise<Blob> {
-    const response = await fetch(`${this.baseUrl}/api/users/export`, {
-      method: 'GET',
-      signal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Export failed: ${response.statusText}`);
-    }
-
-    return response.blob();
+    return this.getBlob('/api/users/export', signal);
   }
 
   // ===========================================================================

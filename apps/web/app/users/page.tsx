@@ -16,13 +16,19 @@ import { ImportResultsDialog, type ImportResults } from "@/components/import-res
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ExportButton } from "@/components/ui/export-button"
-import { createXlsxBlob } from "@/lib/utils/export"
 import { UserTableSkeleton } from "@/components/ui/table-skeleton"
-import { useUsers, useCreateUser, useImportUsers, useUpdateUser, useSetUserCustomerAssignments } from "@/lib/hooks"
+import { useUsers, useCreateUser, useImportUsers, useUpdateUser, useSetUserCustomerAssignments, useExportUsers } from "@/lib/hooks"
 import { type User, mapUserToUser } from "@/lib/types"
 import { SearchOperator, RowStatus } from "@crm/shared"
 import { toast } from "sonner"
 import { PermissionGate, usePermission, Permission } from "@/src/components/PermissionGate"
+
+// Map table column accessorKeys to API sortBy field names
+const COLUMN_TO_SORT_FIELD: Record<string, string> = {
+  name: 'name',
+  role: 'role',
+  lastLoginAt: 'lastLoginAt',
+}
 
 // Debounce hook for search
 function useDebounce<T>(value: T, delay: number): T {
@@ -53,16 +59,19 @@ export default function UsersPage() {
   const [importResults, setImportResults] = React.useState<ImportResults | null>(null)
   const [importResultsOpen, setImportResultsOpen] = React.useState(false)
 
-  // Pagination state
+  // Pagination and sorting state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
+  const [sorting, setSorting] = React.useState<Array<{ id: string; desc: boolean }>>([])
+  const sortBy = sorting.length > 0 ? (COLUMN_TO_SORT_FIELD[sorting[0].id] || 'name') : 'name'
+  const sortOrder = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : 'asc'
 
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
-  // Reset pagination when search or status filter changes
+  // Reset pagination when search, status filter, or sorting changes
   React.useEffect(() => {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
-  }, [debouncedSearch, statusFilter])
+  }, [debouncedSearch, statusFilter, sorting])
 
   // Status filter query — Inactive tab also includes archived users (rowStatus=2)
   const statusQuery = statusFilter === "active"
@@ -77,7 +86,8 @@ export default function UsersPage() {
         ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
         : []),
     ],
-    sortOrder: 'asc',
+    sortBy,
+    sortOrder,
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     include: ['customerAssignments', 'managers'],
@@ -88,6 +98,7 @@ export default function UsersPage() {
   const updateUser = useUpdateUser()
   const setCustomerAssignments = useSetUserCustomerAssignments()
   const importUsers = useImportUsers()
+  const exportUsers = useExportUsers()
 
   // Map API response to User type
   const users: User[] = React.useMemo(() => {
@@ -194,25 +205,13 @@ export default function UsersPage() {
   }
 
   const handleExport = React.useCallback(async () => {
-    const exportData = users.map(user => ({
-      name: user.name,
-      email: user.email,
-      role: user.role || "",
-      department: user.department || "",
-      status: user.status,
-    }))
-
-    return createXlsxBlob(exportData, {
-      columns: [
-        { key: "name", header: "Name", width: 25 },
-        { key: "email", header: "Email", width: 35 },
-        { key: "role", header: "Role", width: 20 },
-        { key: "department", header: "Department", width: 20 },
-        { key: "status", header: "Status", width: 15 },
-      ],
-      sheetName: "Users",
-    })
-  }, [users])
+    try {
+      return await exportUsers.mutateAsync()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to export users")
+      throw err
+    }
+  }, [exportUsers])
 
   return (
     <AppShell>
@@ -236,7 +235,7 @@ export default function UsersPage() {
             </PermissionGate>
             <ExportButton
               onExport={handleExport}
-              filename="users.xlsx"
+              filename="users.csv"
               disabled={users.length === 0}
             />
             <PermissionGate permission={Permission.USER_ADD}>
@@ -252,7 +251,7 @@ export default function UsersPage() {
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by name, email, role, or department..."
+              placeholder="Search by name, email, or role..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9"
@@ -313,6 +312,8 @@ export default function UsersPage() {
                 onSelect={handleSelectUser}
                 pagination={pagination}
                 onPaginationChange={setPagination}
+                sorting={sorting}
+                onSortingChange={setSorting}
                 totalCount={totalCount}
               />
             )}

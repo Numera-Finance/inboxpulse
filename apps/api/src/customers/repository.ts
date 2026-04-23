@@ -14,7 +14,7 @@ export class CustomerRepository extends ScopedRepository {
 
   /**
    * Build freeform search condition for customers.
-   * Searches across: name and domains (via subquery).
+   * Searches across: name, domains (via subquery), and labels (JSONB array).
    */
   override buildFreeformSearch(searchTerm: string): SQL | undefined {
     if (!searchTerm || searchTerm.trim() === '') {
@@ -27,6 +27,10 @@ export class CustomerRepository extends ScopedRepository {
         SELECT ${customerDomains.customerId}
         FROM ${customerDomains}
         WHERE ${customerDomains.domain} ILIKE ${term}
+      ) OR
+      EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(${customers.labels}) AS lbl
+        WHERE lbl ILIKE ${term}
       )
     )`;
   }
