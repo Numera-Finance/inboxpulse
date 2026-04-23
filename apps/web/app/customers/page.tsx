@@ -202,15 +202,7 @@ export default function CustomersPage() {
     }
   }
 
-  const handleExport = React.useCallback(async () => {
-    try {
-      const blob = await exportCustomers.mutateAsync()
-      return blob
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to export customers")
-      throw err
-    }
-  }, [exportCustomers])
+  const handleExport = React.useCallback(() => exportCustomers.mutateAsync(), [exportCustomers])
 
   return (
     <AppShell>

@@ -204,14 +204,7 @@ export default function UsersPage() {
     }
   }
 
-  const handleExport = React.useCallback(async () => {
-    try {
-      return await exportUsers.mutateAsync()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to export users")
-      throw err
-    }
-  }, [exportUsers])
+  const handleExport = React.useCallback(() => exportUsers.mutateAsync(), [exportUsers])
 
   return (
     <AppShell>

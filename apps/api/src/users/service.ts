@@ -142,8 +142,9 @@ export class UserService {
     const limit = searchRequest.limit || 20;
     const offset = searchRequest.offset || 0;
 
-    // Execute search with sorting and pagination
-    // Join with roles to get role name
+    // Execute search with sorting and pagination.
+    // The LEFT JOIN on roles is required by UserRepository.buildFreeformSearch
+    // (matches roles.name) and by the 'role' sort branch above.
     const results = await this.db
       .select({
         user: users,
