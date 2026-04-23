@@ -13,8 +13,10 @@ const app = new Hono();
 const getApiBaseUrl = (): string => getEnv().SERVICE_API_URL;
 
 // Helper to get internal API headers for service-to-service calls
+type HeadersInit = NonNullable<ConstructorParameters<typeof Headers>[0]>;
+
 function getInternalHeaders(): HeadersInit {
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
 
