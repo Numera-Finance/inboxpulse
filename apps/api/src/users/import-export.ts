@@ -1,16 +1,14 @@
 /**
  * User Import/Export Utilities
  *
- * Format: Separate rows (one row per user-customer combination)
+ * One row per user-customer assignment for both directions.
  *
- * Import Format:
+ * Import (CSV):
  * firstName,lastName,email,managerEmails,customerDomain,role,active
  * John,Doe,john@example.com,"mgr1@example.com,mgr2@example.com",acme.com,Account Manager,0
  * John,Doe,john@example.com,"mgr1@example.com,mgr2@example.com",techcorp.com,Controller,0
  *
- * Export Format:
- * id,firstName,lastName,email,managerEmails,customerDomain,role,active
- * user-1,John,Doe,john@example.com,"mgr1@example.com,mgr2@example.com",acme.com,Account Manager,0
+ * Export (xlsx): same columns as import plus a leading `id` column.
  */
 
 import * as XLSX from 'xlsx';
