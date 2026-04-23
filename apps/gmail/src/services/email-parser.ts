@@ -181,7 +181,7 @@ export class EmailParserService {
     return headers;
   }
 
-  private parseHeaders(headers: Map<string, string>): ParsedEmail {
+  private parseHeaders(headers: Map<string, string>) {
     const subject = headers.get('subject') || '(No Subject)';
     const from = this.parseAddress(headers.get('from') || '');
     const tos = this.parseAddressList(headers.get('to') || '');
