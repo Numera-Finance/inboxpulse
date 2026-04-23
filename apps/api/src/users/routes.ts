@@ -117,20 +117,21 @@ userRoutes.get('/me', async (c) => {
 });
 
 /**
- * GET /api/users/export - Export users to CSV
+ * GET /api/users/export - Export users to Excel workbook
  * Registered before /:id so Hono doesn't route "export" as a UUID id.
- * Uses Hono's c.header + c.body to mirror the customer export handler.
+ * Mirrors the customer export handler: xlsx buffer + c.header/c.body.
  */
 userRoutes.get('/export', async (c) => {
   const requestHeader = getRequestHeader(c);
   const service = container.resolve(UserService);
 
-  const csvContent = await service.exportUsers(requestHeader.tenantId);
+  const buffer = await service.exportUsers(requestHeader.tenantId);
 
-  c.header('Content-Type', 'text/csv; charset=utf-8');
-  c.header('Content-Disposition', 'attachment; filename="users.csv"');
+  c.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  c.header('Content-Disposition', 'attachment; filename="users.xlsx"');
 
-  return c.body(csvContent);
+  // Convert Node.js Buffer to Uint8Array for Hono
+  return c.body(new Uint8Array(buffer));
 });
 
 /**

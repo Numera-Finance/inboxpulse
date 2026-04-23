@@ -13,6 +13,7 @@
  * user-1,John,Doe,john@example.com,"mgr1@example.com,mgr2@example.com",acme.com,Account Manager,0
  */
 
+import * as XLSX from 'xlsx';
 import type { User, UserCustomer } from './schema';
 
 export interface ImportRow {
@@ -136,20 +137,17 @@ export function groupImportRows(rows: ImportRow[]): Map<string, ImportRow[]> {
 }
 
 /**
- * Generate CSV content for export
- * Simple CSV generator - escapes fields with quotes if needed
+ * Generate Excel workbook for user export.
+ * One row per user-customer assignment (matches the import format).
  */
-export function generateCSV(
+export function generateUserExport(
   userData: Array<{
     user: User;
     managers: Array<{ email: string }>;
     customers: Array<{ domain: string; roleName: string }>;
   }>
-): string {
-  const rows: string[][] = [];
-
-  // Header
-  rows.push([
+): Buffer {
+  const header = [
     'id',
     'firstName',
     'lastName',
@@ -159,36 +157,34 @@ export function generateCSV(
     'customerDomain',
     'role',
     'active',
-  ]);
+  ];
 
-  // Data rows (one per user-customer combination)
+  const dataRows: string[][] = [];
   for (const item of userData) {
     const managerEmails = item.managers.map((m) => m.email).join(',');
     const active = item.user.rowStatus === 0 ? '0' : '1';
+    const canLogin = item.user.canLogin ? 'true' : 'false';
 
-    // One row per customer
     if (item.customers.length === 0) {
-      // User with no customers - still export one row
-      rows.push([
+      dataRows.push([
         item.user.id,
         item.user.firstName,
         item.user.lastName,
         item.user.email,
-        item.user.canLogin ? 'true' : 'false',
+        canLogin,
         managerEmails,
-        '', // No customer
-        '', // No role
+        '',
+        '',
         active,
       ]);
     } else {
-      // One row per customer
       for (const customer of item.customers) {
-        rows.push([
+        dataRows.push([
           item.user.id,
           item.user.firstName,
           item.user.lastName,
           item.user.email,
-          item.user.canLogin ? 'true' : 'false',
+          canLogin,
           managerEmails,
           customer.domain,
           customer.roleName,
@@ -198,15 +194,21 @@ export function generateCSV(
     }
   }
 
-  // Convert rows to CSV string
-  return rows.map((row) =>
-    row.map((field) => {
-      // Escape quotes and wrap in quotes if contains comma, quote, or newline
-      const escaped = field.replace(/"/g, '""');
-      if (escaped.includes(',') || escaped.includes('"') || escaped.includes('\n')) {
-        return `"${escaped}"`;
-      }
-      return escaped;
-    }).join(',')
-  ).join('\n');
+  const worksheet = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
+  worksheet['!cols'] = [
+    { wch: 38 }, // id (uuid)
+    { wch: 18 }, // firstName
+    { wch: 18 }, // lastName
+    { wch: 32 }, // email
+    { wch: 10 }, // canLogin
+    { wch: 40 }, // managerEmails
+    { wch: 28 }, // customerDomain
+    { wch: 24 }, // role
+    { wch: 8 },  // active
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Users');
+
+  return Buffer.from(XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' }));
 }

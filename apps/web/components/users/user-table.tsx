@@ -10,7 +10,7 @@ import {
   type ColumnDef,
   flexRender,
 } from "@tanstack/react-table"
-import { ArrowUpDown, MoreHorizontal } from "lucide-react"
+import { ArrowUpDown, MoreHorizontal, Pencil } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -189,14 +189,17 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, sor
         return (
           <div className="flex items-center justify-end gap-2">
             <Button
-              size="sm"
-              variant="outline"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              aria-label="Edit user"
+              title="Edit"
               onClick={(e) => {
                 e.stopPropagation()
                 onSelect(user)
               }}
             >
-              Edit
+              <Pencil className="h-4 w-4" />
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

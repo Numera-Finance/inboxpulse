@@ -880,8 +880,8 @@ export class UserService {
     return result;
   }
 
-  async exportUsers(tenantId: string): Promise<string> {
-    const { generateCSV } = await import('./import-export');
+  async exportUsers(tenantId: string): Promise<Buffer> {
+    const { generateUserExport } = await import('./import-export');
     const users = await this.getByTenantId(tenantId);
 
     const exportData = await Promise.all(
@@ -908,7 +908,7 @@ export class UserService {
       })
     );
 
-    return generateCSV(exportData);
+    return generateUserExport(exportData);
   }
 
   // ===========================================================================

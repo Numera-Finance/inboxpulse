@@ -228,7 +228,7 @@ export default function UsersPage() {
             </PermissionGate>
             <ExportButton
               onExport={handleExport}
-              filename="users.csv"
+              filename="users.xlsx"
               disabled={users.length === 0}
             />
             <PermissionGate permission={Permission.USER_ADD}>
