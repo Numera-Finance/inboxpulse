@@ -17,6 +17,7 @@ import {
   type NewUserCustomer,
   RowStatus,
 } from './schema';
+import { roles } from '../roles/schema';
 import { logger } from '../utils/logger';
 
 export interface RebuildResult {
@@ -33,7 +34,8 @@ export class UserRepository extends ScopedRepository {
 
   /**
    * Build freeform search condition for users.
-   * Searches across: firstName, lastName, full name (concatenated), and email.
+   * Searches across: firstName, lastName, full name, email, and role name.
+   * The role match relies on the caller LEFT JOINing the roles table.
    */
   override buildFreeformSearch(searchTerm: string): SQL | undefined {
     if (!searchTerm || searchTerm.trim() === '') {
@@ -44,7 +46,8 @@ export class UserRepository extends ScopedRepository {
       ${users.firstName} ILIKE ${term} OR
       ${users.lastName} ILIKE ${term} OR
       (${users.firstName} || ' ' || ${users.lastName}) ILIKE ${term} OR
-      ${users.email} ILIKE ${term}
+      ${users.email} ILIKE ${term} OR
+      ${roles.name} ILIKE ${term}
     )`;
   }
 

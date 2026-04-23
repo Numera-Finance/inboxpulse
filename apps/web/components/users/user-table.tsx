@@ -35,11 +35,15 @@ interface UserTableProps {
   onSelect: (user: User) => void
   pagination?: { pageIndex: number; pageSize: number }
   onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
+  sorting?: SortingState
+  onSortingChange?: (sorting: SortingState) => void
   totalCount?: number
 }
 
-export function UserTable({ users, onSelect, pagination, onPaginationChange, totalCount }: UserTableProps) {
-  const [sorting, setSorting] = React.useState<SortingState>([])
+export function UserTable({ users, onSelect, pagination, onPaginationChange, sorting: controlledSorting, onSortingChange, totalCount }: UserTableProps) {
+  const [internalSorting, setInternalSorting] = React.useState<SortingState>([])
+  const sorting = controlledSorting ?? internalSorting
+  const setSorting = onSortingChange ?? setInternalSorting
   const [transferUser, setTransferUser] = React.useState<User | null>(null)
   const transferMutation = useTransferUser()
   const activateMutation = useActivateUser()
@@ -244,12 +248,16 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
     data: users,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    ...(!isServerSide && { getSortedRowModel: getSortedRowModel() }),
     getPaginationRowModel: getPaginationRowModel(),
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      const newSorting = typeof updater === 'function' ? updater(sorting) : updater
+      setSorting(newSorting)
+    },
     ...(isServerSide
       ? {
           manualPagination: true,
+          manualSorting: true,
           pageCount: Math.ceil((totalCount ?? 0) / (pagination?.pageSize ?? 50)),
           state: {
             sorting,

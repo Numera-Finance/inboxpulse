@@ -202,15 +202,7 @@ export default function CustomersPage() {
     }
   }
 
-  const handleExport = React.useCallback(async () => {
-    try {
-      const blob = await exportCustomers.mutateAsync()
-      return blob
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to export customers")
-      throw err
-    }
-  }, [exportCustomers])
+  const handleExport = React.useCallback(() => exportCustomers.mutateAsync(), [exportCustomers])
 
   return (
     <AppShell>
@@ -251,7 +243,7 @@ export default function CustomersPage() {
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search by company, domain, contact, or labels..."
+                placeholder="Search by company, domain, or labels..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"

@@ -210,6 +210,15 @@ export function useImportUsers() {
 }
 
 /**
+ * Hook to export users to CSV file
+ */
+export function useExportUsers() {
+  return useMutation({
+    mutationFn: () => api.exportUsers(),
+  });
+}
+
+/**
  * Hook to transfer a user's responsibilities to another user
  */
 export function useTransferUser() {
