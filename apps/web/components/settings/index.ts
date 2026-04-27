@@ -1,5 +1,6 @@
 export { SettingsNav, type SettingsTab } from './settings-nav'
 export { UserPreferences } from './user-preferences'
+export { CompanyPreferences } from './company-preferences'
 export { IntegrationsSettings } from './integrations-settings'
 export { HolidaySettings } from './holiday-settings'
 export { KeywordSettings } from './keyword-settings'

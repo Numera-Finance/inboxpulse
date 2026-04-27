@@ -1,7 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { customSession } from 'better-auth/plugins';
-import { arrayContains, eq, sql } from 'drizzle-orm';
+import { and, arrayContains, eq, sql } from 'drizzle-orm';
 import { container } from 'tsyringe';
 import type { Database } from '@crm/database';
 import {
@@ -11,7 +11,7 @@ import {
   betterAuthVerification,
 } from './better-auth-schema';
 import { tenants } from '../tenants/schema';
-import { users } from '../users/schema';
+import { users, loginHistory } from '../users/schema';
 import { BetterAuthUserService } from './better-auth-user-service';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
@@ -147,33 +147,59 @@ function getAuth() {
       databaseHooks: {
         session: {
           create: {
-            // Update lastLoginAt when a new session is created (user logs in)
+            // Update lastLoginAt and append to login_history when a new session is created
             after: async (session: any) => {
               try {
-                // Get the user's email from better-auth user table
                 const betterAuthUserRecord = await db
-                  .select({ email: betterAuthUser.email })
+                  .select({
+                    email: betterAuthUser.email,
+                    tenantId: betterAuthUser.tenantId,
+                  })
                   .from(betterAuthUser)
                   .where(eq(betterAuthUser.id, session.userId))
                   .limit(1);
 
-                if (betterAuthUserRecord[0]?.email) {
-                  // Update lastLoginAt in our users table
-                  await db
-                    .update(users)
-                    .set({ lastLoginAt: sql`CURRENT_TIMESTAMP` })
-                    .where(eq(users.email, betterAuthUserRecord[0].email));
-
-                  logger.info(
-                    { email: betterAuthUserRecord[0].email, sessionId: session.id },
-                    'Updated lastLoginAt for user'
+                const email = betterAuthUserRecord[0]?.email;
+                const tenantId = betterAuthUserRecord[0]?.tenantId;
+                if (!email || !tenantId) {
+                  logger.warn(
+                    { sessionUserId: session.userId, hasEmail: !!email, hasTenantId: !!tenantId },
+                    'Skipping login event — better-auth user missing email or tenantId'
                   );
+                  return;
                 }
+
+                const updated = await db
+                  .update(users)
+                  .set({ lastLoginAt: sql`CURRENT_TIMESTAMP` })
+                  .where(and(eq(users.email, email), eq(users.tenantId, tenantId)))
+                  .returning({ id: users.id, tenantId: users.tenantId });
+
+                if (!updated[0]) {
+                  logger.warn(
+                    { email, tenantId, sessionId: session.id },
+                    'No matching users row for login event — skipping login_history insert'
+                  );
+                  return;
+                }
+
+                logger.info(
+                  { email, sessionId: session.id },
+                  'Updated lastLoginAt for user'
+                );
+
+                await db.insert(loginHistory).values({
+                  userId: updated[0].id,
+                  tenantId: updated[0].tenantId,
+                  betterAuthSessionId: session.id ?? null,
+                  ipAddress: session.ipAddress ?? null,
+                  userAgent: session.userAgent ?? null,
+                });
               } catch (error: any) {
                 // Log but don't fail session creation
                 logger.error(
                   { error: error.message, sessionUserId: session.userId },
-                  'Failed to update lastLoginAt'
+                  'Failed to record login event'
                 );
               }
             },

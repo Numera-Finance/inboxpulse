@@ -24,4 +24,12 @@ export class TenantClient extends BaseClient {
     const response = await this.get<ApiResponse<Tenant>>(`/api/tenants/${tenantId}`);
     return response?.data ?? null;
   }
+
+  /**
+   * Get the current user's tenant (resolved server-side from session)
+   */
+  async getMe(signal?: AbortSignal): Promise<Tenant | null> {
+    const response = await this.get<ApiResponse<Tenant>>('/api/tenants/me', signal);
+    return response?.data ?? null;
+  }
 }

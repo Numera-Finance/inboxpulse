@@ -15,6 +15,7 @@ export type CreateTenantRequest = z.infer<typeof createTenantRequestSchema>;
 export const tenantSchema = z.object({
   id: z.uuid(),
   name: z.string(),
+  domains: z.array(z.string()).default([]),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });

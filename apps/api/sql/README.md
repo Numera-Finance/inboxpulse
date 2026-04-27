@@ -68,6 +68,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/007_emails_signals_gin_index.sql
 
 # Bake "(Auto)" suffix into auto-created customer names so it's searchable / exportable
 psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
+
+# Add login_history audit table (append-only log of successful logins)
+psql $DATABASE_URL -f apps/api/sql/migrations/011_login_history.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

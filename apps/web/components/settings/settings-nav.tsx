@@ -1,9 +1,9 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { User, Plug2, Calendar, Search } from "lucide-react"
+import { User, Plug2, Calendar, Search, Building2 } from "lucide-react"
 
-export type SettingsTab = 'user' | 'integrations' | 'holidays' | 'keywords'
+export type SettingsTab = 'user' | 'company' | 'integrations' | 'holidays' | 'keywords'
 
 interface SettingsNavProps {
   activeTab: SettingsTab
@@ -13,6 +13,7 @@ interface SettingsNavProps {
 
 const tabs = [
   { id: 'user' as const, label: 'User Preferences', icon: User },
+  { id: 'company' as const, label: 'Company', icon: Building2, adminOnly: true },
   { id: 'holidays' as const, label: 'Holiday Calendar', icon: Calendar, adminOnly: true },
   { id: 'keywords' as const, label: 'Analysis Keywords', icon: Search, adminOnly: true },
   { id: 'integrations' as const, label: 'Integrations', icon: Plug2, adminOnly: true },
