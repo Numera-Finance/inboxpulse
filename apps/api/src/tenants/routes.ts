@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { TenantService } from './service';
+import { getRequestHeader } from '../utils/request-header';
 import type { HonoEnv } from '../types/hono';
 import type { ApiResponse } from '@crm/shared';
 
@@ -22,6 +23,22 @@ app.post('/', async (c) => {
   } catch (error: any) {
     return c.json({ error: error.message }, 400);
   }
+});
+
+/**
+ * Get the current user's tenant (resolved from session).
+ * Must be defined before /:tenantId so Hono doesn't route "me" as a UUID.
+ */
+app.get('/me', async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const tenantService = container.resolve(TenantService);
+  const tenant = await tenantService.findById(requestHeader.tenantId);
+
+  if (!tenant) {
+    return c.json({ error: 'Tenant not found' }, 404);
+  }
+
+  return c.json<ApiResponse<typeof tenant>>({ success: true, data: tenant });
 });
 
 /**

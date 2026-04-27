@@ -1,7 +1,7 @@
 import { container } from 'tsyringe';
 import { createDatabase, type Database } from '@crm/database';
 // Import schemas from API modules (co-located with their code)
-import { users, userManagers, userCustomers, userAccessibleCustomers, tenants, integrations, emailThreads, emails, emailAnalyses, threadAnalyses, runs, customers, contacts, roles, tasks, taskComments, userSubordinates, dashboards, holidayCalendars, analysisKeywords } from '../schemas';
+import { users, userManagers, userCustomers, userAccessibleCustomers, loginHistory, tenants, integrations, emailThreads, emails, emailAnalyses, threadAnalyses, runs, customers, contacts, roles, tasks, taskComments, userSubordinates, dashboards, holidayCalendars, analysisKeywords } from '../schemas';
 // Notification schemas removed - notifications is now a standalone app
 // Import better-auth schemas
 import { betterAuthUser, betterAuthSession, betterAuthAccount, betterAuthVerification } from '../auth/better-auth-schema';
@@ -9,6 +9,8 @@ import { betterAuthUser, betterAuthSession, betterAuthAccount, betterAuthVerific
 // Feature imports
 import { UserRepository } from '../users/repository';
 import { UserService } from '../users/service';
+import { LoginHistoryRepository } from '../users/login-history-repository';
+import { LoginHistoryService } from '../users/login-history-service';
 import { IntegrationRepository } from '../integrations/repository';
 import { IntegrationService } from '../integrations/service';
 import { TenantRepository } from '../tenants/repository';
@@ -46,6 +48,7 @@ export function setupContainer() {
     userManagers,
     userCustomers,
     userAccessibleCustomers,
+    loginHistory,
     tenants,
     integrations,
     emailThreads,
@@ -77,6 +80,7 @@ export function setupContainer() {
 
   // Register repositories (order matters for dependency injection)
   container.register(UserRepository, { useClass: UserRepository });
+  container.register(LoginHistoryRepository, { useClass: LoginHistoryRepository });
   container.register(IntegrationRepository, { useClass: IntegrationRepository });
   container.register(TenantRepository, { useClass: TenantRepository });
   container.register(EmailRepository, { useClass: EmailRepository });
@@ -94,6 +98,7 @@ export function setupContainer() {
 
   // Register services (order matters - dependencies must be registered first)
   container.register(UserService, { useClass: UserService });
+  container.register(LoginHistoryService, { useClass: LoginHistoryService });
   container.register(IntegrationService, { useClass: IntegrationService });
   container.register(TenantService, { useClass: TenantService });
   container.register(RunService, { useClass: RunService });

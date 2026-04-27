@@ -13,3 +13,4 @@ export * from './notification';
 export * from './dashboard';
 export * from './holiday';
 export * from './keyword';
+export * from './login-history';

@@ -200,3 +200,43 @@ export const userSubordinates = pgTable(
 );
 
 export type UserSubordinate = typeof userSubordinates.$inferSelect;
+
+/**
+ * Login History - Append-only audit log of successful logins.
+ *
+ * Written by the better-auth session.create.after hook. Pairs with
+ * users.lastLoginAt (which only stores the most recent login).
+ */
+export const loginHistory = pgTable(
+  'login_history',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .$defaultFn(() => uuidv7()),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    betterAuthSessionId: varchar('better_auth_session_id', { length: 255 }),
+    ipAddress: varchar('ip_address', { length: 64 }),
+    userAgent: varchar('user_agent', { length: 512 }),
+    loggedInAt: timestamp('logged_in_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_login_history_tenant_logged_in').on(
+      table.tenantId,
+      table.loggedInAt
+    ),
+    index('idx_login_history_user_logged_in').on(
+      table.userId,
+      table.loggedInAt
+    ),
+  ]
+);
+
+export type LoginHistory = typeof loginHistory.$inferSelect;
+export type NewLoginHistory = typeof loginHistory.$inferInsert;

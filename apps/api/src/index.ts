@@ -36,6 +36,7 @@ import type { HonoEnv } from './types/hono';
 // Routes
 import { healthRoutes } from './routes/health';
 import { userRoutes } from './users/routes';
+import { loginHistoryRoutes } from './users/login-history-routes';
 import integrationsRoutes from './integrations/routes';
 import tenantsRoutes from './tenants/routes';
 import emailsRoutes from './emails/routes';
@@ -265,8 +266,10 @@ app.use('/api/tasks/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/dashboards/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/holidays/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/keywords/*', betterAuthRequestHeaderMiddleware);
+app.use('/api/login-history/*', betterAuthRequestHeaderMiddleware);
 
 app.route('/api/users', userRoutes);
+app.route('/api/login-history', loginHistoryRoutes);
 app.route('/api/integrations', integrationsRoutes);
 app.route('/api/tenants', tenantsRoutes);
 app.route('/api/emails', emailsRoutes);
