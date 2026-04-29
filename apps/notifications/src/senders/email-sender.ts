@@ -2,7 +2,7 @@
  * SES Email Sender
  *
  * Implements ChannelSender interface for sending emails via Amazon SES.
- * Supports EMAIL_OVERRIDE for development/testing.
+ * Honors EMAIL_BCC to silently BCC monitoring addresses on every send.
  */
 
 import type { ChannelPayload, ChannelSender, SendResult } from '@crm/notifications';
@@ -16,12 +16,12 @@ import { getEnv } from '../env';
 export class SesEmailSender implements ChannelSender {
   private client: unknown | null = null;
   private initialized = false;
-  /** Comma-separated override emails. When set, ALL emails are redirected to these addresses instead of the actual recipient. */
-  private overrideEmails: string[];
+  /** Comma-separated BCC list. Added to every outbound email so we can monitor delivery in production. */
+  private bccEmails: string[];
 
   constructor() {
     const env = getEnv();
-    this.overrideEmails = env.EMAIL_OVERRIDE
+    this.bccEmails = env.EMAIL_BCC
       .split(',')
       .map(e => e.trim())
       .filter(Boolean);
@@ -30,8 +30,8 @@ export class SesEmailSender implements ChannelSender {
       logger.warn('AWS SES credentials not set - emails will not be sent');
     }
 
-    if (this.overrideEmails.length > 0) {
-      logger.info({ overrideEmails: this.overrideEmails }, 'EMAIL_OVERRIDE is active - all emails will be redirected');
+    if (this.bccEmails.length > 0) {
+      logger.info({ bccEmails: this.bccEmails }, 'EMAIL_BCC is active - all emails will BCC these addresses');
     }
   }
 
@@ -73,79 +73,57 @@ export class SesEmailSender implements ChannelSender {
       };
     }
 
-    // Determine recipients: if EMAIL_OVERRIDE is set, send a separate email to each override address
-    const actualRecipient = payload.to;
-    const recipients = this.overrideEmails.length > 0
-      ? this.overrideEmails
-      : [actualRecipient];
-
-    // Build subject (add prefix if redirecting so we know who it was originally for)
-    let subject = payload.subject;
-    if (this.overrideEmails.length > 0) {
-      subject = `[To: ${actualRecipient}] ${subject}`;
-    }
-
-    const errors: string[] = [];
-    const messageIds: string[] = [];
+    const recipient = payload.to;
     const from = payload.from || `${env.FROM_NAME} <${env.FROM_EMAIL}>`;
 
-    for (const recipient of recipients) {
-      try {
-        const { SendEmailCommand } = await import('@aws-sdk/client-ses');
-        const client = await this.getClient() as { send: (cmd: unknown) => Promise<{ MessageId?: string }> };
+    try {
+      const { SendEmailCommand } = await import('@aws-sdk/client-ses');
+      const client = await this.getClient() as { send: (cmd: unknown) => Promise<{ MessageId?: string }> };
 
-        const command = new SendEmailCommand({
-          Source: from,
-          Destination: {
-            ToAddresses: [recipient],
+      const command = new SendEmailCommand({
+        Source: from,
+        Destination: {
+          ToAddresses: [recipient],
+          ...(this.bccEmails.length > 0 && { BccAddresses: this.bccEmails }),
+        },
+        Message: {
+          Subject: { Data: payload.subject, Charset: 'UTF-8' },
+          Body: {
+            ...(payload.html && {
+              Html: { Data: payload.html, Charset: 'UTF-8' },
+            }),
+            ...(payload.text && {
+              Text: { Data: payload.text, Charset: 'UTF-8' },
+            }),
           },
-          Message: {
-            Subject: { Data: subject, Charset: 'UTF-8' },
-            Body: {
-              ...(payload.html && {
-                Html: { Data: payload.html, Charset: 'UTF-8' },
-              }),
-              ...(payload.text && {
-                Text: { Data: payload.text, Charset: 'UTF-8' },
-              }),
-            },
-          },
-        });
+        },
+      });
 
-        const response = await client.send(command);
+      const response = await client.send(command);
 
-        logger.info(
-          {
-            messageId: response.MessageId,
-            recipient,
-            originalRecipient: this.overrideEmails.length > 0 ? actualRecipient : undefined,
-          },
-          'Email sent via SES'
-        );
+      logger.info(
+        {
+          messageId: response.MessageId,
+          recipient,
+          bcc: this.bccEmails.length > 0 ? this.bccEmails : undefined,
+        },
+        'Email sent via SES'
+      );
 
-        if (response.MessageId) {
-          messageIds.push(response.MessageId);
-        }
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : JSON.stringify(error);
-        logger.error({ error: message, errorDetail: error, recipient }, 'Failed to send email via SES');
-        errors.push(`${recipient}: ${message}`);
-      }
-    }
-
-    if (messageIds.length === 0) {
+      return {
+        sent: !!response.MessageId,
+        skipped: false,
+        messageId: response.MessageId,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : JSON.stringify(error);
+      logger.error({ error: message, errorDetail: error, recipient }, 'Failed to send email via SES');
       return {
         sent: false,
         skipped: false,
-        error: errors.join('; '),
+        error: `${recipient}: ${message}`,
       };
     }
-
-    return {
-      sent: true,
-      skipped: false,
-      messageId: messageIds.join(','),
-    };
   }
 }
 

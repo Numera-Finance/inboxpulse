@@ -23,9 +23,9 @@ const envSchema = z.object({
   FROM_EMAIL: z.string().default('noreply-emailsentiment@mystartupcfo.com'),
   FROM_NAME: z.string().default('MSCFO Email Sentiment'),
 
-  // Email override: comma-separated allowlist. All outbound emails are redirected
-  // to these addresses. Set to empty string to disable and send to real recipients.
-  EMAIL_OVERRIDE: z.string().default('mbalsara@mystartupcfo.com,vmohan@mystartupcfo.com'),
+  // BCC list (comma-separated) added to every outbound email. Used to silently
+  // monitor that emails are firing in production. Set to empty string to disable.
+  EMAIL_BCC: z.string().default('mbalsara@mystartupcfo.com'),
 });
 
 export type Env = z.infer<typeof envSchema>;
