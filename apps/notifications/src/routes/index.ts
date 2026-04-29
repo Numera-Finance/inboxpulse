@@ -112,7 +112,7 @@ app.post('/send', async (c) => {
       error: result.error,
     });
   } catch (error: any) {
-    logger.error({ error: error.message, templateName }, 'Failed to send notification');
+    logger.error({ error, templateName }, 'Failed to send notification');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -138,7 +138,7 @@ app.get('/preferences', async (c) => {
 
     return c.json({ success: true, data: { preferences } });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to get user preferences');
+    logger.error({ error }, 'Failed to get user preferences');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -167,7 +167,7 @@ app.put('/preferences/:typeId', async (c) => {
 
     return c.json({ success: true, data: result });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to update preferences');
+    logger.error({ error }, 'Failed to update preferences');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -200,7 +200,7 @@ app.post('/subscribe', async (c) => {
 
     return c.json({ success: true, data: result });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to subscribe');
+    logger.error({ error }, 'Failed to subscribe');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -228,7 +228,7 @@ app.post('/unsubscribe/:typeId', async (c) => {
 
     return c.json({ success: true });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to unsubscribe');
+    logger.error({ error }, 'Failed to unsubscribe');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -252,7 +252,7 @@ app.get('/notifications', async (c) => {
 
     return c.json({ success: true, data: { notifications } });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to get notifications');
+    logger.error({ error }, 'Failed to get notifications');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -274,7 +274,7 @@ app.get('/notifications/:id', async (c) => {
 
     return c.json({ success: true, data: notification });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to get notification');
+    logger.error({ error }, 'Failed to get notification');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -296,7 +296,7 @@ app.post('/notifications/:id/read', async (c) => {
 
     return c.json({ success: true, data: result });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to mark notification as read');
+    logger.error({ error }, 'Failed to mark notification as read');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -352,7 +352,7 @@ app.get('/unsubscribe', async (c) => {
       </html>
     `);
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to unsubscribe');
+    logger.error({ error }, 'Failed to unsubscribe');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -426,7 +426,7 @@ app.post('/send/escalation-batch', async (c) => {
       error: result.error,
     });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to send escalation-batch notification');
+    logger.error({ error }, 'Failed to send escalation-batch notification');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -494,7 +494,7 @@ app.post('/simulate/task-assigned', async (c) => {
       error: result.error,
     });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to simulate task-assigned notification');
+    logger.error({ error }, 'Failed to simulate task-assigned notification');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -565,7 +565,7 @@ app.post('/simulate/escalation-batch', async (c) => {
       error: result.error,
     });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to simulate escalation-batch notification');
+    logger.error({ error }, 'Failed to simulate escalation-batch notification');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -588,7 +588,7 @@ app.get('/preferences/all', async (c) => {
 
     return c.json({ success: true, data: { preferences } });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to get all preferences');
+    logger.error({ error }, 'Failed to get all preferences');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -625,7 +625,7 @@ app.get('/preferences/by-name/:templateName', async (c) => {
       },
     });
   } catch (error: any) {
-    logger.error({ error: error.message, templateName }, 'Failed to get preference');
+    logger.error({ error, templateName }, 'Failed to get preference');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -656,7 +656,7 @@ app.put('/preferences/by-name/:templateName', async (c) => {
 
     return c.json({ success: true, data: result });
   } catch (error: any) {
-    logger.error({ error: error.message, templateName }, 'Failed to update preference');
+    logger.error({ error, templateName }, 'Failed to update preference');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -679,7 +679,7 @@ app.delete('/preferences/by-name/:templateName', async (c) => {
 
     return c.json({ success: true });
   } catch (error: any) {
-    logger.error({ error: error.message, templateName }, 'Failed to delete preference');
+    logger.error({ error, templateName }, 'Failed to delete preference');
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -714,7 +714,7 @@ app.get('/preferences/by-name/:templateName/user/:userId', async (c) => {
       },
     });
   } catch (error: any) {
-    logger.error({ error: error.message, templateName, userId }, 'Failed to check preference');
+    logger.error({ error, templateName, userId }, 'Failed to check preference');
     // Fail-open: if we can't check, default to enabled
     return c.json({ success: true, data: { enabled: true } });
   }
