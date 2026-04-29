@@ -14,6 +14,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import { logger } from './utils/logger';
+import { toStructuredError, sanitizeErrorForClient } from '@crm/shared';
+import type { ApiResponse } from '@crm/shared';
 
 // Routes
 import webhooksRoutes from './routes/webhooks';
@@ -22,6 +24,27 @@ import watchRenewalRoutes from './routes/watch-renewal';
 import { verifyServiceApiKey } from './middleware/internal-auth';
 
 const app = new Hono();
+
+// Global error handler
+app.onError((error, c) => {
+  const structuredError = toStructuredError(error);
+
+  if (structuredError.statusCode >= 500) {
+    logger.error(
+      { error: structuredError, path: c.req.path, method: c.req.method },
+      `Server error occurred: ${structuredError.message}`
+    );
+  } else {
+    logger.warn(
+      { error: structuredError, path: c.req.path, method: c.req.method },
+      `Client error occurred: ${structuredError.message}`
+    );
+  }
+
+  const sanitizedError = sanitizeErrorForClient(structuredError);
+  const response: ApiResponse<never> = { success: false, error: sanitizedError };
+  return c.json(response, sanitizedError.statusCode as any);
+});
 
 // Middleware
 app.use('*', honoLogger());

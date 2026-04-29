@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { serializeError } from '@crm/shared';
 
 let _logger: pino.Logger | null = null;
 
@@ -8,6 +9,10 @@ function getLogger(): pino.Logger {
     const env = getEnv();
     _logger = pino({
       level: env.LOG_LEVEL,
+      serializers: {
+        err: serializeError,
+        error: serializeError,
+      },
       transport:
         env.NODE_ENV === 'development'
           ? {

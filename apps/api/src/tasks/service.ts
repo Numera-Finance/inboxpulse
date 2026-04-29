@@ -726,16 +726,16 @@ export class TaskService {
 
   /**
    * Check if it's time to send notifications to a manager based on their timezone.
-   * Currently defaults to 12pm local time daily.
+   * Currently defaults to 8am local time daily.
    */
   shouldSendNotification(timezone: string | null, now: Date = new Date()): boolean {
     const tz = timezone || 'Asia/Kolkata';
     const managerLocalTime = toZonedTime(now, tz);
     const currentHour = managerLocalTime.getHours();
 
-    // Default: daily at 12pm local time
+    // Default: daily at 8am local time
     // TODO: Read from user notification preferences
-    return currentHour === 12;
+    return currentHour === 8;
   }
 
   /**
