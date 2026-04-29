@@ -1,5 +1,10 @@
 /**
  * Notification API routes
+ *
+ * Error handling: routes throw AppError subclasses (or any Error) and the
+ * global app.onError handler in src/index.ts logs and returns a sanitized
+ * ApiResponse. Don't add per-route try/catch unless the behavior is
+ * intentionally non-default (e.g., fail-open).
  */
 
 import { Hono } from 'hono';
@@ -14,7 +19,12 @@ import {
   getTemplateInstance,
 } from '@crm/notifications';
 import { getEnv } from '../env';
-import type { RequestHeader } from '@crm/shared';
+import {
+  InvalidInputError,
+  NotFoundError,
+  InternalError,
+  type RequestHeader,
+} from '@crm/shared';
 import { logger } from '../utils/logger';
 import { getRequestHeader } from '../utils/request-header';
 import { TaskAssignedEmail, EscalationBatchEmail } from '../templates/emails';
@@ -41,80 +51,58 @@ app.post('/send', async (c) => {
 
   const { templateName, data, recipientEmail } = body;
 
-  if (!templateName) {
-    return c.json({ success: false, error: 'templateName is required' }, 400);
+  if (!templateName) throw new InvalidInputError('templateName is required');
+  if (!templateExists(templateName)) throw new InvalidInputError(`Unknown template: ${templateName}`);
+  if (!recipientEmail) throw new InvalidInputError('recipientEmail is required');
+
+  const definition = getTemplate(templateName);
+  if (definition?.isBatchTemplate) {
+    throw new InvalidInputError('Batch templates should be triggered via cron/scheduler, not /send');
   }
 
-  if (!templateExists(templateName)) {
-    return c.json({ success: false, error: `Unknown template: ${templateName}` }, 400);
-  }
-
-  if (!recipientEmail) {
-    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
-  }
-
-  try {
-    // Check if it's a batch template (not supported via this endpoint)
-    const definition = getTemplate(templateName);
-    if (definition?.isBatchTemplate) {
-      return c.json({
-        success: false,
-        error: 'Batch templates should be triggered via cron/scheduler, not /send'
-      }, 400);
-    }
-
-    // Check user preferences - skip if user has disabled this notification
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const isEnabled = await preferencesService.isEnabled(header.userId, templateName, header);
-    if (!isEnabled) {
-      return c.json({
-        success: true,
-        data: {
-          templateName,
-          recipient: recipientEmail,
-          skipped: true,
-          skipReason: 'User has disabled this notification type',
-        },
-      });
-    }
-
-    // Get template instance
-    const template = getTemplateInstance<{ send: (input: unknown, sender: unknown) => Promise<{ sent: boolean; messageId?: string; skipped?: boolean; skipReason?: string; error?: string }> }>(templateName);
-    if (!template) {
-      return c.json({ success: false, error: `Template not instantiated: ${templateName}` }, 500);
-    }
-
-    // Build input for immediate template
-    const input = {
-      user: {
-        userId: header.userId,
-        tenantId: header.tenantId,
-        email: recipientEmail,
-        timezone: 'UTC',
-      },
-      data: data || {},
-      channel: 'email' as const,
-    };
-
-    // Send via template
-    const emailSender = getEmailSender();
-    const result = await template.send(input, emailSender);
-
+  // Check user preferences - skip if user has disabled this notification
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  const isEnabled = await preferencesService.isEnabled(header.userId, templateName, header);
+  if (!isEnabled) {
     return c.json({
-      success: result.sent,
+      success: true,
       data: {
         templateName,
         recipient: recipientEmail,
-        messageId: result.messageId,
-        skipped: result.skipped,
-        skipReason: result.skipReason,
+        skipped: true,
+        skipReason: 'User has disabled this notification type',
       },
-      error: result.error,
     });
-  } catch (error: any) {
-    logger.error({ error, templateName }, 'Failed to send notification');
-    return c.json({ success: false, error: error.message }, 500);
   }
+
+  const template = getTemplateInstance<{ send: (input: unknown, sender: unknown) => Promise<{ sent: boolean; messageId?: string; skipped?: boolean; skipReason?: string; error?: string }> }>(templateName);
+  if (!template) throw new InternalError(`Template not instantiated: ${templateName}`);
+
+  const input = {
+    user: {
+      userId: header.userId,
+      tenantId: header.tenantId,
+      email: recipientEmail,
+      timezone: 'UTC',
+    },
+    data: data || {},
+    channel: 'email' as const,
+  };
+
+  const emailSender = getEmailSender();
+  const result = await template.send(input, emailSender);
+
+  return c.json({
+    success: result.sent,
+    data: {
+      templateName,
+      recipient: recipientEmail,
+      messageId: result.messageId,
+      skipped: result.skipped,
+      skipReason: result.skipReason,
+    },
+    error: result.error,
+  });
 });
 
 /**
@@ -131,16 +119,9 @@ app.get('/templates', (c) => {
  */
 app.get('/preferences', async (c) => {
   const header = getRequestHeader(c);
-
-  try {
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const preferences = await preferencesService.getAllPreferencesWithDefaults(header.userId, header);
-
-    return c.json({ success: true, data: { preferences } });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to get user preferences');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  const preferences = await preferencesService.getAllPreferencesWithDefaults(header.userId, header);
+  return c.json({ success: true, data: { preferences } });
 });
 
 /**
@@ -152,24 +133,11 @@ app.put('/preferences/:typeId', async (c) => {
   const templateName = c.req.param('typeId'); // Legacy: typeId is now templateName
   const body = await c.req.json().catch(() => ({}));
 
-  try {
-    if (!templateExists(templateName)) {
-      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
-    }
+  if (!templateExists(templateName)) throw new NotFoundError('Template', templateName);
 
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const result = await preferencesService.updatePreference(
-      header.userId,
-      templateName,
-      body,
-      header
-    );
-
-    return c.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to update preferences');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  const result = await preferencesService.updatePreference(header.userId, templateName, body, header);
+  return c.json({ success: true, data: result });
 });
 
 /**
@@ -181,28 +149,17 @@ app.post('/subscribe', async (c) => {
   const body = await c.req.json().catch(() => ({}));
 
   const templateName = body.notificationTypeId || body.templateName;
-  if (!templateName) {
-    return c.json({ success: false, error: 'templateName or notificationTypeId is required' }, 400);
-  }
+  if (!templateName) throw new InvalidInputError('templateName or notificationTypeId is required');
+  if (!templateExists(templateName)) throw new NotFoundError('Template', templateName);
 
-  try {
-    if (!templateExists(templateName)) {
-      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
-    }
-
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const result = await preferencesService.updatePreference(
-      header.userId,
-      templateName,
-      { enabled: true },
-      header
-    );
-
-    return c.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to subscribe');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  const result = await preferencesService.updatePreference(
+    header.userId,
+    templateName,
+    { enabled: true },
+    header
+  );
+  return c.json({ success: true, data: result });
 });
 
 /**
@@ -213,24 +170,16 @@ app.post('/unsubscribe/:typeId', async (c) => {
   const header = getRequestHeader(c);
   const templateName = c.req.param('typeId');
 
-  try {
-    if (!templateExists(templateName)) {
-      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
-    }
+  if (!templateExists(templateName)) throw new NotFoundError('Template', templateName);
 
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    await preferencesService.updatePreference(
-      header.userId,
-      templateName,
-      { enabled: false },
-      header
-    );
-
-    return c.json({ success: true });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to unsubscribe');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  await preferencesService.updatePreference(
+    header.userId,
+    templateName,
+    { enabled: false },
+    header
+  );
+  return c.json({ success: true });
 });
 
 /**
@@ -242,19 +191,14 @@ app.get('/notifications', async (c) => {
   const limit = parseInt(c.req.query('limit') || '50');
   const offset = parseInt(c.req.query('offset') || '0');
 
-  try {
-    const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
-    const notifications = await notificationRepo.findByUser(header.userId, header, {
-      status,
-      limit,
-      offset,
-    });
+  const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
+  const notifications = await notificationRepo.findByUser(header.userId, header, {
+    status,
+    limit,
+    offset,
+  });
 
-    return c.json({ success: true, data: { notifications } });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to get notifications');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  return c.json({ success: true, data: { notifications } });
 });
 
 /**
@@ -264,19 +208,11 @@ app.get('/notifications/:id', async (c) => {
   const header = getRequestHeader(c);
   const id = c.req.param('id');
 
-  try {
-    const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
-    const notification = await notificationRepo.findById(id, header);
+  const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
+  const notification = await notificationRepo.findById(id, header);
 
-    if (!notification) {
-      return c.json({ success: false, error: 'Notification not found' }, 404);
-    }
-
-    return c.json({ success: true, data: notification });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to get notification');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  if (!notification) throw new NotFoundError('Notification', id);
+  return c.json({ success: true, data: notification });
 });
 
 /**
@@ -286,19 +222,11 @@ app.post('/notifications/:id/read', async (c) => {
   const header = getRequestHeader(c);
   const id = c.req.param('id');
 
-  try {
-    const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
-    const result = await notificationRepo.markAsRead(id, header);
+  const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
+  const result = await notificationRepo.markAsRead(id, header);
 
-    if (!result) {
-      return c.json({ success: false, error: 'Notification not found' }, 404);
-    }
-
-    return c.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to mark notification as read');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  if (!result) throw new NotFoundError('Notification', id);
+  return c.json({ success: true, data: result });
 });
 
 /**
@@ -309,52 +237,45 @@ app.get('/unsubscribe', async (c) => {
   const templateName = c.req.query('type');
 
   if (!notificationId || !templateName) {
-    return c.json({ success: false, error: 'Invalid unsubscribe link' }, 400);
+    throw new InvalidInputError('Invalid unsubscribe link');
   }
 
-  try {
-    // Get notification to find user
-    const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
-    const notification = await notificationRepo.findById(notificationId, {
-      tenantId: '',
-      userId: '',
-      permissions: [],
-    } as RequestHeader);
+  // Get notification to find user
+  const notificationRepo = container.resolve<NotificationRepository>('NotificationRepository');
+  const notification = await notificationRepo.findById(notificationId, {
+    tenantId: '',
+    userId: '',
+    permissions: [],
+  } as RequestHeader);
 
-    if (!notification) {
-      return c.json({ success: false, error: 'Invalid unsubscribe link' }, 400);
-    }
+  if (!notification) throw new InvalidInputError('Invalid unsubscribe link');
 
-    const header: RequestHeader = {
-      tenantId: notification.tenantId,
-      userId: notification.userId,
-      permissions: [],
-    };
+  const header: RequestHeader = {
+    tenantId: notification.tenantId,
+    userId: notification.userId,
+    permissions: [],
+  };
 
-    // Set enabled: false for this template
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    await preferencesService.updatePreference(
-      notification.userId,
-      templateName,
-      { enabled: false },
-      header
-    );
+  // Set enabled: false for this template
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  await preferencesService.updatePreference(
+    notification.userId,
+    templateName,
+    { enabled: false },
+    header
+  );
 
-    // Return HTML response for browser
-    return c.html(`
-      <!DOCTYPE html>
-      <html>
-        <head><title>Unsubscribed</title></head>
-        <body>
-          <h1>You have been unsubscribed</h1>
-          <p>You will no longer receive these notifications.</p>
-        </body>
-      </html>
-    `);
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to unsubscribe');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  // Return HTML response for browser
+  return c.html(`
+    <!DOCTYPE html>
+    <html>
+      <head><title>Unsubscribed</title></head>
+      <body>
+        <h1>You have been unsubscribed</h1>
+        <p>You will no longer receive these notifications.</p>
+      </body>
+    </html>
+  `);
 });
 
 
@@ -379,56 +300,45 @@ app.post('/send/escalation-batch', async (c) => {
 
   const { escalations, metrics, recipientName, recipientEmail } = body;
 
-  if (!escalations || !Array.isArray(escalations)) {
-    return c.json({ success: false, error: 'escalations array is required' }, 400);
-  }
-  if (!metrics) {
-    return c.json({ success: false, error: 'metrics object is required' }, 400);
-  }
-  if (!recipientEmail) {
-    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
-  }
+  if (!escalations || !Array.isArray(escalations)) throw new InvalidInputError('escalations array is required');
+  if (!metrics) throw new InvalidInputError('metrics object is required');
+  if (!recipientEmail) throw new InvalidInputError('recipientEmail is required');
 
-  try {
-    const html = await render(
-      EscalationBatchEmail({
-        escalations,
-        metrics,
-        recipientName: recipientName || 'Team',
-      })
-    );
+  const html = await render(
+    EscalationBatchEmail({
+      escalations,
+      metrics,
+      recipientName: recipientName || 'Team',
+    })
+  );
 
-    const totalCount = metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
-    const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
+  const totalCount = metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
+  const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
 
-    const emailSender = getEmailSender();
-    const result = await emailSender.send({
-      channel: 'email',
-      to: recipientEmail,
+  const emailSender = getEmailSender();
+  const result = await emailSender.send({
+    channel: 'email',
+    to: recipientEmail,
+    subject,
+    html,
+  });
+
+  logger.info(
+    { recipient: recipientEmail, escalationCount: escalations.length, sent: result.sent },
+    'Sent escalation-batch notification'
+  );
+
+  return c.json({
+    success: result.sent,
+    data: {
+      template: 'escalation-batch',
+      recipient: recipientEmail,
       subject,
-      html,
-    });
-
-    logger.info(
-      { recipient: recipientEmail, escalationCount: escalations.length, sent: result.sent },
-      'Sent escalation-batch notification'
-    );
-
-    return c.json({
-      success: result.sent,
-      data: {
-        template: 'escalation-batch',
-        recipient: recipientEmail,
-        subject,
-        messageId: result.messageId,
-        escalationCount: escalations.length,
-      },
-      error: result.error,
-    });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to send escalation-batch notification');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+      messageId: result.messageId,
+      escalationCount: escalations.length,
+    },
+    error: result.error,
+  });
 });
 
 // =============================================================================
@@ -452,51 +362,42 @@ app.post('/simulate/task-assigned', async (c) => {
 
   const { task, recipientName, recipientEmail } = body;
 
-  if (!task) {
-    return c.json({ success: false, error: 'task object is required' }, 400);
-  }
-  if (!recipientEmail) {
-    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
-  }
+  if (!task) throw new InvalidInputError('task object is required');
+  if (!recipientEmail) throw new InvalidInputError('recipientEmail is required');
 
   const requiredFields = ['id', 'customer', 'subject', 'dateOpened', 'assignedTo', 'accountOwner', 'detailsUrl'];
   const missingFields = requiredFields.filter(f => !task[f]);
   if (missingFields.length > 0) {
-    return c.json({ success: false, error: `Missing task fields: ${missingFields.join(', ')}` }, 400);
+    throw new InvalidInputError(`Missing task fields: ${missingFields.join(', ')}`);
   }
 
-  try {
-    const html = await render(
-      TaskAssignedEmail({
-        task,
-        recipientName: recipientName || 'Team',
-      })
-    );
+  const html = await render(
+    TaskAssignedEmail({
+      task,
+      recipientName: recipientName || 'Team',
+    })
+  );
 
-    const subject = `New Escalation: ${task.customer} - ${task.subject.substring(0, 50)}${task.subject.length > 50 ? '...' : ''}`;
+  const subject = `New Escalation: ${task.customer} - ${task.subject.substring(0, 50)}${task.subject.length > 50 ? '...' : ''}`;
 
-    const emailSender = getEmailSender();
-    const result = await emailSender.send({
-      channel: 'email',
-      to: recipientEmail,
+  const emailSender = getEmailSender();
+  const result = await emailSender.send({
+    channel: 'email',
+    to: recipientEmail,
+    subject,
+    html,
+  });
+
+  return c.json({
+    success: result.sent,
+    data: {
+      template: 'task-assigned',
+      recipient: recipientEmail,
       subject,
-      html,
-    });
-
-    return c.json({
-      success: result.sent,
-      data: {
-        template: 'task-assigned',
-        recipient: recipientEmail,
-        subject,
-        messageId: result.messageId,
-      },
-      error: result.error,
-    });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to simulate task-assigned notification');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+      messageId: result.messageId,
+    },
+    error: result.error,
+  });
 });
 
 /**
@@ -517,57 +418,46 @@ app.post('/simulate/escalation-batch', async (c) => {
 
   const { escalations, metrics, recipientName, recipientEmail } = body;
 
-  if (!escalations || !Array.isArray(escalations)) {
-    return c.json({ success: false, error: 'escalations array is required' }, 400);
-  }
-  if (!metrics) {
-    return c.json({ success: false, error: 'metrics object is required' }, 400);
-  }
-  if (!recipientEmail) {
-    return c.json({ success: false, error: 'recipientEmail is required' }, 400);
-  }
+  if (!escalations || !Array.isArray(escalations)) throw new InvalidInputError('escalations array is required');
+  if (!metrics) throw new InvalidInputError('metrics object is required');
+  if (!recipientEmail) throw new InvalidInputError('recipientEmail is required');
 
   const requiredMetrics = ['new', 'open1Day', 'open3Days', 'openMoreThan3Days'];
   const missingMetrics = requiredMetrics.filter(m => metrics[m] === undefined);
   if (missingMetrics.length > 0) {
-    return c.json({ success: false, error: `Missing metrics fields: ${missingMetrics.join(', ')}` }, 400);
+    throw new InvalidInputError(`Missing metrics fields: ${missingMetrics.join(', ')}`);
   }
 
-  try {
-    const html = await render(
-      EscalationBatchEmail({
-        escalations,
-        metrics,
-        recipientName: recipientName || 'Team',
-      })
-    );
+  const html = await render(
+    EscalationBatchEmail({
+      escalations,
+      metrics,
+      recipientName: recipientName || 'Team',
+    })
+  );
 
-    const totalCount = metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
-    const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
+  const totalCount = metrics.new + metrics.open1Day + metrics.open3Days + metrics.openMoreThan3Days;
+  const subject = `Action Required: ${totalCount} Escalation${totalCount !== 1 ? 's' : ''} Pending`;
 
-    const emailSender = getEmailSender();
-    const result = await emailSender.send({
-      channel: 'email',
-      to: recipientEmail,
+  const emailSender = getEmailSender();
+  const result = await emailSender.send({
+    channel: 'email',
+    to: recipientEmail,
+    subject,
+    html,
+  });
+
+  return c.json({
+    success: result.sent,
+    data: {
+      template: 'escalation-batch',
+      recipient: recipientEmail,
       subject,
-      html,
-    });
-
-    return c.json({
-      success: result.sent,
-      data: {
-        template: 'escalation-batch',
-        recipient: recipientEmail,
-        subject,
-        messageId: result.messageId,
-        escalationCount: escalations.length,
-      },
-      error: result.error,
-    });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to simulate escalation-batch notification');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+      messageId: result.messageId,
+      escalationCount: escalations.length,
+    },
+    error: result.error,
+  });
 });
 
 // =============================================================================
@@ -581,16 +471,9 @@ app.post('/simulate/escalation-batch', async (c) => {
  */
 app.get('/preferences/all', async (c) => {
   const header = getRequestHeader(c);
-
-  try {
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const preferences = await preferencesService.getAllPreferencesWithDefaults(header.userId, header);
-
-    return c.json({ success: true, data: { preferences } });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to get all preferences');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  const preferences = await preferencesService.getAllPreferencesWithDefaults(header.userId, header);
+  return c.json({ success: true, data: { preferences } });
 });
 
 /**
@@ -601,33 +484,25 @@ app.get('/preferences/by-name/:templateName', async (c) => {
   const header = getRequestHeader(c);
   const templateName = c.req.param('templateName');
 
-  try {
-    const template = getTemplate(templateName);
-    if (!template) {
-      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
-    }
+  const template = getTemplate(templateName);
+  if (!template) throw new NotFoundError('Template', templateName);
 
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const preference = await preferencesService.getPreference(header.userId, templateName, header);
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  const preference = await preferencesService.getPreference(header.userId, templateName, header);
 
-    // Return preference or defaults from template
-    return c.json({
-      success: true,
-      data: preference || {
-        templateName: template.name,
-        enabled: template.defaultEnabled,
-        channels: template.defaultChannels,
-        frequency: template.defaultFrequency,
-        batchInterval: template.defaultBatchInterval,
-        payload: null,
-        lastSentAt: null,
-        nextSendAt: null,
-      },
-    });
-  } catch (error: any) {
-    logger.error({ error, templateName }, 'Failed to get preference');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  return c.json({
+    success: true,
+    data: preference || {
+      templateName: template.name,
+      enabled: template.defaultEnabled,
+      channels: template.defaultChannels,
+      frequency: template.defaultFrequency,
+      batchInterval: template.defaultBatchInterval,
+      payload: null,
+      lastSentAt: null,
+      nextSendAt: null,
+    },
+  });
 });
 
 /**
@@ -641,24 +516,11 @@ app.put('/preferences/by-name/:templateName', async (c) => {
   const templateName = c.req.param('templateName');
   const body = await c.req.json().catch(() => ({}));
 
-  try {
-    if (!templateExists(templateName)) {
-      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
-    }
+  if (!templateExists(templateName)) throw new NotFoundError('Template', templateName);
 
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    const result = await preferencesService.updatePreference(
-      header.userId,
-      templateName,
-      body,
-      header
-    );
-
-    return c.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error({ error, templateName }, 'Failed to update preference');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  const result = await preferencesService.updatePreference(header.userId, templateName, body, header);
+  return c.json({ success: true, data: result });
 });
 
 /**
@@ -669,26 +531,21 @@ app.delete('/preferences/by-name/:templateName', async (c) => {
   const header = getRequestHeader(c);
   const templateName = c.req.param('templateName');
 
-  try {
-    if (!templateExists(templateName)) {
-      return c.json({ success: false, error: `Unknown template: ${templateName}` }, 404);
-    }
+  if (!templateExists(templateName)) throw new NotFoundError('Template', templateName);
 
-    const preferencesService = container.resolve<PreferencesService>(PreferencesService);
-    await preferencesService.deletePreference(header.userId, templateName, header);
-
-    return c.json({ success: true });
-  } catch (error: any) {
-    logger.error({ error, templateName }, 'Failed to delete preference');
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  const preferencesService = container.resolve<PreferencesService>(PreferencesService);
+  await preferencesService.deletePreference(header.userId, templateName, header);
+  return c.json({ success: true });
 });
 
 /**
  * Check if a template is enabled for a specific user
  * GET /api/notifications/preferences/by-name/:templateName/user/:userId
  *
- * Used by API service to check if user wants to receive a notification
+ * Used by API service to check if user wants to receive a notification.
+ * Fail-open by design: if anything goes wrong, default to enabled so legitimate
+ * notifications aren't silently dropped because of a transient lookup failure.
+ * Keeps its own try/catch to preserve that contract.
  */
 app.get('/preferences/by-name/:templateName/user/:userId', async (c) => {
   const header = getRequestHeader(c);
@@ -713,9 +570,8 @@ app.get('/preferences/by-name/:templateName/user/:userId', async (c) => {
         batchInterval: preference?.batchInterval ?? template.defaultBatchInterval,
       },
     });
-  } catch (error: any) {
-    logger.error({ error, templateName, userId }, 'Failed to check preference');
-    // Fail-open: if we can't check, default to enabled
+  } catch (error) {
+    logger.error({ error, templateName, userId }, 'Failed to check preference (fail-open)');
     return c.json({ success: true, data: { enabled: true } });
   }
 });
