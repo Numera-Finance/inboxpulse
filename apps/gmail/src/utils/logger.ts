@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { serializeError } from '@crm/shared';
 
 let _logger: pino.Logger | null = null;
 
@@ -14,7 +15,8 @@ function getLogger(): pino.Logger {
         },
       },
       serializers: {
-        error: pino.stdSerializers.err,
+        err: serializeError,
+        error: serializeError,
       },
       base: {
         service: 'gmail-sync',

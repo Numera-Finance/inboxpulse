@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { serializeError } from '@crm/shared';
 
 // Logger is created lazily to ensure env vars are loaded (dotenv) before reading them.
 let _logger: pino.Logger | null = null;
@@ -15,7 +16,8 @@ function getLogger(): pino.Logger {
         },
       },
       serializers: {
-        error: pino.stdSerializers.err,
+        err: serializeError,
+        error: serializeError,
       },
       base: {
         service: 'crm-api',
