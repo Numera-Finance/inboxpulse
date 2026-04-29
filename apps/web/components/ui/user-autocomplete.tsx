@@ -208,12 +208,15 @@ export function UserAutocomplete({
     }
   }, [handleScroll])
 
-  // Reset search and pagination when closing (preserve allItems for instant reopen)
+  // Reset search input when closing, but keep offset/allItems intact so the
+  // selected user remains in `allItems` and the trigger button can render its
+  // name on next open. Resetting offset here would refetch the first page and
+  // overwrite allItems with only the first PAGE_SIZE users, losing any picked
+  // from later pages.
   React.useEffect(() => {
     if (!open) {
       setSearch("")
       setDebouncedSearch("")
-      setOffset(0)
       loadingNextPage.current = false
     }
   }, [open])
