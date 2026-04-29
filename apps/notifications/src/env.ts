@@ -23,8 +23,14 @@ const envSchema = z.object({
   FROM_EMAIL: z.string().default('noreply-emailsentiment@mystartupcfo.com'),
   FROM_NAME: z.string().default('MSCFO Email Sentiment'),
 
+  // Email override (comma-separated). When set, ALL outbound emails are redirected
+  // to these addresses instead of the real recipient. Used for dev/staging
+  // sandboxing. Default is empty so production sends to real recipients.
+  EMAIL_OVERRIDE: z.string().default(''),
+
   // BCC list (comma-separated) added to every outbound email. Used to silently
   // monitor that emails are firing in production. Set to empty string to disable.
+  // Skipped when EMAIL_OVERRIDE is active to avoid duplicate copies.
   EMAIL_BCC: z.string().default('mbalsara@mystartupcfo.com'),
 });
 
