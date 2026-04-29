@@ -7,7 +7,7 @@ import { RunService } from '../runs/service';
 import { dbEmailToEmail } from './converter';
 import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
-import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, NotFoundError, ValidationError } from '@crm/shared';
+import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError } from '@crm/shared';
 import { analyzedEmailSearchRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 import { handleGetRequest, handleGetRequestWithParams, handleApiRequest } from '../utils/api-handler';
@@ -42,14 +42,25 @@ app.post('/bulk-with-threads', async (c) => {
     );
   }
 
-  // Errors here propagate to the global handler, which returns 500 — exactly
-  // what we want for Pub/Sub to retry the delivery.
+  // Force every bulk-insert failure to surface as 500 so Pub/Sub redelivers.
+  // Without this wrap, the global handler would map postgres FK / unique /
+  // NOT NULL violations (23503 / 23505 / 23502) to 4xx, which Pub/Sub treats
+  // as permanent — losing the retry on transient DB issues.
   const emailService = container.resolve(EmailService);
-  const result = await emailService.bulkInsertWithThreads(
-    body.tenantId,
-    body.integrationId,
-    validationResult.data
-  );
+  let result: Awaited<ReturnType<typeof emailService.bulkInsertWithThreads>>;
+  try {
+    result = await emailService.bulkInsertWithThreads(
+      body.tenantId,
+      body.integrationId,
+      validationResult.data
+    );
+  } catch (error) {
+    throw new InternalError(
+      'Bulk insert failed',
+      { tenantId: body.tenantId, integrationId: body.integrationId },
+      error instanceof Error ? error : new Error(String(error))
+    );
+  }
 
   logger.info(
     {
