@@ -31,17 +31,17 @@ CREATE TABLE user_notification_preferences (
 );
 
 -- Unique constraint: one preference per user per template
-CREATE UNIQUE INDEX uniq_user_notification_preferences_template
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_notification_preferences_template
     ON user_notification_preferences(user_id, template_name);
 
 -- Query indexes
-CREATE INDEX idx_user_notification_preferences_user
+CREATE INDEX IF NOT EXISTS idx_user_notification_preferences_user
     ON user_notification_preferences(user_id);
 
-CREATE INDEX idx_user_notification_preferences_template_name
+CREATE INDEX IF NOT EXISTS idx_user_notification_preferences_template_name
     ON user_notification_preferences(template_name);
 
 -- Batch scheduling: find users due for batch notifications
-CREATE INDEX idx_user_notification_preferences_batch_due
+CREATE INDEX IF NOT EXISTS idx_user_notification_preferences_batch_due
     ON user_notification_preferences(template_name, next_send_at)
     WHERE enabled = true AND frequency = 'batched';
