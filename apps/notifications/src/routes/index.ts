@@ -355,7 +355,8 @@ app.post('/send/escalation-batch', async (c) => {
  *   recipientEmail: string
  * }
  *
- * Uses EMAIL_OVERRIDE env var if set, otherwise sends to recipientEmail.
+ * Sends to recipientEmail. EMAIL_OVERRIDE redirects all sends to a sandbox list;
+ * EMAIL_BCC silently BCCs a monitor list on every normal-mode send.
  */
 app.post('/simulate/task-assigned', async (c) => {
   const body = await c.req.json().catch(() => ({}));
@@ -411,7 +412,8 @@ app.post('/simulate/task-assigned', async (c) => {
  *   recipientEmail: string
  * }
  *
- * Uses EMAIL_OVERRIDE env var if set, otherwise sends to recipientEmail.
+ * Sends to recipientEmail. EMAIL_OVERRIDE redirects all sends to a sandbox list;
+ * EMAIL_BCC silently BCCs a monitor list on every normal-mode send.
  */
 app.post('/simulate/escalation-batch', async (c) => {
   const body = await c.req.json().catch(() => ({}));
@@ -585,6 +587,7 @@ app.get('/simulate', (c) => {
     success: true,
     data: {
       emailOverride: getEnv().EMAIL_OVERRIDE || null,
+      emailBcc: getEnv().EMAIL_BCC || null,
       endpoints: [
         {
           method: 'POST',
@@ -617,7 +620,7 @@ app.get('/simulate', (c) => {
           },
         },
       ],
-      note: 'If EMAIL_OVERRIDE is set (comma-separated), only those recipients receive emails. Others are redirected to the first address.',
+      note: 'EMAIL_OVERRIDE (comma-separated) redirects all sends to a sandbox list. EMAIL_BCC silently BCCs every outbound email so production delivery can be monitored. BCC is skipped while override is active.',
     },
   });
 });

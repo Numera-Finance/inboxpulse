@@ -2,7 +2,8 @@
  * SES Email Sender
  *
  * Implements ChannelSender interface for sending emails via Amazon SES.
- * Supports EMAIL_OVERRIDE for development/testing.
+ * Honors EMAIL_OVERRIDE (redirect every outbound to a sandbox list) and
+ * EMAIL_BCC (silently BCC every outbound to a monitor list).
  */
 
 import type { ChannelPayload, ChannelSender, SendResult } from '@crm/notifications';
@@ -16,12 +17,18 @@ import { getEnv } from '../env';
 export class SesEmailSender implements ChannelSender {
   private client: unknown | null = null;
   private initialized = false;
-  /** Comma-separated override emails. When set, ALL emails are redirected to these addresses instead of the actual recipient. */
+  /** Comma-separated override list. When set, ALL emails are redirected to these addresses instead of the real recipient (dev/staging sandbox). */
   private overrideEmails: string[];
+  /** Comma-separated BCC list. Added to every outbound email so we can monitor delivery in production. Skipped when override is active. */
+  private bccEmails: string[];
 
   constructor() {
     const env = getEnv();
     this.overrideEmails = env.EMAIL_OVERRIDE
+      .split(',')
+      .map(e => e.trim())
+      .filter(Boolean);
+    this.bccEmails = env.EMAIL_BCC
       .split(',')
       .map(e => e.trim())
       .filter(Boolean);
@@ -32,6 +39,10 @@ export class SesEmailSender implements ChannelSender {
 
     if (this.overrideEmails.length > 0) {
       logger.info({ overrideEmails: this.overrideEmails }, 'EMAIL_OVERRIDE is active - all emails will be redirected');
+    }
+
+    if (this.bccEmails.length > 0) {
+      logger.info({ bccEmails: this.bccEmails }, 'EMAIL_BCC is active - all emails will BCC these addresses');
     }
   }
 
@@ -73,17 +84,23 @@ export class SesEmailSender implements ChannelSender {
       };
     }
 
-    // Determine recipients: if EMAIL_OVERRIDE is set, send a separate email to each override address
+    // Determine recipients: if EMAIL_OVERRIDE is set, send a separate email to
+    // each override address (sandbox mode). Otherwise send to the real recipient.
     const actualRecipient = payload.to;
     const recipients = this.overrideEmails.length > 0
       ? this.overrideEmails
       : [actualRecipient];
 
-    // Build subject (add prefix if redirecting so we know who it was originally for)
+    // Subject prefix only applies in override mode so we know who it was for.
     let subject = payload.subject;
     if (this.overrideEmails.length > 0) {
       subject = `[To: ${actualRecipient}] ${subject}`;
     }
+
+    // BCC monitor list applies only in normal mode. In override mode the entire
+    // delivery is already going to the override list — adding BCC would just
+    // duplicate copies to addresses that may overlap.
+    const bcc = this.overrideEmails.length === 0 ? this.bccEmails : [];
 
     const errors: string[] = [];
     const messageIds: string[] = [];
@@ -98,6 +115,7 @@ export class SesEmailSender implements ChannelSender {
           Source: from,
           Destination: {
             ToAddresses: [recipient],
+            ...(bcc.length > 0 && { BccAddresses: bcc }),
           },
           Message: {
             Subject: { Data: subject, Charset: 'UTF-8' },
@@ -119,6 +137,7 @@ export class SesEmailSender implements ChannelSender {
             messageId: response.MessageId,
             recipient,
             originalRecipient: this.overrideEmails.length > 0 ? actualRecipient : undefined,
+            bcc: bcc.length > 0 ? bcc : undefined,
           },
           'Email sent via SES'
         );
