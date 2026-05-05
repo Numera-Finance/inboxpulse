@@ -209,7 +209,7 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'sentiment': true,               // Enable sentiment analysis
     'escalation': false,              // Disabled — negative sentiment drives escalation workflow
     'upsell': true,                   // Enable upsell detection
-    'churn': false,                   // Enable churn risk assessment
+    'churn': true,                    // Enable churn risk assessment
     'kudos': false,                   // Enable kudos detection
     'competitor': false,              // Enable competitor mentions
   },
