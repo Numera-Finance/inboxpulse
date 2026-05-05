@@ -3,36 +3,65 @@ import { describe, it, expect } from 'vitest';
 import { parseKeywords } from './service';
 
 describe('parseKeywords', () => {
-  it('parses single words separated by spaces', () => {
-    expect(parseKeywords('urgent critical')).toEqual(['urgent', 'critical']);
+  it('splits on commas', () => {
+    expect(parseKeywords('urgent, critical')).toEqual(['urgent', 'critical']);
   });
 
-  it('parses single words separated by newlines', () => {
+  it('splits on newlines', () => {
     expect(parseKeywords('urgent\ncritical')).toEqual(['urgent', 'critical']);
   });
 
-  it('parses mixed spaces and newlines', () => {
-    expect(parseKeywords('urgent\ncritical important')).toEqual(['urgent', 'critical', 'important']);
+  it('splits on tabs', () => {
+    expect(parseKeywords('urgent\tcritical')).toEqual(['urgent', 'critical']);
   });
 
-  it('parses double-quoted multi-word phrases', () => {
+  it('preserves spaces inside an item so multi-word names stay intact', () => {
+    expect(parseKeywords('cancel subscription, very upset')).toEqual([
+      'cancel subscription',
+      'very upset',
+    ]);
+  });
+
+  it('handles a comma-separated competitor list with multi-word names', () => {
+    const input = 'Inkle, Pilot, Burdick Tax & Accounting, Gettleson Witzer and O\'Connor';
+    expect(parseKeywords(input)).toEqual([
+      'Inkle',
+      'Pilot',
+      'Burdick Tax & Accounting',
+      'Gettleson Witzer and O\'Connor',
+    ]);
+  });
+
+  it('strips optional surrounding double quotes', () => {
     expect(parseKeywords('"well done"')).toEqual(['well done']);
   });
 
-  it('parses mix of quoted phrases and single words', () => {
-    expect(parseKeywords('"well done" great')).toEqual(['well done', 'great']);
+  it('strips optional surrounding curly quotes', () => {
+    expect(parseKeywords('“well done”')).toEqual(['well done']);
   });
 
-  it('parses multiple quoted phrases', () => {
-    expect(parseKeywords('"cancel subscription" "very upset"')).toEqual(['cancel subscription', 'very upset']);
+  it('handles curly double low-9 quotation mark (U+201E)', () => {
+    expect(parseKeywords('„well done”')).toEqual(['well done']);
   });
 
-  it('parses quoted phrases with surrounding single words', () => {
-    expect(parseKeywords('urgent "cancel subscription" churn')).toEqual(['urgent', 'cancel subscription', 'churn']);
+  it('mixes quoted and unquoted comma-separated items', () => {
+    expect(parseKeywords('"cancel subscription", churn, "very upset"')).toEqual([
+      'cancel subscription',
+      'churn',
+      'very upset',
+    ]);
   });
 
-  it('handles extra whitespace', () => {
-    expect(parseKeywords('  urgent   critical  ')).toEqual(['urgent', 'critical']);
+  it('trims whitespace around items', () => {
+    expect(parseKeywords('  urgent  ,  critical  ')).toEqual(['urgent', 'critical']);
+  });
+
+  it('drops empty items between separators', () => {
+    expect(parseKeywords('urgent,,critical\n\ncancel')).toEqual([
+      'urgent',
+      'critical',
+      'cancel',
+    ]);
   });
 
   it('handles empty string', () => {
@@ -43,47 +72,14 @@ describe('parseKeywords', () => {
     expect(parseKeywords('   \n  \n  ')).toEqual([]);
   });
 
-  it('treats empty quotes as literal token', () => {
-    expect(parseKeywords('""')).toEqual(['""']);
+  it('drops items that are only empty quotes', () => {
+    expect(parseKeywords('""')).toEqual([]);
   });
 
-  it('handles tabs', () => {
-    expect(parseKeywords('urgent\tcritical')).toEqual(['urgent', 'critical']);
-  });
-
-  it('handles quoted phrase on its own line', () => {
-    expect(parseKeywords('urgent\n"well done"\ncritical')).toEqual(['urgent', 'well done', 'critical']);
-  });
-
-  // Curly/smart quote support
-  it('parses curly-quoted multi-word phrases', () => {
-    expect(parseKeywords('\u201cwell done\u201d')).toEqual(['well done']);
-  });
-
-  it('parses curly-quoted phrases with single words', () => {
-    expect(parseKeywords('\u201ccancel subscription\u201d churn')).toEqual(['cancel subscription', 'churn']);
-  });
-
-  it('parses mix of straight and curly quotes', () => {
-    expect(parseKeywords('"urgent issue"\n\u201cLack of response\u201d\n"Poor service"')).toEqual([
-      'urgent issue',
-      'Lack of response',
-      'Poor service',
-    ]);
-  });
-
-  it('does not split curly-quoted phrases into separate words', () => {
-    const input = '\u201cLoss of confidence\u201d\n\u201cError in reporting\u201d';
-    const parsed = parseKeywords(input);
-    expect(parsed).toEqual(['Loss of confidence', 'Error in reporting']);
-    expect(parsed).not.toContain('of');
-    expect(parsed).not.toContain('in');
-  });
-
-  it('handles real-world negative keywords from DB', () => {
-    const input = '"???"\n\u201cConcerned\u201d\n"Concerning"\n\u201cNot satisfied\u201d\n\u201cDisappointed\u201d\n"Disappointing"\n\u201cFrustrated\u201d';
-    const parsed = parseKeywords(input);
-    expect(parsed).toEqual([
+  it('handles real-world negative keywords from DB (curly-quoted, newline-separated)', () => {
+    const input =
+      '"???"\n“Concerned”\n"Concerning"\n“Not satisfied”\n“Disappointed”\n"Disappointing"\n“Frustrated”';
+    expect(parseKeywords(input)).toEqual([
       '???',
       'Concerned',
       'Concerning',
@@ -92,11 +88,13 @@ describe('parseKeywords', () => {
       'Disappointing',
       'Frustrated',
     ]);
-    expect(parsed).not.toContain('of');
-    expect(parsed).not.toContain('in');
   });
 
-  it('handles curly double low-9 quotation mark (U+201E)', () => {
-    expect(parseKeywords('\u201ewell done\u201d')).toEqual(['well done']);
+  it('does not split a multi-word phrase into separate words', () => {
+    const input = '“Loss of confidence”\n“Error in reporting”';
+    const parsed = parseKeywords(input);
+    expect(parsed).toEqual(['Loss of confidence', 'Error in reporting']);
+    expect(parsed).not.toContain('of');
+    expect(parsed).not.toContain('in');
   });
 });

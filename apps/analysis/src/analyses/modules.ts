@@ -124,50 +124,53 @@ Return:
 - opportunity: ≤30 words paraphrasing what the client said and which MyStartupCFO service addresses it. Do not invent details.
 - product: the matching service group name from the taxonomy (exact text).
 
-## Conditions for detected: true (all three required)
+## Conditions for detected: true (all four required)
 
-1. **Upsell signal in the Email Body** — either of:
-   - A problem, delay, penalty, quality issue, confusion, manual workaround, or open F&A/tax/compliance question the client is currently shouldering on their own.
+1. **Pain or ask in the Email Body** — either:
+   - A problem, delay, penalty, quality issue, confusion, manual workaround, or open F&A / tax / compliance question the client is currently shouldering on their own.
    - A direct ask for MyStartupCFO to take on, start, or expand work.
 
 2. **Signal maps cleanly to exactly one taxonomy group below, excluding Bookkeeping (basic).**
 
-3. **The service is NOT already being delivered to this client.** Use thread participants and thread context to judge:
-   - If @mystartupcfo.com staff or a MyStartupCFO service partner is already on the thread executing that same work, the signal is about in-flight work — treat as **churn / quality, not upsell** → detected: false.
-   - If the client is clearly handling the work internally (internal addresses only, "we've been…", "I've been…") or explicitly asking MyStartupCFO to start / take over, the service is not yet being delivered → upsell candidate.
+3. **The service is NOT already being delivered to this client.** Judge from thread participants and prior turns:
+   - If any @mystartupcfo.com address or MyStartupCFO service partner is on the thread (sender, To, Cc, or any prior turn) executing or coordinating that same work, the service is in-flight → detected: false.
+   - The active presence of MyStartupCFO staff replying about the work is sufficient evidence the service is being delivered. Do not require an explicit statement.
+   - Operational coordination on existing work — providing data, answering open items, approving drafts, asking for status, requesting corrections — is not an upsell signal.
+
+4. **The client is not winding down, dissolving, shutting down, or leaving.** Closing-out work for a dissolving entity, a customer announcing they are switching to another provider, or a customer ending the engagement is churn or transition work, not upsell → detected: false. This applies even when dissolution filings or final-period work are part of MyStartupCFO's service taxonomy.
 
 ## Service taxonomy (use these exact group names for \`product\`)
 
 **Bookkeeping (basic)** — INCLUDED in every engagement, NEVER upsell:
-- Bank/CC reconciliation, payroll JE processing, monthly close JEs, standard BS/P&L/CF reporting, balance-sheet schedules, recording invoices from client-provided data.
+- Standard ledger maintenance covered by the base engagement: bank and credit-card reconciliation, payroll journal entries, monthly close entries, standard balance sheet / P&L / cash flow reporting, balance-sheet schedules, and recording invoices from client-provided data.
 
 **Bookkeeping (advanced)**:
-- CoA restructuring, class/department/location/project tagging, revenue recognition (ASC 606), inventory reconciliation, sales tax administration, grant reporting (NSF/SBIR).
+- Chart-of-accounts restructuring, class / department / location / project tagging, revenue recognition under ASC 606, inventory reconciliation, sales-tax administration, and grant reporting.
 
 **F&A operations**:
-- AP ops, AR ops, payroll ops, cap table maintenance, financial modeling, CFO services (advisory, investor/management reporting, M&A support), due diligence and audit support, financial tool setup (Bill.com, Carta, Gusto, ADP, Rippling).
+- Accounts payable operations, accounts receivable operations, payroll operations, cap-table maintenance, financial modeling, CFO advisory and investor / management reporting, M&A and due-diligence support, audit support, and finance-tool setup.
 
 **Custom reporting**:
-- Entity consolidation, budget vs actuals, MIS in client format, custom F&A reports.
+- Entity consolidation, budget vs. actuals, MIS in client format, and custom F&A reports.
 
 **Compliance and tax**:
-- 1099 filings, state annual reports / SoI, state registrations / de-registrations, payroll/tax notice handling, sales nexus study, sales tax filings, federal/state income tax returns, foreign tax filings, BOI, BE12, TRC, dissolution filings, tax planning, R&D credit study.
+- 1099 filings, state annual reports and Statements of Information, state registrations and de-registrations, payroll and tax notice handling, sales-nexus studies, sales-tax filings, federal and state income-tax returns, foreign tax filings, BOI, BE-12, TRC, dissolution filings, tax planning, and R&D credit studies.
 
 **F&A and company admin**:
-- Company formation, EIN registration, state incorporation, compliance registrations, virtual office services, registered agent services.
+- Company formation, EIN registration, state incorporation, compliance registrations, virtual office services, and registered-agent services.
 
 ## Rules
 
-- Derive pain signals and asks ONLY from the Email Body. Ignore the Email Signature section — it typically contains marketing boilerplate (Calendly, webinars, taglines) that are not the sender's intent.
+- Derive pain signals and asks ONLY from the Email Body. Ignore the Email Signature section.
 - Use thread participants and thread context ONLY to judge whether the service is already being delivered, never to source pain signals.
-- If the sender is MyStartupCFO staff (@mystartupcfo.com) or a third-party partner/vendor writing about their own ops rather than as a client, detected: false.
-- \`product\` must be one of the five exact taxonomy group names above. If the signal doesn't cleanly map to one, detected: false. Do not invent product names.
+- If the sender is MyStartupCFO staff or a third-party partner / vendor writing about their own ops rather than as a client, detected: false.
+- \`product\` must be one of the six exact taxonomy group names above. If the signal doesn't cleanly map to one, detected: false. Do not invent product names.
 - Acknowledgments, scheduling, FYIs, forwards with no commentary, and routine status updates are not upsell signals.
-- Confidence ≥ 0.85 only when the signal is concrete, the service is clearly not already being delivered, and the taxonomy match is unambiguous. Below ~0.6, prefer detected: false.
+- Confidence ≥ 0.85 only when the signal is concrete, the service is clearly not already being delivered, the client is not winding down, and the taxonomy match is unambiguous. When any of these are uncertain, prefer detected: false.
 
-When uncertain on any of the three conditions, default to detected: false.`,
+When uncertain on any of the four conditions, default to detected: false.`,
   schema: upsellSchema,
-  version: 'v1.2',
+  version: 'v1.3',
 };
 
 /**
