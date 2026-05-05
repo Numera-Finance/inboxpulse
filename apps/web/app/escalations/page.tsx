@@ -322,6 +322,17 @@ export default function EscalationsPage() {
     searchPlaceholder: "Search emails...",
   }), [])
 
+  // When the user is viewing a single signal type (Upsell / Churn / Negative),
+  // the resolve dialog should match what they're acting on, regardless of any
+  // additional signals the email also carries. Only fall back to the
+  // email-level category when the view isn't scoped to one of those three.
+  const resolveCategory = React.useCallback((email: AnalyzedEmail): TaskSignalCategory | null => {
+    if (effectiveSignal === 'negative' || effectiveSignal === 'upsell' || effectiveSignal === 'churn') {
+      return effectiveSignal
+    }
+    return getTaskSignalCategory(email?.signals)
+  }, [effectiveSignal])
+
   // Memoize render functions to prevent re-renders
   // Show "Done" button for any email with a task that isn't resolved
   const renderHeaderActions = React.useCallback((item: InboxItem) => {
@@ -336,7 +347,7 @@ export default function EscalationsPage() {
           if (email?.taskId) {
             setDoneDialog({
               taskId: email.taskId,
-              signalCategory: getTaskSignalCategory(email?.signals),
+              signalCategory: resolveCategory(email),
             })
           }
         }}
@@ -345,7 +356,7 @@ export default function EscalationsPage() {
         Resolve
       </Button>
     )
-  }, [])
+  }, [resolveCategory])
 
   const renderMetaInfo = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail

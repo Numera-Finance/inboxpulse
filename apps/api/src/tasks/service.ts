@@ -278,7 +278,8 @@ export class TaskService {
   }
 
   /**
-   * Create task from negative email (system-created).
+   * Create task from an analyzed email (system-created).
+   * Triggered for negative-sentiment, upsell, and churn-risk emails.
    * Auto-assigns to the customer's controller or account manager if available.
    */
   async createFromEmail(
@@ -294,13 +295,13 @@ export class TaskService {
       return existing;
     }
 
-    logger.info({ emailId, customerId }, 'Auto-creating task from negative email');
+    logger.info({ emailId, customerId }, 'Auto-creating task from analyzed email');
 
     const task = await this.taskRepository.create({
       tenantId,
       customerId,
       emailId,
-      title: emailSubject || 'Negative sentiment email',
+      title: emailSubject || 'Analyzed email task',
       createdBySystem: true,
     });
 
