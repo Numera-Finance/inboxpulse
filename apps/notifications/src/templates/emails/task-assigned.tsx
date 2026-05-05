@@ -16,6 +16,8 @@ import {
 } from "@react-email/components";
 import * as React from "react";
 
+export type TaskSignalCategory = 'negative' | 'upsell' | 'churn';
+
 export interface TaskAssignedTask {
   id: string;
   customer: string;
@@ -25,6 +27,7 @@ export interface TaskAssignedTask {
   assignedBy?: string | null;
   accountOwner: string;
   detailsUrl: string;
+  signalCategory?: TaskSignalCategory;
 }
 
 export interface TaskAssignedEmailProps {
@@ -32,12 +35,34 @@ export interface TaskAssignedEmailProps {
   recipientName?: string;
 }
 
+const HEADING_BY_CATEGORY: Record<TaskSignalCategory, string> = {
+  negative: 'Escalation Assigned to You',
+  upsell: 'Upsell Opportunity Assigned to You',
+  churn: 'Churn Risk Assigned to You',
+};
+
+const NOUN_BY_CATEGORY: Record<TaskSignalCategory, string> = {
+  negative: 'escalation',
+  upsell: 'upsell opportunity',
+  churn: 'churn risk',
+};
+
+const CTA_BY_CATEGORY: Record<TaskSignalCategory, string> = {
+  negative: 'View Escalation',
+  upsell: 'View Opportunity',
+  churn: 'View Churn Risk',
+};
+
 export function TaskAssignedEmail({
   task,
   recipientName,
 }: TaskAssignedEmailProps) {
   const isSystemAssigned = !task.assignedBy;
-  const previewText = `New escalation assigned: ${task.customer} - ${task.subject}`;
+  const category: TaskSignalCategory = task.signalCategory ?? 'negative';
+  const heading = HEADING_BY_CATEGORY[category];
+  const noun = NOUN_BY_CATEGORY[category];
+  const cta = CTA_BY_CATEGORY[category];
+  const previewText = `New ${noun} assigned: ${task.customer} - ${task.subject}`;
 
   const isSamePerson = (a: string | null | undefined, b: string | null | undefined) =>
     a && b && a.toLowerCase().trim() === b.toLowerCase().trim();
@@ -58,7 +83,7 @@ export function TaskAssignedEmail({
                 New Assignment
               </Text>
               <Text className="text-white text-[22px] font-semibold m-0">
-                Escalation Assigned to You
+                {heading}
               </Text>
             </Section>
 
@@ -66,8 +91,8 @@ export function TaskAssignedEmail({
             <Section className="px-8 py-7">
               <Text className="text-sm text-zinc-600 m-0 mb-5">
                 Hi {recipientName}, {isSystemAssigned
-                  ? "you've been auto-assigned a new escalation."
-                  : `you've been assigned a new escalation by ${task.assignedBy}.`}
+                  ? `you've been auto-assigned a new ${noun}.`
+                  : `you've been assigned a new ${noun} by ${task.assignedBy}.`}
               </Text>
 
               {/* Task Card */}
@@ -128,7 +153,7 @@ export function TaskAssignedEmail({
                   href={task.detailsUrl}
                   className="inline-block bg-zinc-900 text-white text-sm font-medium px-6 py-3 rounded-lg no-underline"
                 >
-                  View Escalation
+                  {cta}
                 </Link>
               </Section>
             </Section>

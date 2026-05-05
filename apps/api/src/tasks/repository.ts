@@ -18,6 +18,7 @@ export interface TaskWithRelations extends Task {
   emailBody?: string | null;
   emailFromEmail?: string | null;
   emailFromName?: string | null;
+  emailSignals?: number[] | null;
 }
 
 export interface TaskCommentWithUser extends TaskComment {
@@ -189,6 +190,7 @@ export class TaskRepository extends ScopedRepository {
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,
         emailFromName: emails.fromName,
+        emailSignals: emails.signals,
       })
       .from(tasks)
       .leftJoin(customers, eq(tasks.customerId, customers.id))
@@ -266,6 +268,7 @@ export class TaskRepository extends ScopedRepository {
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,
         emailFromName: emails.fromName,
+        emailSignals: emails.signals,
       })
       .from(tasks)
       .leftJoin(customers, eq(tasks.customerId, customers.id))
@@ -509,6 +512,7 @@ export class TaskRepository extends ScopedRepository {
         emailBody: emails.body,
         emailFromEmail: emails.fromEmail,
         emailFromName: emails.fromName,
+        emailSignals: emails.signals,
       })
       .from(tasks)
       .leftJoin(customers, eq(tasks.customerId, customers.id))

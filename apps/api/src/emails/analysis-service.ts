@@ -1122,9 +1122,9 @@ export class EmailAnalysisService {
   // ===========================================================================
 
   /**
-   * Auto-create task for negative sentiment emails
+   * Auto-create task for emails with an actionable signal.
    * Conditions:
-   * - Email has negative sentiment
+   * - Email has negative sentiment, an upsell opportunity, or any churn risk
    * - Email is NOT classified as spam, marketing, or automated
    * - Email has a valid customer association
    */
@@ -1134,12 +1134,23 @@ export class EmailAnalysisService {
   ): Promise<void> {
     try {
       const sentimentResult = data.analysisResults?.['sentiment'];
+      const upsellResult = data.analysisResults?.['upsell'];
+      const churnResult = data.analysisResults?.['churn'];
       const classificationResult = data.classificationResult;
 
-      // Check if sentiment is negative
-      if (sentimentResult?.value !== 'negative') {
+      const hasNegative = sentimentResult?.value === 'negative';
+      const hasUpsell = upsellResult?.detected === true;
+      const hasChurn = !!churnResult?.riskLevel;
+
+      if (!hasNegative && !hasUpsell && !hasChurn) {
         return;
       }
+
+      const signalCategory: 'negative' | 'upsell' | 'churn' = hasNegative
+        ? 'negative'
+        : hasUpsell
+          ? 'upsell'
+          : 'churn';
 
       // Check if email is spam, marketing, transactional, or automated
       const skipCategories = ['spam', 'marketing', 'transactional', 'automated'];
@@ -1194,12 +1205,19 @@ export class EmailAnalysisService {
         return;
       }
 
+      const fallbackTitle =
+        signalCategory === 'upsell'
+          ? 'Upsell opportunity'
+          : signalCategory === 'churn'
+            ? 'Churn risk'
+            : 'Negative sentiment email';
+
       // Create task
       const task = await this.taskService.createFromEmail(
         ctx.tenantId,
         participantWithCustomer.customerId,
         ctx.emailId,
-        email.subject || 'Negative sentiment email'
+        email.subject || fallbackTitle
       );
 
       logger.info(
@@ -1207,15 +1225,16 @@ export class EmailAnalysisService {
           emailId: ctx.emailId,
           taskId: task.id,
           customerId: participantWithCustomer.customerId,
+          signalCategory,
           logType: 'TASK_AUTO_CREATED'
         },
-        'Auto-created task for negative sentiment email'
+        'Auto-created task from analyzed email'
       );
     } catch (error: any) {
       // Non-blocking - log and continue
       logger.warn(
         { emailId: ctx.emailId, error: error.message },
-        'Failed to auto-create task for negative email (non-blocking)'
+        'Failed to auto-create task from analyzed email (non-blocking)'
       );
     }
   }

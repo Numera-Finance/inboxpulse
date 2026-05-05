@@ -102,6 +102,21 @@ export const CHURN_SIGNALS = [
   Signal.CHURN_CRITICAL,
 ] as const;
 
+// Categories that drive auto-task creation, notification subjects,
+// and resolve-dialog labeling. Negative wins over upsell/churn when both
+// are present so escalations stay framed as escalations.
+export type TaskSignalCategory = 'negative' | 'upsell' | 'churn';
+
+export function getTaskSignalCategory(
+  signals: number[] | null | undefined
+): TaskSignalCategory | null {
+  if (!signals) return null;
+  if (signals.includes(Signal.SENTIMENT_NEGATIVE)) return 'negative';
+  if (signals.includes(Signal.UPSELL)) return 'upsell';
+  if (CHURN_SIGNALS.some(s => signals.includes(s))) return 'churn';
+  return null;
+}
+
 // All classification signals
 export const CLASSIFICATION_SIGNALS = [
   Signal.CLASSIFICATION_SPAM,

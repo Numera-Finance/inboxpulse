@@ -36,7 +36,7 @@ import {
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
 import type { AnalyzedEmail, AnalyzedEmailSearchRequest } from "@crm/clients"
-import { Signal, hasSignal, SIGNAL_LABELS, type SignalType } from "@crm/shared"
+import { SIGNAL_LABELS, getTaskSignalCategory, type SignalType, type TaskSignalCategory } from "@crm/shared"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { getEmailClient, getTaskClient } from "@/lib/api/clients"
 
@@ -50,8 +50,9 @@ export default function EscalationsPage() {
   const { user } = useAuth()
   const currentUserId = user?.id
 
-  // Dialog state for mark done
-  const [doneDialogTaskId, setDoneDialogTaskId] = React.useState<string | null>(null)
+  // Dialog state for mark done — track both the task id and the signal
+  // category so the dialog can render the right labels.
+  const [doneDialog, setDoneDialog] = React.useState<{ taskId: string; signalCategory: TaskSignalCategory | null } | null>(null)
 
   // Get filter state from URL search params
   // Default to "all" if no status specified (since we now show all analyzed emails)
@@ -322,18 +323,22 @@ export default function EscalationsPage() {
   }), [])
 
   // Memoize render functions to prevent re-renders
-  // Show "Done" button only for negative sentiment emails with a task
+  // Show "Done" button for any email with a task that isn't resolved
   const renderHeaderActions = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
-    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
-    const hasTask = email?.taskId !== null
-    const showDone = isNegative && hasTask && item.status !== "resolved"
+    const hasTask = email?.taskId !== null && email?.taskId !== undefined
+    const showDone = hasTask && item.status !== "resolved"
     if (!showDone) return null
     return (
       <Button
         className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
         onClick={() => {
-          if (email?.taskId) setDoneDialogTaskId(email.taskId)
+          if (email?.taskId) {
+            setDoneDialog({
+              taskId: email.taskId,
+              signalCategory: getTaskSignalCategory(email?.signals),
+            })
+          }
         }}
       >
         <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
@@ -344,8 +349,7 @@ export default function EscalationsPage() {
 
   const renderMetaInfo = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
-    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
-    const showTaskMeta = isNegative && email?.taskId
+    const showTaskMeta = email?.taskId
     if (!showTaskMeta) {
       // Not negative or no task - show minimal meta info (just customer and date)
       return (
@@ -381,9 +385,8 @@ export default function EscalationsPage() {
 
   const renderSidePanel = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
-    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
-    if (!isNegative || !email?.taskId) {
-      // Not negative or no task - no side panel
+    if (!email?.taskId) {
+      // No task - no side panel
       return null
     }
     return (
@@ -556,15 +559,16 @@ export default function EscalationsPage() {
         </div>
 
         <MarkDoneDialog
-          open={!!doneDialogTaskId}
-          onClose={() => setDoneDialogTaskId(null)}
+          open={!!doneDialog}
+          onClose={() => setDoneDialog(null)}
           onConfirm={async (problem, resolution) => {
-            if (doneDialogTaskId) {
-              await handleResolve(doneDialogTaskId, problem, resolution)
-              setDoneDialogTaskId(null)
+            if (doneDialog) {
+              await handleResolve(doneDialog.taskId, problem, resolution)
+              setDoneDialog(null)
             }
           }}
           isLoading={markDone.isPending}
+          signalCategory={doneDialog?.signalCategory}
         />
       </div>
     </AppShell>

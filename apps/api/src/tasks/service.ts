@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, and, sql } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
-import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission } from '@crm/shared';
+import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission, getTaskSignalCategory } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
@@ -834,6 +834,7 @@ export class TaskService {
                 assignedBy: assignedByName || null,
                 accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
                 detailsUrl: `${webUrl}/escalations/${task.id}`,
+                signalCategory: getTaskSignalCategory(task.emailSignals) ?? 'negative',
               },
               recipientName: task.assignedToName?.split(' ')[0] || 'Team',
             },

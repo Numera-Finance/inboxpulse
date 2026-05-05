@@ -8,7 +8,6 @@
 import type { Email as FrontendEmail } from "@/lib/types"
 import type { Escalation } from "@/lib/data"
 import type { Task, TaskComment, AnalyzedEmail } from "@crm/clients"
-import { Signal, hasSignal } from "@crm/shared"
 import type {
   InboxItem,
   InboxItemContent,
@@ -570,7 +569,7 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
     recipients: email.assignedToName
       ? [{ name: email.assignedToName, id: email.assignedToId || undefined }]
       : [],
-    status: hasTask && hasSignal(email.signals, Signal.SENTIMENT_NEGATIVE)
+    status: hasTask
       ? (email.taskStatus === 1 ? "resolved" : "open")
       : undefined,
     classification: classification?.value === 'transactional' ? classification : undefined,

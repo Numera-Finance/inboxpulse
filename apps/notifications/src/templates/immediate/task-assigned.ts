@@ -14,6 +14,14 @@ import {
 } from '@crm/notifications';
 import { TaskAssignedEmail } from '../emails/task-assigned';
 
+export type TaskSignalCategory = 'negative' | 'upsell' | 'churn';
+
+const SUBJECT_PREFIX_BY_CATEGORY: Record<TaskSignalCategory, string> = {
+  negative: 'New Escalation Assigned',
+  upsell: 'New Upsell Assigned',
+  churn: 'New Churn Risk Assigned',
+};
+
 /**
  * Data expected by task.assigned template
  */
@@ -27,6 +35,7 @@ export interface TaskAssignedData {
     assignedBy?: string | null;
     accountOwner: string;
     detailsUrl: string;
+    signalCategory?: TaskSignalCategory;
   };
   recipientName?: string;
 }
@@ -48,6 +57,8 @@ export class TaskAssignedTemplate extends BaseImmediateTemplate<TaskAssignedData
 
   async send(input: ImmediateInput, sender: ChannelSender): Promise<SendResult> {
     const data = input.data as unknown as TaskAssignedData;
+    const category: TaskSignalCategory = data.task.signalCategory ?? 'negative';
+    const subjectPrefix = SUBJECT_PREFIX_BY_CATEGORY[category];
 
     // Render email
     const html = await render(
@@ -61,7 +72,7 @@ export class TaskAssignedTemplate extends BaseImmediateTemplate<TaskAssignedData
     return sender.send({
       channel: 'email',
       to: input.user.email,
-      subject: `New Escalation Assigned: ${data.task.customer} - ${data.task.subject}`,
+      subject: `${subjectPrefix}: ${data.task.customer} - ${data.task.subject}`,
       html,
     });
   }
