@@ -40,7 +40,7 @@ import { SIGNAL_LABELS, getTaskSignalCategory, type SignalType, type TaskSignalC
 import { useAuth } from "@/src/contexts/AuthContext"
 import { getEmailClient, getTaskClient } from "@/lib/api/clients"
 
-export default function EscalationsPage() {
+export default function TasksPage() {
   const navigate = useNavigate()
   const { taskId: emailIdFromUrl } = useParams<{ taskId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -226,7 +226,7 @@ export default function EscalationsPage() {
     (item: InboxItem<unknown>) => {
       const currentParams = searchParams.toString()
       const queryString = currentParams ? `?${currentParams}` : ""
-      navigate(`/escalations/${item.id}${queryString}`)
+      navigate(`/tasks/${item.id}${queryString}`)
     },
     [navigate, searchParams]
   )

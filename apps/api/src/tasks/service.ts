@@ -834,7 +834,7 @@ export class TaskService {
                 assignedTo: task.assignedToName || 'Unassigned',
                 assignedBy: assignedByName || null,
                 accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
-                detailsUrl: `${webUrl}/escalations/${task.id}`,
+                detailsUrl: `${webUrl}/tasks/${task.id}`,
                 signalCategory: getTaskSignalCategory(task.emailSignals) ?? 'negative',
               },
               recipientName: task.assignedToName?.split(' ')[0] || 'Team',

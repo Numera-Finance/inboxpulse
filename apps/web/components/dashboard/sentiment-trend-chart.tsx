@@ -90,7 +90,7 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 fill={COLORS.Positive}
                 fillOpacity={0.8}
                 style={{ cursor: "pointer" }}
-                onClick={() => navigate('/escalations?signal=positive&status=all')}
+                onClick={() => navigate('/tasks?signal=positive&status=all')}
               />
               <Area
                 type="monotone"
@@ -100,7 +100,7 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 fill={COLORS.Neutral}
                 fillOpacity={0.8}
                 style={{ cursor: "pointer" }}
-                onClick={() => navigate('/escalations?signal=neutral&status=all')}
+                onClick={() => navigate('/tasks?signal=neutral&status=all')}
               />
               <Area
                 type="monotone"
@@ -110,7 +110,7 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 fill={COLORS.Negative}
                 fillOpacity={0.8}
                 style={{ cursor: "pointer" }}
-                onClick={() => navigate('/escalations?signal=negative&status=all')}
+                onClick={() => navigate('/tasks?signal=negative&status=all')}
               />
             </AreaChart>
           </ResponsiveContainer>

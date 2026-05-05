@@ -1,11 +1,21 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import DashboardPage from '@/app/page'
 import CustomersPage from '@/app/customers/page'
 import UsersPage from '@/app/users/page'
-import EscalationsPage from '@/app/escalations/page'
+import TasksPage from '@/app/tasks/page'
 import SettingsPage from '@/app/settings/page'
 import { Login } from './pages/Login'
 import { ProtectedRoute } from './components/ProtectedRoute'
+
+// Preserve query string + :taskId path param when redirecting the legacy
+// /escalations* routes to /tasks*. Old notification email links and
+// bookmarks land here.
+function EscalationsRedirect() {
+  const { taskId } = useParams<{ taskId?: string }>()
+  const { search } = useLocation()
+  const target = taskId ? `/tasks/${taskId}${search}` : `/tasks${search}`
+  return <Navigate to={target} replace />
+}
 
 export default function App() {
   return (
@@ -68,21 +78,24 @@ export default function App() {
         }
       />
       <Route
-        path="/escalations"
+        path="/tasks"
         element={
           <ProtectedRoute>
-            <EscalationsPage />
+            <TasksPage />
           </ProtectedRoute>
         }
       />
       <Route
-        path="/escalations/:taskId"
+        path="/tasks/:taskId"
         element={
           <ProtectedRoute>
-            <EscalationsPage />
+            <TasksPage />
           </ProtectedRoute>
         }
       />
+      {/* Legacy /escalations URLs (notification emails, bookmarks) -> /tasks */}
+      <Route path="/escalations" element={<EscalationsRedirect />} />
+      <Route path="/escalations/:taskId" element={<EscalationsRedirect />} />
       {/* Redirect old integrations route to settings */}
       <Route
         path="/integrations"

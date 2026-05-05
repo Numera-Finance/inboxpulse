@@ -61,7 +61,7 @@ export function SentimentChart({ filters }: SentimentChartProps) {
                 onClick={(data) => {
                   if (data?.name) {
                     const signal = data.name.toLowerCase()
-                    navigate(`/escalations?signal=${signal}&status=all`)
+                    navigate(`/tasks?signal=${signal}&status=all`)
                   }
                 }}
                 label={({ cx, cy, midAngle, outerRadius, name, value }) => {
