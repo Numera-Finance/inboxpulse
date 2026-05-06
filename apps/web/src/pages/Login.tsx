@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { signInWithGoogle, getSession } from '../lib/auth';
 
 // Parse error from URL once, outside component (survives HMR/re-renders)
@@ -22,17 +22,21 @@ const initialError = getInitialError();
 
 export function Login() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const next = searchParams.get('next');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
   const urlCleared = useRef(false);
 
-  // Clear URL params once (after first render)
+  // Clear URL params once (after first render). Preserve the `next` param so
+  // it survives the post-error rerender and is still passed to OAuth.
   useEffect(() => {
     if (!urlCleared.current && window.location.search.includes('error')) {
-      window.history.replaceState({}, '', window.location.pathname);
+      const preserved = next ? `?next=${encodeURIComponent(next)}` : '';
+      window.history.replaceState({}, '', window.location.pathname + preserved);
       urlCleared.current = true;
     }
-  }, []);
+  }, [next]);
 
   // Check if user is already logged in
   useEffect(() => {
@@ -40,8 +44,9 @@ export function Login() {
       try {
         const session = await getSession();
         if (session?.data?.user) {
-          // User is already logged in, redirect to home
-          navigate('/');
+          // User is already logged in — honor `next` if it's a same-origin path.
+          const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
+          navigate(target, { replace: true });
         }
       } catch (err) {
         // No session, stay on login page
@@ -50,17 +55,15 @@ export function Login() {
     };
 
     checkSession();
-  }, [navigate]);
+  }, [navigate, next]);
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      // This will redirect to Google OAuth
-      await signInWithGoogle();
-      // Note: After Google OAuth, user will be redirected back to callback
-      // which will then redirect to home page
+      // This will redirect to Google OAuth, then back to `next` (or root).
+      await signInWithGoogle(next);
     } catch (err: any) {
       console.error('Google sign-in error:', err);
       setError(err.message || 'Failed to sign in with Google');
