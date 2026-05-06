@@ -197,27 +197,48 @@ export function InboxView({
     }
   }, [searchQuery, fetchItems])
 
-  // Fetch content when selection changes - uses callbacksRef to avoid re-running on callback changes
+  // Fetch content when selection changes. Uses an AbortController so that if
+  // the user clicks a different item while this fetch is still in flight, the
+  // previous request is cancelled — otherwise a slow earlier response can
+  // clobber a faster later one and the right pane shows stale content.
   React.useEffect(() => {
     if (!selectedItem) {
       setContent(null)
+      // Selection cleared while a fetch may still be in flight — clear the
+      // spinner here too, since the aborted fetch's `finally` deliberately
+      // doesn't reset isLoadingContent (that guard exists so A's resolution
+      // doesn't clobber B's loading=true during a rapid A→B click).
+      setIsLoadingContent(false)
       return
     }
+
+    const controller = new AbortController()
 
     const fetchContent = async () => {
       setIsLoadingContent(true)
       try {
-        const itemContent = await callbacksRef.current.onFetchContent(selectedItem.id)
+        const itemContent = await callbacksRef.current.onFetchContent(
+          selectedItem.id,
+          controller.signal
+        )
+        if (controller.signal.aborted) return
         setContent(itemContent)
       } catch (error) {
+        // Aborted requests are expected when selection changes — silence them.
+        if (controller.signal.aborted) return
+        if (error instanceof DOMException && error.name === 'AbortError') return
         console.error("Failed to fetch content:", error)
         setContent(null)
       } finally {
-        setIsLoadingContent(false)
+        if (!controller.signal.aborted) setIsLoadingContent(false)
       }
     }
 
     fetchContent()
+
+    return () => {
+      controller.abort()
+    }
   }, [selectedItem?.id])
 
   // Track if we're in controlled mode (selectedItem prop is provided)
