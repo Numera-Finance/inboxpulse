@@ -1,5 +1,6 @@
 import { createAuthClient } from 'better-auth/client';
 import { inferAdditionalFields } from 'better-auth/client/plugins';
+import { safeRelativePath } from '@crm/shared';
 
 // Better-auth client configuration
 // baseURL should point to the API server
@@ -27,12 +28,13 @@ export const authClient = createAuthClient({
 });
 
 // Export convenience methods
-export const signInWithGoogle = async () => {
+export const signInWithGoogle = async (next?: string | null) => {
   // Pass callbackURL to redirect back to web app after OAuth
   const webUrl = import.meta.env.VITE_WEB_URL || window.location.origin;
+  const target = safeRelativePath(next, window.location.origin);
   return authClient.signIn.social({
     provider: 'google',
-    callbackURL: `${webUrl}/`, // Redirect to web app root on success
+    callbackURL: `${webUrl}${target}`, // Redirect back to intended page on success
     errorCallbackURL: `${webUrl}/login`, // Redirect to login page on error (with error params)
   });
 };
