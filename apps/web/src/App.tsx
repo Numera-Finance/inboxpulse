@@ -4,6 +4,7 @@ import CustomersPage from '@/app/customers/page'
 import UsersPage from '@/app/users/page'
 import EscalationsPage from '@/app/escalations/page'
 import SettingsPage from '@/app/settings/page'
+import { OnboardingPending } from '@/components/onboarding-pending'
 import { Login } from './pages/Login'
 import { ProtectedRoute } from './components/ProtectedRoute'
 
@@ -87,6 +88,16 @@ export default function App() {
       <Route
         path="/integrations"
         element={<Navigate to="/settings?tab=integrations" replace />}
+      />
+      {/* Preview route for the onboarding-pending screen — exercised in dev
+          / visual review until the real gate trigger is wired in. */}
+      <Route
+        path="/preview/onboarding"
+        element={
+          <ProtectedRoute>
+            <OnboardingPending />
+          </ProtectedRoute>
+        }
       />
       <Route
         path="/settings"
