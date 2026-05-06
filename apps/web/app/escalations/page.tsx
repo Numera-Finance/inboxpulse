@@ -198,11 +198,13 @@ export default function EscalationsPage() {
     [buildSearchRequest]
   )
 
-  // Fetch email content callback for InboxView
+  // Fetch email content callback for InboxView. Accepts an AbortSignal so a
+  // slower earlier request can't clobber a faster later one when the user
+  // clicks rapidly between items.
   const handleFetchContent = React.useCallback(
-    async (itemId: string): Promise<InboxItemContent> => {
+    async (itemId: string, signal?: AbortSignal): Promise<InboxItemContent> => {
       const emailClient = getEmailClient()
-      const email = await emailClient.getAnalyzedById(itemId)
+      const email = await emailClient.getAnalyzedById(itemId, signal)
 
       if (!email) {
         throw new Error("Failed to fetch email")
@@ -212,7 +214,7 @@ export default function EscalationsPage() {
       let comments = undefined
       if (email.taskId) {
         const taskClient = getTaskClient()
-        comments = await taskClient.getComments(email.taskId)
+        comments = await taskClient.getComments(email.taskId, signal)
       }
 
       return analyzedEmailToInboxContent(email, comments)

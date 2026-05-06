@@ -263,9 +263,13 @@ export interface InboxCallbacks {
   ) => Promise<InboxPage<InboxItem>>;
 
   /**
-   * Fetch full content for an item (for detail view)
+   * Fetch full content for an item (for detail view).
+   * The optional signal is provided by InboxView so the in-flight request
+   * can be aborted when the user clicks a different item before this one
+   * resolves — preventing a slow earlier response from clobbering a faster
+   * later one.
    */
-  onFetchContent: (itemId: string) => Promise<InboxItemContent>;
+  onFetchContent: (itemId: string, signal?: AbortSignal) => Promise<InboxItemContent>;
 
   /**
    * Optional: Fetch thread messages

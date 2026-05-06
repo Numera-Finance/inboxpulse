@@ -348,9 +348,10 @@ export class EmailClient extends BaseClient {
   /**
    * Get a single analyzed email by ID with task overlay
    */
-  async getAnalyzedById(emailId: string): Promise<AnalyzedEmail | null> {
+  async getAnalyzedById(emailId: string, signal?: AbortSignal): Promise<AnalyzedEmail | null> {
     const response = await this.get<ApiResponse<AnalyzedEmail>>(
-      `/api/emails/analyzed/${encodeURIComponent(emailId)}`
+      `/api/emails/analyzed/${encodeURIComponent(emailId)}`,
+      signal
     );
 
     return response?.data ?? null;
