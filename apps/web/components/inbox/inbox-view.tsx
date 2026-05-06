@@ -204,6 +204,11 @@ export function InboxView({
   React.useEffect(() => {
     if (!selectedItem) {
       setContent(null)
+      // Selection cleared while a fetch may still be in flight — clear the
+      // spinner here too, since the aborted fetch's `finally` deliberately
+      // doesn't reset isLoadingContent (that guard exists so A's resolution
+      // doesn't clobber B's loading=true during a rapid A→B click).
+      setIsLoadingContent(false)
       return
     }
 
