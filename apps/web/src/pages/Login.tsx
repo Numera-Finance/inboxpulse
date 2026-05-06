@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { safeRelativePath } from '@crm/shared';
 import { signInWithGoogle, getSession } from '../lib/auth';
 
 // Parse error from URL once, outside component (survives HMR/re-renders)
@@ -45,8 +46,7 @@ export function Login() {
         const session = await getSession();
         if (session?.data?.user) {
           // User is already logged in — honor `next` if it's a same-origin path.
-          const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
-          navigate(target, { replace: true });
+          navigate(safeRelativePath(next, window.location.origin), { replace: true });
         }
       } catch (err) {
         // No session, stay on login page
