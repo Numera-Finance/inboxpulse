@@ -1515,12 +1515,14 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Get upsell opportunity count for dashboard with access control.
+   * Get open upsell opportunity count for dashboard with access control.
    *
    * Mirrors the AI Analysis drilldown query (`searchAnalyzedEmails` with
-   * `signal=upsell&status=all`) so the dashboard tile and the drilldown list
-   * always agree: distinct analyzed emails with the UPSELL signal whose sender
-   * is a customer the caller can access.
+   * `signal=upsell&status=open`) so the tile and the drilldown list always
+   * agree: distinct analyzed emails with the UPSELL signal whose sender is a
+   * customer the caller can access AND that have an open task (t.status = 0).
+   * Upsell emails without a task (e.g. pure-upsell with no negative sentiment)
+   * are not auto-created today, so they are not "open" and don't count here.
    */
   async getUpsellCountScoped(
     header: RequestHeader,
@@ -1535,6 +1537,7 @@ export class EmailRepository extends ScopedRepository {
       sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
       sql`e.signals @> ARRAY[${Signal.UPSELL}]::integer[]`,
       sql`ep.customer_id IS NOT NULL`,
+      sql`t.status = 0`,
     ];
 
     if (!isAdmin(header.permissions)) {
@@ -1560,6 +1563,7 @@ export class EmailRepository extends ScopedRepository {
       SELECT count(DISTINCT e.id)::int AS count
       FROM emails e
       INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      LEFT JOIN tasks t ON t.email_id = e.id
       WHERE ${whereClause}
     `);
 
