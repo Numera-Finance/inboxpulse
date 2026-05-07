@@ -567,6 +567,21 @@ export default function EscalationsPage() {
             }
           }}
           isLoading={markDone.isPending}
+          {...(effectiveSignal === 'upsell'
+            ? {
+                problemLabel: 'Upsell requested',
+                resolutionLabel: 'Do we have the ability to serve? List Upsell services & partnership followed up',
+                problemPlaceholder: 'Describe the upsell requested...',
+                resolutionPlaceholder: 'List upsell services and partnership follow-up...',
+              }
+            : effectiveSignal === 'churn'
+              ? {
+                  problemLabel: 'Churn signal',
+                  resolutionLabel: 'Root cause and retention plan / partnership followed up',
+                  problemPlaceholder: 'Describe the churn signal...',
+                  resolutionPlaceholder: 'Describe the root cause, retention plan, and partnership follow-up...',
+                }
+              : {})}
         />
       </div>
     </AppShell>
