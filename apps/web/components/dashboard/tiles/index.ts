@@ -114,7 +114,7 @@ export const TILE_DEFINITIONS: TileDefinition[] = [
       icon: TrendingUp,
       trend: "up",
       useData: useDashboardOpportunities,
-      drilldownPath: "/escalations?signal=upsell&status=all",
+      drilldownPath: "/escalations?signal=upsell&status=open",
     },
     layout: { w: 1, h: 1, minW: 1, minH: 1 },
   },

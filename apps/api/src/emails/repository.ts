@@ -1515,7 +1515,14 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Get upsell opportunity count for dashboard with access control
+   * Get open upsell opportunity count for dashboard with access control.
+   *
+   * Mirrors the AI Analysis drilldown query (`searchAnalyzedEmails` with
+   * `signal=upsell&status=open`) so the tile and the drilldown list always
+   * agree: distinct analyzed emails with the UPSELL signal whose sender is a
+   * customer the caller can access AND that have an open task (t.status = 0).
+   * Upsell emails without a task (e.g. pure-upsell with no negative sentiment)
+   * are not auto-created today, so they are not "open" and don't count here.
    */
   async getUpsellCountScoped(
     header: RequestHeader,
@@ -1525,45 +1532,42 @@ export class EmailRepository extends ScopedRepository {
       dateTo?: string;
     }
   ): Promise<number> {
-    const conditions: SQL[] = [
-      eq(emails.tenantId, header.tenantId),
-      signalContains(Signal.UPSELL),
-      isNotNull(emailParticipants.customerId),
-      // Scope to customers the user can access (same filter as customer table)
-      this.customerAccessFilter(emailParticipants.customerId, header),
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
+      sql`e.signals @> ARRAY[${Signal.UPSELL}]::integer[]`,
+      sql`ep.customer_id IS NOT NULL`,
+      sql`t.status = 0`,
     ];
 
-    // Add customer filter
-    if (filters?.customerId) {
-      conditions.push(eq(emailParticipants.customerId, filters.customerId));
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
     }
 
-    // Add date filters
+    if (filters?.customerId) {
+      whereParts.push(sql`ep.customer_id = ${filters.customerId}`);
+    }
     if (filters?.dateFrom) {
-      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+      whereParts.push(sql`e.received_at >= ${filters.dateFrom}::timestamp`);
     }
     if (filters?.dateTo) {
-      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+      whereParts.push(sql`e.received_at <= ${filters.dateTo}::timestamp`);
     }
 
-    // Sum per-customer distinct email counts so shared emails are counted once per customer,
-    // matching the customer table's per-row counts
-    const perCustomer = this.db
-      .select({
-        customerId: emailParticipants.customerId,
-        count: sql<number>`count(DISTINCT ${emails.id})::int`.as('count'),
-      })
-      .from(emailParticipants)
-      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(and(...conditions))
-      .groupBy(emailParticipants.customerId)
-      .as('per_customer');
+    const whereClause = sql.join(whereParts, sql` AND `);
 
-    const result = await this.db
-      .select({ total: sql<number>`coalesce(sum(${perCustomer.count}), 0)::int` })
-      .from(perCustomer);
+    const result = await this.db.execute<{ count: number }>(sql`
+      SELECT count(DISTINCT e.id)::int AS count
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      LEFT JOIN tasks t ON t.email_id = e.id
+      WHERE ${whereClause}
+    `);
 
-    return result[0]?.total ?? 0;
+    return result[0]?.count ?? 0;
   }
 
   // ===========================================================================
