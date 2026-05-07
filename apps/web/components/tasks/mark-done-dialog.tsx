@@ -18,6 +18,10 @@ interface MarkDoneDialogProps {
   onClose: () => void
   onConfirm: (problem: string, resolution: string) => void
   isLoading?: boolean
+  problemLabel?: string
+  resolutionLabel?: string
+  problemPlaceholder?: string
+  resolutionPlaceholder?: string
 }
 
 export function MarkDoneDialog({
@@ -25,6 +29,10 @@ export function MarkDoneDialog({
   onClose,
   onConfirm,
   isLoading = false,
+  problemLabel = "Problem",
+  resolutionLabel = "Resolution",
+  problemPlaceholder = "Describe the problem...",
+  resolutionPlaceholder = "Describe the resolution...",
 }: MarkDoneDialogProps) {
   const [problem, setProblem] = React.useState("")
   const [resolution, setResolution] = React.useState("")
@@ -47,10 +55,10 @@ export function MarkDoneDialog({
 
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="problem">Problem</Label>
+            <Label htmlFor="problem">{problemLabel}</Label>
             <Textarea
               id="problem"
-              placeholder="Describe the problem..."
+              placeholder={problemPlaceholder}
               value={problem}
               onChange={(e) => setProblem(e.target.value)}
               rows={3}
@@ -59,10 +67,10 @@ export function MarkDoneDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="resolution">Resolution</Label>
+            <Label htmlFor="resolution">{resolutionLabel}</Label>
             <Textarea
               id="resolution"
-              placeholder="Describe the resolution..."
+              placeholder={resolutionPlaceholder}
               value={resolution}
               onChange={(e) => setResolution(e.target.value)}
               rows={3}
