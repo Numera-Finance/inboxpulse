@@ -19,9 +19,9 @@ export function EmailDrawer({ email, customerName, open, onClose }: EmailDrawerP
 
   return (
     <>
-      {/* Overlay */}
+      {/* Overlay - constrained to area right of sidebar so sidebar stays interactive */}
       <div
-        className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity ${
+        className={`fixed top-0 right-0 bottom-0 left-[var(--sidebar-width,16rem)] bg-background/80 backdrop-blur-sm z-40 transition-opacity ${
           open ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}

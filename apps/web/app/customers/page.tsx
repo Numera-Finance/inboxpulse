@@ -142,7 +142,7 @@ export default function CustomersPage() {
 
   const handleTabChange = (newTab: string) => {
     if (customerId) {
-      navigate(`/customers/${customerId}/${newTab}`)
+      navigate(`/customers/${customerId}/${newTab}`, { replace: true })
     }
   }
 
