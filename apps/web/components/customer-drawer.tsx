@@ -217,6 +217,29 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [open, emailDrawerOpen, onClose])
 
+  // Graceful Back for the nested email modal: push a history entry when it
+  // opens so the browser Back button closes it without unwinding the customer
+  // drawer's URL state. The popstate listener detects the back action and
+  // closes the modal; the explicit close path pops history to keep it in sync.
+  const emailDrawerHistoryPushed = React.useRef(false)
+  React.useEffect(() => {
+    if (!emailDrawerOpen) return
+    window.history.pushState({ emailDrawer: true }, "")
+    emailDrawerHistoryPushed.current = true
+    const handlePop = () => {
+      emailDrawerHistoryPushed.current = false
+      setEmailDrawerOpen(false)
+    }
+    window.addEventListener("popstate", handlePop)
+    return () => {
+      window.removeEventListener("popstate", handlePop)
+      if (emailDrawerHistoryPushed.current) {
+        emailDrawerHistoryPushed.current = false
+        window.history.back()
+      }
+    }
+  }, [emailDrawerOpen])
+
   // Reset filters and customer-specific state when customer changes
   React.useEffect(() => {
     if (customer) {
@@ -573,15 +596,15 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
     // Show loading state when drawer is open but customer is still loading
     return (
       <>
-        {/* Overlay */}
+        {/* Overlay - constrained to area right of sidebar so sidebar stays interactive */}
         <div
-          className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
+          className={`fixed top-0 right-0 bottom-0 left-[var(--sidebar-width,16rem)] bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
             isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
           onClick={onClose}
         />
-        {/* Drawer with loading state */}
-        <div className={`fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
+        {/* Drawer with loading state - spans only the main content area */}
+        <div className={`fixed right-0 top-0 z-50 h-full left-[var(--sidebar-width,16rem)] transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
           isVisible ? "translate-x-0" : "translate-x-full"
         }`}>
           <div className="flex h-full flex-col items-center justify-center">
@@ -821,17 +844,17 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
 
   return (
     <>
-      {/* Overlay */}
+      {/* Overlay - constrained to area right of sidebar so sidebar stays interactive */}
       <div
-        className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
+        className={`fixed top-0 right-0 bottom-0 left-[var(--sidebar-width,16rem)] bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
           isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}
       />
 
-      {/* Drawer - Always full width */}
+      {/* Drawer - spans only the main content area, never the sidebar */}
       <div
-        className={`fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
+        className={`fixed right-0 top-0 z-50 h-full left-[var(--sidebar-width,16rem)] transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
           isVisible ? "translate-x-0" : "translate-x-full"
         }`}
       >
