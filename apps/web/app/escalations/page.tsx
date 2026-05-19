@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useSearchParams, useNavigate, useParams } from "react-router-dom"
+import { subDays, startOfDay, endOfDay } from "date-fns"
 import { Inbox, CheckCircle } from "lucide-react"
 import { ClassificationIndicator } from "@/components/ui/classification-indicator"
 import { Separator } from "@/components/ui/separator"
@@ -59,9 +60,19 @@ export default function EscalationsPage() {
   const effectiveStatus = statusFromUrl || "open"
   const assignedFromUrl = searchParams.get("assigned")
   const customerIdFromUrl = searchParams.get("customer")
-  const dateFromUrl = searchParams.get("dateFrom")
-  const dateToUrl = searchParams.get("dateTo")
+  const dateFromUrl = searchParams.get("from")
+  const dateToUrl = searchParams.get("to")
   const signalFromUrl = searchParams.get("signal") as TaskFilter['signal'] | null
+
+  const defaultDateFrom = React.useMemo(
+    () => startOfDay(subDays(new Date(), 30)),
+    []
+  )
+  const defaultDateTo = React.useMemo(
+    () => endOfDay(new Date()),
+    []
+  )
+
   // Default to 'negative' on initial load, but 'all' is explicitly set via signal=all in URL
   const effectiveSignal = (signalFromUrl as string) === 'all' ? undefined : (signalFromUrl || 'negative')
 
@@ -89,13 +100,8 @@ export default function EscalationsPage() {
       filters.customerId = customerIdFromUrl
     }
 
-    if (dateFromUrl) {
-      filters.dateFrom = new Date(dateFromUrl)
-    }
-
-    if (dateToUrl) {
-      filters.dateTo = new Date(dateToUrl)
-    }
+    filters.dateFrom = dateFromUrl ? new Date(dateFromUrl) : defaultDateFrom
+    filters.dateTo = dateToUrl ? new Date(dateToUrl) : defaultDateTo
 
     if (effectiveSignal) {
       filters.signal = effectiveSignal
@@ -146,26 +152,18 @@ export default function EscalationsPage() {
         request.customerId = filter.customerId
       }
 
-      // Date filters
-      if (dateFromUrl) {
-        const fromDate = new Date(dateFromUrl)
-        fromDate.setUTCHours(0, 0, 0, 0)
-        request.dateFrom = fromDate.toISOString()
-      } else if (filter.dateFrom) {
-        const fromDate = new Date(filter.dateFrom)
-        fromDate.setUTCHours(0, 0, 0, 0)
-        request.dateFrom = fromDate.toISOString()
-      }
+      // Date filters — always send a range so the API result matches the
+      // displayed filter; fall back to the page's default 30-day window when
+      // the URL and inbox filter both omit dates.
+      const dateFromSource = dateFromUrl ?? (filter.dateFrom ? new Date(filter.dateFrom).toISOString() : defaultDateFrom.toISOString())
+      const fromDate = new Date(dateFromSource)
+      fromDate.setUTCHours(0, 0, 0, 0)
+      request.dateFrom = fromDate.toISOString()
 
-      if (dateToUrl) {
-        const toDate = new Date(dateToUrl)
-        toDate.setUTCHours(23, 59, 59, 999)
-        request.dateTo = toDate.toISOString()
-      } else if (filter.dateTo) {
-        const toDate = new Date(filter.dateTo)
-        toDate.setUTCHours(23, 59, 59, 999)
-        request.dateTo = toDate.toISOString()
-      }
+      const dateToSource = dateToUrl ?? (filter.dateTo ? new Date(filter.dateTo).toISOString() : defaultDateTo.toISOString())
+      const toDate = new Date(dateToSource)
+      toDate.setUTCHours(23, 59, 59, 999)
+      request.dateTo = toDate.toISOString()
 
       // Signal filter
       if (effectiveSignal) {
@@ -174,7 +172,7 @@ export default function EscalationsPage() {
 
       return request
     },
-    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId, effectiveSignal]
+    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, defaultDateFrom, defaultDateTo, currentUserId, effectiveSignal]
   )
 
   // Fetch analyzed emails callback for InboxView
@@ -278,15 +276,15 @@ export default function EscalationsPage() {
 
       // Date range
       if (newFilters.dateFrom) {
-        params.set("dateFrom", newFilters.dateFrom.toISOString())
+        params.set("from", newFilters.dateFrom.toISOString())
       } else {
-        params.delete("dateFrom")
+        params.delete("from")
       }
 
       if (newFilters.dateTo) {
-        params.set("dateTo", newFilters.dateTo.toISOString())
+        params.set("to", newFilters.dateTo.toISOString())
       } else {
-        params.delete("dateTo")
+        params.delete("to")
       }
 
       // Signal - use 'all' explicitly so it doesn't fall back to 'negative' default
