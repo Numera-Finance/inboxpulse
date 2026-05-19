@@ -152,26 +152,18 @@ export default function EscalationsPage() {
         request.customerId = filter.customerId
       }
 
-      // Date filters
-      if (dateFromUrl) {
-        const fromDate = new Date(dateFromUrl)
-        fromDate.setUTCHours(0, 0, 0, 0)
-        request.dateFrom = fromDate.toISOString()
-      } else if (filter.dateFrom) {
-        const fromDate = new Date(filter.dateFrom)
-        fromDate.setUTCHours(0, 0, 0, 0)
-        request.dateFrom = fromDate.toISOString()
-      }
+      // Date filters — always send a range so the API result matches the
+      // displayed filter; fall back to the page's default 30-day window when
+      // the URL and inbox filter both omit dates.
+      const dateFromSource = dateFromUrl ?? (filter.dateFrom ? new Date(filter.dateFrom).toISOString() : defaultDateFrom.toISOString())
+      const fromDate = new Date(dateFromSource)
+      fromDate.setUTCHours(0, 0, 0, 0)
+      request.dateFrom = fromDate.toISOString()
 
-      if (dateToUrl) {
-        const toDate = new Date(dateToUrl)
-        toDate.setUTCHours(23, 59, 59, 999)
-        request.dateTo = toDate.toISOString()
-      } else if (filter.dateTo) {
-        const toDate = new Date(filter.dateTo)
-        toDate.setUTCHours(23, 59, 59, 999)
-        request.dateTo = toDate.toISOString()
-      }
+      const dateToSource = dateToUrl ?? (filter.dateTo ? new Date(filter.dateTo).toISOString() : defaultDateTo.toISOString())
+      const toDate = new Date(dateToSource)
+      toDate.setUTCHours(23, 59, 59, 999)
+      request.dateTo = toDate.toISOString()
 
       // Signal filter
       if (effectiveSignal) {
@@ -180,7 +172,7 @@ export default function EscalationsPage() {
 
       return request
     },
-    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId, effectiveSignal]
+    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, defaultDateFrom, defaultDateTo, currentUserId, effectiveSignal]
   )
 
   // Fetch analyzed emails callback for InboxView

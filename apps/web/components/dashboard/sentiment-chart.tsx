@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDashboardSentiment } from "@/lib/hooks"
 import { useNavigate } from "react-router-dom"
+import { appendDateRange } from "./drilldown-utils"
 import type { TileFilters } from "./tiles"
 
 const COLORS = {
@@ -61,7 +62,7 @@ export function SentimentChart({ filters }: SentimentChartProps) {
                 onClick={(data) => {
                   if (data?.name) {
                     const signal = data.name.toLowerCase()
-                    navigate(`/escalations?signal=${signal}&status=all`)
+                    navigate(appendDateRange(`/escalations?signal=${signal}&status=all`, filters))
                   }
                 }}
                 label={({ cx, cy, midAngle, outerRadius, name, value }) => {

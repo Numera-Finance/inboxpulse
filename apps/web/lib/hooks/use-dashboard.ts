@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { SearchOperator } from '@crm/shared';
 import * as api from '@/lib/api';
+import { getEmailClient } from '@/lib/api/clients';
 import type { TileFilters } from '@/components/dashboard/tiles';
 
 // Query keys for cache management
@@ -63,32 +64,26 @@ export function useDashboardCustomers(filters?: TileFilters) {
 
 /**
  * Hook for escalation count dashboard tile
- * Uses task search API to get open escalation tasks
+ * Uses the same /api/emails/analyzed/search endpoint as the AI Analysis
+ * drilldown so the tile number matches the drilldown list by construction
+ * (same SQL path: customer_id IS NOT NULL on sender, e.received_at for dates,
+ * task status filter).
  */
 export function useDashboardEscalations(filters?: TileFilters) {
   return useQuery({
     queryKey: dashboardKeys.escalations(filters),
     queryFn: async () => {
-      const request: api.TaskSearchRequest = {
+      const emailClient = getEmailClient();
+      const result = await emailClient.searchAnalyzed({
         status: 'open',
+        signal: 'negative',
         limit: 1,
         offset: 0,
-      };
-
-      if (filters?.customerId) {
-        request.customerId = filters.customerId;
-      }
-      if (filters?.userId) {
-        request.assignedToId = filters.userId;
-      }
-      if (filters?.dateFrom) {
-        request.dateFrom = filters.dateFrom;
-      }
-      if (filters?.dateTo) {
-        request.dateTo = filters.dateTo;
-      }
-
-      const result = await api.searchTasks(request);
+        ...(filters?.customerId ? { customerId: filters.customerId } : {}),
+        ...(filters?.userId ? { assignedToId: filters.userId } : {}),
+        ...(filters?.dateFrom ? { dateFrom: filters.dateFrom } : {}),
+        ...(filters?.dateTo ? { dateTo: filters.dateTo } : {}),
+      });
 
       return {
         value: result.total,

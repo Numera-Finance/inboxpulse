@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { RefreshCw } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { appendDateRange } from "../drilldown-utils"
 import type { TileFilters } from "./index"
 
 // Data returned by stat tile hooks
@@ -42,9 +43,8 @@ export function StatTile({ config, filters }: StatTileProps) {
   const isClickable = !!config.drilldownPath
 
   const handleClick = () => {
-    if (config.drilldownPath) {
-      navigate(config.drilldownPath)
-    }
+    if (!config.drilldownPath) return
+    navigate(appendDateRange(config.drilldownPath, filters))
   }
 
   return (
