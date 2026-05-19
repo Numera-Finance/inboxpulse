@@ -81,6 +81,30 @@ export function DateRangeFilter({
   const [selectedPreset, setSelectedPreset] = React.useState<PresetLabel>("Last 30 days")
   const [dateOpen, setDateOpen] = React.useState(false)
 
+  // Sync internal state when parent props change (e.g. when filters are cleared)
+  React.useEffect(() => {
+    if (dateFrom && dateTo) {
+      const from = startOfDay(new Date(dateFrom))
+      const to = endOfDay(new Date(dateTo))
+      setDateRange({ from, to })
+      // Try to match a preset exactly, otherwise mark as Custom
+      const match = DATE_PRESETS.find((p) => {
+        const v = p.getValue()
+        if (!v) return false
+        return v.from.toISOString() === from.toISOString() && v.to.toISOString() === to.toISOString()
+      })
+      setSelectedPreset(match ? match.label : "Custom")
+      return
+    }
+
+    // No dates provided -> reset to Last 30 days
+    const last30 = DATE_PRESETS.find((p) => p.label === "Last 30 days")?.getValue()
+    if (last30) {
+      setDateRange(last30)
+      setSelectedPreset("Last 30 days")
+    }
+  }, [dateFrom, dateTo])
+
   // Handle date range change from calendar
   const handleDateRangeChange = (range: DateRange | undefined) => {
     setDateRange(range)

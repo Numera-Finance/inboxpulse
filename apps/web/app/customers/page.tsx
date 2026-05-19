@@ -57,6 +57,8 @@ export default function CustomersPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const signalFromUrl = searchParams.get("signal") as SignalFilterType | null
+  const initialDateFrom = searchParams.get("from")
+  const initialDateTo = searchParams.get("to")
 
   const [view, setView] = React.useState<"grid" | "table">("table")
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -71,15 +73,24 @@ export default function CustomersPage() {
   const sortBy = sorting.length > 0 ? (COLUMN_TO_SORT_FIELD[sorting[0].id] || 'name') : 'name'
   const sortOrder = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : 'asc'
 
-  // Date filter state (default to Last 30 days)
-  const [dateFrom, setDateFrom] = React.useState(() => startOfDay(subDays(new Date(), 30)).toISOString())
-  const [dateTo, setDateTo] = React.useState(() => endOfDay(new Date()).toISOString())
+  // Date filter state (default to Last 30 days or URL values)
+  const [dateFrom, setDateFrom] = React.useState(
+    () => initialDateFrom ?? startOfDay(subDays(new Date(), 30)).toISOString()
+  )
+  const [dateTo, setDateTo] = React.useState(
+    () => initialDateTo ?? endOfDay(new Date()).toISOString()
+  )
 
   const handleDateRangeChange = React.useCallback((newDateFrom: string, newDateTo: string) => {
     setDateFrom(newDateFrom)
     setDateTo(newDateTo)
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
-  }, [])
+
+    const params = new URLSearchParams(searchParams)
+    params.set("from", newDateFrom)
+    params.set("to", newDateTo)
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
 
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
@@ -88,6 +99,16 @@ export default function CustomersPage() {
   React.useEffect(() => {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
   }, [debouncedSearch, sorting])
+
+  // Keep the date range in sync with the URL when the query string changes.
+  // Only react when the URL actually carries date params — otherwise we would
+  // recompute a fresh "Last 30 days from now" on every unrelated param change.
+  const urlFrom = searchParams.get("from")
+  const urlTo = searchParams.get("to")
+  React.useEffect(() => {
+    if (urlFrom) setDateFrom(urlFrom)
+    if (urlTo) setDateTo(urlTo)
+  }, [urlFrom, urlTo])
 
   // Fetch customers using React Query with server-side pagination
   const { data, isLoading, isError, error } = useCustomers({
@@ -132,30 +153,40 @@ export default function CustomersPage() {
   // Total count from server for pagination
   const totalCount = data?.total ?? 0
 
+  const preserveSearchPath = (path: string) => {
+    const params = new URLSearchParams(searchParams)
+    const queryString = params.toString()
+    return queryString ? `${path}?${queryString}` : path
+  }
+
   const handleSelectCustomer = (customer: Customer) => {
-    navigate(`/customers/${customer.id}/emails`)
+    navigate(preserveSearchPath(`/customers/${customer.id}/emails`))
   }
 
   const handleCloseDrawer = () => {
-    navigate('/customers', { replace: true })
+    navigate(preserveSearchPath('/customers'), { replace: true })
   }
 
   const handleTabChange = (newTab: string) => {
     if (customerId) {
-      navigate(`/customers/${customerId}/${newTab}`, { replace: true })
+      navigate(preserveSearchPath(`/customers/${customerId}/${newTab}`), { replace: true })
     }
   }
 
   const handleEmailSelect = (selectedEmailId: string | null) => {
-    if (customerId && selectedEmailId) {
-      navigate(`/customers/${customerId}/emails/${selectedEmailId}`, { replace: true })
-    } else if (customerId) {
-      navigate(`/customers/${customerId}/emails`, { replace: true })
+    if (!customerId) return
+
+    if (selectedEmailId) {
+      navigate(preserveSearchPath(`/customers/${customerId}/emails/${selectedEmailId}`), { replace: true })
+    } else {
+      navigate(preserveSearchPath(`/customers/${customerId}/emails`), { replace: true })
     }
   }
 
   const handleSignalClick = (customer: Customer, signal: string) => {
-    navigate(`/customers/${customer.id}/emails?signal=${signal}`)
+    const params = new URLSearchParams(searchParams)
+    params.set('signal', signal)
+    navigate(`/customers/${customer.id}/emails?${params.toString()}`, { replace: true })
   }
 
   const handleAddCustomer = async (customerData: CustomerFormData) => {
@@ -320,6 +351,7 @@ export default function CustomersPage() {
           initialSignalFilter={signalFromUrl}
           dateFrom={dateFrom}
           dateTo={dateTo}
+          onDateRangeChange={handleDateRangeChange}
         />
 
         <AddCustomerDrawer

@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DateRangeFilter } from "@/components/ui/date-range-filter"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { EmailDrawer } from "@/components/email-drawer"
 import {
@@ -57,9 +58,11 @@ interface CustomerDrawerProps {
   /** Optional date filters to scope email results (passed from customer page) */
   dateFrom?: string
   dateTo?: string
+  /** Parent callback to update shared date filters across customer drawer and page */
+  onDateRangeChange?: (dateFrom: string, dateTo: string) => void
 }
 
-export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter, dateFrom, dateTo }: CustomerDrawerProps) {
+export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter, dateFrom, dateTo, onDateRangeChange }: CustomerDrawerProps) {
   // Track visibility separately from open to allow exit animation
   const [isVisible, setIsVisible] = React.useState(open)
   const [shouldRender, setShouldRender] = React.useState(open)
@@ -1124,6 +1127,15 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
 
               </div>
             </div>
+            <div className="flex items-center gap-2">
+            {onDateRangeChange && (
+              <DateRangeFilter
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onChange={onDateRangeChange}
+                className="min-w-[240px]"
+              />
+            )}
             <div className="flex items-center gap-1">
               <PermissionGate permission={Permission.CUSTOMER_EDIT}>
                 <Button variant="ghost" size="icon" onClick={() => setMergeDialogOpen(true)} title="Merge customer">
@@ -1133,6 +1145,7 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
               <Button variant="ghost" size="icon" onClick={onClose}>
                 <X className="h-5 w-5" />
               </Button>
+            </div>
             </div>
           </div>
 
