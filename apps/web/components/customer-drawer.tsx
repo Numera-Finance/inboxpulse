@@ -108,6 +108,15 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
   const [mergeDialogOpen, setMergeDialogOpen] = React.useState(false)
   const [editDomains, setEditDomains] = React.useState<string[]>([])
   const [newDomainInput, setNewDomainInput] = React.useState("")
+  const domainInputRef = React.useRef<HTMLInputElement>(null)
+
+  // Auto-focus the "Add domain..." input when entering edit mode so the user
+  // can type immediately without an extra click.
+  React.useEffect(() => {
+    if (isEditingDomains) {
+      domainInputRef.current?.focus()
+    }
+  }, [isEditingDomains])
   const [contactSorting, setContactSorting] = React.useState<SortingState>([])
 
   // Team tab state
@@ -701,13 +710,13 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
     }
   }
 
-  const handleSaveDomains = async () => {
-    if (!customer || editDomains.length === 0) return
+  const persistDomains = async (domains: string[]) => {
+    if (!customer || domains.length === 0) return
 
     try {
       await updateCustomer.mutateAsync({
         id: customer.id,
-        data: { domains: editDomains },
+        data: { domains },
       })
       queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
       queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
@@ -726,10 +735,27 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
     }
   }
 
+  // Fold any pending typed domain into the list before persisting, so users
+  // who save (Enter or checkmark) with text still in the input don't lose it.
+  const handleSaveDomains = () => {
+    const typed = newDomainInput.trim().toLowerCase()
+    const next = typed && !editDomains.includes(typed)
+      ? [...editDomains, typed]
+      : editDomains
+    persistDomains(next)
+  }
+
   const handleRemoveDomain = (domain: string) => {
     if (editDomains.length > 1) {
       setEditDomains(editDomains.filter((d) => d !== domain))
     }
+  }
+
+  // Delete a domain directly from the display badges (no edit mode needed).
+  // Persists immediately. Blocked when only one domain remains.
+  const handleDeleteDomainFromBadge = (domain: string) => {
+    if (!customer || customer.domains.length <= 1) return
+    persistDomains(customer.domains.filter((d) => d !== domain))
   }
 
   // Team member handlers
@@ -1046,11 +1072,23 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
                 </div>
 
                 {/* Row 2: Domains */}
-                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                <div className="flex items-center gap-1 text-sm text-muted-foreground flex-wrap">
                   {!isEditingDomains ? (
                     <>
                       <Globe className="h-3 w-3" />
-                      {customer.domains.join(", ")}
+                      {customer.domains.map((domain) => (
+                        <Badge key={domain} variant="outline" className="text-xs">
+                          {domain}
+                          <button
+                            className="ml-1 hover:text-destructive disabled:opacity-50"
+                            onClick={() => handleDeleteDomainFromBadge(domain)}
+                            disabled={customer.domains.length <= 1 || updateCustomer.isPending}
+                            title={customer.domains.length <= 1 ? "At least one domain is required" : "Remove domain"}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      ))}
                       <Button
                         variant="ghost"
                         size="icon"
@@ -1062,8 +1100,9 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
                           setLabels(customer.labels)
                           setIsEditingLabels(false)
                         }}
+                        title="Add domain"
                       >
-                        <Pencil className="h-3 w-3" />
+                        <Plus className="h-3 w-3" />
                       </Button>
                     </>
                   ) : (
@@ -1082,6 +1121,7 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
                         </Badge>
                       ))}
                       <Input
+                        ref={domainInputRef}
                         value={newDomainInput}
                         onChange={(e) => setNewDomainInput(e.target.value)}
                         placeholder="Add domain..."
@@ -1089,7 +1129,7 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault()
-                            handleAddDomain()
+                            handleSaveDomains()
                           }
                           if (e.key === "Escape") {
                             setIsEditingDomains(false)
