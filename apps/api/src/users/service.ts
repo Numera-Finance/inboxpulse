@@ -4,7 +4,7 @@ import { TenantRepository } from '../tenants/repository';
 import { RoleRepository } from '../roles/repository';
 import { TaskRepository } from '../tasks/repository';
 import { sql, desc, asc, and, isNull, inArray, type SQL } from 'drizzle-orm';
-import { NotFoundError, ValidationError, isAdmin, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
+import { NotFoundError, ValidationError, isAdmin, withAutoSuffix, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
 import { scopedSearch } from '@crm/database';
 import type { Database } from '@crm/database';
 import { UserRepository } from './repository';
@@ -324,10 +324,16 @@ export class UserService {
         // Parse name into first/last
         const { firstName, lastName } = this.parseEmailName(participant.email, participant.name);
 
+        // Mark ingestion-time auto-creates with the same " (Auto)" suffix
+        // used for auto-created customers, so they're distinguishable in the
+        // UI and exports from users added manually. withAutoSuffix returns
+        // "(Auto)" alone when there's no parsed last name.
+        const suffixedLastName = withAutoSuffix(lastName);
+
         const newUser = await this.userRepository.create({
           tenantId,
           firstName,
-          lastName,
+          lastName: suffixedLastName,
           email: participant.email.toLowerCase(),
           roleId: userRole?.id,
           rowStatus: RowStatus.ACTIVE,
