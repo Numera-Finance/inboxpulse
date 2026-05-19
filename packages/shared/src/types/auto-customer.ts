@@ -1,14 +1,13 @@
 /**
- * Suffix appended to the stored name of customers that were auto-created
- * (e.g., by the email-pipeline domain-extraction or refined later from a
- * signature's company field). The suffix is searchable in the UI and shows
- * up in exports — that's intentional.
- *
- * Single source of truth — both the create path (apps/analysis
- * domain-extraction) and the update-from-signature path (apps/api
- * analysis-service) import this so the suffix can't drift.
+ * "(Auto)" suffix marker used for names of records auto-created by the
+ * email-ingestion pipeline (customers, users, etc.). Single source of
+ * truth — `withAutoSuffix` is the only entry point. The suffix is
+ * searchable in the UI and shows up in exports — intentional.
  */
-export const AUTO_CUSTOMER_NAME_SUFFIX = ' (Auto)';
+const AUTO_NAME_SUFFIX = ' (Auto)';
+const AUTO_SUFFIX_LOWER = AUTO_NAME_SUFFIX.toLowerCase();
+/** Whitespace-tolerant fallback — catches "Foo(Auto)" without a leading space. */
+const AUTO_SUFFIX_LOWER_TIGHT = AUTO_NAME_SUFFIX.trim().toLowerCase();
 
 /**
  * Naive customer-name inference from a domain. Single source of truth for
@@ -32,23 +31,19 @@ export function inferCustomerNameFromDomain(domain: string): string {
     .join(' ');
 }
 
-/** Lowercase form used for case-insensitive suffix detection. Single source. */
-const AUTO_SUFFIX_LOWER = AUTO_CUSTOMER_NAME_SUFFIX.toLowerCase();
-/** Whitespace-tolerant fallback — catches "Foo(Auto)" without a leading space. */
-const AUTO_SUFFIX_LOWER_TIGHT = AUTO_CUSTOMER_NAME_SUFFIX.trim().toLowerCase();
-
 /**
- * Build the stored name for an auto-created customer from a base name.
- * Idempotent: never double-appends, including when the input already carries
- * the suffix in any common formatting (with or without the leading space, any
- * letter case).
+ * Build the stored name for an auto-created record from a base name.
+ * Always returns at least the "(Auto)" marker — callers don't need a
+ * fallback for empty input. Idempotent: never double-appends, including
+ * when the input already carries the suffix in any common formatting
+ * (with or without the leading space, any letter case).
  */
-export function withAutoCustomerSuffix(name: string): string {
+export function withAutoSuffix(name: string): string {
   const trimmed = name.trim();
-  if (!trimmed) return trimmed;
+  if (!trimmed) return AUTO_NAME_SUFFIX.trim();
   const lower = trimmed.toLowerCase();
   if (lower.endsWith(AUTO_SUFFIX_LOWER) || lower.endsWith(AUTO_SUFFIX_LOWER_TIGHT)) {
     return trimmed; // already suffixed; don't double-append
   }
-  return `${trimmed}${AUTO_CUSTOMER_NAME_SUFFIX}`;
+  return `${trimmed}${AUTO_NAME_SUFFIX}`;
 }

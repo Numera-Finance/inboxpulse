@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { asc, desc, sql, ilike, or, and } from 'drizzle-orm';
-import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, withAutoCustomerSuffix, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
+import { ConflictError, ValidationError, NotFoundError, isAdmin, Signal, withAutoSuffix, type RequestHeader, type SearchRequest, type SearchResponse } from '@crm/shared';
 import type { Database, Transaction } from '@crm/database';
 import { scopedSearch } from '@crm/database';
 import { CustomerRepository } from './repository';
@@ -735,7 +735,7 @@ export class CustomerService {
    * same domain serialize on the lock, so no two concurrent transactions can
    * both insert and conflict on the unique constraint.
    *
-   * The "(Auto)" suffix is always applied via `withAutoCustomerSuffix` — never built inline.
+   * The "(Auto)" suffix is always applied via `withAutoSuffix` — never built inline.
    */
   async ensureCustomerForEmail(
     tx: Transaction,
@@ -748,7 +748,7 @@ export class CustomerService {
     if (!proposedRaw) {
       throw new ValidationError('ensureCustomerForEmail requires at least one of defaultName or signatureCompany');
     }
-    const proposedName = withAutoCustomerSuffix(proposedRaw);
+    const proposedName = withAutoSuffix(proposedRaw);
 
     // Serialize concurrent calls for the same (tenant, domain) within their
     // transactions. The lock auto-releases at end of transaction.

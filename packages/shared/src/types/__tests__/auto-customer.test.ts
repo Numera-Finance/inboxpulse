@@ -1,60 +1,55 @@
 import { describe, it, expect } from 'vitest';
 import {
-  AUTO_CUSTOMER_NAME_SUFFIX,
-  withAutoCustomerSuffix,
+  withAutoSuffix,
   inferCustomerNameFromDomain,
 } from '../auto-customer';
 
-describe('withAutoCustomerSuffix', () => {
+describe('withAutoSuffix', () => {
   it('appends the canonical " (Auto)" suffix to a plain name', () => {
-    expect(withAutoCustomerSuffix('Acme')).toBe('Acme (Auto)');
-    expect(withAutoCustomerSuffix('Acme Corp')).toBe('Acme Corp (Auto)');
+    expect(withAutoSuffix('Acme')).toBe('Acme (Auto)');
+    expect(withAutoSuffix('Acme Corp')).toBe('Acme Corp (Auto)');
   });
 
   it('trims input before appending', () => {
-    expect(withAutoCustomerSuffix('  Acme  ')).toBe('Acme (Auto)');
+    expect(withAutoSuffix('  Acme  ')).toBe('Acme (Auto)');
   });
 
-  it('returns the empty string when given empty input', () => {
-    expect(withAutoCustomerSuffix('')).toBe('');
-    expect(withAutoCustomerSuffix('   ')).toBe('');
+  it('returns "(Auto)" alone when given empty input', () => {
+    expect(withAutoSuffix('')).toBe('(Auto)');
+    expect(withAutoSuffix('   ')).toBe('(Auto)');
   });
 
   describe('idempotency (does not double-append)', () => {
     it('detects an already-suffixed name with canonical formatting', () => {
-      expect(withAutoCustomerSuffix('Acme (Auto)')).toBe('Acme (Auto)');
+      expect(withAutoSuffix('Acme (Auto)')).toBe('Acme (Auto)');
     });
 
     it('detects regardless of letter case', () => {
-      expect(withAutoCustomerSuffix('Acme (AUTO)')).toBe('Acme (AUTO)');
-      expect(withAutoCustomerSuffix('Acme (auto)')).toBe('Acme (auto)');
-      expect(withAutoCustomerSuffix('ACME CORP (Auto)')).toBe('ACME CORP (Auto)');
+      expect(withAutoSuffix('Acme (AUTO)')).toBe('Acme (AUTO)');
+      expect(withAutoSuffix('Acme (auto)')).toBe('Acme (auto)');
+      expect(withAutoSuffix('ACME CORP (Auto)')).toBe('ACME CORP (Auto)');
     });
 
     it('detects when the leading space is missing — "Foo(Auto)" is treated as suffixed', () => {
-      // Without this tolerance, `withAutoCustomerSuffix("Foo(Auto)")` would
+      // Without this tolerance, `withAutoSuffix("Foo(Auto)")` would
       // produce `"Foo(Auto) (Auto)"`.
-      expect(withAutoCustomerSuffix('Foo(Auto)')).toBe('Foo(Auto)');
+      expect(withAutoSuffix('Foo(Auto)')).toBe('Foo(Auto)');
     });
 
     it('still appends the canonical suffix when the input has unrelated trailing parens', () => {
       // Input doesn't end with the suffix — append normally.
-      expect(withAutoCustomerSuffix('Foo (something else)')).toBe('Foo (something else) (Auto)');
-      expect(withAutoCustomerSuffix('Foo (AutoX)')).toBe('Foo (AutoX) (Auto)');
+      expect(withAutoSuffix('Foo (something else)')).toBe('Foo (something else) (Auto)');
+      expect(withAutoSuffix('Foo (AutoX)')).toBe('Foo (AutoX) (Auto)');
     });
 
     it('round-trips: applying twice yields the same string', () => {
-      const once = withAutoCustomerSuffix('Acme Corp');
-      const twice = withAutoCustomerSuffix(once);
-      const thrice = withAutoCustomerSuffix(twice);
+      const once = withAutoSuffix('Acme Corp');
+      const twice = withAutoSuffix(once);
+      const thrice = withAutoSuffix(twice);
       expect(once).toBe('Acme Corp (Auto)');
       expect(twice).toBe('Acme Corp (Auto)');
       expect(thrice).toBe('Acme Corp (Auto)');
     });
-  });
-
-  it('does not depend on the suffix constant being mutable', () => {
-    expect(AUTO_CUSTOMER_NAME_SUFFIX).toBe(' (Auto)');
   });
 });
 
