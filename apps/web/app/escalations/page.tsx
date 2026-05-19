@@ -322,25 +322,34 @@ export default function EscalationsPage() {
   }), [])
 
   // Memoize render functions to prevent re-renders
-  // Show "Done" button only for negative sentiment emails with a task
+  // Show "Done" button for negative-sentiment escalations and for TAT breaches.
+  // TAT resolutions don't collect a problem/resolution comment — they're a
+  // status acknowledgement, so we resolve directly instead of opening the
+  // MarkDoneDialog.
+  const isTatView = effectiveSignal === 'tat'
   const renderHeaderActions = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
     const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
     const hasTask = email?.taskId !== null
-    const showDone = isNegative && hasTask && item.status !== "resolved"
+    const showDone = (isNegative || isTatView) && hasTask && item.status !== "resolved"
     if (!showDone) return null
     return (
       <Button
         className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
         onClick={() => {
-          if (email?.taskId) setDoneDialogTaskId(email.taskId)
+          if (!email?.taskId) return
+          if (isTatView) {
+            handleResolve(email.taskId, '', '')
+          } else {
+            setDoneDialogTaskId(email.taskId)
+          }
         }}
       >
         <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
         Resolve
       </Button>
     )
-  }, [])
+  }, [isTatView, handleResolve])
 
   const renderMetaInfo = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
@@ -382,8 +391,8 @@ export default function EscalationsPage() {
   const renderSidePanel = React.useCallback((item: InboxItem) => {
     const email = item.originalData as AnalyzedEmail
     const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
-    if (!isNegative || !email?.taskId) {
-      // Not negative or no task - no side panel
+    if (!isNegative || !email?.taskId || isTatView) {
+      // Not negative, no task, or TAT view — no resolution/comments panel
       return null
     }
     return (
@@ -393,7 +402,7 @@ export default function EscalationsPage() {
         <TaskComments taskId={email.taskId} variant="panel" />
       </div>
     )
-  }, [])
+  }, [isTatView])
 
   // Get customer name for display
   const { data: customersData } = useCustomers({

@@ -56,9 +56,13 @@ export const addCommentRequestSchema = z.object({
   content: z.string().min(1).max(5000),
 });
 
+// Problem/resolution are required for sentiment-driven escalations (the UI's
+// MarkDoneDialog enforces non-empty client-side), but the TAT-breach resolve
+// path is a status acknowledgement and supplies them as empty strings. Allow
+// empty here so that path doesn't fail server-side validation.
 export const markDoneRequestSchema = z.object({
-  problem: z.string().min(1, 'Problem is required').max(5000),
-  resolution: z.string().min(1, 'Resolution is required').max(5000),
+  problem: z.string().max(5000),
+  resolution: z.string().max(5000),
 });
 
 // =============================================================================
