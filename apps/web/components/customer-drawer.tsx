@@ -98,8 +98,6 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
   })
   const [selectedEmail, setSelectedEmail] = React.useState<Email | null>(null)
   const [emailDrawerOpen, setEmailDrawerOpen] = React.useState(false)
-  const [isEditingLabels, setIsEditingLabels] = React.useState(false)
-  const [labels, setLabels] = React.useState<string[]>([])
   const [labelPopoverOpen, setLabelPopoverOpen] = React.useState(false)
   const [newLabelInput, setNewLabelInput] = React.useState("")
   const [isEditingName, setIsEditingName] = React.useState(false)
@@ -194,7 +192,6 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
       setNewContact({ name: "", email: "", phone: "", title: "" })
       setSelectedEmail(null)
       setEmailDrawerOpen(false)
-      setIsEditingLabels(false)
       setLabelPopoverOpen(false)
       setNewLabelInput("")
       setIsEditingName(false)
@@ -254,9 +251,6 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
 
   // Reset filters and customer-specific state when customer changes
   React.useEffect(() => {
-    if (customer) {
-      setLabels(customer.labels)
-    }
     // Always reset filters when customer ID changes (including to undefined)
     setEmailSentimentFilter(initialSignalFilter || 'negative')
     setContactSearch('')
@@ -665,33 +659,34 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
     setNewContact({ name: "", email: "", phone: "", title: "" })
   }
 
-  const handleAddLabel = (label: string) => {
-    if (!labels.includes(label)) {
-      setLabels([...labels, label])
+  const persistLabels = async (next: string[]) => {
+    if (!customer) return
+    try {
+      await updateCustomer.mutateAsync({
+        id: customer.id,
+        data: { labels: next },
+      })
+      queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
+      queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
+    } catch (error) {
+      console.error("Failed to save labels:", error)
     }
+  }
+
+  const handleAddLabel = (label: string) => {
+    if (!customer || customer.labels.includes(label)) {
+      setLabelPopoverOpen(false)
+      setNewLabelInput("")
+      return
+    }
+    persistLabels([...customer.labels, label])
     setLabelPopoverOpen(false)
     setNewLabelInput("")
   }
 
   const handleRemoveLabel = (label: string) => {
-    setLabels(labels.filter((l) => l !== label))
-  }
-
-  const handleSaveLabels = async () => {
     if (!customer) return
-
-    try {
-      await updateCustomer.mutateAsync({
-        id: customer.id,
-        data: { labels },
-      })
-      // Invalidate customer queries to refresh data
-      queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
-      queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
-      setIsEditingLabels(false)
-    } catch (error) {
-      console.error("Failed to save labels:", error)
-    }
+    persistLabels(customer.labels.filter((l) => l !== label))
   }
 
   const handleSaveName = async () => {
@@ -864,9 +859,13 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
     }
   }
 
-  const availableLabels = predefinedLabels.filter(
-    (label) => !labels.includes(label) && label.toLowerCase().includes(newLabelInput.toLowerCase()),
-  )
+  const availableLabels = customer
+    ? predefinedLabels.filter(
+        (label) =>
+          !customer.labels.includes(label) &&
+          label.toLowerCase().includes(newLabelInput.toLowerCase()),
+      )
+    : []
 
   // Don't render if not visible and animation complete
   if (!shouldRender) return null
@@ -909,8 +908,6 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
                           setIsEditingName(true)
                           setIsEditingDomains(false)
                           setNewDomainInput("")
-                          setLabels(customer.labels)
-                          setIsEditingLabels(false)
                         }}
                       >
                         <Pencil className="h-3 w-3" />
@@ -952,123 +949,60 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
                     </>
                   )}
                   {/* Labels */}
-                  {labels.map((label) => (
+                  {customer.labels.map((label) => (
                     <Badge key={label} variant="outline" className="text-xs">
                       {label}
-                      {isEditingLabels && (
-                        <button className="ml-1 hover:text-destructive" onClick={() => handleRemoveLabel(label)}>
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
+                      <button
+                        className="ml-1 hover:text-destructive disabled:opacity-50"
+                        onClick={() => handleRemoveLabel(label)}
+                        disabled={updateCustomer.isPending}
+                        title="Remove label"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
                     </Badge>
                   ))}
-                  {!isEditingLabels ? (
-                    <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-xs bg-transparent"
-                          onClick={() => {
-                            setIsEditingLabels(true)
-                            setLabelPopoverOpen(true)
-                            setIsEditingName(false)
-                            setIsEditingDomains(false)
-                            setNewDomainInput("")
-                          }}
-                        >
-                          <Plus className="h-3 w-3 mr-1" />
-                          Labels
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-[200px] p-0" align="start">
-                        <Command>
-                          <CommandInput
-                            placeholder="Search or add..."
-                            value={newLabelInput}
-                            onValueChange={setNewLabelInput}
-                          />
-                          <CommandList>
-                            <CommandEmpty>
-                              {newLabelInput && (
-                                <button
-                                  className="w-full px-2 py-1.5 text-sm text-left hover:bg-accent"
-                                  onClick={() => handleAddLabel(newLabelInput)}
-                                >
-                                  Create "{newLabelInput}"
-                                </button>
-                              )}
-                            </CommandEmpty>
-                            <CommandGroup>
-                              {availableLabels.map((label) => (
-                                <CommandItem key={label} value={label} onSelect={() => handleAddLabel(label)}>
-                                  {label}
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
-                  ) : (
-                    <>
-                      <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
-                        <PopoverTrigger asChild>
-                          <Button variant="outline" size="sm" className="h-6 text-xs bg-transparent">
-                            <Plus className="h-3 w-3 mr-1" />
-                            Add
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[200px] p-0" align="start">
-                          <Command>
-                            <CommandInput
-                              placeholder="Search or add..."
-                              value={newLabelInput}
-                              onValueChange={setNewLabelInput}
-                            />
-                            <CommandList>
-                              <CommandEmpty>
-                                {newLabelInput && (
-                                  <button
-                                    className="w-full px-2 py-1.5 text-sm text-left hover:bg-accent"
-                                    onClick={() => handleAddLabel(newLabelInput)}
-                                  >
-                                    Create "{newLabelInput}"
-                                  </button>
-                                )}
-                              </CommandEmpty>
-                              <CommandGroup>
-                                {availableLabels.map((label) => (
-                                  <CommandItem key={label} value={label} onSelect={() => handleAddLabel(label)}>
-                                    {label}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
+                  <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
+                    <PopoverTrigger asChild>
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => {
-                          setLabels(customer.labels)
-                          setIsEditingLabels(false)
-                        }}
+                        className="h-6 text-xs bg-transparent"
+                        disabled={updateCustomer.isPending}
                       >
-                        Cancel
+                        <Plus className="h-3 w-3 mr-1" />
+                        Labels
                       </Button>
-                      <Button size="sm" className="h-6 text-xs" onClick={handleSaveLabels} disabled={updateCustomer.isPending}>
-                        {updateCustomer.isPending ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Check className="h-3 w-3 mr-1" />
-                        )}
-                        Save
-                      </Button>
-                    </>
-                  )}
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[200px] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Search or add..."
+                          value={newLabelInput}
+                          onValueChange={setNewLabelInput}
+                        />
+                        <CommandList>
+                          <CommandEmpty>
+                            {newLabelInput && (
+                              <button
+                                className="w-full px-2 py-1.5 text-sm text-left hover:bg-accent"
+                                onClick={() => handleAddLabel(newLabelInput)}
+                              >
+                                Create "{newLabelInput}"
+                              </button>
+                            )}
+                          </CommandEmpty>
+                          <CommandGroup>
+                            {availableLabels.map((label) => (
+                              <CommandItem key={label} value={label} onSelect={() => handleAddLabel(label)}>
+                                {label}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 {/* Row 2: Domains */}
@@ -1097,8 +1031,6 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
                           setEditDomains([...customer.domains])
                           setIsEditingDomains(true)
                           setIsEditingName(false)
-                          setLabels(customer.labels)
-                          setIsEditingLabels(false)
                         }}
                         title="Add domain"
                       >
