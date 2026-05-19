@@ -8,7 +8,7 @@
  * John,Doe,john@example.com,"mgr1@example.com,mgr2@example.com",acme.com,Account Manager,0
  * John,Doe,john@example.com,"mgr1@example.com,mgr2@example.com",techcorp.com,Controller,0
  *
- * Export (xlsx): same columns as import plus a leading `id` column.
+ * Export (xlsx): same columns as import, plus a `canLogin` flag.
  */
 
 import * as XLSX from 'xlsx';
@@ -146,7 +146,6 @@ export function generateUserExport(
   }>
 ): Buffer {
   const header = [
-    'id',
     'firstName',
     'lastName',
     'email',
@@ -165,7 +164,6 @@ export function generateUserExport(
 
     if (item.customers.length === 0) {
       dataRows.push([
-        item.user.id,
         item.user.firstName,
         item.user.lastName,
         item.user.email,
@@ -178,7 +176,6 @@ export function generateUserExport(
     } else {
       for (const customer of item.customers) {
         dataRows.push([
-          item.user.id,
           item.user.firstName,
           item.user.lastName,
           item.user.email,
@@ -194,7 +191,6 @@ export function generateUserExport(
 
   const worksheet = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
   worksheet['!cols'] = [
-    { wch: 38 }, // id (uuid)
     { wch: 18 }, // firstName
     { wch: 18 }, // lastName
     { wch: 32 }, // email
