@@ -2,10 +2,12 @@ import { z } from 'zod';
 
 /**
  * Zod schema for creating/updating a contact
- * Used for validation at API boundaries
+ * Used for validation at API boundaries.
+ *
+ * Tenant is resolved server-side from the session (browser) or `x-tenant-id`
+ * header (internal service-to-service via `requireInternalAuth`), not from the body.
  */
 export const createContactRequestSchema = z.object({
-  tenantId: z.uuid(),
   customerId: z.uuid().optional(),
   email: z.string().email().max(500),
   name: z.string().optional(),

@@ -595,24 +595,24 @@ export class CustomerService {
     }
   }
 
-  async createCustomer(data: CreateCustomerRequest): Promise<ClientCustomer> {
+  async createCustomer(tenantId: string, data: CreateCustomerRequest): Promise<ClientCustomer> {
     try {
-      logger.info({ domains: data.domains, tenantId: data.tenantId }, 'Creating customer');
+      logger.info({ domains: data.domains, tenantId }, 'Creating customer');
 
       // Validate that all domains don't already exist for this tenant
       for (const domain of data.domains) {
         const normalizedDomain = domain.toLowerCase();
-        const existingCustomer = await this.customerRepository.findByDomain(data.tenantId, normalizedDomain);
+        const existingCustomer = await this.customerRepository.findByDomain(tenantId, normalizedDomain);
         if (existingCustomer) {
           throw new ConflictError(
             `Domain "${domain}" is already associated with another customer`,
-            { domain, tenantId: data.tenantId }
+            { domain, tenantId }
           );
         }
       }
 
       // Use first domain for create logic
-      const customer = await this.customerRepository.create({ ...data, domain: data.domains[0] });
+      const customer = await this.customerRepository.create({ ...data, tenantId, domain: data.domains[0] });
 
       // Add remaining domains
       for (let i = 1; i < data.domains.length; i++) {
@@ -625,19 +625,19 @@ export class CustomerService {
       }
       return clientCustomer;
     } catch (error: any) {
-      logger.error({ error, domains: data.domains, tenantId: data.tenantId }, 'Failed to create customer');
+      logger.error({ error, domains: data.domains, tenantId }, 'Failed to create customer');
       throw error;
     }
   }
 
-  async upsertCustomer(data: CreateCustomerRequest): Promise<ClientCustomer> {
+  async upsertCustomer(tenantId: string, data: CreateCustomerRequest): Promise<ClientCustomer> {
     try {
-      logger.info({ domains: data.domains, tenantId: data.tenantId }, 'Upserting customer');
+      logger.info({ domains: data.domains, tenantId }, 'Upserting customer');
 
       // Step 1: Find which customer we're upserting (based on first domain)
       const firstDomainNormalized = data.domains[0].toLowerCase();
       const existingCustomerForFirstDomain = await this.customerRepository.findByDomain(
-        data.tenantId,
+        tenantId,
         firstDomainNormalized
       );
       const targetCustomerId = existingCustomerForFirstDomain?.id;
@@ -646,21 +646,21 @@ export class CustomerService {
       // (It's OK if they belong to the same customer we're updating)
       for (let i = 1; i < data.domains.length; i++) {
         const normalizedDomain = data.domains[i].toLowerCase();
-        const existingCustomer = await this.customerRepository.findByDomain(data.tenantId, normalizedDomain);
+        const existingCustomer = await this.customerRepository.findByDomain(tenantId, normalizedDomain);
 
         if (existingCustomer) {
           // If we're updating an existing customer, check if domain belongs to a different customer
           if (targetCustomerId && existingCustomer.id !== targetCustomerId) {
             throw new ConflictError(
               `Domain "${data.domains[i]}" is already associated with another customer`,
-              { domain: data.domains[i], tenantId: data.tenantId, existingCustomerId: existingCustomer.id }
+              { domain: data.domains[i], tenantId, existingCustomerId: existingCustomer.id }
             );
           }
           // If we're creating a new customer, any existing domain is a conflict
           if (!targetCustomerId) {
             throw new ConflictError(
               `Domain "${data.domains[i]}" is already associated with another customer`,
-              { domain: data.domains[i], tenantId: data.tenantId, existingCustomerId: existingCustomer.id }
+              { domain: data.domains[i], tenantId, existingCustomerId: existingCustomer.id }
             );
           }
         }
@@ -677,7 +677,7 @@ export class CustomerService {
 
       // Step 4: Perform upsert with all domains in a single transaction
       // This ensures atomicity - if anything fails, everything rolls back
-      const customerWithDomains = await this.customerRepository.upsertWithDomains(normalizedData);
+      const customerWithDomains = await this.customerRepository.upsertWithDomains({ ...normalizedData, tenantId });
 
       // The repository now returns the customer with domains array already populated
       if (!customerWithDomains.domains || customerWithDomains.domains.length === 0) {
@@ -698,7 +698,7 @@ export class CustomerService {
         updatedAt: customerWithDomains.updatedAt,
       } as ClientCustomer;
     } catch (error: any) {
-      logger.error({ error, domains: data.domains, tenantId: data.tenantId }, 'Failed to upsert customer');
+      logger.error({ error, domains: data.domains, tenantId }, 'Failed to upsert customer');
       throw error;
     }
   }

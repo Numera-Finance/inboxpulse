@@ -248,12 +248,12 @@ export class ContactService {
     }
   }
 
-  async upsertContact(data: NewContact): Promise<Contact> {
+  async upsertContact(tenantId: string, data: Omit<NewContact, 'tenantId'>): Promise<Contact> {
     try {
-      logger.info({ email: data.email, tenantId: data.tenantId }, 'Upserting contact');
-      return await this.contactRepository.upsert(data);
+      logger.info({ email: data.email, tenantId }, 'Upserting contact');
+      return await this.contactRepository.upsert({ ...data, tenantId });
     } catch (error: any) {
-      logger.error({ error, email: data.email, tenantId: data.tenantId }, 'Failed to upsert contact');
+      logger.error({ error, email: data.email, tenantId }, 'Failed to upsert contact');
       throw error;
     }
   }
