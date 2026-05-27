@@ -245,12 +245,14 @@ app.route('/oauth', oauthRoutes);
 app.route('/', inngestRoutes); // Inngest webhook handler at /api/inngest/*
 
 // Internal service-to-service routes (validated by SERVICE_API_KEY, no session needed)
+// Customers and contacts are NOT mounted here: they have no service-to-service
+// callers, and the dual mount made tenant resolution ambiguous (session vs
+// x-tenant-id header). Browser callers go through the session-authenticated
+// mounts below — the only path that exists.
 app.use('/api/internal/*', requireInternalAuth());
 app.route('/api/internal/integrations', integrationsRoutes);
 app.route('/api/internal/runs', runsRoutes);
 app.route('/api/internal/emails', emailsRoutes);
-app.route('/api/internal/customers', customerRoutes);
-app.route('/api/internal/contacts', contactRoutes);
 
 // Protected routes (auth required)
 // Use better-auth middleware chain (tries better-auth first, falls back to legacy in dev)

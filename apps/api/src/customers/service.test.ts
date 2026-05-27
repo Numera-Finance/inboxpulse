@@ -61,11 +61,12 @@ describe('CustomerService.upsertCustomer name handling', () => {
     vi.clearAllMocks();
   });
 
+  const TENANT_ID = '9f34e10b-27d1-457a-bcdc-590f2eb9fa4a';
+
   it('passes the caller-provided name through when creating a new customer', async () => {
     const { service, upsertCalls } = makeService(null);
 
-    await service.upsertCustomer({
-      tenantId: '9f34e10b-27d1-457a-bcdc-590f2eb9fa4a',
+    await service.upsertCustomer(TENANT_ID, {
       domains: ['foo.com'],
       name: 'Foo (Auto)',
       isAutoCreated: true,
@@ -81,8 +82,7 @@ describe('CustomerService.upsertCustomer name handling', () => {
       isAutoCreated: true,
     });
 
-    await service.upsertCustomer({
-      tenantId: '9f34e10b-27d1-457a-bcdc-590f2eb9fa4a',
+    await service.upsertCustomer(TENANT_ID, {
       domains: ['foo.com'],
       name: 'Foo (Auto)', // pipeline re-run sends the inferred name again
       isAutoCreated: true,
@@ -98,8 +98,7 @@ describe('CustomerService.upsertCustomer name handling', () => {
       isAutoCreated: false,
     });
 
-    await service.upsertCustomer({
-      tenantId: '9f34e10b-27d1-457a-bcdc-590f2eb9fa4a',
+    await service.upsertCustomer(TENANT_ID, {
       domains: ['foo.com'],
       name: 'Renamed Via Upsert',
     });

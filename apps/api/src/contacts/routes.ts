@@ -12,8 +12,7 @@ export const contactRoutes = new Hono();
 /**
  * POST /api/contacts - Create/upsert contact
  *
- * Tenant comes from `requestHeader.tenantId` (resolved by the session middleware
- * on `/api/contacts/*` or by `requireInternalAuth` on `/api/internal/contacts/*`),
+ * Tenant comes from `requestHeader.tenantId` (resolved by the session middleware),
  * never from the request body.
  */
 contactRoutes.post('/', async (c) => {
