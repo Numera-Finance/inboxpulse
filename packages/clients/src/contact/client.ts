@@ -7,15 +7,10 @@ import type { Contact, CreateContactRequest } from './types';
  */
 export class ContactClient extends BaseClient {
   /**
-   * Create or update a contact
-   *
-   * Browser callers should omit `tenantId` — tenant is resolved from the session.
-   * Internal service-to-service callers (when this client is constructed with
-   * `{ internal: true }`) must pass `tenantId` so the `x-tenant-id` header is set
-   * for `requireInternalAuth`.
+   * Create or update a contact. Tenant is resolved server-side from the session.
    */
-  async upsertContact(data: CreateContactRequest, signal?: AbortSignal, tenantId?: string): Promise<Contact> {
-    const response = await this.post<ApiResponse<Contact>>('/api/contacts', data, signal, tenantId);
+  async upsertContact(data: CreateContactRequest, signal?: AbortSignal): Promise<Contact> {
+    const response = await this.post<ApiResponse<Contact>>('/api/contacts', data, signal);
     if (!response || !response.data) {
       throw new Error('Invalid API response: missing data');
     }
@@ -74,8 +69,8 @@ export class ContactClient extends BaseClient {
   /**
    * Update a contact
    */
-  async updateContact(id: string, data: Partial<CreateContactRequest>, signal?: AbortSignal, tenantId?: string): Promise<Contact> {
-    const response = await this.patch<ApiResponse<Contact>>(`/api/contacts/${id}`, data, signal, tenantId);
+  async updateContact(id: string, data: Partial<CreateContactRequest>, signal?: AbortSignal): Promise<Contact> {
+    const response = await this.patch<ApiResponse<Contact>>(`/api/contacts/${id}`, data, signal);
     if (!response || !response.data) {
       throw new Error('Invalid API response: missing data');
     }

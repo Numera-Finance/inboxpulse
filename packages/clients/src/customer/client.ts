@@ -7,15 +7,10 @@ import type { Customer, CreateCustomerRequest, MergeCustomerResponse } from './t
  */
 export class CustomerClient extends BaseClient {
   /**
-   * Create or update a customer
-   *
-   * Browser callers should omit `tenantId` — tenant is resolved from the session.
-   * Internal service-to-service callers (when this client is constructed with
-   * `{ internal: true }`) must pass `tenantId` so the `x-tenant-id` header is set
-   * for `requireInternalAuth`.
+   * Create or update a customer. Tenant is resolved server-side from the session.
    */
-  async upsertCustomer(data: CreateCustomerRequest, signal?: AbortSignal, tenantId?: string): Promise<Customer> {
-    const response = await this.post<ApiResponse<Customer>>('/api/customers', data, signal, tenantId);
+  async upsertCustomer(data: CreateCustomerRequest, signal?: AbortSignal): Promise<Customer> {
+    const response = await this.post<ApiResponse<Customer>>('/api/customers', data, signal);
     if (!response) {
       throw new Error('Invalid API response: response is null');
     }

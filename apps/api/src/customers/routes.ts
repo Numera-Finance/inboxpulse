@@ -41,8 +41,7 @@ customerRoutes.post('/search', async (c) => {
  * POST /api/customers - Create/upsert customer
  * Requires CUSTOMER_ADD permission.
  *
- * Tenant comes from `requestHeader.tenantId` (resolved by the session middleware
- * on `/api/customers/*` or by `requireInternalAuth` on `/api/internal/customers/*`),
+ * Tenant comes from `requestHeader.tenantId` (resolved by the session middleware),
  * never from the request body.
  */
 customerRoutes.post('/', requirePermission(Permission.CUSTOMER_ADD), async (c) => {
