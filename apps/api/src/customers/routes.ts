@@ -3,9 +3,9 @@ import { container } from 'tsyringe';
 import { NotFoundError, searchRequestSchema, Permission, ValidationError } from '@crm/shared';
 import { CustomerService } from './service';
 import type { ApiResponse, RequestHeader } from '@crm/shared';
-import { createCustomerRequestSchema, mergeCustomerRequestSchema, type CreateCustomerRequest } from '@crm/clients';
+import { createCustomerRequestSchema, mergeCustomerRequestSchema } from '@crm/clients';
 import { requirePermission } from '../middleware/require-permission';
-import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
+import { handleApiRequest, handleApiRequestWithStatus, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { getRequestHeader } from '../utils/request-header';
 import { z } from 'zod';
 import type { CustomerImportResult } from './import-export';
@@ -39,21 +39,21 @@ customerRoutes.post('/search', async (c) => {
 
 /**
  * POST /api/customers - Create/upsert customer
- * Requires CUSTOMER_ADD permission
+ * Requires CUSTOMER_ADD permission.
+ *
+ * Tenant comes from `requestHeader.tenantId` (resolved by the session middleware
+ * on `/api/customers/*` or by `requireInternalAuth` on `/api/internal/customers/*`),
+ * never from the request body.
  */
 customerRoutes.post('/', requirePermission(Permission.CUSTOMER_ADD), async (c) => {
-  const body = await c.req.json();
-  const validated: CreateCustomerRequest = createCustomerRequestSchema.parse(body);
-
-  const customerService = container.resolve(CustomerService);
-  const customer = await customerService.upsertCustomer(validated);
-
-  return c.json<ApiResponse<typeof customer>>(
-    {
-      success: true,
-      data: customer,
-    },
-    201
+  return handleApiRequestWithStatus(
+    c,
+    createCustomerRequestSchema,
+    201,
+    async (requestHeader: RequestHeader, data) => {
+      const customerService = container.resolve(CustomerService);
+      return await customerService.upsertCustomer(requestHeader.tenantId, data);
+    }
   );
 });
 

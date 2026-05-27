@@ -5,10 +5,11 @@ import { z } from 'zod';
  * Used for validation at API boundaries
  *
  * Note: domains array is serialized to customer_domains table internally
- * Physical implementation (customers + customer_domains) is hidden from callers
+ * Physical implementation (customers + customer_domains) is hidden from callers.
+ * Tenant is resolved server-side from the session (browser) or `x-tenant-id`
+ * header (internal service-to-service via `requireInternalAuth`), not from the body.
  */
 export const createCustomerRequestSchema = z.object({
-  tenantId: z.uuid(),
   domains: z.array(z.string().min(1).max(255)).min(1), // At least one domain required
   name: z.string().optional(),
   website: z.string().url().optional(),

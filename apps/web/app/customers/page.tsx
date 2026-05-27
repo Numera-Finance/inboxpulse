@@ -192,7 +192,6 @@ export default function CustomersPage() {
   const handleAddCustomer = async (customerData: CustomerFormData) => {
     try {
       await upsertCustomer.mutateAsync({
-        tenantId: customerData.tenantId,
         domains: customerData.domains,
         name: customerData.name,
         website: customerData.website,
