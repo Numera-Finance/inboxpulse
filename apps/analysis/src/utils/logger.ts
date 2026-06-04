@@ -9,21 +9,19 @@ function getLogger(): pino.Logger {
     const env = getEnv();
     _logger = pino({
       level: env.LOG_LEVEL,
+      formatters: {
+        level: (label) => {
+          return { level: label.toUpperCase() };
+        },
+      },
       serializers: {
         err: serializeError,
         error: serializeError,
       },
-      transport:
-        env.NODE_ENV === 'development'
-          ? {
-              target: 'pino-pretty',
-              options: {
-                colorize: true,
-                translateTime: 'HH:MM:ss Z',
-                ignore: 'pid,hostname',
-              },
-            }
-          : undefined,
+      base: {
+        service: 'crm-analysis',
+        env: env.NODE_ENV,
+      },
     });
   }
   return _logger;

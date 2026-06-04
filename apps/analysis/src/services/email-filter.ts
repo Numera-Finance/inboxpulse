@@ -1,6 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
 import type { Email } from '@crm/shared';
+import { DEFAULT_LLM_MODEL } from '@crm/shared';
 import { AIService, type ModelConfig } from './ai-service';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
@@ -620,7 +621,7 @@ export class EmailFilterService {
     // Default model config if not provided
     const model: ModelConfig = modelConfig || {
       provider: 'google',
-      model: 'gemini-2.5-flash',
+      model: DEFAULT_LLM_MODEL,
       temperature: 0.3,
       maxTokens: 500,
     };
