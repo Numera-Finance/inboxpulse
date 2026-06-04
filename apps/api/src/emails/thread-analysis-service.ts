@@ -3,6 +3,7 @@ import { AnalysisClient } from '@crm/clients';
 import { ThreadAnalysisRepository } from './thread-analysis-repository';
 import type { Email } from '@crm/shared';
 import type { AnalysisType } from '@crm/shared';
+import { DEFAULT_LLM_MODEL } from '@crm/shared';
 import { logger } from '../utils/logger';
 
 export interface ThreadSummaryContext {
@@ -424,7 +425,7 @@ Return only the updated summary text, no JSON, no markdown.`;
 
     try {
       // Use analysis client's summarize method
-      const result = await this.analysisClient.summarizeThread(analysisType, prompt, 'gemini-2.0-flash');
+      const result = await this.analysisClient.summarizeThread(analysisType, prompt, DEFAULT_LLM_MODEL);
 
       return {
         summary: result.summary,

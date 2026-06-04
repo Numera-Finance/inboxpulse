@@ -5,6 +5,8 @@
 
 import { z } from 'zod';
 
+import { DEFAULT_LLM_MODEL, DEFAULT_LLM_FALLBACK_MODEL } from '../constants/models';
+
 // =============================================================================
 // Email Signals - Integer constants for the signals[] array on emails table
 // Using ranges to group related signals and leave room for future additions
@@ -215,32 +217,32 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
   },
   modelConfigs: {
     'signature-extraction': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'sentiment': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'escalation': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'upsell': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'churn': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'kudos': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'competitor': {
-      primary: 'gemini-2.5-flash',
-      fallback: 'gemini-2.0-flash-lite',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
   },
   promptVersions: {

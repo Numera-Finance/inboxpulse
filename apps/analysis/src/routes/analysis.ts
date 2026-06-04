@@ -7,7 +7,7 @@ import { AnalysisConfigLoader } from '../framework/config-loader';
 import { AIService, type ModelConfig } from '../services/ai-service';
 import { analysisRegistry } from '../framework/registry';
 import { analysisCacheService } from '../services/cache-service';
-import { emailSchema, analysisTypeSchema } from '@crm/shared';
+import { emailSchema, analysisTypeSchema, DEFAULT_LLM_MODEL } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { z } from 'zod';
 import type { ApiResponse } from '@crm/shared';
@@ -317,7 +317,7 @@ app.post('/filter', async (c) => {
 const summarizeRequestSchema = z.object({
   analysisType: z.string(),
   prompt: z.string(),
-  model: z.string().optional().default('gemini-2.5-flash'),
+  model: z.string().optional().default(DEFAULT_LLM_MODEL),
 });
 
 /**
