@@ -9,4 +9,4 @@
 export const DEFAULT_LLM_MODEL = 'gemini-3-flash-preview';
 
 /** Default fallback LLM model used when the primary model fails. */
-export const DEFAULT_LLM_FALLBACK_MODEL = 'gemini-2.0-flash-lite';
+export const DEFAULT_LLM_FALLBACK_MODEL = 'gemini-2.5-flash';
