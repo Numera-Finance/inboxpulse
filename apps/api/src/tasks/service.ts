@@ -1,13 +1,12 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
-import { eq, and, sql, type SQL } from 'drizzle-orm';
+import { eq, and, sql, type SQL, type Column } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
-import { EmailAnalysisStatus } from '../emails/schema';
 import { customers } from '../customers/schema';
 import { users } from '../users/schema';
 import { UserRepository } from '../users/repository';
@@ -460,7 +459,7 @@ export class TaskService {
           eq(tasks.status, TaskStatus.OPEN),
           eq(tasks.createdBySystem, true),
           // Only escalations openable on the page (sender mapped to a customer).
-          this.escalationVisibleCondition()
+          this.escalationOpenableCondition(tasks.emailId, tasks.tenantId)
         )
       );
 
@@ -553,9 +552,7 @@ export class TaskService {
             dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
             assignedTo: assignedToName,
             accountOwner: accountOwnerName,
-            detailsUrl: task.emailId
-              ? `${getEnv().APP_URL}/escalations/${task.emailId}`
-              : `${getEnv().APP_URL}/escalations`,
+            detailsUrl: this.escalationDetailsUrl(task.emailId),
           });
 
           // Categorize this task for per-manager metrics
@@ -609,7 +606,7 @@ export class TaskService {
       eq(tasks.createdBySystem, true),
       inArray(tasks.customerId, customerIds),
       // Only escalations openable on the page (sender mapped to a customer).
-      this.escalationVisibleCondition()
+      this.escalationOpenableCondition(tasks.emailId, tasks.tenantId)
     );
 
     // Apply 'since' filter if provided (for incremental updates)
@@ -681,9 +678,7 @@ export class TaskService {
         dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
         assignedTo: assignedToName,
         accountOwner: accountOwnerName,
-        detailsUrl: task.emailId
-          ? `${getEnv().APP_URL}/escalations/${task.emailId}`
-          : `${getEnv().APP_URL}/escalations`,
+        detailsUrl: this.escalationDetailsUrl(task.emailId),
       });
     }
 
@@ -800,48 +795,53 @@ export class TaskService {
   }
 
   /**
-   * Whether an escalation would be visible on the escalations page.
+   * Single source of truth for "can this escalation be opened on the page".
    *
-   * Mirrors the visibility rule shared by the list (`searchAnalyzedEmails`) and
-   * the detail fetch (`getAnalyzedEmailById`): the email must be analysis-complete
-   * and its SENDER (direction='from') must map to a customer. Escalations whose
-   * sender isn't a mapped customer (e.g. customer identified via a to/cc address)
-   * never surface in the list and can't be opened by id — so we must not notify
-   * an assignee about them. Used to gate assignment notifications.
+   * Mirrors the openability rule of the detail fetch (`getAnalyzedEmailById`):
+   * the email exists for the tenant and its SENDER (direction='from') maps to a
+   * customer. Escalations whose sender isn't a mapped customer (e.g. customer
+   * identified via a to/cc address) can't be opened from the escalations page,
+   * so their links are dead-ends.
+   *
+   * NOTE: deliberately does NOT filter on analysis_status — the detail page
+   * opens such emails regardless of analysis state, so a stricter check here
+   * would suppress notifications whose links actually work. Both the per-task
+   * gate and the digest filter consume this one predicate so they can't drift.
+   *
+   * @param emailIdExpr  email id — a bound value or a correlated column (e.g. `tasks.emailId`)
+   * @param tenantIdExpr tenant id — a bound value or a correlated column
    */
-  private async isEscalationVisible(tenantId: string, emailId: string): Promise<boolean> {
-    const rows = await this.db.execute<{ visible: boolean }>(sql`
-      SELECT EXISTS (
-        SELECT 1
-        FROM emails e
-        INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
-        INNER JOIN customers c ON c.id = ep.customer_id
-        WHERE e.id = ${emailId}
-          AND e.tenant_id = ${tenantId}
-          AND e.analysis_status = ${EmailAnalysisStatus.Completed}
-      ) AS visible
-    `);
-    return rows[0]?.visible ?? false;
-  }
-
-  /**
-   * SQL predicate (correlated to the `tasks` table) for the same escalation
-   * visibility rule as isEscalationVisible: the task's email must be
-   * analysis-complete and its SENDER must map to a customer. Used to filter
-   * manager-digest queries so digests only list/count escalations a recipient
-   * can actually open — escalations whose sender isn't a mapped customer have
-   * dead-end links and are excluded.
-   */
-  private escalationVisibleCondition(): SQL {
+  private escalationOpenableCondition(
+    emailIdExpr: SQL | Column | string,
+    tenantIdExpr: SQL | Column | string
+  ): SQL {
     return sql`EXISTS (
       SELECT 1
       FROM emails e
       INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
       INNER JOIN customers c2 ON c2.id = ep.customer_id
-      WHERE e.id = ${tasks.emailId}
-        AND e.tenant_id = ${tasks.tenantId}
-        AND e.analysis_status = ${EmailAnalysisStatus.Completed}
+      WHERE e.id = ${emailIdExpr}
+        AND e.tenant_id = ${tenantIdExpr}
     )`;
+  }
+
+  /** Whether a specific escalation email is openable on the page. */
+  private async isEscalationOpenable(tenantId: string, emailId: string): Promise<boolean> {
+    const rows = await this.db.execute<{ openable: boolean }>(
+      sql`SELECT ${this.escalationOpenableCondition(emailId, tenantId)} AS openable`
+    );
+    return rows[0]?.openable ?? false;
+  }
+
+  /**
+   * Build the escalations deep-link for a task's email. The escalations page
+   * resolves by analyzed-email id; when there's no email we fall back to the
+   * list. Single web base (WEB_URL) so every escalation link — assignment
+   * notifications and manager digests — points at the same host.
+   */
+  private escalationDetailsUrl(emailId: string | null): string {
+    const base = getEnv().WEB_URL;
+    return emailId ? `${base}/escalations/${emailId}` : `${base}/escalations`;
   }
 
   /**
@@ -864,29 +864,26 @@ export class TaskService {
       return false;
     }
 
-    // Don't notify about escalations the assignee can't open or find. The
-    // escalations page lists and opens an escalation only when its email's
-    // sender maps to a customer (see isEscalationVisible). Escalations
-    // auto-created from emails whose sender isn't a mapped customer never appear
-    // in the list and their detail link resolves to nothing — so skip the
-    // notification entirely rather than send a dead-end link.
-    if (!task.emailId || !(await this.isEscalationVisible(task.tenantId, task.emailId))) {
+    // Auto-created escalations link to the escalations page, which can only open
+    // an escalation whose email sender maps to a customer. If such an escalation
+    // isn't openable, its link is a dead-end, so skip the notification. This
+    // gate is scoped to system-created escalations only — manually-created tasks
+    // keep the original behaviour (notify whenever there's a recipient), since
+    // they aren't subject to the escalations-page sender-attribution rule.
+    if (
+      task.createdBySystem &&
+      (!task.emailId || !(await this.isEscalationOpenable(task.tenantId, task.emailId)))
+    ) {
       logger.info(
         { taskId: task.id, emailId: task.emailId },
-        'Escalation not visible on escalations page (sender not mapped to a customer); skipping assignment notification'
+        'Escalation not openable on escalations page (sender not mapped to a customer); skipping assignment notification'
       );
       return false;
     }
 
     const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
-    const webUrl = getEnv().WEB_URL;
 
-    // The escalations detail page resolves by analyzed-email id, not task id.
-    // emailId is guaranteed non-null here by the visibility check above; the
-    // fallback is retained defensively.
-    const detailsUrl = task.emailId
-      ? `${webUrl}/escalations/${task.emailId}`
-      : `${webUrl}/escalations`;
+    const detailsUrl = this.escalationDetailsUrl(task.emailId);
 
     try {
       // Call /send - the notification service handles preference checks

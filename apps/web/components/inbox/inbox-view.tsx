@@ -315,20 +315,26 @@ export function InboxView({
     if (isLoading || controlledSelectedItem || internalSelectedItem || hasAutoSelectedRef.current) {
       return
     }
-    hasAutoSelectedRef.current = true
     const controller = new AbortController()
     void (async () => {
+      let selected = false
       if (initialSelectedId) {
-        const selected = await resolveAndSelectTarget(initialSelectedId, { signal: controller.signal })
-        if (selected || controller.signal.aborted) return
+        selected = await resolveAndSelectTarget(initialSelectedId, { signal: controller.signal })
       }
+      if (controller.signal.aborted) return
       // Fall back to the first item only when there was no resolvable target.
-      if (!controller.signal.aborted && itemsRef.current.length > 0) {
+      if (!selected && itemsRef.current.length > 0) {
         handleSelectItem(itemsRef.current[0])
+        selected = true
       }
+      // Latch ONLY after a selection actually happened, so an aborted attempt
+      // or an empty-then-populated list can still auto-select on a later run.
+      // Leaving the ref unset until success also keeps the external-URL effect
+      // (guarded by this ref) from firing a duplicate fetch during initial load.
+      if (selected) hasAutoSelectedRef.current = true
     })()
     return () => controller.abort()
-  }, [isLoading, controlledSelectedItem, internalSelectedItem, initialSelectedId, resolveAndSelectTarget, handleSelectItem])
+  }, [isLoading, items, controlledSelectedItem, internalSelectedItem, initialSelectedId, resolveAndSelectTarget, handleSelectItem])
 
   // Handle external URL changes after the initial auto-select (e.g. pasting a
   // bookmarked link or in-app navigation). Sync selection to the new id,
