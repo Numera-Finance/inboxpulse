@@ -272,6 +272,14 @@ export interface InboxCallbacks {
   onFetchContent: (itemId: string, signal?: AbortSignal) => Promise<InboxItemContent>;
 
   /**
+   * Optional: Fetch a single item by id for selection when it isn't present in
+   * the currently loaded/filtered page. Lets a deep-linked target that's
+   * off-page or filtered out still open, instead of silently falling back to
+   * the first item. Returns null when no such item exists.
+   */
+  onFetchItem?: (itemId: string, signal?: AbortSignal) => Promise<InboxItem | null>;
+
+  /**
    * Optional: Fetch thread messages
    */
   onFetchThread?: (threadId: string) => Promise<InboxItemContent[]>;

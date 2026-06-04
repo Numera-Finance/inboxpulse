@@ -1984,11 +1984,20 @@ export class EmailRepository extends ScopedRepository {
    */
   async getAnalyzedEmailById(
     header: RequestHeader,
-    emailId: string
+    id: string
   ): Promise<AnalyzedEmail | null> {
+    // `id` may be an email id OR a task id. Resolve task→email so old/stray
+    // links that carry a task id (notification emails historically linked by
+    // task id) still open the right escalation. The task lookup is tenant-scoped.
     const whereParts: SQL[] = [
       sql`e.tenant_id = ${header.tenantId}`,
-      sql`e.id = ${emailId}`,
+      sql`(
+        e.id = ${id}
+        OR e.id = (
+          SELECT t2.email_id FROM tasks t2
+          WHERE t2.id = ${id} AND t2.tenant_id = ${header.tenantId}
+        )
+      )`,
       sql`ep.customer_id IS NOT NULL`,
     ];
 

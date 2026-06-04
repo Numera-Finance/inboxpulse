@@ -1,12 +1,13 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, type SQL } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
+import { EmailAnalysisStatus } from '../emails/schema';
 import { customers } from '../customers/schema';
 import { users } from '../users/schema';
 import { UserRepository } from '../users/repository';
@@ -457,7 +458,9 @@ export class TaskService {
         and(
           eq(tasks.tenantId, tenantId),
           eq(tasks.status, TaskStatus.OPEN),
-          eq(tasks.createdBySystem, true)
+          eq(tasks.createdBySystem, true),
+          // Only escalations openable on the page (sender mapped to a customer).
+          this.escalationVisibleCondition()
         )
       );
 
@@ -550,7 +553,9 @@ export class TaskService {
             dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
             assignedTo: assignedToName,
             accountOwner: accountOwnerName,
-            detailsUrl: `${getEnv().APP_URL}/tasks/${task.id}`,
+            detailsUrl: task.emailId
+              ? `${getEnv().APP_URL}/escalations/${task.emailId}`
+              : `${getEnv().APP_URL}/escalations`,
           });
 
           // Categorize this task for per-manager metrics
@@ -602,7 +607,9 @@ export class TaskService {
       eq(tasks.tenantId, header.tenantId),
       eq(tasks.status, TaskStatus.OPEN),
       eq(tasks.createdBySystem, true),
-      inArray(tasks.customerId, customerIds)
+      inArray(tasks.customerId, customerIds),
+      // Only escalations openable on the page (sender mapped to a customer).
+      this.escalationVisibleCondition()
     );
 
     // Apply 'since' filter if provided (for incremental updates)
@@ -674,7 +681,9 @@ export class TaskService {
         dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
         assignedTo: assignedToName,
         accountOwner: accountOwnerName,
-        detailsUrl: `${getEnv().APP_URL}/tasks/${task.id}`,
+        detailsUrl: task.emailId
+          ? `${getEnv().APP_URL}/escalations/${task.emailId}`
+          : `${getEnv().APP_URL}/escalations`,
       });
     }
 
@@ -791,6 +800,51 @@ export class TaskService {
   }
 
   /**
+   * Whether an escalation would be visible on the escalations page.
+   *
+   * Mirrors the visibility rule shared by the list (`searchAnalyzedEmails`) and
+   * the detail fetch (`getAnalyzedEmailById`): the email must be analysis-complete
+   * and its SENDER (direction='from') must map to a customer. Escalations whose
+   * sender isn't a mapped customer (e.g. customer identified via a to/cc address)
+   * never surface in the list and can't be opened by id — so we must not notify
+   * an assignee about them. Used to gate assignment notifications.
+   */
+  private async isEscalationVisible(tenantId: string, emailId: string): Promise<boolean> {
+    const rows = await this.db.execute<{ visible: boolean }>(sql`
+      SELECT EXISTS (
+        SELECT 1
+        FROM emails e
+        INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+        INNER JOIN customers c ON c.id = ep.customer_id
+        WHERE e.id = ${emailId}
+          AND e.tenant_id = ${tenantId}
+          AND e.analysis_status = ${EmailAnalysisStatus.Completed}
+      ) AS visible
+    `);
+    return rows[0]?.visible ?? false;
+  }
+
+  /**
+   * SQL predicate (correlated to the `tasks` table) for the same escalation
+   * visibility rule as isEscalationVisible: the task's email must be
+   * analysis-complete and its SENDER must map to a customer. Used to filter
+   * manager-digest queries so digests only list/count escalations a recipient
+   * can actually open — escalations whose sender isn't a mapped customer have
+   * dead-end links and are excluded.
+   */
+  private escalationVisibleCondition(): SQL {
+    return sql`EXISTS (
+      SELECT 1
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c2 ON c2.id = ep.customer_id
+      WHERE e.id = ${tasks.emailId}
+        AND e.tenant_id = ${tasks.tenantId}
+        AND e.analysis_status = ${EmailAnalysisStatus.Completed}
+    )`;
+  }
+
+  /**
    * Send task-assigned notification via the notifications service.
    * Called when a task is created with an assignee or reassigned.
    * Checks user preferences before sending.
@@ -810,8 +864,29 @@ export class TaskService {
       return false;
     }
 
+    // Don't notify about escalations the assignee can't open or find. The
+    // escalations page lists and opens an escalation only when its email's
+    // sender maps to a customer (see isEscalationVisible). Escalations
+    // auto-created from emails whose sender isn't a mapped customer never appear
+    // in the list and their detail link resolves to nothing — so skip the
+    // notification entirely rather than send a dead-end link.
+    if (!task.emailId || !(await this.isEscalationVisible(task.tenantId, task.emailId))) {
+      logger.info(
+        { taskId: task.id, emailId: task.emailId },
+        'Escalation not visible on escalations page (sender not mapped to a customer); skipping assignment notification'
+      );
+      return false;
+    }
+
     const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
     const webUrl = getEnv().WEB_URL;
+
+    // The escalations detail page resolves by analyzed-email id, not task id.
+    // emailId is guaranteed non-null here by the visibility check above; the
+    // fallback is retained defensively.
+    const detailsUrl = task.emailId
+      ? `${webUrl}/escalations/${task.emailId}`
+      : `${webUrl}/escalations`;
 
     try {
       // Call /send - the notification service handles preference checks
@@ -837,7 +912,7 @@ export class TaskService {
                 assignedTo: task.assignedToName || 'Unassigned',
                 assignedBy: assignedByName || null,
                 accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
-                detailsUrl: `${webUrl}/escalations/${task.id}`,
+                detailsUrl,
               },
               recipientName: task.assignedToName?.split(' ')[0] || 'Team',
             },

@@ -43,7 +43,7 @@ import { getEmailClient, getTaskClient } from "@/lib/api/clients"
 
 export default function EscalationsPage() {
   const navigate = useNavigate()
-  const { taskId: emailIdFromUrl } = useParams<{ taskId?: string }>()
+  const { emailId: emailIdFromUrl } = useParams<{ emailId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
 
@@ -220,6 +220,18 @@ export default function EscalationsPage() {
     []
   )
 
+  // Fetch a single item by id for deep-link selection when it isn't on the
+  // current page (off-page or filtered out). getAnalyzedById tolerates a task
+  // id, so older task-id escalation links resolve to the right email too.
+  const handleFetchItem = React.useCallback(
+    async (itemId: string, signal?: AbortSignal): Promise<InboxItem<AnalyzedEmail> | null> => {
+      const emailClient = getEmailClient()
+      const email = await emailClient.getAnalyzedById(itemId, signal)
+      return email ? analyzedEmailToInboxItem(email) : null
+    },
+    []
+  )
+
   // Handle item selection - navigate to email URL
   const handleSelectItem = React.useCallback(
     (item: InboxItem<unknown>) => {
@@ -302,8 +314,9 @@ export default function EscalationsPage() {
   const inboxCallbacks = React.useMemo(() => ({
     onFetchItems: handleFetchItems,
     onFetchContent: handleFetchContent,
+    onFetchItem: handleFetchItem,
     onSelect: handleSelectItem,
-  }), [handleFetchItems, handleFetchContent, handleSelectItem])
+  }), [handleFetchItems, handleFetchContent, handleFetchItem, handleSelectItem])
 
   // Memoize config to prevent re-renders
   const inboxConfig = React.useMemo(() => ({

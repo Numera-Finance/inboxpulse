@@ -962,13 +962,15 @@ export class EmailService {
   }
 
   /**
-   * Get a single analyzed email by ID with task overlay
+   * Get a single analyzed email with task overlay.
+   * `id` may be an email id or a task id (task→email is resolved in the repo),
+   * so escalation links that carry a task id still open the right email.
    */
   async getAnalyzedEmailById(
     requestHeader: RequestHeader,
-    emailId: string
+    id: string
   ): Promise<AnalyzedEmail | null> {
-    return this.emailRepo.getAnalyzedEmailById(requestHeader, emailId);
+    return this.emailRepo.getAnalyzedEmailById(requestHeader, id);
   }
 
   /**
