@@ -96,6 +96,14 @@ export function InboxView({
     callbacksRef.current = callbacks
   }, [callbacks])
 
+  // Latest items in a ref so stable callbacks (click handler, deep-link
+  // resolver) can read them without changing identity (which would otherwise
+  // re-trigger the auto-select effect or break handler memoization).
+  const itemsRef = React.useRef(items)
+  React.useEffect(() => {
+    itemsRef.current = items
+  }, [items])
+
   // Resizable panel state
   const [panelWidth, setPanelWidth] = React.useState(() => {
     if (typeof window !== "undefined") {
@@ -263,37 +271,81 @@ export function InboxView({
     }
   }, [])
 
-  // Auto-select item when items load - prefer initialSelectedId, then first item
-  // Only auto-select once to avoid overriding user clicks during loading transitions
+  // Resolve a target id to an item and select it. Prefers the already-loaded
+  // list; when the target isn't on the current page (off-page or filtered out)
+  // it fetches the item directly via onFetchItem so a valid deep link still
+  // opens instead of being lost. `silent` updates the selection without firing
+  // onSelect (used for external URL syncs to avoid a navigation loop).
+  // Returns true when a matching item was selected.
+  const resolveAndSelectTarget = React.useCallback(
+    async (
+      targetId: string,
+      opts?: { silent?: boolean; signal?: AbortSignal }
+    ): Promise<boolean> => {
+      const select = (item: InboxItem) => {
+        if (opts?.silent) setInternalSelectedItem(item)
+        else handleSelectItem(item)
+      }
+
+      const inList = itemsRef.current.find((i) => i.id === targetId)
+      if (inList) {
+        select(inList)
+        return true
+      }
+
+      const fetchItem = callbacksRef.current.onFetchItem
+      if (!fetchItem) return false
+      try {
+        const fetched = await fetchItem(targetId, opts?.signal)
+        if (opts?.signal?.aborted || !fetched) return false
+        select(fetched)
+        return true
+      } catch {
+        return false
+      }
+    },
+    [handleSelectItem]
+  )
+
+  // Auto-select once after the initial list load settles: prefer
+  // initialSelectedId (fetched directly when it's off-page/filtered out), then
+  // the first item. Guarded so it can't override the user's own clicks.
   const hasAutoSelectedRef = React.useRef(false)
   React.useEffect(() => {
-    if (items.length > 0 && !controlledSelectedItem && !internalSelectedItem && !hasAutoSelectedRef.current) {
-      // If initialSelectedId is provided, try to find and select that item
+    if (isLoading || controlledSelectedItem || internalSelectedItem || hasAutoSelectedRef.current) {
+      return
+    }
+    const controller = new AbortController()
+    void (async () => {
+      let selected = false
       if (initialSelectedId) {
-        const targetItem = items.find(i => i.id === initialSelectedId)
-        if (targetItem) {
-          hasAutoSelectedRef.current = true
-          handleSelectItem(targetItem)
-          return
-        }
+        selected = await resolveAndSelectTarget(initialSelectedId, { signal: controller.signal })
       }
-      // Fall back to first item
-      hasAutoSelectedRef.current = true
-      handleSelectItem(items[0])
-    }
-  }, [items, controlledSelectedItem, internalSelectedItem, handleSelectItem, initialSelectedId])
+      if (controller.signal.aborted) return
+      // Fall back to the first item only when there was no resolvable target.
+      if (!selected && itemsRef.current.length > 0) {
+        handleSelectItem(itemsRef.current[0])
+        selected = true
+      }
+      // Latch ONLY after a selection actually happened, so an aborted attempt
+      // or an empty-then-populated list can still auto-select on a later run.
+      // Leaving the ref unset until success also keeps the external-URL effect
+      // (guarded by this ref) from firing a duplicate fetch during initial load.
+      if (selected) hasAutoSelectedRef.current = true
+    })()
+    return () => controller.abort()
+  }, [isLoading, items, controlledSelectedItem, internalSelectedItem, initialSelectedId, resolveAndSelectTarget, handleSelectItem])
 
-  // Handle external URL changes (e.g., when user pastes a bookmarked link)
-  // This runs when initialSelectedId changes and we have items loaded
+  // Handle external URL changes after the initial auto-select (e.g. pasting a
+  // bookmarked link or in-app navigation). Sync selection to the new id,
+  // fetching it when it's off-page; silent to avoid an onSelect→navigate loop.
   React.useEffect(() => {
-    if (initialSelectedId && items.length > 0 && internalSelectedItem?.id !== initialSelectedId) {
-      const targetItem = items.find(i => i.id === initialSelectedId)
-      if (targetItem) {
-        setInternalSelectedItem(targetItem)
-        // Don't call handleSelectItem here to avoid infinite loop with onSelect callback
-      }
-    }
-  }, [initialSelectedId, items, internalSelectedItem?.id])
+    if (!hasAutoSelectedRef.current) return
+    if (!initialSelectedId || internalSelectedItem?.id === initialSelectedId) return
+    const controller = new AbortController()
+    void resolveAndSelectTarget(initialSelectedId, { silent: true, signal: controller.signal })
+    return () => controller.abort()
+  }, [initialSelectedId, internalSelectedItem?.id, resolveAndSelectTarget])
 
   // Handle refresh
   const handleRefresh = () => {
@@ -381,12 +433,6 @@ export function InboxView({
     showThreadCount: config.showThreadCount,
     itemType: config.itemType,
   }), [config.showPriority, config.showCustomer, config.showThreadCount, config.itemType])
-
-  // Store items in a ref to avoid handleItemClick dependency on items
-  const itemsRef = React.useRef(items)
-  React.useEffect(() => {
-    itemsRef.current = items
-  }, [items])
 
   // Create stable click handler that uses ref
   const handleItemClick = React.useCallback((itemId: string) => {

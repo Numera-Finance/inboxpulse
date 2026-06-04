@@ -77,7 +77,7 @@ export default function App() {
         }
       />
       <Route
-        path="/escalations/:taskId"
+        path="/escalations/:emailId"
         element={
           <ProtectedRoute>
             <EscalationsPage />
