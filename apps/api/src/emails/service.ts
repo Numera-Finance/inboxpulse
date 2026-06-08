@@ -127,30 +127,26 @@ export class EmailService {
     }
 
     // Update firstReplyAt for customer emails in threads with replies (outside transaction).
-    // Process replies oldest-first so each customer email is matched to its first
-    // subsequent reply (updateFirstReplyForThread only fills rows where first_reply_at IS NULL).
+    // A single set-based UPDATE assigns each customer email the earliest reply that
+    // arrived after it (MIN(reply_at) WHERE reply_at > received_at), so no client-side
+    // ordering is needed and it's one round-trip for the whole batch.
     if (replyMarkers.length > 0) {
-      const sortedReplies = [...replyMarkers].sort(
-        (a, b) => a.receivedAt.getTime() - b.receivedAt.getTime()
-      );
-      for (const reply of sortedReplies) {
-        try {
-          await this.emailRepo.updateFirstReplyForThread(
+      try {
+        await this.emailRepo.setFirstReplyForThreads(
+          tenantId,
+          replyMarkers.map((r) => r.threadId),
+          replyMarkers.map((r) => r.receivedAt)
+        );
+      } catch (error) {
+        // Log but don't fail - TAT data is not critical
+        logger.warn(
+          {
             tenantId,
-            reply.threadId,
-            reply.receivedAt
-          );
-        } catch (error) {
-          // Log but don't fail - TAT data is not critical
-          logger.warn(
-            {
-              tenantId,
-              threadId: reply.threadId,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            },
-            'Failed to update firstReplyAt for customer emails'
-          );
-        }
+            replyCount: replyMarkers.length,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
+          'Failed to update firstReplyAt for customer emails'
+        );
       }
     }
 
