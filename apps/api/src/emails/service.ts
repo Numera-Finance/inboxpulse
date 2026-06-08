@@ -5,7 +5,7 @@ import { TenantRepository } from '../tenants/repository';
 import { ContactRepository } from '../contacts/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
-import { threadToDb, emailToDb, computeEmailContentHash } from './converter';
+import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
 import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
@@ -82,12 +82,10 @@ export class EmailService {
     let totalSkipped = 0;
     let threadsCreated = 0;
     const emailsToAnalyze: Array<{ emailId: string; threadId: string }> = [];
-    const replyEmailsToProcess: Array<{
-      threadId: string;
-      emailId: string;
-      fromEmail: string;
-      receivedAt: Date;
-    }> = [];
+    // Reply markers for first-reply (TAT) tracking. Reply emails (SENT label or
+    // tenant-domain sender) are never stored — we only record their timestamp so
+    // we can set firstReplyAt on the customer email they answered.
+    const replyMarkers: Array<{ threadId: string; receivedAt: Date }> = [];
 
     // Batch-level dedup sets — shared across all collections in this batch
     // Catches forwarded copies that land in different Gmail threads
@@ -118,35 +116,29 @@ export class EmailService {
         });
       }
 
-      // Collect reply emails for TAT tracking (emails from tenant domain)
-      if (tenantDomains) {
-        for (const insertedEmail of result.insertedEmails) {
-          const originalEmail = collection.emails.find(
-            (e) => e.messageId === insertedEmail.messageId
-          );
-          if (originalEmail && tenantDomains.some(d => originalEmail.from.email.toLowerCase().endsWith(`@${d.toLowerCase()}`))) {
-            replyEmailsToProcess.push({
-              threadId: result.threadId,
-              emailId: insertedEmail.id,
-              fromEmail: originalEmail.from.email,
-              receivedAt: new Date(originalEmail.receivedAt),
-            });
-          }
+      // Collect reply markers for first-reply (TAT) tracking. Reply emails are
+      // detected and excluded from storage inside the transaction; here we only
+      // carry their timestamps so we can set firstReplyAt afterwards.
+      if (result.threadId) {
+        for (const receivedAt of result.replyReceivedAts) {
+          replyMarkers.push({ threadId: result.threadId, receivedAt });
         }
       }
     }
 
-    // Update firstReplyAt for customer emails in threads with replies (outside transaction)
-    // This populates TAT tracking data
-    if (tenantDomains && replyEmailsToProcess.length > 0) {
-      for (const reply of replyEmailsToProcess) {
+    // Update firstReplyAt for customer emails in threads with replies (outside transaction).
+    // Process replies oldest-first so each customer email is matched to its first
+    // subsequent reply (updateFirstReplyForThread only fills rows where first_reply_at IS NULL).
+    if (replyMarkers.length > 0) {
+      const sortedReplies = [...replyMarkers].sort(
+        (a, b) => a.receivedAt.getTime() - b.receivedAt.getTime()
+      );
+      for (const reply of sortedReplies) {
         try {
           await this.emailRepo.updateFirstReplyForThread(
             tenantId,
             reply.threadId,
-            reply.emailId,
-            reply.receivedAt,
-            tenantDomains
+            reply.receivedAt
           );
         } catch (error) {
           // Log but don't fail - TAT data is not critical
@@ -154,7 +146,6 @@ export class EmailService {
             {
               tenantId,
               threadId: reply.threadId,
-              emailId: reply.emailId,
               error: error instanceof Error ? error.message : 'Unknown error',
             },
             'Failed to update firstReplyAt for customer emails'
@@ -412,7 +403,7 @@ export class EmailService {
     insertedCount: number;
     skippedCount: number;
     emailsToAnalyze: string[]; // Email IDs that need analysis
-    insertedEmails: Array<{ id: string; messageId: string }>; // For TAT tracking
+    replyReceivedAts: Date[]; // Timestamps of reply (SENT/tenant-domain) emails — not stored
   }> {
     return await this.db.transaction(async (tx) => {
       // Step 1: Dedup check — filter out emails that are forwarded copies
@@ -447,26 +438,70 @@ export class EmailService {
           : 'Dedup: all emails accepted (no duplicates found)'
       );
 
-      // If all emails were deduped, return early
-      if (dedupResult.emails.length === 0) {
+      // Partition deduped emails:
+      //   - storable: incoming/customer emails we persist and analyze
+      //   - replies:  SENT-label OR tenant-domain sender emails. These are NEVER
+      //               stored or analyzed — we keep only their timestamp to set
+      //               firstReplyAt on the customer email they answered.
+      const replyEmails = dedupResult.emails.filter((e) => isReplyEmail(e, tenantDomains));
+      const storableEmails = dedupResult.emails.filter((e) => !isReplyEmail(e, tenantDomains));
+      const replyReceivedAts = replyEmails.map((e) => new Date(e.receivedAt));
+
+      // Nothing to store and no reply timestamps to record → no-op
+      if (storableEmails.length === 0 && replyEmails.length === 0) {
         return {
           threadId: '',
           threadCreated: false,
           insertedCount: 0,
           skippedCount: collection.emails.length,
           emailsToAnalyze: [],
-          insertedEmails: [],
+          replyReceivedAts: [],
         };
       }
 
-      const filteredCollection: EmailCollection = {
-        ...collection,
-        emails: dedupResult.emails,
-      };
+      // Step 2: Resolve the thread.
+      // When there are storable emails we upsert the thread. When this batch
+      // contains ONLY replies, look up the existing thread so we can still set
+      // firstReplyAt on customer emails stored in a previous batch.
+      let threadId: string;
+      let threadCreated = false;
 
-      const threadDb = threadToDb(filteredCollection.thread, tenantId, integrationId);
+      if (storableEmails.length === 0) {
+        const existingThread = await tx
+          .select({ id: emailThreads.id })
+          .from(emailThreads)
+          .where(
+            and(
+              eq(emailThreads.tenantId, tenantId),
+              eq(emailThreads.integrationId, integrationId),
+              eq(emailThreads.providerThreadId, collection.thread.threadId)
+            )
+          )
+          .limit(1);
 
-      // Step 2: Upsert thread atomically
+        // No existing thread → the reply has no customer email to attach to. Skip.
+        if (!existingThread[0]) {
+          return {
+            threadId: '',
+            threadCreated: false,
+            insertedCount: 0,
+            skippedCount: collection.emails.length,
+            emailsToAnalyze: [],
+            replyReceivedAts: [],
+          };
+        }
+
+        return {
+          threadId: existingThread[0].id,
+          threadCreated: false,
+          insertedCount: 0,
+          skippedCount: dedupSkipped,
+          emailsToAnalyze: [],
+          replyReceivedAts,
+        };
+      }
+
+      const threadDb = threadToDb(collection.thread, tenantId, integrationId);
       const threadResult = await tx
         .insert(emailThreads)
         .values(threadDb)
@@ -479,49 +514,46 @@ export class EmailService {
           set: {
             subject: threadDb.subject,
             lastMessageAt: sql`GREATEST(${emailThreads.lastMessageAt}, EXCLUDED.last_message_at)`,
-            messageCount: sql`${emailThreads.messageCount} + EXCLUDED.message_count`,
             updatedAt: sql`CURRENT_TIMESTAMP`,
           },
         })
         .returning({ id: emailThreads.id });
 
-      const threadId = threadResult[0].id;
-      const threadCreated = threadResult.length > 0;
+      threadId = threadResult[0].id;
+      threadCreated = threadResult.length > 0;
 
-      // Step 3: Convert emails to database format with thread ID
+      // Step 3: Convert storable emails to database format with thread ID
       // Pass tenant domains for TAT classification (isCustomerEmail)
-      const emailsDb: NewEmail[] = filteredCollection.emails.map((email) =>
+      const emailsDb: NewEmail[] = storableEmails.map((email) =>
         emailToDb(email, tenantId, threadId, integrationId, tenantDomains)
       );
 
       // Step 4: Check existing emails before insert/update (for change detection)
       const existingEmailsMap = new Map<string, { id: string; body: string | null; analysisStatus: EmailAnalysisStatus | null }>();
 
-      if (emailsDb.length > 0) {
-        const messageIds = emailsDb.map(e => e.messageId);
-        const existingEmails = await tx
-          .select({
-            id: emails.id,
-            messageId: emails.messageId,
-            body: emails.body,
-            analysisStatus: emails.analysisStatus,
-          })
-          .from(emails)
-          .where(
-            and(
-              eq(emails.tenantId, tenantId),
-              eq(emails.provider, filteredCollection.thread.provider),
-              inArray(emails.messageId, messageIds)
-            )
-          );
+      const messageIds = emailsDb.map(e => e.messageId);
+      const existingEmails = await tx
+        .select({
+          id: emails.id,
+          messageId: emails.messageId,
+          body: emails.body,
+          analysisStatus: emails.analysisStatus,
+        })
+        .from(emails)
+        .where(
+          and(
+            eq(emails.tenantId, tenantId),
+            eq(emails.provider, collection.thread.provider),
+            inArray(emails.messageId, messageIds)
+          )
+        );
 
-        for (const existing of existingEmails) {
-          existingEmailsMap.set(existing.messageId, {
-            id: existing.id,
-            body: existing.body,
-            analysisStatus: existing.analysisStatus || null,
-          });
-        }
+      for (const existing of existingEmails) {
+        existingEmailsMap.set(existing.messageId, {
+          id: existing.id,
+          body: existing.body,
+          analysisStatus: existing.analysisStatus || null,
+        });
       }
 
       // Step 5: Bulk insert emails atomically (skip duplicates)
@@ -547,8 +579,8 @@ export class EmailService {
       const emailsToAnalyze: string[] = [];
 
       for (const emailResult of insertedEmails) {
-        const originalEmail = filteredCollection.emails.find(
-          (e) => e.messageId === emailResult.messageId && e.provider === filteredCollection.thread.provider
+        const originalEmail = storableEmails.find(
+          (e) => e.messageId === emailResult.messageId && e.provider === collection.thread.provider
         );
 
         if (!originalEmail) {
@@ -588,7 +620,7 @@ export class EmailService {
         insertedCount,
         skippedCount,
         emailsToAnalyze,
-        insertedEmails, // For TAT tracking
+        replyReceivedAts,
       };
     });
   }

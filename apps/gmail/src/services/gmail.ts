@@ -396,7 +396,10 @@ export class GmailService {
         userId: 'me',
         requestBody: {
           topicName,
-          labelIds: ['INBOX'], // Only watch inbox, customize as needed
+          // Watch INBOX (incoming) and SENT (outgoing replies).
+          // SENT messages are never stored — they are read only to capture the
+          // first-reply timestamp (firstReplyAt) on the customer email they answer.
+          labelIds: ['INBOX', 'SENT'],
         },
       });
 

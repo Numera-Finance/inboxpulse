@@ -2279,13 +2279,13 @@ export class EmailRepository extends ScopedRepository {
   async updateFirstReplyForThread(
     tenantId: string,
     threadId: string,
-    replyEmailId: string,
-    replyReceivedAt: Date,
-    _tenantDomains: string[]
+    replyReceivedAt: Date
   ): Promise<number> {
     // Update customer emails in this thread that don't have a firstReplyAt yet
-    // and were received before this reply
-    // Uses is_customer_email column set during ingestion
+    // and were received before this reply.
+    // Uses is_customer_email column set during ingestion.
+    // The reply email itself is never stored, so we only record its timestamp
+    // (first_reply_email_id is intentionally left null).
     // Convert Date to ISO string for SQL compatibility
     const replyReceivedAtStr = replyReceivedAt.toISOString();
 
@@ -2293,7 +2293,6 @@ export class EmailRepository extends ScopedRepository {
     const result = await this.db.execute(sql`
       UPDATE emails
       SET
-        first_reply_email_id = ${replyEmailId},
         first_reply_at = ${replyReceivedAtStr}::timestamp,
         updated_at = NOW()
       WHERE tenant_id = ${tenantId}
@@ -2310,7 +2309,6 @@ export class EmailRepository extends ScopedRepository {
         {
           tenantId,
           threadId,
-          replyEmailId,
           updatedCount: rowCount,
         },
         'Updated firstReplyAt for customer emails in thread'

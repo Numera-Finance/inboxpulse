@@ -29,7 +29,6 @@ export const emailThreads = pgTable('email_threads', {
   // Timestamps
   firstMessageAt: timestamp('first_message_at').notNull(),
   lastMessageAt: timestamp('last_message_at').notNull(),
-  messageCount: integer('message_count').notNull().default(0),
 
   // Provider-specific data
   metadata: jsonb('metadata').$type<Record<string, any>>(),

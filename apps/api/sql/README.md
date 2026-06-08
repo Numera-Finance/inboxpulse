@@ -70,6 +70,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/007_emails_signals_gin_index.sql
 
 # Bake "(Auto)" suffix into auto-created customer names so it's searchable / exportable
 psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
+
+# Drop email_threads.message_count (write-only column, removed)
+psql $DATABASE_URL -f apps/api/sql/migrations/011_drop_thread_message_count.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

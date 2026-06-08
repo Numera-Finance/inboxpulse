@@ -83,7 +83,6 @@ export class EmailParserService {
         subject: firstMessage.subject,
         firstMessageAt: firstMessage.receivedAt,
         lastMessageAt: lastMessage.receivedAt,
-        messageCount: emails.length,
         metadata: {
           // Store Gmail-specific thread metadata (gmailThreadId is redundant - already in providerThreadId)
         },

@@ -17,9 +17,28 @@ export function threadToDb(
     subject: thread.subject,
     firstMessageAt: thread.firstMessageAt,
     lastMessageAt: thread.lastMessageAt,
-    messageCount: thread.messageCount,
     metadata: thread.metadata,
   };
+}
+
+/**
+ * A "reply" is an outbound message in a thread: it carries Gmail's SENT label
+ * OR its sender is on a tenant domain. Replies are never stored or analyzed —
+ * only their timestamp is used to populate firstReplyAt (time-to-response).
+ *
+ * @param tenantDomains - Tenant's email domains (e.g., ['acme.com']). When not
+ *   configured, only the SENT label can classify an email as a reply.
+ */
+export function isReplyEmail(email: Email, tenantDomains?: string[] | null): boolean {
+  const labels = email.labels || [];
+  if (labels.includes('SENT')) {
+    return true;
+  }
+  if (tenantDomains?.length) {
+    const from = email.from.email.toLowerCase();
+    return tenantDomains.some((d) => from.endsWith(`@${d.toLowerCase()}`));
+  }
+  return false;
 }
 
 /**
