@@ -22,6 +22,19 @@ export function threadToDb(
 }
 
 /**
+ * Whether an email's sender is on one of the tenant's own domains.
+ * Single source of truth for tenant-domain matching (used by both reply
+ * detection and isCustomerEmail classification) so the two never drift.
+ */
+export function isFromTenantDomain(fromEmail: string, tenantDomains?: string[] | null): boolean {
+  if (!tenantDomains?.length) {
+    return false;
+  }
+  const from = fromEmail.toLowerCase();
+  return tenantDomains.some((d) => from.endsWith(`@${d.toLowerCase()}`));
+}
+
+/**
  * A "reply" is an outbound message in a thread: it carries Gmail's SENT label
  * OR its sender is on a tenant domain. Replies are never stored or analyzed —
  * only their timestamp is used to populate firstReplyAt (time-to-response).
@@ -34,11 +47,7 @@ export function isReplyEmail(email: Email, tenantDomains?: string[] | null): boo
   if (labels.includes('SENT')) {
     return true;
   }
-  if (tenantDomains?.length) {
-    const from = email.from.email.toLowerCase();
-    return tenantDomains.some((d) => from.endsWith(`@${d.toLowerCase()}`));
-  }
-  return false;
+  return isFromTenantDomain(email.from.email, tenantDomains);
 }
 
 /**
@@ -55,7 +64,7 @@ export function emailToDb(
   // Determine if this is a customer email (not from any tenant domain)
   // Used for TAT metrics - only customer emails are tracked
   const isCustomerEmail = tenantDomains?.length
-    ? !tenantDomains.some(d => email.from.email.toLowerCase().endsWith(`@${d.toLowerCase()}`))
+    ? !isFromTenantDomain(email.from.email, tenantDomains)
     : null; // null if tenant domains not configured
 
   // Extract RFC 2822 Message-ID from metadata (set by email parser)

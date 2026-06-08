@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { describe, it, expect } from 'vitest';
 import type { Email } from '@crm/shared';
-import { isReplyEmail } from '../converter';
+import { isReplyEmail, isFromTenantDomain } from '../converter';
 
 // isReplyEmail decides which messages are treated as outbound "replies".
 // Replies are never stored or analyzed — only their timestamp is used to set
@@ -61,5 +61,45 @@ describe('isReplyEmail', () => {
   it('handles emails with no labels', () => {
     const email: Email = { ...baseEmail, labels: undefined, from: { email: 'customer@acme-customer.com' } };
     expect(isReplyEmail(email, tenantDomains)).toBe(false);
+  });
+});
+
+// isFromTenantDomain is the shared helper that backs both reply detection and the
+// isCustomerEmail classification, so they can never drift.
+describe('isFromTenantDomain', () => {
+  const tenantDomains = ['tenant.com', 'tenant.io'];
+
+  it('matches a sender on a tenant domain (case-insensitive)', () => {
+    expect(isFromTenantDomain('agent@tenant.com', tenantDomains)).toBe(true);
+    expect(isFromTenantDomain('Agent@Tenant.COM', tenantDomains)).toBe(true);
+    expect(isFromTenantDomain('x@tenant.io', tenantDomains)).toBe(true);
+  });
+
+  it('does not match a non-tenant sender', () => {
+    expect(isFromTenantDomain('customer@acme-customer.com', tenantDomains)).toBe(false);
+  });
+
+  it('does not match a domain that only contains a tenant domain as a substring', () => {
+    expect(isFromTenantDomain('attacker@nottenant.com', tenantDomains)).toBe(false);
+  });
+
+  it('returns false when tenant domains are not configured', () => {
+    expect(isFromTenantDomain('agent@tenant.com', null)).toBe(false);
+    expect(isFromTenantDomain('agent@tenant.com', [])).toBe(false);
+    expect(isFromTenantDomain('agent@tenant.com', undefined)).toBe(false);
+  });
+
+  it('is the exact complement used by isReplyEmail (minus the SENT label)', () => {
+    const inbound: Email = {
+      provider: 'gmail',
+      messageId: 'm2',
+      threadId: 't2',
+      subject: 'hi',
+      from: { email: 'agent@tenant.com' },
+      tos: [{ email: 'customer@acme-customer.com' }],
+      receivedAt: new Date('2026-01-01T00:00:00Z'),
+      labels: ['INBOX'],
+    };
+    expect(isReplyEmail(inbound, tenantDomains)).toBe(isFromTenantDomain(inbound.from.email, tenantDomains));
   });
 });

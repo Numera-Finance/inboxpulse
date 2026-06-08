@@ -73,6 +73,9 @@ psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
 
 # Drop email_threads.message_count (write-only column, removed)
 psql $DATABASE_URL -f apps/api/sql/migrations/011_drop_thread_message_count.sql
+
+# Drop emails.first_reply_email_id (reply emails no longer stored; only timestamp kept)
+psql $DATABASE_URL -f apps/api/sql/migrations/012_drop_first_reply_email_id.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

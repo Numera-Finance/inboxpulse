@@ -434,38 +434,54 @@ export class EmailService {
           : 'Dedup: all emails accepted (no duplicates found)'
       );
 
-      // Partition deduped emails:
+      // Partition deduped emails in a single pass:
       //   - storable: incoming/customer emails we persist and analyze
       //   - replies:  SENT-label OR tenant-domain sender emails. These are NEVER
       //               stored or analyzed — we keep only their timestamp to set
       //               firstReplyAt on the customer email they answered.
-      const replyEmails = dedupResult.emails.filter((e) => isReplyEmail(e, tenantDomains));
-      const storableEmails = dedupResult.emails.filter((e) => !isReplyEmail(e, tenantDomains));
+      const storableEmails: Email[] = [];
+      const replyEmails: Email[] = [];
+      for (const e of dedupResult.emails) {
+        (isReplyEmail(e, tenantDomains) ? replyEmails : storableEmails).push(e);
+      }
       const replyReceivedAts = replyEmails.map((e) => new Date(e.receivedAt));
+
+      // Build the consistent "nothing stored" result. insertedCount is 0, so every
+      // email in the collection (deduped, replies, or unmatched) counts as skipped.
+      const noopResult = {
+        threadId: '',
+        threadCreated: false,
+        insertedCount: 0,
+        skippedCount: collection.emails.length,
+        emailsToAnalyze: [] as string[],
+        replyReceivedAts: [] as Date[],
+      };
 
       // Nothing to store and no reply timestamps to record → no-op
       if (storableEmails.length === 0 && replyEmails.length === 0) {
-        return {
-          threadId: '',
-          threadCreated: false,
-          insertedCount: 0,
-          skippedCount: collection.emails.length,
-          emailsToAnalyze: [],
-          replyReceivedAts: [],
-        };
+        return noopResult;
       }
 
       // Step 2: Resolve the thread.
       // When there are storable emails we upsert the thread. When this batch
-      // contains ONLY replies, look up the existing thread so we can still set
+      // contains ONLY replies, bump the existing thread's lastMessageAt (the
+      // company's reply is recent activity) and return its id so we can still set
       // firstReplyAt on customer emails stored in a previous batch.
       let threadId: string;
       let threadCreated = false;
 
       if (storableEmails.length === 0) {
-        const existingThread = await tx
-          .select({ id: emailThreads.id })
-          .from(emailThreads)
+        // Reply-only batch. UPDATE ... RETURNING bumps lastMessageAt and tells us
+        // whether the thread exists in one round-trip.
+        const latestReply = new Date(
+          Math.max(...replyReceivedAts.map((d) => d.getTime()))
+        ).toISOString();
+        const updatedThread = await tx
+          .update(emailThreads)
+          .set({
+            lastMessageAt: sql`GREATEST(${emailThreads.lastMessageAt}, ${latestReply}::timestamp)`,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          })
           .where(
             and(
               eq(emailThreads.tenantId, tenantId),
@@ -473,31 +489,58 @@ export class EmailService {
               eq(emailThreads.providerThreadId, collection.thread.threadId)
             )
           )
-          .limit(1);
+          .returning({ id: emailThreads.id });
 
-        // No existing thread → the reply has no customer email to attach to. Skip.
-        if (!existingThread[0]) {
-          return {
-            threadId: '',
-            threadCreated: false,
-            insertedCount: 0,
-            skippedCount: collection.emails.length,
-            emailsToAnalyze: [],
-            replyReceivedAts: [],
-          };
+        // No existing thread → the reply arrived before the customer email it
+        // answers (e.g. out-of-order delivery). Nothing to attach to; log it so the
+        // dropped time-to-response is visible instead of being silently lost.
+        if (!updatedThread[0]) {
+          logger.warn(
+            {
+              tenantId,
+              integrationId,
+              providerThreadId: collection.thread.threadId,
+              droppedReplyCount: replyEmails.length,
+            },
+            'Reply received before its thread exists — firstReplyAt not recorded'
+          );
+          return noopResult;
         }
 
         return {
-          threadId: existingThread[0].id,
-          threadCreated: false,
-          insertedCount: 0,
-          skippedCount: dedupSkipped,
-          emailsToAnalyze: [],
+          ...noopResult,
+          threadId: updatedThread[0].id,
           replyReceivedAts,
         };
       }
 
-      const threadDb = threadToDb(collection.thread, tenantId, integrationId);
+      // Step 2b: Derive thread metadata from STORED emails. firstMessageAt and
+      // subject must reference a message that actually exists as a row (sent/reply
+      // emails aren't stored), while lastMessageAt reflects all activity in the
+      // batch — including replies — so the thread surfaces as recently active.
+      const storableSorted = [...storableEmails].sort(
+        (a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime()
+      );
+      const firstStorable = storableSorted[0];
+      const lastActivityAt = new Date(
+        Math.max(
+          ...storableEmails.map((e) => new Date(e.receivedAt).getTime()),
+          ...replyReceivedAts.map((d) => d.getTime())
+        )
+      );
+      const threadDb = threadToDb(
+        {
+          ...collection.thread,
+          subject: firstStorable.subject,
+          firstMessageAt: new Date(firstStorable.receivedAt),
+          lastMessageAt: lastActivityAt,
+        },
+        tenantId,
+        integrationId
+      );
+
+      // (xmax = 0) is true only for the INSERT branch of ON CONFLICT DO UPDATE,
+      // so threadCreated correctly distinguishes a new thread from an update.
       const threadResult = await tx
         .insert(emailThreads)
         .values(threadDb)
@@ -513,10 +556,10 @@ export class EmailService {
             updatedAt: sql`CURRENT_TIMESTAMP`,
           },
         })
-        .returning({ id: emailThreads.id });
+        .returning({ id: emailThreads.id, inserted: sql<boolean>`(xmax = 0)` });
 
       threadId = threadResult[0].id;
-      threadCreated = threadResult.length > 0;
+      threadCreated = threadResult[0].inserted === true;
 
       // Step 3: Convert storable emails to database format with thread ID
       // Pass tenant domains for TAT classification (isCustomerEmail)
@@ -602,11 +645,14 @@ export class EmailService {
         }
       }
 
-      // Calculate inserted vs updated counts
+      // Calculate inserted vs skipped counts. "skipped" is defined uniformly across
+      // all return paths as every email in the collection that was not newly
+      // inserted (deduped duplicates, replies, and conflict-updates), so that
+      // insertedCount + skippedCount === collection.emails.length everywhere.
       const insertedCount = insertedEmails.filter(
         (e) => !existingEmailsMap.has(e.messageId)
       ).length;
-      const skippedCount = dedupSkipped + (emailsDb.length - insertedEmails.length);
+      const skippedCount = collection.emails.length - insertedCount;
 
       // Transaction commits here - ALL OR NOTHING
       // If anything fails, entire transaction rolls back
