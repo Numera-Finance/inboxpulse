@@ -5,7 +5,7 @@ import { TenantRepository } from '../tenants/repository';
 import { ContactRepository } from '../contacts/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
-import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail } from './converter';
+import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
 import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
@@ -77,6 +77,16 @@ export class EmailService {
     // Fetch tenant domains for TAT tracking (firstReplyAt updates)
     const tenant = await this.tenantRepo.findById(tenantId);
     const tenantDomains = tenant?.domains?.length ? tenant.domains : null;
+
+    // Without configured domains we can't distinguish customer mail from internal
+    // mail, so reply detection / first-reply (TAT) tracking is disabled and all
+    // emails are stored unfiltered. Surface it so the misconfiguration is visible.
+    if (!tenantDomains) {
+      logger.warn(
+        { tenantId, integrationId },
+        'Tenant has no domains configured — first-reply (TAT) tracking disabled; outbound emails stored unfiltered'
+      );
+    }
 
     let totalInserted = 0;
     let totalSkipped = 0;
@@ -439,12 +449,24 @@ export class EmailService {
       //   - replies:  SENT-label OR tenant-domain sender emails. These are NEVER
       //               stored or analyzed — we keep only their timestamp to set
       //               firstReplyAt on the customer email they answered.
+      //
+      // Short-circuit: without configured tenant domains we cannot tell customer
+      // mail from internal mail, so reply detection is disabled — every email is
+      // stored (pre-TAT behavior) and firstReplyAt is left unset. (A warning is
+      // emitted once per bulk call in the caller.)
+      const replyDetectionEnabled = !!tenantDomains?.length;
       const storableEmails: Email[] = [];
       const replyEmails: Email[] = [];
       for (const e of dedupResult.emails) {
-        (isReplyEmail(e, tenantDomains) ? replyEmails : storableEmails).push(e);
+        (replyDetectionEnabled && isReplyEmail(e, tenantDomains) ? replyEmails : storableEmails).push(e);
       }
-      const replyReceivedAts = replyEmails.map((e) => new Date(e.receivedAt));
+      // All replies count as thread activity (lastMessageAt), but only genuine
+      // customer-facing replies (addressed to the customer, not automated) set
+      // firstReplyAt — otherwise auto-acks / internal notes would understate TAT.
+      const allReplyTimes = replyEmails.map((e) => new Date(e.receivedAt));
+      const replyReceivedAts = replyEmails
+        .filter((e) => isCountableReply(e, tenantDomains))
+        .map((e) => new Date(e.receivedAt));
 
       // Build the consistent "nothing stored" result. insertedCount is 0, so every
       // email in the collection (deduped, replies, or unmatched) counts as skipped.
@@ -472,9 +494,11 @@ export class EmailService {
 
       if (storableEmails.length === 0) {
         // Reply-only batch. UPDATE ... RETURNING bumps lastMessageAt and tells us
-        // whether the thread exists in one round-trip.
+        // whether the thread exists in one round-trip. Use ALL reply timestamps for
+        // activity (even automated/internal ones are activity); firstReplyAt below
+        // uses only the countable subset.
         const latestReply = new Date(
-          Math.max(...replyReceivedAts.map((d) => d.getTime()))
+          Math.max(...allReplyTimes.map((d) => d.getTime()))
         ).toISOString();
         const updatedThread = await tx
           .update(emailThreads)
@@ -525,7 +549,7 @@ export class EmailService {
       const lastActivityAt = new Date(
         Math.max(
           ...storableEmails.map((e) => new Date(e.receivedAt).getTime()),
-          ...replyReceivedAts.map((d) => d.getTime())
+          ...allReplyTimes.map((d) => d.getTime())
         )
       );
       const threadDb = threadToDb(

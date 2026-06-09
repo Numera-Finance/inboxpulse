@@ -1,7 +1,13 @@
 import 'reflect-metadata';
 import { describe, it, expect } from 'vitest';
 import type { Email } from '@crm/shared';
-import { isReplyEmail, isFromTenantDomain } from '../converter';
+import {
+  isReplyEmail,
+  isFromTenantDomain,
+  isAutoSubmitted,
+  hasExternalRecipient,
+  isCountableReply,
+} from '../converter';
 
 // isReplyEmail decides which messages are treated as outbound "replies".
 // Replies are never stored or analyzed — only their timestamp is used to set
@@ -101,5 +107,62 @@ describe('isFromTenantDomain', () => {
       labels: ['INBOX'],
     };
     expect(isReplyEmail(inbound, tenantDomains)).toBe(isFromTenantDomain(inbound.from.email, tenantDomains));
+  });
+});
+
+// A sent/reply email only counts toward time-to-response if it's a genuine
+// customer-facing human reply — not automated and addressed to the customer.
+describe('isCountableReply (TAT first-reply qualification)', () => {
+  const tenantDomains = ['tenant.com'];
+  const reply = (over: Partial<Email>): Email => ({
+    provider: 'gmail',
+    messageId: 'r',
+    threadId: 't',
+    subject: 'Re: issue',
+    from: { email: 'agent@tenant.com' },
+    tos: [{ email: 'customer@acme-customer.com' }],
+    receivedAt: new Date('2026-01-01T10:00:00Z'),
+    labels: ['SENT'],
+    ...over,
+  });
+
+  it('counts a human reply addressed to the customer', () => {
+    expect(isCountableReply(reply({}), tenantDomains)).toBe(true);
+  });
+
+  it('rejects an internal-only message (all recipients on tenant domains)', () => {
+    const internal = reply({ tos: [{ email: 'colleague@tenant.com' }], ccs: [{ email: 'boss@tenant.com' }] });
+    expect(hasExternalRecipient(internal, tenantDomains)).toBe(false);
+    expect(isCountableReply(internal, tenantDomains)).toBe(false);
+  });
+
+  it('rejects auto-submitted mail via the Auto-Submitted header', () => {
+    const auto = reply({ metadata: { autoSubmitted: 'auto-replied' } });
+    expect(isAutoSubmitted(auto)).toBe(true);
+    expect(isCountableReply(auto, tenantDomains)).toBe(false);
+  });
+
+  it('rejects bulk/auto Precedence', () => {
+    expect(isAutoSubmitted(reply({ metadata: { precedence: 'bulk' } }))).toBe(true);
+    expect(isAutoSubmitted(reply({ metadata: { precedence: 'auto_reply' } }))).toBe(true);
+    expect(isCountableReply(reply({ metadata: { precedence: 'bulk' } }), tenantDomains)).toBe(false);
+  });
+
+  it('rejects noreply@-style senders', () => {
+    expect(isAutoSubmitted(reply({ from: { email: 'no-reply@tenant.com' } }))).toBe(true);
+    expect(isCountableReply(reply({ from: { email: 'noreply@tenant.com' } }), tenantDomains)).toBe(false);
+  });
+
+  it('treats Auto-Submitted: no as a normal (countable) reply', () => {
+    expect(isAutoSubmitted(reply({ metadata: { autoSubmitted: 'no' } }))).toBe(false);
+    expect(isCountableReply(reply({ metadata: { autoSubmitted: 'no' } }), tenantDomains)).toBe(true);
+  });
+
+  it('counts a reply to the customer even when a colleague is cc’d', () => {
+    const mixed = reply({
+      tos: [{ email: 'customer@acme-customer.com' }],
+      ccs: [{ email: 'colleague@tenant.com' }],
+    });
+    expect(isCountableReply(mixed, tenantDomains)).toBe(true);
   });
 });
