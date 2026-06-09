@@ -50,10 +50,9 @@ CREATE TABLE IF NOT EXISTS emails (
     -- Set during email ingestion to avoid expensive domain matching in queries
     is_customer_email BOOLEAN,
 
-    -- firstReplyEmailId: ID of the first reply email from tenant domain
-    -- firstReplyAt: Timestamp when the first reply was sent
-    -- These are populated during email sync when a reply is detected
-    first_reply_email_id UUID,
+    -- first_reply_at: Timestamp of the first reply (tenant's outbound message) in
+    -- the thread that arrived after this customer email — the time-to-response
+    -- anchor. Reply emails are not stored as rows, so only the timestamp is kept.
     first_reply_at TIMESTAMP,
 
     -- Tracking
