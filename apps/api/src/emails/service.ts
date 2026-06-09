@@ -5,7 +5,7 @@ import { TenantRepository } from '../tenants/repository';
 import { ContactRepository } from '../contacts/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
-import { threadToDb, emailToDb, computeEmailContentHash } from './converter';
+import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
 import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
@@ -78,16 +78,24 @@ export class EmailService {
     const tenant = await this.tenantRepo.findById(tenantId);
     const tenantDomains = tenant?.domains?.length ? tenant.domains : null;
 
+    // Without configured domains we can't distinguish customer mail from internal
+    // mail, so reply detection / first-reply (TAT) tracking is disabled and all
+    // emails are stored unfiltered. Surface it so the misconfiguration is visible.
+    if (!tenantDomains) {
+      logger.warn(
+        { tenantId, integrationId },
+        'Tenant has no domains configured — first-reply (TAT) tracking disabled; outbound emails stored unfiltered'
+      );
+    }
+
     let totalInserted = 0;
     let totalSkipped = 0;
     let threadsCreated = 0;
     const emailsToAnalyze: Array<{ emailId: string; threadId: string }> = [];
-    const replyEmailsToProcess: Array<{
-      threadId: string;
-      emailId: string;
-      fromEmail: string;
-      receivedAt: Date;
-    }> = [];
+    // Reply markers for first-reply (TAT) tracking. Reply emails (SENT label or
+    // tenant-domain sender) are never stored — we only record their timestamp so
+    // we can set firstReplyAt on the customer email they answered.
+    const replyMarkers: Array<{ threadId: string; receivedAt: Date }> = [];
 
     // Batch-level dedup sets — shared across all collections in this batch
     // Catches forwarded copies that land in different Gmail threads
@@ -118,48 +126,37 @@ export class EmailService {
         });
       }
 
-      // Collect reply emails for TAT tracking (emails from tenant domain)
-      if (tenantDomains) {
-        for (const insertedEmail of result.insertedEmails) {
-          const originalEmail = collection.emails.find(
-            (e) => e.messageId === insertedEmail.messageId
-          );
-          if (originalEmail && tenantDomains.some(d => originalEmail.from.email.toLowerCase().endsWith(`@${d.toLowerCase()}`))) {
-            replyEmailsToProcess.push({
-              threadId: result.threadId,
-              emailId: insertedEmail.id,
-              fromEmail: originalEmail.from.email,
-              receivedAt: new Date(originalEmail.receivedAt),
-            });
-          }
+      // Collect reply markers for first-reply (TAT) tracking. Reply emails are
+      // detected and excluded from storage inside the transaction; here we only
+      // carry their timestamps so we can set firstReplyAt afterwards.
+      if (result.threadId) {
+        for (const receivedAt of result.replyReceivedAts) {
+          replyMarkers.push({ threadId: result.threadId, receivedAt });
         }
       }
     }
 
-    // Update firstReplyAt for customer emails in threads with replies (outside transaction)
-    // This populates TAT tracking data
-    if (tenantDomains && replyEmailsToProcess.length > 0) {
-      for (const reply of replyEmailsToProcess) {
-        try {
-          await this.emailRepo.updateFirstReplyForThread(
+    // Update firstReplyAt for customer emails in threads with replies (outside transaction).
+    // A single set-based UPDATE assigns each customer email the earliest reply that
+    // arrived after it (MIN(reply_at) WHERE reply_at > received_at), so no client-side
+    // ordering is needed and it's one round-trip for the whole batch.
+    if (replyMarkers.length > 0) {
+      try {
+        await this.emailRepo.setFirstReplyForThreads(
+          tenantId,
+          replyMarkers.map((r) => r.threadId),
+          replyMarkers.map((r) => r.receivedAt)
+        );
+      } catch (error) {
+        // Log but don't fail - TAT data is not critical
+        logger.warn(
+          {
             tenantId,
-            reply.threadId,
-            reply.emailId,
-            reply.receivedAt,
-            tenantDomains
-          );
-        } catch (error) {
-          // Log but don't fail - TAT data is not critical
-          logger.warn(
-            {
-              tenantId,
-              threadId: reply.threadId,
-              emailId: reply.emailId,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            },
-            'Failed to update firstReplyAt for customer emails'
-          );
-        }
+            replyCount: replyMarkers.length,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
+          'Failed to update firstReplyAt for customer emails'
+        );
       }
     }
 
@@ -412,7 +409,7 @@ export class EmailService {
     insertedCount: number;
     skippedCount: number;
     emailsToAnalyze: string[]; // Email IDs that need analysis
-    insertedEmails: Array<{ id: string; messageId: string }>; // For TAT tracking
+    replyReceivedAts: Date[]; // Timestamps of reply (SENT/tenant-domain) emails — not stored
   }> {
     return await this.db.transaction(async (tx) => {
       // Step 1: Dedup check — filter out emails that are forwarded copies
@@ -447,26 +444,127 @@ export class EmailService {
           : 'Dedup: all emails accepted (no duplicates found)'
       );
 
-      // If all emails were deduped, return early
-      if (dedupResult.emails.length === 0) {
+      // Partition deduped emails in a single pass:
+      //   - storable: incoming/customer emails we persist and analyze
+      //   - replies:  SENT-label OR tenant-domain sender emails. These are NEVER
+      //               stored or analyzed — we keep only their timestamp to set
+      //               firstReplyAt on the customer email they answered.
+      //
+      // Short-circuit: without configured tenant domains we cannot tell customer
+      // mail from internal mail, so reply detection is disabled — every email is
+      // stored (pre-TAT behavior) and firstReplyAt is left unset. (A warning is
+      // emitted once per bulk call in the caller.)
+      const replyDetectionEnabled = !!tenantDomains?.length;
+      const storableEmails: Email[] = [];
+      const replyEmails: Email[] = [];
+      for (const e of dedupResult.emails) {
+        (replyDetectionEnabled && isReplyEmail(e, tenantDomains) ? replyEmails : storableEmails).push(e);
+      }
+      // All replies count as thread activity (lastMessageAt), but only genuine
+      // customer-facing replies (addressed to the customer, not automated) set
+      // firstReplyAt — otherwise auto-acks / internal notes would understate TAT.
+      const allReplyTimes = replyEmails.map((e) => new Date(e.receivedAt));
+      const replyReceivedAts = replyEmails
+        .filter((e) => isCountableReply(e, tenantDomains))
+        .map((e) => new Date(e.receivedAt));
+
+      // Build the consistent "nothing stored" result. insertedCount is 0, so every
+      // email in the collection (deduped, replies, or unmatched) counts as skipped.
+      const noopResult = {
+        threadId: '',
+        threadCreated: false,
+        insertedCount: 0,
+        skippedCount: collection.emails.length,
+        emailsToAnalyze: [] as string[],
+        replyReceivedAts: [] as Date[],
+      };
+
+      // Nothing to store and no reply timestamps to record → no-op
+      if (storableEmails.length === 0 && replyEmails.length === 0) {
+        return noopResult;
+      }
+
+      // Step 2: Resolve the thread.
+      // When there are storable emails we upsert the thread. When this batch
+      // contains ONLY replies, bump the existing thread's lastMessageAt (the
+      // company's reply is recent activity) and return its id so we can still set
+      // firstReplyAt on customer emails stored in a previous batch.
+      let threadId: string;
+      let threadCreated = false;
+
+      if (storableEmails.length === 0) {
+        // Reply-only batch. UPDATE ... RETURNING bumps lastMessageAt and tells us
+        // whether the thread exists in one round-trip. Use ALL reply timestamps for
+        // activity (even automated/internal ones are activity); firstReplyAt below
+        // uses only the countable subset.
+        const latestReply = new Date(
+          Math.max(...allReplyTimes.map((d) => d.getTime()))
+        ).toISOString();
+        const updatedThread = await tx
+          .update(emailThreads)
+          .set({
+            lastMessageAt: sql`GREATEST(${emailThreads.lastMessageAt}, ${latestReply}::timestamp)`,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          })
+          .where(
+            and(
+              eq(emailThreads.tenantId, tenantId),
+              eq(emailThreads.integrationId, integrationId),
+              eq(emailThreads.providerThreadId, collection.thread.threadId)
+            )
+          )
+          .returning({ id: emailThreads.id });
+
+        // No existing thread → the reply arrived before the customer email it
+        // answers (e.g. out-of-order delivery). Nothing to attach to; log it so the
+        // dropped time-to-response is visible instead of being silently lost.
+        if (!updatedThread[0]) {
+          logger.warn(
+            {
+              tenantId,
+              integrationId,
+              providerThreadId: collection.thread.threadId,
+              droppedReplyCount: replyEmails.length,
+            },
+            'Reply received before its thread exists — firstReplyAt not recorded'
+          );
+          return noopResult;
+        }
+
         return {
-          threadId: '',
-          threadCreated: false,
-          insertedCount: 0,
-          skippedCount: collection.emails.length,
-          emailsToAnalyze: [],
-          insertedEmails: [],
+          ...noopResult,
+          threadId: updatedThread[0].id,
+          replyReceivedAts,
         };
       }
 
-      const filteredCollection: EmailCollection = {
-        ...collection,
-        emails: dedupResult.emails,
-      };
+      // Step 2b: Derive thread metadata from STORED emails. firstMessageAt and
+      // subject must reference a message that actually exists as a row (sent/reply
+      // emails aren't stored), while lastMessageAt reflects all activity in the
+      // batch — including replies — so the thread surfaces as recently active.
+      const storableSorted = [...storableEmails].sort(
+        (a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime()
+      );
+      const firstStorable = storableSorted[0];
+      const lastActivityAt = new Date(
+        Math.max(
+          ...storableEmails.map((e) => new Date(e.receivedAt).getTime()),
+          ...allReplyTimes.map((d) => d.getTime())
+        )
+      );
+      const threadDb = threadToDb(
+        {
+          ...collection.thread,
+          subject: firstStorable.subject,
+          firstMessageAt: new Date(firstStorable.receivedAt),
+          lastMessageAt: lastActivityAt,
+        },
+        tenantId,
+        integrationId
+      );
 
-      const threadDb = threadToDb(filteredCollection.thread, tenantId, integrationId);
-
-      // Step 2: Upsert thread atomically
+      // (xmax = 0) is true only for the INSERT branch of ON CONFLICT DO UPDATE,
+      // so threadCreated correctly distinguishes a new thread from an update.
       const threadResult = await tx
         .insert(emailThreads)
         .values(threadDb)
@@ -479,49 +577,46 @@ export class EmailService {
           set: {
             subject: threadDb.subject,
             lastMessageAt: sql`GREATEST(${emailThreads.lastMessageAt}, EXCLUDED.last_message_at)`,
-            messageCount: sql`${emailThreads.messageCount} + EXCLUDED.message_count`,
             updatedAt: sql`CURRENT_TIMESTAMP`,
           },
         })
-        .returning({ id: emailThreads.id });
+        .returning({ id: emailThreads.id, inserted: sql<boolean>`(xmax = 0)` });
 
-      const threadId = threadResult[0].id;
-      const threadCreated = threadResult.length > 0;
+      threadId = threadResult[0].id;
+      threadCreated = threadResult[0].inserted === true;
 
-      // Step 3: Convert emails to database format with thread ID
+      // Step 3: Convert storable emails to database format with thread ID
       // Pass tenant domains for TAT classification (isCustomerEmail)
-      const emailsDb: NewEmail[] = filteredCollection.emails.map((email) =>
+      const emailsDb: NewEmail[] = storableEmails.map((email) =>
         emailToDb(email, tenantId, threadId, integrationId, tenantDomains)
       );
 
       // Step 4: Check existing emails before insert/update (for change detection)
       const existingEmailsMap = new Map<string, { id: string; body: string | null; analysisStatus: EmailAnalysisStatus | null }>();
 
-      if (emailsDb.length > 0) {
-        const messageIds = emailsDb.map(e => e.messageId);
-        const existingEmails = await tx
-          .select({
-            id: emails.id,
-            messageId: emails.messageId,
-            body: emails.body,
-            analysisStatus: emails.analysisStatus,
-          })
-          .from(emails)
-          .where(
-            and(
-              eq(emails.tenantId, tenantId),
-              eq(emails.provider, filteredCollection.thread.provider),
-              inArray(emails.messageId, messageIds)
-            )
-          );
+      const messageIds = emailsDb.map(e => e.messageId);
+      const existingEmails = await tx
+        .select({
+          id: emails.id,
+          messageId: emails.messageId,
+          body: emails.body,
+          analysisStatus: emails.analysisStatus,
+        })
+        .from(emails)
+        .where(
+          and(
+            eq(emails.tenantId, tenantId),
+            eq(emails.provider, collection.thread.provider),
+            inArray(emails.messageId, messageIds)
+          )
+        );
 
-        for (const existing of existingEmails) {
-          existingEmailsMap.set(existing.messageId, {
-            id: existing.id,
-            body: existing.body,
-            analysisStatus: existing.analysisStatus || null,
-          });
-        }
+      for (const existing of existingEmails) {
+        existingEmailsMap.set(existing.messageId, {
+          id: existing.id,
+          body: existing.body,
+          analysisStatus: existing.analysisStatus || null,
+        });
       }
 
       // Step 5: Bulk insert emails atomically (skip duplicates)
@@ -547,8 +642,8 @@ export class EmailService {
       const emailsToAnalyze: string[] = [];
 
       for (const emailResult of insertedEmails) {
-        const originalEmail = filteredCollection.emails.find(
-          (e) => e.messageId === emailResult.messageId && e.provider === filteredCollection.thread.provider
+        const originalEmail = storableEmails.find(
+          (e) => e.messageId === emailResult.messageId && e.provider === collection.thread.provider
         );
 
         if (!originalEmail) {
@@ -574,11 +669,14 @@ export class EmailService {
         }
       }
 
-      // Calculate inserted vs updated counts
+      // Calculate inserted vs skipped counts. "skipped" is defined uniformly across
+      // all return paths as every email in the collection that was not newly
+      // inserted (deduped duplicates, replies, and conflict-updates), so that
+      // insertedCount + skippedCount === collection.emails.length everywhere.
       const insertedCount = insertedEmails.filter(
         (e) => !existingEmailsMap.has(e.messageId)
       ).length;
-      const skippedCount = dedupSkipped + (emailsDb.length - insertedEmails.length);
+      const skippedCount = collection.emails.length - insertedCount;
 
       // Transaction commits here - ALL OR NOTHING
       // If anything fails, entire transaction rolls back
@@ -588,7 +686,7 @@ export class EmailService {
         insertedCount,
         skippedCount,
         emailsToAnalyze,
-        insertedEmails, // For TAT tracking
+        replyReceivedAts,
       };
     });
   }

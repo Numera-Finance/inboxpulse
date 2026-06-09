@@ -2276,31 +2276,54 @@ export class EmailRepository extends ScopedRepository {
    * @param replyReceivedAt - Timestamp of when the reply was received
    * @param _tenantDomains - Unused (kept for backwards compatibility)
    */
-  async updateFirstReplyForThread(
+  /**
+   * Set first_reply_at on customer emails for a batch of (thread, reply-timestamp)
+   * pairs in a single set-based UPDATE.
+   *
+   * For each customer email we record the EARLIEST reply that arrived strictly
+   * after it (MIN(reply_at) WHERE reply_at > received_at) — i.e. the time-to-response.
+   * The `first_reply_at IS NULL` guard means an earlier batch's value is never
+   * overwritten, so this is safe to call repeatedly as replies trickle in.
+   *
+   * Reply emails themselves are never stored (first_reply_email_id stays null);
+   * we only persist their timestamp on the customer email they answered.
+   *
+   * @param threadIds         Internal thread UUIDs, parallel to replyReceivedAts
+   * @param replyReceivedAts  Reply timestamps, parallel to threadIds
+   */
+  async setFirstReplyForThreads(
     tenantId: string,
-    threadId: string,
-    replyEmailId: string,
-    replyReceivedAt: Date,
-    _tenantDomains: string[]
+    threadIds: string[],
+    replyReceivedAts: Date[]
   ): Promise<number> {
-    // Update customer emails in this thread that don't have a firstReplyAt yet
-    // and were received before this reply
-    // Uses is_customer_email column set during ingestion
-    // Convert Date to ISO string for SQL compatibility
-    const replyReceivedAtStr = replyReceivedAt.toISOString();
+    if (threadIds.length === 0 || threadIds.length !== replyReceivedAts.length) {
+      return 0;
+    }
 
-    // Update first_reply_at for customer emails in the thread that haven't been replied to yet
+    // Build a VALUES list of (thread_id, reply_at) pairs. The casts on the row
+    // fragments establish the column types for the VALUES-derived table.
+    const pairs = threadIds.map(
+      (threadId, i) => sql`(${threadId}::uuid, ${replyReceivedAts[i].toISOString()}::timestamp)`
+    );
+    const valuesList = sql.join(pairs, sql`, `);
+
     const result = await this.db.execute(sql`
-      UPDATE emails
+      UPDATE emails e
       SET
-        first_reply_email_id = ${replyEmailId},
-        first_reply_at = ${replyReceivedAtStr}::timestamp,
+        first_reply_at = sub.min_reply,
         updated_at = NOW()
-      WHERE tenant_id = ${tenantId}
-        AND thread_id = ${threadId}
-        AND first_reply_at IS NULL
-        AND received_at < ${replyReceivedAtStr}::timestamp
-        AND is_customer_email = true
+      FROM (
+        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
+        FROM emails e2
+        JOIN (VALUES ${valuesList}) AS r(thread_id, reply_at)
+          ON r.thread_id = e2.thread_id
+         AND r.reply_at > e2.received_at
+        WHERE e2.tenant_id = ${tenantId}
+          AND e2.is_customer_email = true
+          AND e2.first_reply_at IS NULL
+        GROUP BY e2.id
+      ) sub
+      WHERE e.id = sub.email_id
     `);
 
     const rowCount = (result as any).rowCount || 0;
@@ -2309,11 +2332,11 @@ export class EmailRepository extends ScopedRepository {
       logger.info(
         {
           tenantId,
-          threadId,
-          replyEmailId,
+          threadCount: new Set(threadIds).size,
+          replyCount: threadIds.length,
           updatedCount: rowCount,
         },
-        'Updated firstReplyAt for customer emails in thread'
+        'Updated firstReplyAt for customer emails'
       );
     }
 

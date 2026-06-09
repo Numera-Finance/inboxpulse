@@ -82,9 +82,12 @@ export class SyncService {
 
     const query = `after:${Math.floor(thirtyDaysAgo.getTime() / 1000)}`;
 
-    let totalProcessed = 0;
-    let totalInserted = 0;
-    let totalSkipped = 0;
+    // Gmail returns messages newest-first. Collect all message IDs across pages,
+    // then process them oldest-first so a customer email is always stored before
+    // the reply that answers it. Otherwise a reply in an earlier (newer) page
+    // would be processed before its thread exists, get dropped, and its
+    // firstReplyAt / time-to-response would be lost.
+    const allMessageIds: string[] = [];
     let pageToken: string | undefined;
 
     do {
@@ -94,22 +97,22 @@ export class SyncService {
         pageToken,
       });
 
-      if (messages.length === 0) break;
-
-      const messageIds = messages.map((m) => m.id!).filter(Boolean);
-      const result = await this.processMessageIds(integration, runId, messageIds);
-
-      totalProcessed += result.processed;
-      totalInserted += result.inserted;
-      totalSkipped += result.skipped;
+      for (const m of messages) {
+        if (m.id) allMessageIds.push(m.id);
+      }
       pageToken = nextPageToken;
-
-      await this.runClient.update(runId, {
-        itemsProcessed: totalProcessed,
-        itemsInserted: totalInserted,
-        itemsSkipped: totalSkipped,
-      });
     } while (pageToken);
+
+    // Reverse newest-first → oldest-first before processing.
+    allMessageIds.reverse();
+
+    const result = await this.processMessageIds(integration, runId, allMessageIds);
+
+    await this.runClient.update(runId, {
+      itemsProcessed: result.processed,
+      itemsInserted: result.inserted,
+      itemsSkipped: result.skipped,
+    });
 
     // Get current history ID for future incremental syncs
     const historyId = await this.gmailService.getCurrentHistoryId(tenantId);

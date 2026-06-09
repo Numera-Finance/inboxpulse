@@ -83,7 +83,6 @@ export class EmailParserService {
         subject: firstMessage.subject,
         firstMessageAt: firstMessage.receivedAt,
         lastMessageAt: lastMessage.receivedAt,
-        messageCount: emails.length,
         metadata: {
           // Store Gmail-specific thread metadata (gmailThreadId is redundant - already in providerThreadId)
         },
@@ -130,6 +129,10 @@ export class EmailParserService {
         rfcMessageId: headers.get('message-id') || undefined,
         references: headers.get('references') || undefined,
         inReplyTo: headers.get('in-reply-to') || undefined,
+        // Headers used to detect automated mail (auto-replies, bulk senders) so
+        // they don't count as a genuine first reply for time-to-response (TAT).
+        autoSubmitted: headers.get('auto-submitted') || undefined,
+        precedence: headers.get('precedence') || undefined,
       },
     };
   }

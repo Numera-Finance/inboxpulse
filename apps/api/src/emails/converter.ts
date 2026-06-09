@@ -17,9 +17,91 @@ export function threadToDb(
     subject: thread.subject,
     firstMessageAt: thread.firstMessageAt,
     lastMessageAt: thread.lastMessageAt,
-    messageCount: thread.messageCount,
     metadata: thread.metadata,
   };
+}
+
+/**
+ * Whether an email's sender is on one of the tenant's own domains.
+ * Single source of truth for tenant-domain matching (used by both reply
+ * detection and isCustomerEmail classification) so the two never drift.
+ */
+export function isFromTenantDomain(fromEmail: string, tenantDomains?: string[] | null): boolean {
+  if (!tenantDomains?.length) {
+    return false;
+  }
+  const from = fromEmail.toLowerCase();
+  return tenantDomains.some((d) => from.endsWith(`@${d.toLowerCase()}`));
+}
+
+/**
+ * A "reply" is an outbound message in a thread: it carries Gmail's SENT label
+ * OR its sender is on a tenant domain. Replies are never stored or analyzed —
+ * only their timestamp is used to populate firstReplyAt (time-to-response).
+ *
+ * @param tenantDomains - Tenant's email domains (e.g., ['acme.com']). When not
+ *   configured, only the SENT label can classify an email as a reply.
+ */
+export function isReplyEmail(email: Email, tenantDomains?: string[] | null): boolean {
+  const labels = email.labels || [];
+  if (labels.includes('SENT')) {
+    return true;
+  }
+  return isFromTenantDomain(email.from.email, tenantDomains);
+}
+
+// Local-parts that indicate an unattended/automated mailbox.
+const NO_REPLY_LOCAL_PARTS = new Set([
+  'noreply',
+  'no-reply',
+  'no.reply',
+  'donotreply',
+  'do-not-reply',
+  'do_not_reply',
+]);
+
+/**
+ * Whether an email looks machine-generated (auto-reply, vacation responder,
+ * bulk/automated sender). Such messages must NOT count as a genuine first reply
+ * for time-to-response, or an instant auto-acknowledgement would make TAT ≈ 0.
+ */
+export function isAutoSubmitted(email: Email): boolean {
+  const md = email.metadata || {};
+
+  // RFC 3834: Auto-Submitted is anything other than "no" (auto-replied, auto-generated).
+  const autoSubmitted = typeof md.autoSubmitted === 'string' ? md.autoSubmitted.toLowerCase().trim() : '';
+  if (autoSubmitted && autoSubmitted !== 'no') {
+    return true;
+  }
+
+  // Precedence: bulk/auto_reply/junk are conventional markers for automated mail.
+  const precedence = typeof md.precedence === 'string' ? md.precedence.toLowerCase().trim() : '';
+  if (precedence === 'bulk' || precedence === 'auto_reply' || precedence === 'junk') {
+    return true;
+  }
+
+  // noreply@-style senders are unattended mailboxes.
+  const localPart = email.from.email.toLowerCase().split('@')[0];
+  return NO_REPLY_LOCAL_PARTS.has(localPart);
+}
+
+/**
+ * Whether a reply is actually addressed to someone outside the tenant (i.e. the
+ * customer), rather than an internal-only message (teammate note, forward to a
+ * colleague). At least one to/cc recipient must be off the tenant's domains.
+ */
+export function hasExternalRecipient(email: Email, tenantDomains?: string[] | null): boolean {
+  const recipients = [...(email.tos || []), ...(email.ccs || [])];
+  return recipients.some((r) => r.email && !isFromTenantDomain(r.email, tenantDomains));
+}
+
+/**
+ * Whether an outbound/reply email should count as the customer-facing first
+ * reply for time-to-response: it must be a real human response addressed to the
+ * customer, not automated mail and not an internal-only message.
+ */
+export function isCountableReply(email: Email, tenantDomains?: string[] | null): boolean {
+  return !isAutoSubmitted(email) && hasExternalRecipient(email, tenantDomains);
 }
 
 /**
@@ -36,7 +118,7 @@ export function emailToDb(
   // Determine if this is a customer email (not from any tenant domain)
   // Used for TAT metrics - only customer emails are tracked
   const isCustomerEmail = tenantDomains?.length
-    ? !tenantDomains.some(d => email.from.email.toLowerCase().endsWith(`@${d.toLowerCase()}`))
+    ? !isFromTenantDomain(email.from.email, tenantDomains)
     : null; // null if tenant domains not configured
 
   // Extract RFC 2822 Message-ID from metadata (set by email parser)
