@@ -6,7 +6,7 @@
  */
 
 /** Default primary LLM model used for analysis, summarization, and classification. */
-export const DEFAULT_LLM_MODEL = 'gemini-3-flash-preview';
+export const DEFAULT_LLM_MODEL = 'gemini-2.5-flash';
 
 /** Default fallback LLM model used when the primary model fails. */
 export const DEFAULT_LLM_FALLBACK_MODEL = 'gemini-2.5-flash';
