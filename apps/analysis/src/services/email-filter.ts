@@ -514,7 +514,9 @@ export class EmailFilterService {
     try {
       const response = await this.callHuggingFaceWithRetry<HFClassificationResponse[][]>(
         EmailFilterService.HF_SPAM_MODEL,
-        { inputs: content },
+        // truncation: token-dense content (URLs etc.) can exceed the model's
+        // 512-token limit within our char budget, returning HTTP 400
+        { inputs: content, parameters: { truncation: true } },
         hfToken
       );
 
@@ -571,7 +573,7 @@ export class EmailFilterService {
         EmailFilterService.HF_ZERO_SHOT_MODEL,
         {
           inputs: content,
-          parameters: { candidate_labels: candidateLabels },
+          parameters: { candidate_labels: candidateLabels, truncation: true },
         },
         hfToken
       );
