@@ -70,6 +70,10 @@ psql $DATABASE_URL -f apps/api/sql/migrations/007_emails_signals_gin_index.sql
 
 # Bake "(Auto)" suffix into auto-created customer names so it's searchable / exportable
 psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
+
+# Create analysis_cache table (LLM analysis result cache used by crm-analysis;
+# the Drizzle schema existed but the table was never created in production)
+psql $DATABASE_URL -f apps/api/sql/migrations/011_analysis_cache.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
