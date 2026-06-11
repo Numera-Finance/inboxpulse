@@ -194,7 +194,9 @@ export class EmailFilterService {
   private static readonly ICS_PATTERN = /BEGIN:VCALENDAR/i;
 
   // HuggingFace API settings
-  private static readonly HF_API_URL = 'https://api-inference.huggingface.co/models';
+  // NOTE: the legacy api-inference.huggingface.co endpoint was decommissioned
+  // (DNS no longer resolves); the Inference Providers router is the replacement.
+  private static readonly HF_API_URL = 'https://router.huggingface.co/hf-inference/models';
   private static readonly HF_SPAM_MODEL = 'mshenoda/roberta-spam'; // Email spam detection
   private static readonly HF_ZERO_SHOT_MODEL = 'facebook/bart-large-mnli';
   private static readonly HF_RETRY_DELAY_MS = 2000;
@@ -563,10 +565,9 @@ export class EmailFilterService {
     const candidateLabels = ['business email', 'marketing email', 'spam', 'transactional notification', 'automated system message'];
 
     try {
-      const response = await this.callHuggingFaceWithRetry<{
-        labels: string[];
-        scores: number[];
-      }>(
+      const response = await this.callHuggingFaceWithRetry<
+        { labels: string[]; scores: number[] } | HFClassificationResponse[]
+      >(
         EmailFilterService.HF_ZERO_SHOT_MODEL,
         {
           inputs: content,
@@ -575,14 +576,26 @@ export class EmailFilterService {
         hfToken
       );
 
-      if (!response || !response.labels || !response.scores) {
-        return null;
+      // Normalize: the legacy serverless API returned {labels, scores}; the
+      // router endpoint returns a flat [{label, score}] array.
+      let topLabel: string | undefined;
+      let topScore = 0;
+      if (Array.isArray(response)) {
+        const top = response.reduce(
+          (a, b) => (a.score > b.score ? a : b),
+          response[0]
+        );
+        topLabel = top?.label;
+        topScore = top?.score ?? 0;
+      } else if (response?.labels && response?.scores) {
+        const maxIndex = response.scores.indexOf(Math.max(...response.scores));
+        topLabel = response.labels[maxIndex];
+        topScore = response.scores[maxIndex];
       }
 
-      // Find highest scoring label
-      const maxIndex = response.scores.indexOf(Math.max(...response.scores));
-      const topLabel = response.labels[maxIndex];
-      const topScore = response.scores[maxIndex];
+      if (!topLabel) {
+        return null;
+      }
 
       // Map labels to categories
       const categoryMap: Record<string, EmailCategory> = {

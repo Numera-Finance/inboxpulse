@@ -27,7 +27,10 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
     {
       id: 'analyze-email',
       name: 'Analyze Email After Insertion',
-      retries: 9, // Retry up to 9 times with exponential backoff
+      // Most analysis failures are deterministic (schema-validation mismatches),
+      // so high retry counts multiply LLM cost without improving success rate.
+      // The Jun 2026 cost spike was amplified by emails burning all 10 attempts.
+      retries: 3, // Retry up to 3 times with exponential backoff
       concurrency: [
         { limit: 5 }, // Max 5 concurrent analyses per container to stay within 512MB
       ],
