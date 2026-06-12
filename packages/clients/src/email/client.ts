@@ -1,6 +1,6 @@
 import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
-import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem } from './types';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker } from './types';
 
 /**
  * Email input type for bulk insert API
@@ -118,6 +118,23 @@ export class EmailClient extends BaseClient {
       });
       throw error;
     }
+  }
+
+  /**
+   * Record first-reply markers (header-only) for outbound/reply messages the
+   * Gmail sync drops at the blacklist stage. The API applies the reply rules and
+   * sets first_reply_at on the answered customer emails. Best-effort (TAT data):
+   * callers should not fail their sync if this throws.
+   */
+  async setFirstReplyMarkers(
+    tenantId: string,
+    integrationId: string,
+    markers: FirstReplyMarker[]
+  ): Promise<{ updatedCount: number }> {
+    return await this.post<{ updatedCount: number }>(
+      '/api/emails/first-reply-markers',
+      { tenantId, integrationId, markers }
+    );
   }
 
   /**

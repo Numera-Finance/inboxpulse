@@ -2291,6 +2291,45 @@ export class EmailRepository extends ScopedRepository {
    * @param threadIds         Internal thread UUIDs, parallel to replyReceivedAts
    * @param replyReceivedAts  Reply timestamps, parallel to threadIds
    */
+  /**
+   * Shared core for the first-reply UPDATEs. Sets first_reply_at on customer
+   * emails to the earliest reply that arrived strictly after them. The caller
+   * supplies the JOIN fragment that relates a `r(…, reply_at)` VALUES table to
+   * `emails e2` (directly by thread_id, or via email_threads by provider id);
+   * everything else — the guards, MIN/GROUP BY, and logging — is identical.
+   */
+  private async runFirstReplyUpdate(
+    tenantId: string,
+    joinFragment: SQL,
+    logContext: Record<string, unknown>,
+    message: string
+  ): Promise<number> {
+    const result = await this.db.execute(sql`
+      UPDATE emails e
+      SET
+        first_reply_at = sub.min_reply,
+        updated_at = NOW()
+      FROM (
+        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
+        FROM emails e2
+        ${joinFragment}
+        WHERE e2.tenant_id = ${tenantId}
+          AND e2.is_customer_email = true
+          AND e2.first_reply_at IS NULL
+        GROUP BY e2.id
+      ) sub
+      WHERE e.id = sub.email_id
+    `);
+
+    const rowCount = (result as any).rowCount || 0;
+
+    if (rowCount > 0) {
+      logger.info({ tenantId, ...logContext, updatedCount: rowCount }, message);
+    }
+
+    return rowCount;
+  }
+
   async setFirstReplyForThreads(
     tenantId: string,
     threadIds: string[],
@@ -2306,41 +2345,65 @@ export class EmailRepository extends ScopedRepository {
       (threadId, i) => sql`(${threadId}::uuid, ${replyReceivedAts[i].toISOString()}::timestamp)`
     );
     const valuesList = sql.join(pairs, sql`, `);
+    const joinFragment = sql`
+      JOIN (VALUES ${valuesList}) AS r(thread_id, reply_at)
+        ON r.thread_id = e2.thread_id
+       AND r.reply_at > e2.received_at`;
 
-    const result = await this.db.execute(sql`
-      UPDATE emails e
-      SET
-        first_reply_at = sub.min_reply,
-        updated_at = NOW()
-      FROM (
-        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
-        FROM emails e2
-        JOIN (VALUES ${valuesList}) AS r(thread_id, reply_at)
-          ON r.thread_id = e2.thread_id
-         AND r.reply_at > e2.received_at
-        WHERE e2.tenant_id = ${tenantId}
-          AND e2.is_customer_email = true
-          AND e2.first_reply_at IS NULL
-        GROUP BY e2.id
-      ) sub
-      WHERE e.id = sub.email_id
-    `);
+    return this.runFirstReplyUpdate(
+      tenantId,
+      joinFragment,
+      { threadCount: new Set(threadIds).size, replyCount: threadIds.length },
+      'Updated firstReplyAt for customer emails'
+    );
+  }
 
-    const rowCount = (result as any).rowCount || 0;
-
-    if (rowCount > 0) {
-      logger.info(
-        {
-          tenantId,
-          threadCount: new Set(threadIds).size,
-          replyCount: threadIds.length,
-          updatedCount: rowCount,
-        },
-        'Updated firstReplyAt for customer emails'
-      );
+  /**
+   * Set first_reply_at on customer emails from a batch of (provider-thread,
+   * reply-timestamp) pairs in a single set-based UPDATE.
+   *
+   * Same semantics as {@link setFirstReplyForThreads} (earliest reply strictly
+   * after each customer email; never overwrites an existing value), but keyed by
+   * the provider's thread id so callers that only have header metadata — e.g.
+   * blacklisted tenant-domain replies the Gmail sync never stores — don't need to
+   * resolve internal thread UUIDs first. Threads are scoped by (tenant,
+   * integration) to match the email_threads uniqueness.
+   *
+   * @param integrationId       Integration the threads belong to
+   * @param providerThreadIds   Provider thread ids, parallel to replyReceivedAts
+   * @param replyReceivedAts    Reply timestamps, parallel to providerThreadIds
+   */
+  async setFirstReplyForProviderThreads(
+    tenantId: string,
+    integrationId: string,
+    providerThreadIds: string[],
+    replyReceivedAts: Date[]
+  ): Promise<number> {
+    if (providerThreadIds.length === 0 || providerThreadIds.length !== replyReceivedAts.length) {
+      return 0;
     }
 
-    return rowCount;
+    // Build a VALUES list of (provider_thread_id, reply_at) pairs. The casts on
+    // the row fragments establish the column types for the VALUES-derived table.
+    const pairs = providerThreadIds.map(
+      (providerThreadId, i) => sql`(${providerThreadId}::text, ${replyReceivedAts[i].toISOString()}::timestamp)`
+    );
+    const valuesList = sql.join(pairs, sql`, `);
+    const joinFragment = sql`
+      JOIN email_threads et
+        ON et.id = e2.thread_id
+       AND et.tenant_id = ${tenantId}
+       AND et.integration_id = ${integrationId}
+      JOIN (VALUES ${valuesList}) AS r(provider_thread_id, reply_at)
+        ON r.provider_thread_id = et.provider_thread_id
+       AND r.reply_at > e2.received_at`;
+
+    return this.runFirstReplyUpdate(
+      tenantId,
+      joinFragment,
+      { integrationId, threadCount: new Set(providerThreadIds).size, replyCount: providerThreadIds.length },
+      'Updated firstReplyAt for customer emails (from reply markers)'
+    );
   }
 
   /**

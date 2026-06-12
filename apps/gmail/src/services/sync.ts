@@ -1,5 +1,6 @@
-import { IntegrationClient, RunClient, EmailClient, Integration } from '@crm/clients';
-import { GmailService } from './gmail';
+import { IntegrationClient, RunClient, EmailClient, Integration, type FirstReplyMarker } from '@crm/clients';
+import { withRetry } from '@crm/shared';
+import { GmailService, type MessageHeaderMeta } from './gmail';
 import { EmailParserService } from './email-parser';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
@@ -172,6 +173,11 @@ export class SyncService {
     let totalSkipped = 0;
     let totalBlacklisted = 0;
 
+    // Reply markers for blacklisted tenant-domain (outbound) messages. These are
+    // never fetched or stored; we forward header metadata so the API can set
+    // first_reply_at (time-to-response) on the customer email they answer.
+    const replyMarkers: FirstReplyMarker[] = [];
+
     for (let i = 0; i < messageIds.length; i += CHUNK_SIZE) {
       const chunkMessageIds = messageIds.slice(i, i + CHUNK_SIZE);
       let filteredMessageIds = chunkMessageIds;
@@ -198,17 +204,27 @@ export class SyncService {
             const fromEmail = this.extractEmailFromHeader(header.from);
             if (fromEmail) {
               const normalizedFrom = fromEmail.toLowerCase();
-              // Check email blacklist
-              if (emailBlacklist.has(normalizedFrom)) {
-                totalBlacklisted++;
-                logger.debug({ integrationId, from: normalizedFrom }, 'Skipping blacklisted sender (email)');
-                continue;
-              }
-              // Check domain blacklist
               const domain = this.extractDomainFromEmail(normalizedFrom);
-              if (domain && domainBlacklist.has(domain)) {
+              const emailBlacklisted = emailBlacklist.has(normalizedFrom);
+              const domainBlacklisted = !!domain && domainBlacklist.has(domain);
+
+              if (emailBlacklisted || domainBlacklisted) {
                 totalBlacklisted++;
-                logger.debug({ integrationId, from: normalizedFrom, domain }, 'Skipping blacklisted sender (domain)');
+                logger.debug(
+                  { integrationId, from: normalizedFrom, domain, rule: domainBlacklisted ? 'domain' : 'email' },
+                  'Skipping blacklisted sender'
+                );
+                // Senders on a tenant (domain-blacklisted) domain are outbound /
+                // reply messages. We never store them, but their header metadata
+                // lets the API set first_reply_at on the customer email they
+                // answer — even when the address ALSO matched the email blacklist.
+                // The API applies the authoritative reply rules.
+                if (domainBlacklisted) {
+                  const marker = this.buildReplyMarker(header, normalizedFrom);
+                  if (marker) {
+                    replyMarkers.push(marker);
+                  }
+                }
                 continue;
               }
             }
@@ -286,7 +302,64 @@ export class SyncService {
       logger.info({ integrationId, totalBlacklisted }, 'Total messages skipped due to blacklist');
     }
 
+    // Forward first-reply markers for the outbound (tenant-domain) messages we
+    // dropped above. Best-effort: TAT data is non-critical, so a failure here
+    // must never fail the sync.
+    if (replyMarkers.length > 0) {
+      try {
+        // Retry transient failures (network / 5xx / 429) so a single blip doesn't
+        // drop the whole batch of reply timestamps — there's no Pub/Sub redelivery
+        // for markers alone.
+        const { updatedCount } = await withRetry(
+          () => this.emailClient.setFirstReplyMarkers(tenantId, integrationId, replyMarkers),
+          {
+            maxRetries: 3,
+            shouldRetry: (error: { status?: number }) => {
+              const status = error?.status;
+              return status === undefined || status >= 500 || status === 429;
+            },
+          }
+        );
+        logger.info(
+          { integrationId, markerCount: replyMarkers.length, updatedCount },
+          'Forwarded first-reply markers'
+        );
+      } catch (error) {
+        logger.warn(
+          { integrationId, markerCount: replyMarkers.length, error: error instanceof Error ? error.message : 'Unknown error' },
+          'Failed to forward first-reply markers'
+        );
+      }
+    }
+
     return { processed: totalProcessed, inserted: totalInserted, skipped: totalSkipped };
+  }
+
+  /**
+   * Build a first-reply marker from a blacklisted message's header metadata.
+   * Returns null when the message lacks the thread id / timestamp needed to
+   * attribute the reply. Recipient/automation classification is left to the API.
+   */
+  private buildReplyMarker(header: MessageHeaderMeta, fromEmail: string): FirstReplyMarker | null {
+    if (!header.threadId || !header.internalDate) {
+      return null;
+    }
+    const epochMs = Number(header.internalDate);
+    if (!Number.isFinite(epochMs)) {
+      return null;
+    }
+    return {
+      providerThreadId: header.threadId,
+      fromEmail,
+      // Reuse the email parser's address-list parsing (handles "Name <a@b>, c@d"
+      // and bracket-less display names) instead of re-implementing it.
+      tos: this.emailParser.parseAddressList(header.to ?? ''),
+      ccs: this.emailParser.parseAddressList(header.cc ?? ''),
+      labels: [],
+      receivedAt: new Date(epochMs).toISOString(),
+      autoSubmitted: header.autoSubmitted,
+      precedence: header.precedence,
+    };
   }
 
   /**

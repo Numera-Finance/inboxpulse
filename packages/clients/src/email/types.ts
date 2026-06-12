@@ -86,3 +86,43 @@ export const analyzedEmailExportItemSchema = z.object({
 });
 
 export type AnalyzedEmailExportItem = z.infer<typeof analyzedEmailExportItemSchema>;
+
+/**
+ * First-reply marker — a header-only signal that the company replied in a thread.
+ *
+ * Emitted by the Gmail sync for outbound/reply messages it drops at the
+ * domain-blacklist stage (tenant-domain senders are never stored or analyzed).
+ * We forward just enough metadata for the API to apply the same reply rules as
+ * the full-email path (isReplyEmail + isCountableReply) and set first_reply_at
+ * on the customer email being answered — without ever fetching the body.
+ */
+export const firstReplyMarkerSchema = z.object({
+  /** Provider's thread id (Gmail threadId) = email_threads.provider_thread_id */
+  providerThreadId: z.string().min(1),
+  /** Reply sender address (expected to be on a tenant domain) */
+  fromEmail: z.string().min(1),
+  /** Recipients — used to require an external (customer) recipient */
+  tos: z.array(z.object({ email: z.string(), name: z.string().optional() })).default([]),
+  ccs: z.array(z.object({ email: z.string(), name: z.string().optional() })).default([]),
+  /** Gmail labels (e.g. SENT) */
+  labels: z.array(z.string()).default([]),
+  /** Reply timestamp (Gmail internalDate), ISO string */
+  receivedAt: z.string().min(1),
+  /** RFC 3834 Auto-Submitted header value, if present (filters auto-replies) */
+  autoSubmitted: z.string().nullable().optional(),
+  /** Precedence header value, if present (filters bulk/auto mail) */
+  precedence: z.string().nullable().optional(),
+});
+
+export type FirstReplyMarker = z.infer<typeof firstReplyMarkerSchema>;
+
+/**
+ * Request body for POST /api/internal/emails/first-reply-markers
+ */
+export const firstReplyMarkersRequestSchema = z.object({
+  tenantId: z.string().uuid(),
+  integrationId: z.string().uuid(),
+  markers: z.array(firstReplyMarkerSchema).default([]),
+});
+
+export type FirstReplyMarkersRequest = z.infer<typeof firstReplyMarkersRequestSchema>;

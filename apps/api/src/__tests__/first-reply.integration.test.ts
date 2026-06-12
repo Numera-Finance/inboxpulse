@@ -26,6 +26,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { eq } from 'drizzle-orm';
 import type { Email, EmailCollection } from '@crm/shared';
+import type { FirstReplyMarker } from '@crm/clients';
 
 // Neutralize the Inngest analysis trigger. The service dynamically imports
 // '../inngest/client'; this mock resolves to the same module id.
@@ -292,5 +293,98 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
     const rows = await storedEmails();
     expect(rows).toHaveLength(2); // mitigation 3 — sent email stored, not dropped
     expect(rows.every((r) => r.firstReplyAt === null)).toBe(true);
+  });
+
+  // ── header-only marker path (blacklisted tenant-domain replies) ─────────────
+  // These replies are dropped by the Gmail blacklist before being fetched, so
+  // the sync forwards only header metadata. applyFirstReplyMarkers must set
+  // first_reply_at without ever creating an email row.
+  describe('first-reply markers', () => {
+    const mkMarker = (
+      over: Partial<FirstReplyMarker> & { receivedAt: string }
+    ): FirstReplyMarker => ({
+      providerThreadId: THREAD,
+      fromEmail: 'agent@tenant.com',
+      tos: [{ email: 'customer@acme.com' }],
+      ccs: [],
+      labels: [],
+      autoSubmitted: null,
+      precedence: null,
+      ...over,
+    });
+
+    const applyMarkers = (markers: FirstReplyMarker[]) =>
+      service.applyFirstReplyMarkers(TENANT_ID, INTEGRATION_ID, markers);
+
+    it('sets first_reply_at on the answered customer email and stores no new row', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+
+      const res = await applyMarkers([mkMarker({ receivedAt: '2026-01-01T11:00:00Z' })]);
+
+      expect(res.updatedCount).toBe(1);
+      const rows = await storedEmails();
+      expect(rows).toHaveLength(1); // marker never creates a row
+      expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z');
+    });
+
+    it('ignores an internal-only marker (no external recipient)', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+
+      const res = await applyMarkers([
+        mkMarker({ tos: [{ email: 'colleague@tenant.com' }], receivedAt: '2026-01-01T10:00:00Z' }),
+      ]);
+
+      expect(res.updatedCount).toBe(0);
+      expect((await storedEmails())[0].firstReplyAt).toBeNull();
+    });
+
+    it('ignores an auto-submitted marker', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+
+      const res = await applyMarkers([
+        mkMarker({ autoSubmitted: 'auto-replied', receivedAt: '2026-01-01T09:05:00Z' }),
+      ]);
+
+      expect(res.updatedCount).toBe(0);
+      expect((await storedEmails())[0].firstReplyAt).toBeNull();
+    });
+
+    it('is a no-op for a thread that does not exist', async () => {
+      const res = await applyMarkers([
+        mkMarker({ providerThreadId: 'no-such-thread', receivedAt: '2026-01-01T11:00:00Z' }),
+      ]);
+
+      expect(res.updatedCount).toBe(0);
+      expect(await storedEmails()).toHaveLength(0);
+    });
+
+    it('does not overwrite an existing first_reply_at', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+
+      await applyMarkers([mkMarker({ receivedAt: '2026-01-01T11:00:00Z' })]);
+      const res = await applyMarkers([mkMarker({ receivedAt: '2026-01-01T10:00:00Z' })]);
+
+      expect(res.updatedCount).toBe(0);
+      expect((await storedEmails())[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z');
+    });
+
+    it('ignores a marker timestamped before the customer email (reply must be after)', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+
+      const res = await applyMarkers([mkMarker({ receivedAt: '2026-01-01T08:00:00Z' })]);
+
+      expect(res.updatedCount).toBe(0);
+      expect((await storedEmails())[0].firstReplyAt).toBeNull();
+    });
+
+    it('disabled when the tenant has no domains configured', async () => {
+      tenantDomains = null;
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+      tenantDomains = null; // applyFirstReplyMarkers re-reads tenant domains
+
+      const res = await applyMarkers([mkMarker({ receivedAt: '2026-01-01T11:00:00Z' })]);
+
+      expect(res.updatedCount).toBe(0);
+    });
   });
 });

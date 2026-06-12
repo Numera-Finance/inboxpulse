@@ -8,7 +8,7 @@ import { dbEmailToEmail } from './converter';
 import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
 import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError } from '@crm/shared';
-import { analyzedEmailSearchRequestSchema } from '@crm/clients';
+import { analyzedEmailSearchRequestSchema, firstReplyMarkersRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 import { handleGetRequest, handleGetRequestWithParams, handleApiRequest } from '../utils/api-handler';
 
@@ -95,6 +95,44 @@ app.post('/bulk-with-threads', async (c) => {
       );
     }
   }
+
+  return c.json(result);
+});
+
+/**
+ * Record first-reply markers (header-only) for outbound/reply messages the Gmail
+ * sync drops at the blacklist stage. Sets first_reply_at on the answered customer
+ * emails. No email rows are created. Best-effort: the caller (sync) does not fail
+ * if this errors, but invalid bodies still return 4xx.
+ */
+app.post('/first-reply-markers', async (c) => {
+  const body = await c.req.json();
+
+  const parsed = firstReplyMarkersRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new ValidationError(
+      'Invalid first-reply markers request',
+      { issues: parsed.error.issues },
+      parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message, code: i.code }))
+    );
+  }
+
+  const emailService = container.resolve(EmailService);
+  const result = await emailService.applyFirstReplyMarkers(
+    parsed.data.tenantId,
+    parsed.data.integrationId,
+    parsed.data.markers
+  );
+
+  logger.info(
+    {
+      tenantId: parsed.data.tenantId,
+      integrationId: parsed.data.integrationId,
+      markerCount: parsed.data.markers.length,
+      updatedCount: result.updatedCount,
+    },
+    'Applied first-reply markers'
+  );
 
   return c.json(result);
 });

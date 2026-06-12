@@ -7,7 +7,7 @@ import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
 import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
-import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem } from '@crm/clients';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
 import { emails, emailThreads } from './schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
@@ -24,6 +24,75 @@ export class EmailService {
     @inject(ContactRepository) private contactRepo: ContactRepository,
     @inject('Database') private db: Database
   ) {}
+
+  /**
+   * Apply header-only first-reply markers from the Gmail sync.
+   *
+   * Outbound/reply messages from tenant domains are dropped by the Gmail
+   * blacklist before they're ever fetched or stored. To still capture
+   * time-to-response, the sync forwards lightweight markers (thread + timestamp +
+   * recipients) which we run through the SAME reply rules as the full-email path
+   * (isReplyEmail + isCountableReply) and use to set first_reply_at on the
+   * customer email each reply answers. Reply messages are never stored.
+   */
+  async applyFirstReplyMarkers(
+    tenantId: string,
+    integrationId: string,
+    markers: FirstReplyMarker[]
+  ): Promise<{ updatedCount: number }> {
+    if (!markers.length) {
+      return { updatedCount: 0 };
+    }
+
+    const tenant = await this.tenantRepo.findById(tenantId);
+    const tenantDomains = tenant?.domains?.length ? tenant.domains : null;
+
+    // Without configured domains we can't tell a company reply from customer
+    // mail, so first-reply attribution is disabled (mirrors the bulk-insert path).
+    if (!tenantDomains) {
+      logger.warn(
+        { tenantId, integrationId, markerCount: markers.length },
+        'No tenant domains configured — first-reply markers ignored'
+      );
+      return { updatedCount: 0 };
+    }
+
+    const providerThreadIds: string[] = [];
+    const replyReceivedAts: Date[] = [];
+    for (const marker of markers) {
+      // Reuse the exact reply classification from the full-email path so the two
+      // never diverge. Auto-submitted / internal-only replies are filtered out.
+      const classifiable = {
+        from: { email: marker.fromEmail },
+        tos: marker.tos,
+        ccs: marker.ccs,
+        labels: marker.labels,
+        metadata: { autoSubmitted: marker.autoSubmitted, precedence: marker.precedence },
+      };
+      if (!isReplyEmail(classifiable, tenantDomains) || !isCountableReply(classifiable, tenantDomains)) {
+        continue;
+      }
+      const receivedAt = new Date(marker.receivedAt);
+      if (Number.isNaN(receivedAt.getTime())) {
+        continue;
+      }
+      providerThreadIds.push(marker.providerThreadId);
+      replyReceivedAts.push(receivedAt);
+    }
+
+    if (!providerThreadIds.length) {
+      return { updatedCount: 0 };
+    }
+
+    const updatedCount = await this.emailRepo.setFirstReplyForProviderThreads(
+      tenantId,
+      integrationId,
+      providerThreadIds,
+      replyReceivedAts
+    );
+
+    return { updatedCount };
+  }
 
   /**
    * Bulk insert emails with threads

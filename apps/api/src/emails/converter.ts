@@ -22,6 +22,21 @@ export function threadToDb(
 }
 
 /**
+ * Minimal shape needed to classify a message as a (countable) reply. Both the
+ * full `Email` (incoming sync) and a lightweight header-only first-reply marker
+ * (blacklisted tenant-domain replies) satisfy this, so the classification rules
+ * below have a single implementation regardless of how much of the message we
+ * actually fetched.
+ */
+export interface ReplyClassifiableEmail {
+  from: { email: string };
+  tos?: ReadonlyArray<{ email: string }>;
+  ccs?: ReadonlyArray<{ email: string }>;
+  labels?: string[];
+  metadata?: Record<string, unknown> | null;
+}
+
+/**
  * Whether an email's sender is on one of the tenant's own domains.
  * Single source of truth for tenant-domain matching (used by both reply
  * detection and isCustomerEmail classification) so the two never drift.
@@ -42,7 +57,7 @@ export function isFromTenantDomain(fromEmail: string, tenantDomains?: string[] |
  * @param tenantDomains - Tenant's email domains (e.g., ['acme.com']). When not
  *   configured, only the SENT label can classify an email as a reply.
  */
-export function isReplyEmail(email: Email, tenantDomains?: string[] | null): boolean {
+export function isReplyEmail(email: ReplyClassifiableEmail, tenantDomains?: string[] | null): boolean {
   const labels = email.labels || [];
   if (labels.includes('SENT')) {
     return true;
@@ -65,7 +80,7 @@ const NO_REPLY_LOCAL_PARTS = new Set([
  * bulk/automated sender). Such messages must NOT count as a genuine first reply
  * for time-to-response, or an instant auto-acknowledgement would make TAT ≈ 0.
  */
-export function isAutoSubmitted(email: Email): boolean {
+export function isAutoSubmitted(email: ReplyClassifiableEmail): boolean {
   const md = email.metadata || {};
 
   // RFC 3834: Auto-Submitted is anything other than "no" (auto-replied, auto-generated).
@@ -90,7 +105,7 @@ export function isAutoSubmitted(email: Email): boolean {
  * customer), rather than an internal-only message (teammate note, forward to a
  * colleague). At least one to/cc recipient must be off the tenant's domains.
  */
-export function hasExternalRecipient(email: Email, tenantDomains?: string[] | null): boolean {
+export function hasExternalRecipient(email: ReplyClassifiableEmail, tenantDomains?: string[] | null): boolean {
   const recipients = [...(email.tos || []), ...(email.ccs || [])];
   return recipients.some((r) => r.email && !isFromTenantDomain(r.email, tenantDomains));
 }
@@ -100,7 +115,7 @@ export function hasExternalRecipient(email: Email, tenantDomains?: string[] | nu
  * reply for time-to-response: it must be a real human response addressed to the
  * customer, not automated mail and not an internal-only message.
  */
-export function isCountableReply(email: Email, tenantDomains?: string[] | null): boolean {
+export function isCountableReply(email: ReplyClassifiableEmail, tenantDomains?: string[] | null): boolean {
   return !isAutoSubmitted(email) && hasExternalRecipient(email, tenantDomains);
 }
 
