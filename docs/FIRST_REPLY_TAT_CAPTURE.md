@@ -44,7 +44,8 @@ mailboxes shows `first_reply_at = NULL` everywhere.)
 ### Resolution (do **not** remove tenant domains from the blacklist)
 
 The blacklist keeps doing its job (no internal mail stored/analyzed, no body fetches).
-Instead, when Phase 1 drops a **domain-blacklisted** sender, it builds a lightweight
+Instead, when Phase 1 drops a sender on a **tenant (domain-blacklisted) domain** — whether
+the domain rule or a specific email-blacklist entry matched — it builds a lightweight
 **first-reply marker** from header metadata it already has and forwards it to the API:
 
 - `threadId` and `internalDate` are **top-level fields** on the Gmail message resource —

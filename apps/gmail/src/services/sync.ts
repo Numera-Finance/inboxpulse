@@ -1,4 +1,5 @@
 import { IntegrationClient, RunClient, EmailClient, Integration, type FirstReplyMarker } from '@crm/clients';
+import { withRetry } from '@crm/shared';
 import { GmailService, type MessageHeaderMeta } from './gmail';
 import { EmailParserService } from './email-parser';
 import { logger } from '../utils/logger';
@@ -203,24 +204,26 @@ export class SyncService {
             const fromEmail = this.extractEmailFromHeader(header.from);
             if (fromEmail) {
               const normalizedFrom = fromEmail.toLowerCase();
-              // Check email blacklist
-              if (emailBlacklist.has(normalizedFrom)) {
-                totalBlacklisted++;
-                logger.debug({ integrationId, from: normalizedFrom }, 'Skipping blacklisted sender (email)');
-                continue;
-              }
-              // Check domain blacklist
               const domain = this.extractDomainFromEmail(normalizedFrom);
-              if (domain && domainBlacklist.has(domain)) {
+              const emailBlacklisted = emailBlacklist.has(normalizedFrom);
+              const domainBlacklisted = !!domain && domainBlacklist.has(domain);
+
+              if (emailBlacklisted || domainBlacklisted) {
                 totalBlacklisted++;
-                logger.debug({ integrationId, from: normalizedFrom, domain }, 'Skipping blacklisted sender (domain)');
-                // Domain-blacklisted senders are the tenant's own domains, i.e.
-                // outbound/reply messages. We don't store them, but their header
-                // metadata lets the API set first_reply_at on the customer email
-                // they answer. The API applies the authoritative reply rules.
-                const marker = this.buildReplyMarker(header, normalizedFrom);
-                if (marker) {
-                  replyMarkers.push(marker);
+                logger.debug(
+                  { integrationId, from: normalizedFrom, domain, rule: domainBlacklisted ? 'domain' : 'email' },
+                  'Skipping blacklisted sender'
+                );
+                // Senders on a tenant (domain-blacklisted) domain are outbound /
+                // reply messages. We never store them, but their header metadata
+                // lets the API set first_reply_at on the customer email they
+                // answer — even when the address ALSO matched the email blacklist.
+                // The API applies the authoritative reply rules.
+                if (domainBlacklisted) {
+                  const marker = this.buildReplyMarker(header, normalizedFrom);
+                  if (marker) {
+                    replyMarkers.push(marker);
+                  }
                 }
                 continue;
               }
@@ -304,10 +307,18 @@ export class SyncService {
     // must never fail the sync.
     if (replyMarkers.length > 0) {
       try {
-        const { updatedCount } = await this.emailClient.setFirstReplyMarkers(
-          tenantId,
-          integrationId,
-          replyMarkers
+        // Retry transient failures (network / 5xx / 429) so a single blip doesn't
+        // drop the whole batch of reply timestamps — there's no Pub/Sub redelivery
+        // for markers alone.
+        const { updatedCount } = await withRetry(
+          () => this.emailClient.setFirstReplyMarkers(tenantId, integrationId, replyMarkers),
+          {
+            maxRetries: 3,
+            shouldRetry: (error: { status?: number }) => {
+              const status = error?.status;
+              return status === undefined || status >= 500 || status === 429;
+            },
+          }
         );
         logger.info(
           { integrationId, markerCount: replyMarkers.length, updatedCount },
@@ -340,26 +351,15 @@ export class SyncService {
     return {
       providerThreadId: header.threadId,
       fromEmail,
-      tos: this.parseRecipientHeader(header.to),
-      ccs: this.parseRecipientHeader(header.cc),
+      // Reuse the email parser's address-list parsing (handles "Name <a@b>, c@d"
+      // and bracket-less display names) instead of re-implementing it.
+      tos: this.emailParser.parseAddressList(header.to ?? ''),
+      ccs: this.emailParser.parseAddressList(header.cc ?? ''),
       labels: [],
       receivedAt: new Date(epochMs).toISOString(),
       autoSubmitted: header.autoSubmitted,
       precedence: header.precedence,
     };
-  }
-
-  /**
-   * Parse a To/Cc header into recipient addresses. Handles comma-separated
-   * "Name <a@b.com>, c@d.com" lists; entries without an address are skipped.
-   */
-  private parseRecipientHeader(value: string | null): Array<{ email: string }> {
-    if (!value) return [];
-    return value
-      .split(',')
-      .map((part) => this.extractEmailFromHeader(part))
-      .filter((email): email is string => !!email)
-      .map((email) => ({ email }));
   }
 
   /**

@@ -67,7 +67,7 @@ export class EmailService {
         tos: marker.tos,
         ccs: marker.ccs,
         labels: marker.labels,
-        metadata: { autoSubmitted: marker.autoSubmitted ?? undefined, precedence: marker.precedence ?? undefined },
+        metadata: { autoSubmitted: marker.autoSubmitted, precedence: marker.precedence },
       };
       if (!isReplyEmail(classifiable, tenantDomains) || !isCountableReply(classifiable, tenantDomains)) {
         continue;

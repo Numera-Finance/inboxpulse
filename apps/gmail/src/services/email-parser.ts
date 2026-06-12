@@ -207,7 +207,9 @@ export class EmailParserService {
     };
   }
 
-  private parseAddress(address: string): { email: string; name?: string } {
+  // Public so other services (e.g. the Gmail sync's first-reply markers) can
+  // reuse the same address parsing instead of re-implementing it.
+  parseAddress(address: string): { email: string; name?: string } {
     // Format can be: "Name <email@example.com>" or just "email@example.com"
     const match = address.match(/^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/);
 
@@ -220,7 +222,7 @@ export class EmailParserService {
     return { email: address.trim() };
   }
 
-  private parseAddressList(addresses: string): Array<{ email: string; name?: string }> {
+  parseAddressList(addresses: string): Array<{ email: string; name?: string }> {
     if (!addresses) return [];
 
     // Split by comma, but not commas within quotes

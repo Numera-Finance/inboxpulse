@@ -2291,6 +2291,45 @@ export class EmailRepository extends ScopedRepository {
    * @param threadIds         Internal thread UUIDs, parallel to replyReceivedAts
    * @param replyReceivedAts  Reply timestamps, parallel to threadIds
    */
+  /**
+   * Shared core for the first-reply UPDATEs. Sets first_reply_at on customer
+   * emails to the earliest reply that arrived strictly after them. The caller
+   * supplies the JOIN fragment that relates a `r(…, reply_at)` VALUES table to
+   * `emails e2` (directly by thread_id, or via email_threads by provider id);
+   * everything else — the guards, MIN/GROUP BY, and logging — is identical.
+   */
+  private async runFirstReplyUpdate(
+    tenantId: string,
+    joinFragment: SQL,
+    logContext: Record<string, unknown>,
+    message: string
+  ): Promise<number> {
+    const result = await this.db.execute(sql`
+      UPDATE emails e
+      SET
+        first_reply_at = sub.min_reply,
+        updated_at = NOW()
+      FROM (
+        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
+        FROM emails e2
+        ${joinFragment}
+        WHERE e2.tenant_id = ${tenantId}
+          AND e2.is_customer_email = true
+          AND e2.first_reply_at IS NULL
+        GROUP BY e2.id
+      ) sub
+      WHERE e.id = sub.email_id
+    `);
+
+    const rowCount = (result as any).rowCount || 0;
+
+    if (rowCount > 0) {
+      logger.info({ tenantId, ...logContext, updatedCount: rowCount }, message);
+    }
+
+    return rowCount;
+  }
+
   async setFirstReplyForThreads(
     tenantId: string,
     threadIds: string[],
@@ -2306,41 +2345,17 @@ export class EmailRepository extends ScopedRepository {
       (threadId, i) => sql`(${threadId}::uuid, ${replyReceivedAts[i].toISOString()}::timestamp)`
     );
     const valuesList = sql.join(pairs, sql`, `);
+    const joinFragment = sql`
+      JOIN (VALUES ${valuesList}) AS r(thread_id, reply_at)
+        ON r.thread_id = e2.thread_id
+       AND r.reply_at > e2.received_at`;
 
-    const result = await this.db.execute(sql`
-      UPDATE emails e
-      SET
-        first_reply_at = sub.min_reply,
-        updated_at = NOW()
-      FROM (
-        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
-        FROM emails e2
-        JOIN (VALUES ${valuesList}) AS r(thread_id, reply_at)
-          ON r.thread_id = e2.thread_id
-         AND r.reply_at > e2.received_at
-        WHERE e2.tenant_id = ${tenantId}
-          AND e2.is_customer_email = true
-          AND e2.first_reply_at IS NULL
-        GROUP BY e2.id
-      ) sub
-      WHERE e.id = sub.email_id
-    `);
-
-    const rowCount = (result as any).rowCount || 0;
-
-    if (rowCount > 0) {
-      logger.info(
-        {
-          tenantId,
-          threadCount: new Set(threadIds).size,
-          replyCount: threadIds.length,
-          updatedCount: rowCount,
-        },
-        'Updated firstReplyAt for customer emails'
-      );
-    }
-
-    return rowCount;
+    return this.runFirstReplyUpdate(
+      tenantId,
+      joinFragment,
+      { threadCount: new Set(threadIds).size, replyCount: threadIds.length },
+      'Updated firstReplyAt for customer emails'
+    );
   }
 
   /**
@@ -2374,46 +2389,21 @@ export class EmailRepository extends ScopedRepository {
       (providerThreadId, i) => sql`(${providerThreadId}::text, ${replyReceivedAts[i].toISOString()}::timestamp)`
     );
     const valuesList = sql.join(pairs, sql`, `);
+    const joinFragment = sql`
+      JOIN email_threads et
+        ON et.id = e2.thread_id
+       AND et.tenant_id = ${tenantId}
+       AND et.integration_id = ${integrationId}
+      JOIN (VALUES ${valuesList}) AS r(provider_thread_id, reply_at)
+        ON r.provider_thread_id = et.provider_thread_id
+       AND r.reply_at > e2.received_at`;
 
-    const result = await this.db.execute(sql`
-      UPDATE emails e
-      SET
-        first_reply_at = sub.min_reply,
-        updated_at = NOW()
-      FROM (
-        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
-        FROM (VALUES ${valuesList}) AS r(provider_thread_id, reply_at)
-        JOIN email_threads et
-          ON et.provider_thread_id = r.provider_thread_id
-         AND et.tenant_id = ${tenantId}
-         AND et.integration_id = ${integrationId}
-        JOIN emails e2
-          ON e2.thread_id = et.id
-         AND r.reply_at > e2.received_at
-        WHERE e2.tenant_id = ${tenantId}
-          AND e2.is_customer_email = true
-          AND e2.first_reply_at IS NULL
-        GROUP BY e2.id
-      ) sub
-      WHERE e.id = sub.email_id
-    `);
-
-    const rowCount = (result as any).rowCount || 0;
-
-    if (rowCount > 0) {
-      logger.info(
-        {
-          tenantId,
-          integrationId,
-          threadCount: new Set(providerThreadIds).size,
-          replyCount: providerThreadIds.length,
-          updatedCount: rowCount,
-        },
-        'Updated firstReplyAt for customer emails (from reply markers)'
-      );
-    }
-
-    return rowCount;
+    return this.runFirstReplyUpdate(
+      tenantId,
+      joinFragment,
+      { integrationId, threadCount: new Set(providerThreadIds).size, replyCount: providerThreadIds.length },
+      'Updated firstReplyAt for customer emails (from reply markers)'
+    );
   }
 
   /**
