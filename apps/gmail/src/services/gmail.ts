@@ -10,6 +10,25 @@ interface FetchEmailsOptions {
   labelIds?: string[];
 }
 
+/**
+ * Metadata-only view of a message (no body). Carries the From header for
+ * blacklist filtering plus the fields needed to seed first_reply_at for
+ * blacklisted tenant-domain replies without fetching the full message.
+ */
+export interface MessageHeaderMeta {
+  id: string;
+  from: string | null;
+  historyId: string | null;
+  /** Provider thread id (Gmail threadId) */
+  threadId: string | null;
+  /** Received timestamp, epoch ms as string (Gmail internalDate) */
+  internalDate: string | null;
+  to: string | null;
+  cc: string | null;
+  autoSubmitted: string | null;
+  precedence: string | null;
+}
+
 export class GmailService {
   constructor(private clientFactory: GmailClientFactory) {}
 
@@ -235,19 +254,24 @@ export class GmailService {
 
   /**
    * Batch get message headers only (metadata format - no body content)
-   * Used for filtering before fetching full content
-   * Returns message ID and From header for blacklist filtering
+   * Used for filtering before fetching full content.
+   *
+   * Returns the From header (blacklist filtering) plus the thread id, received
+   * timestamp, and reply-classification headers (To/Cc/Auto-Submitted/Precedence)
+   * so blacklisted tenant-domain replies can still seed first_reply_at without
+   * ever fetching the body. threadId and internalDate are top-level message
+   * fields returned by the metadata format — no extra cost.
    */
   async batchGetMessageHeaders(
     tenantId: string,
     messageIds: string[]
-  ): Promise<Array<{ id: string; from: string | null; historyId: string | null }>> {
+  ): Promise<MessageHeaderMeta[]> {
     if (messageIds.length === 0) {
       return [];
     }
 
     const BATCH_SIZE = 50;
-    const headers: Array<{ id: string; from: string | null; historyId: string | null }> = [];
+    const headers: MessageHeaderMeta[] = [];
 
     logger.info(
       { tenantId, totalMessages: messageIds.length },
@@ -297,17 +321,18 @@ export class GmailService {
   private async executeBatchGetHeaders(
     tenantId: string,
     messageIds: string[]
-  ): Promise<Array<{ id: string; from: string | null; historyId: string | null }>> {
+  ): Promise<MessageHeaderMeta[]> {
     const gmail = await this.clientFactory.getBatchClient(tenantId, 50);
-    const headers: Array<{ id: string; from: string | null; historyId: string | null }> = [];
+    const headers: MessageHeaderMeta[] = [];
 
-    // Request only metadata format with From header
+    // Metadata format (no body) with the headers needed for blacklist filtering
+    // and first-reply classification. threadId/internalDate are top-level fields.
     const requests = messageIds.map((id) =>
       gmail.users.messages.get({
         userId: 'me',
         id,
         format: 'metadata',
-        metadataHeaders: ['From'],
+        metadataHeaders: ['From', 'To', 'Cc', 'Auto-Submitted', 'Precedence'],
       })
     );
 
@@ -318,13 +343,19 @@ export class GmailService {
 
       if (result.status === 'fulfilled') {
         const message = result.value.data;
-        const fromHeader = message.payload?.headers?.find(
-          (h) => h.name?.toLowerCase() === 'from'
-        );
+        const getHeader = (name: string): string | null =>
+          message.payload?.headers?.find((h) => h.name?.toLowerCase() === name)?.value || null;
+
         headers.push({
           id: message.id!,
-          from: fromHeader?.value || null,
+          from: getHeader('from'),
           historyId: message.historyId || null,
+          threadId: message.threadId || null,
+          internalDate: message.internalDate || null,
+          to: getHeader('to'),
+          cc: getHeader('cc'),
+          autoSubmitted: getHeader('auto-submitted'),
+          precedence: getHeader('precedence'),
         });
       } else {
         // Skip messages that can't be fetched (deleted/trashed/etc)

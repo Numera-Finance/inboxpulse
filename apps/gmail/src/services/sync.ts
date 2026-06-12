@@ -1,5 +1,5 @@
-import { IntegrationClient, RunClient, EmailClient, Integration } from '@crm/clients';
-import { GmailService } from './gmail';
+import { IntegrationClient, RunClient, EmailClient, Integration, type FirstReplyMarker } from '@crm/clients';
+import { GmailService, type MessageHeaderMeta } from './gmail';
 import { EmailParserService } from './email-parser';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
@@ -172,6 +172,11 @@ export class SyncService {
     let totalSkipped = 0;
     let totalBlacklisted = 0;
 
+    // Reply markers for blacklisted tenant-domain (outbound) messages. These are
+    // never fetched or stored; we forward header metadata so the API can set
+    // first_reply_at (time-to-response) on the customer email they answer.
+    const replyMarkers: FirstReplyMarker[] = [];
+
     for (let i = 0; i < messageIds.length; i += CHUNK_SIZE) {
       const chunkMessageIds = messageIds.slice(i, i + CHUNK_SIZE);
       let filteredMessageIds = chunkMessageIds;
@@ -209,6 +214,14 @@ export class SyncService {
               if (domain && domainBlacklist.has(domain)) {
                 totalBlacklisted++;
                 logger.debug({ integrationId, from: normalizedFrom, domain }, 'Skipping blacklisted sender (domain)');
+                // Domain-blacklisted senders are the tenant's own domains, i.e.
+                // outbound/reply messages. We don't store them, but their header
+                // metadata lets the API set first_reply_at on the customer email
+                // they answer. The API applies the authoritative reply rules.
+                const marker = this.buildReplyMarker(header, normalizedFrom);
+                if (marker) {
+                  replyMarkers.push(marker);
+                }
                 continue;
               }
             }
@@ -286,7 +299,67 @@ export class SyncService {
       logger.info({ integrationId, totalBlacklisted }, 'Total messages skipped due to blacklist');
     }
 
+    // Forward first-reply markers for the outbound (tenant-domain) messages we
+    // dropped above. Best-effort: TAT data is non-critical, so a failure here
+    // must never fail the sync.
+    if (replyMarkers.length > 0) {
+      try {
+        const { updatedCount } = await this.emailClient.setFirstReplyMarkers(
+          tenantId,
+          integrationId,
+          replyMarkers
+        );
+        logger.info(
+          { integrationId, markerCount: replyMarkers.length, updatedCount },
+          'Forwarded first-reply markers'
+        );
+      } catch (error) {
+        logger.warn(
+          { integrationId, markerCount: replyMarkers.length, error: error instanceof Error ? error.message : 'Unknown error' },
+          'Failed to forward first-reply markers'
+        );
+      }
+    }
+
     return { processed: totalProcessed, inserted: totalInserted, skipped: totalSkipped };
+  }
+
+  /**
+   * Build a first-reply marker from a blacklisted message's header metadata.
+   * Returns null when the message lacks the thread id / timestamp needed to
+   * attribute the reply. Recipient/automation classification is left to the API.
+   */
+  private buildReplyMarker(header: MessageHeaderMeta, fromEmail: string): FirstReplyMarker | null {
+    if (!header.threadId || !header.internalDate) {
+      return null;
+    }
+    const epochMs = Number(header.internalDate);
+    if (!Number.isFinite(epochMs)) {
+      return null;
+    }
+    return {
+      providerThreadId: header.threadId,
+      fromEmail,
+      tos: this.parseRecipientHeader(header.to),
+      ccs: this.parseRecipientHeader(header.cc),
+      labels: [],
+      receivedAt: new Date(epochMs).toISOString(),
+      autoSubmitted: header.autoSubmitted,
+      precedence: header.precedence,
+    };
+  }
+
+  /**
+   * Parse a To/Cc header into recipient addresses. Handles comma-separated
+   * "Name <a@b.com>, c@d.com" lists; entries without an address are skipped.
+   */
+  private parseRecipientHeader(value: string | null): Array<{ email: string }> {
+    if (!value) return [];
+    return value
+      .split(',')
+      .map((part) => this.extractEmailFromHeader(part))
+      .filter((email): email is string => !!email)
+      .map((email) => ({ email }));
   }
 
   /**

@@ -2344,6 +2344,79 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Set first_reply_at on customer emails from a batch of (provider-thread,
+   * reply-timestamp) pairs in a single set-based UPDATE.
+   *
+   * Same semantics as {@link setFirstReplyForThreads} (earliest reply strictly
+   * after each customer email; never overwrites an existing value), but keyed by
+   * the provider's thread id so callers that only have header metadata — e.g.
+   * blacklisted tenant-domain replies the Gmail sync never stores — don't need to
+   * resolve internal thread UUIDs first. Threads are scoped by (tenant,
+   * integration) to match the email_threads uniqueness.
+   *
+   * @param integrationId       Integration the threads belong to
+   * @param providerThreadIds   Provider thread ids, parallel to replyReceivedAts
+   * @param replyReceivedAts    Reply timestamps, parallel to providerThreadIds
+   */
+  async setFirstReplyForProviderThreads(
+    tenantId: string,
+    integrationId: string,
+    providerThreadIds: string[],
+    replyReceivedAts: Date[]
+  ): Promise<number> {
+    if (providerThreadIds.length === 0 || providerThreadIds.length !== replyReceivedAts.length) {
+      return 0;
+    }
+
+    // Build a VALUES list of (provider_thread_id, reply_at) pairs. The casts on
+    // the row fragments establish the column types for the VALUES-derived table.
+    const pairs = providerThreadIds.map(
+      (providerThreadId, i) => sql`(${providerThreadId}::text, ${replyReceivedAts[i].toISOString()}::timestamp)`
+    );
+    const valuesList = sql.join(pairs, sql`, `);
+
+    const result = await this.db.execute(sql`
+      UPDATE emails e
+      SET
+        first_reply_at = sub.min_reply,
+        updated_at = NOW()
+      FROM (
+        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
+        FROM (VALUES ${valuesList}) AS r(provider_thread_id, reply_at)
+        JOIN email_threads et
+          ON et.provider_thread_id = r.provider_thread_id
+         AND et.tenant_id = ${tenantId}
+         AND et.integration_id = ${integrationId}
+        JOIN emails e2
+          ON e2.thread_id = et.id
+         AND r.reply_at > e2.received_at
+        WHERE e2.tenant_id = ${tenantId}
+          AND e2.is_customer_email = true
+          AND e2.first_reply_at IS NULL
+        GROUP BY e2.id
+      ) sub
+      WHERE e.id = sub.email_id
+    `);
+
+    const rowCount = (result as any).rowCount || 0;
+
+    if (rowCount > 0) {
+      logger.info(
+        {
+          tenantId,
+          integrationId,
+          threadCount: new Set(providerThreadIds).size,
+          replyCount: providerThreadIds.length,
+          updatedCount: rowCount,
+        },
+        'Updated firstReplyAt for customer emails (from reply markers)'
+      );
+    }
+
+    return rowCount;
+  }
+
+  /**
    * Reassign all email participants from one customer to another.
    */
   async reassignParticipantCustomer(tenantId: string, sourceCustomerId: string, targetCustomerId: string, tx?: Transaction): Promise<number> {
