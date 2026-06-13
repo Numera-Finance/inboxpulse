@@ -7,6 +7,7 @@ import { getRequestHeader } from '../utils/request-header';
 import { handleApiRequest, handleApiRequestWithStatus, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { UserService } from './service';
 import { TenantRepository } from '../tenants/repository';
+import { logger } from '../utils/logger';
 import {
   createUserRequestSchema,
   updateUserRequestSchema,
@@ -107,16 +108,23 @@ userRoutes.get('/me', async (c) => {
   const service = container.resolve(UserService);
   const tenantRepository = container.resolve(TenantRepository);
 
-  const [user, tenant] = await Promise.all([
-    service.getById(requestHeader, requestHeader.userId),
-    tenantRepository.findById(requestHeader.tenantId),
-  ]);
+  const user = await service.getById(requestHeader, requestHeader.userId);
 
   if (!user) {
     throw new NotFoundError('User', requestHeader.userId);
   }
 
-  const data = { ...user, tenantDomain: tenant?.domain ?? null };
+  // tenantDomain is best-effort enrichment — a failure here (e.g. a tenants
+  // schema/migration mismatch) must not take down the core auth endpoint.
+  let tenantDomain: string | null = null;
+  try {
+    const tenant = await tenantRepository.findById(requestHeader.tenantId);
+    tenantDomain = tenant?.domain ?? null;
+  } catch (error) {
+    logger.error({ error, tenantId: requestHeader.tenantId }, 'Failed to load tenant domain for /me');
+  }
+
+  const data = { ...user, tenantDomain };
 
   return c.json<ApiResponse<typeof data>>({
     success: true,
