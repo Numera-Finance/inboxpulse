@@ -351,35 +351,44 @@ export class CustomerService {
     try {
       logger.info({ id, tenantId: requestHeader.tenantId }, 'Fetching customer by id (scoped)');
       const customer = await this.customerRepository.findByIdScoped(requestHeader, id);
-      const clientCustomer = await toClientCustomer(customer, this.customerRepository);
-      if (!clientCustomer) return undefined;
-
-      // Enrich with email stats for sidebar display (mirrors getCustomerByDomainScoped)
-      const ids = [clientCustomer.id];
-      const [emailCounts, escalationCounts, upsellCounts, churnCounts, positiveCounts, averageTats, lastContactDates] = await Promise.all([
-        this.emailRepository.getCountsByCustomerIdsScoped(requestHeader, ids),
-        this.emailRepository.getEscalationCountsByCustomerIdsScoped(requestHeader, ids),
-        this.emailRepository.getUpsellCountsByCustomerIdsScoped(requestHeader, ids),
-        this.emailRepository.getChurnCountsByCustomerIdsScoped(requestHeader, ids),
-        this.emailRepository.getPositiveCountsByCustomerIdsScoped(requestHeader, ids),
-        this.emailRepository.getAverageTatByCustomerIdsScoped(requestHeader, ids),
-        this.emailRepository.getLastContactDatesByCustomerIdsScoped(requestHeader, ids),
-      ]);
-
-      return {
-        ...clientCustomer,
-        emailCount: emailCounts[clientCustomer.id] || 0,
-        escalationCount: escalationCounts[clientCustomer.id] || 0,
-        upsellCount: upsellCounts[clientCustomer.id] || 0,
-        churnCount: churnCounts[clientCustomer.id] || 0,
-        positiveCount: positiveCounts[clientCustomer.id] || 0,
-        averageTat: averageTats[clientCustomer.id] ?? null,
-        lastContactDate: lastContactDates[clientCustomer.id],
-      };
+      return await toClientCustomer(customer, this.customerRepository);
     } catch (error: any) {
       logger.error({ error, id, tenantId: requestHeader.tenantId }, 'Failed to fetch customer by id');
       throw error;
     }
+  }
+
+  /**
+   * Like getCustomerByIdScoped but enriched with email stats (counts, escalations,
+   * TAT, etc.) for sidebar/detail display. Kept separate so the cheaper base
+   * lookup can be used by write paths (e.g. existence checks before update).
+   */
+  async getEnrichedCustomerByIdScoped(requestHeader: RequestHeader, id: string): Promise<ClientCustomer | undefined> {
+    const clientCustomer = await this.getCustomerByIdScoped(requestHeader, id);
+    if (!clientCustomer) return undefined;
+
+    // Enrich with email stats (mirrors getCustomerByDomainScoped)
+    const ids = [clientCustomer.id];
+    const [emailCounts, escalationCounts, upsellCounts, churnCounts, positiveCounts, averageTats, lastContactDates] = await Promise.all([
+      this.emailRepository.getCountsByCustomerIdsScoped(requestHeader, ids),
+      this.emailRepository.getEscalationCountsByCustomerIdsScoped(requestHeader, ids),
+      this.emailRepository.getUpsellCountsByCustomerIdsScoped(requestHeader, ids),
+      this.emailRepository.getChurnCountsByCustomerIdsScoped(requestHeader, ids),
+      this.emailRepository.getPositiveCountsByCustomerIdsScoped(requestHeader, ids),
+      this.emailRepository.getAverageTatByCustomerIdsScoped(requestHeader, ids),
+      this.emailRepository.getLastContactDatesByCustomerIdsScoped(requestHeader, ids),
+    ]);
+
+    return {
+      ...clientCustomer,
+      emailCount: emailCounts[clientCustomer.id] || 0,
+      escalationCount: escalationCounts[clientCustomer.id] || 0,
+      upsellCount: upsellCounts[clientCustomer.id] || 0,
+      churnCount: churnCounts[clientCustomer.id] || 0,
+      positiveCount: positiveCounts[clientCustomer.id] || 0,
+      averageTat: averageTats[clientCustomer.id] ?? null,
+      lastContactDate: lastContactDates[clientCustomer.id],
+    };
   }
 
   /**

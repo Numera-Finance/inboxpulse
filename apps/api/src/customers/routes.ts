@@ -161,7 +161,7 @@ customerRoutes.get('/:id', async (c) => {
     z.object({ id: z.uuid() }),
     async (requestHeader: RequestHeader, params) => {
       const service = container.resolve(CustomerService);
-      const customer = await service.getCustomerByIdScoped(requestHeader, params.id);
+      const customer = await service.getEnrichedCustomerByIdScoped(requestHeader, params.id);
       if (!customer) {
         throw new NotFoundError('Customer', params.id);
       }
