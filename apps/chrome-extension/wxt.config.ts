@@ -41,6 +41,7 @@ const hostPermissions = Array.from(
 
 export default defineConfig({
   extensionApi: 'chrome',
+  outDir: 'output',
   modules: ['@wxt-dev/module-react'],
   hooks: {
     'build:done'(wxt) {
