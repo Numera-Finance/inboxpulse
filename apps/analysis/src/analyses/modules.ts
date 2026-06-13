@@ -67,7 +67,7 @@ Signals of dissatisfaction with us (NOT EXHAUSTIVE — reason about cases not li
 Signals that do NOT by themselves make an email NEGATIVE (NOT EXHAUSTIVE — reason about cases not listed here):
 - A price / fee / quote negotiation
 - A genuine question, clarification, or help request that does NOT challenge the correctness of our work
-- Frustration aimed at a third party rather than us
+- Frustration aimed at a third party (a bank, tax authority, vendor, or tool) rather than at us — UNLESS the customer expects us to act on it (investigate, intervene, or get it resolved)
 - The customer apologizing for their own delay or mistake
 - An automated or transactional notice
 
@@ -75,7 +75,7 @@ DOUBLE-CHECK before finalizing your classification. Re-read the email and ask:
 "Is the customer unhappy with something WE did or failed to do, as the main point of the email — OR are they expressing urgency or time-pressure about our work?"
 - If YES to either → NEGATIVE.
 - A question that challenges whether our work is correct, or flags a missing or incorrect figure, counts as dissatisfaction → NEGATIVE.
-- If the negativity is only about price, a third party, or their own mistake, AND there is no urgency → NEUTRAL.
+- If the negativity is only about price, a third party they do not expect us to act on, or their own mistake, AND there is no urgency → NEUTRAL.
 Revise your initial classification if this check disagrees with it.
 
 EXAMPLES - Classify as NEUTRAL (NOT positive):
