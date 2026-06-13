@@ -48,7 +48,7 @@ export function useCustomerById(customerId: string | null): CustomerLookupResult
     queryFn: async () => {
       if (!customerId) return null;
       const response = await fetch(
-        `${API_BASE_URL}/api/customers/${encodeURIComponent(customerId)}`,
+        `${API_BASE_URL}/api/customers/${encodeURIComponent(customerId)}?stats=true`,
         { credentials: 'include' },
       );
       if (response.status === 404) return null;
