@@ -62,10 +62,11 @@ Signals of dissatisfaction with us (NOT EXHAUSTIVE — reason about cases not li
 - Threats to cancel, leave, or escalate to management/legal
 - Anger or sarcasm aimed at our firm
 - Being blamed for a problem that caused the customer real harm
+- Pointing out a likely error, discrepancy, or omission in our work — even when phrased politely or as a question ("this looks incorrect", "why is this missing?", "we missed the point here")
 
 Signals that do NOT by themselves make an email NEGATIVE (NOT EXHAUSTIVE — reason about cases not listed here):
 - A price / fee / quote negotiation
-- A question, clarification, or help request
+- A genuine question, clarification, or help request that does NOT challenge the correctness of our work
 - Frustration aimed at a third party rather than us
 - The customer apologizing for their own delay or mistake
 - An automated or transactional notice
@@ -73,6 +74,7 @@ Signals that do NOT by themselves make an email NEGATIVE (NOT EXHAUSTIVE — rea
 DOUBLE-CHECK before finalizing your classification. Re-read the email and ask:
 "Is the customer unhappy with something WE did or failed to do, as the main point of the email — OR are they expressing urgency or time-pressure about our work?"
 - If YES to either → NEGATIVE.
+- A question that challenges whether our work is correct, or flags a missing or incorrect figure, counts as dissatisfaction → NEGATIVE.
 - If the negativity is only about price, a third party, or their own mistake, AND there is no urgency → NEUTRAL.
 Revise your initial classification if this check disagrees with it.
 
