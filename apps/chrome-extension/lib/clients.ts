@@ -5,8 +5,11 @@ import {
   TaskClient,
 } from '@crm/clients';
 
-export const API_BASE_URL = 'http://localhost:4001';
-export const WEB_URL = 'http://localhost:4000';
+// Build-time configurable so the extension works against both a local dev
+// stack and the Cloud Run deployment. Set WXT_API_URL / WXT_WEB_URL at build
+// time (see .env.example); falls back to localhost for `wxt dev`.
+export const API_BASE_URL = import.meta.env.WXT_API_URL || 'http://localhost:4001';
+export const WEB_URL = import.meta.env.WXT_WEB_URL || 'http://localhost:4000';
 
 let userClient: UserClient | null = null;
 let customerClient: CustomerClient | null = null;

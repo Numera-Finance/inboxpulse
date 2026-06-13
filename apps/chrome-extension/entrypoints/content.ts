@@ -119,47 +119,35 @@ export default defineContentScript({
       const messages = threadView.getMessageViews();
       if (messages.length === 0) return;
 
-      // Find the first external domain from the thread participants.
-      // Check senders first, then recipients, to find a customer domain.
-      let domain: string | null = null;
+      // The external sender (first non-tenant participant) — used only to
+      // highlight the matching contact and for the "no customer" message.
+      // Customer identity itself is resolved from the thread's emails server-side.
       let senderEmail: string | null = null;
-
-      // 1. Check senders for an external domain
       for (const msg of messages) {
-        const sender = msg.getSender();
-        const d = sender.emailAddress.split('@')[1]?.toLowerCase();
+        const email = msg.getSender().emailAddress.toLowerCase();
+        const d = email.split('@')[1];
         if (d && d !== tenantDomain) {
-          domain = d;
-          senderEmail = sender.emailAddress.toLowerCase();
+          senderEmail = email;
           break;
         }
       }
 
-      // 2. If all senders are internal, check recipients for an external domain
-      if (!domain) {
-        for (const msg of messages) {
-          const recipientEmails = msg.getRecipientEmailAddresses();
-          for (const email of recipientEmails) {
-            const d = email.split('@')[1]?.toLowerCase();
-            if (d && d !== tenantDomain) {
-              domain = d;
-              senderEmail = email.toLowerCase();
-              break;
+      // Collect every Gmail message ID in the thread. The backend maps these to
+      // the linked customer (and sentiment) via the stored email→customer link —
+      // authoritative, unlike guessing the customer from the sender's domain.
+      // InboxSDK's getMessageIDAsync() returns the same ID stored as messageId.
+      const collectThreadMessageIds = async (): Promise<string[]> => {
+        const ids = await Promise.all(
+          messages.map(async (msg) => {
+            try {
+              return await msg.getMessageIDAsync();
+            } catch {
+              return null;
             }
-          }
-          if (domain) break;
-        }
-      }
-
-      // 3. Fall back to the first message's sender domain if no external found
-      if (!domain) {
-        const fallbackSender = messages[0].getSender();
-        domain = fallbackSender.emailAddress.split('@')[1]?.toLowerCase() ?? null;
-        senderEmail = fallbackSender.emailAddress.toLowerCase() ?? null;
-      }
-      if (!domain) return;
-
-      console.log('[CRM Extension] Thread sender domain:', domain);
+          }),
+        );
+        return ids.filter((id): id is string => !!id);
+      };
 
       // Create Shadow DOM container to isolate Tailwind from Gmail
       const host = document.createElement('div');
@@ -189,22 +177,35 @@ export default defineContentScript({
       });
 
       const root = ReactDOM.createRoot(mountPoint);
-      root.render(
-        React.createElement(
-          React.StrictMode,
-          null,
+      const renderSidebar = (threadMessageIds: string[], messageIdsReady: boolean): void => {
+        root.render(
           React.createElement(
-            QueryClientProvider,
-            { client: queryClient },
-            React.createElement(SidebarApp, { senderDomain: domain, senderEmail }),
+            React.StrictMode,
+            null,
+            React.createElement(
+              QueryClientProvider,
+              { client: queryClient },
+              React.createElement(SidebarApp, {
+                senderEmail,
+                threadMessageIds,
+                messageIdsReady,
+              }),
+            ),
           ),
-        ),
-      );
+        );
+      };
+
+      // Render a loading state immediately, then resolve the customer once the
+      // thread's message IDs are collected.
+      renderSidebar([], false);
+      void collectThreadMessageIds().then((ids) => {
+        renderSidebar(ids, true);
+      });
 
       // Register the sidebar panel with InboxSDK
       threadView.addSidebarContentPanel({
         el: host,
-        title: 'CRM',
+        title: 'InboxPulse',
         iconUrl: chrome.runtime.getURL('icons/icon-32.png'),
       });
 

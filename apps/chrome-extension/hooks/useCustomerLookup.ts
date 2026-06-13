@@ -37,3 +37,32 @@ export function useCustomerLookup(domain: string | null): CustomerLookupResult {
     error: error ? (error as Error).message : null,
   };
 }
+
+/**
+ * Look up an enriched customer by ID using GET /api/customers/:id. Used after
+ * resolving a thread to its customer via the email→customer link.
+ */
+export function useCustomerById(customerId: string | null): CustomerLookupResult {
+  const { data, isLoading, error } = useQuery<Customer | null>({
+    queryKey: ['customer', 'id', customerId],
+    queryFn: async () => {
+      if (!customerId) return null;
+      const response = await fetch(
+        `${API_BASE_URL}/api/customers/${encodeURIComponent(customerId)}`,
+        { credentials: 'include' },
+      );
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`Failed to load customer: ${response.statusText}`);
+      const json = (await response.json()) as { success: boolean; data?: Customer };
+      return json.data ?? null;
+    },
+    enabled: !!customerId,
+    staleTime: 60_000,
+  });
+
+  return {
+    customer: data ?? null,
+    isLoading: !!customerId && isLoading,
+    error: error ? (error as Error).message : null,
+  };
+}

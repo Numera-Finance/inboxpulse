@@ -1,6 +1,43 @@
 import { defineConfig } from 'wxt';
+import { loadEnv } from 'vite';
 import { resolve } from 'path';
 import { copyFileSync, existsSync, mkdirSync } from 'fs';
+
+// Resolve build-time API/Web URLs from WXT_* env vars (see .env.example).
+// `wxt build`/`wxt zip` use production mode (reads .env.production); `wxt dev`
+// uses development mode. Falls back to localhost so dev works with no config.
+function resolveMode(): string {
+  const argv = process.argv;
+  // Honor an explicit `-m <mode>` / `--mode <mode>` flag (matches WXT/Vite).
+  const flagIndex = argv.findIndex((a) => a === '-m' || a === '--mode');
+  if (flagIndex !== -1 && argv[flagIndex + 1]) return argv[flagIndex + 1];
+  if (process.env.NODE_ENV === 'production') return 'production';
+  // `wxt build` / `wxt zip` default to production; `wxt` (dev) to development.
+  if (argv.includes('build') || argv.includes('zip')) return 'production';
+  return 'development';
+}
+const env = loadEnv(resolveMode(), process.cwd(), 'WXT_');
+const API_URL = env.WXT_API_URL || 'http://localhost:4001';
+const WEB_URL = env.WXT_WEB_URL || 'http://localhost:4000';
+
+/**
+ * Convert an origin URL into a Chrome host match pattern.
+ * Match patterns CANNOT contain a port — `http://localhost:4001/*` is parsed
+ * as the literal host "localhost:4001" and never matches a real request to
+ * localhost. We must strip the port and emit `<scheme>://<host>/*`.
+ */
+function toHostMatchPattern(rawUrl: string): string {
+  const u = new URL(rawUrl);
+  return `${u.protocol}//${u.hostname}/*`;
+}
+
+const hostPermissions = Array.from(
+  new Set([
+    'https://mail.google.com/*',
+    toHostMatchPattern(API_URL),
+    toHostMatchPattern(WEB_URL),
+  ]),
+);
 
 export default defineConfig({
   extensionApi: 'chrome',
@@ -27,7 +64,7 @@ export default defineConfig({
     description: 'View CRM customer data alongside Gmail conversations',
     version: '0.1.0',
     permissions: ['activeTab', 'storage', 'scripting'],
-    host_permissions: ['https://mail.google.com/*', 'http://localhost:4001/*', 'http://localhost:4000/*'],
+    host_permissions: hostPermissions,
     action: {
       default_title: 'CRM Sidebar for Gmail',
       default_icon: {

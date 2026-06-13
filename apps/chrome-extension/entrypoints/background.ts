@@ -8,7 +8,9 @@
 
 import '@inboxsdk/core/background.js';
 
-const WEB_URL = 'http://localhost:4000';
+// Build-time configurable (see .env.example) so OAuth login works against both
+// the local dev web app and the Cloud Run deployment.
+const WEB_URL = import.meta.env.WXT_WEB_URL || 'http://localhost:4000';
 
 export default defineBackground(() => {
   // Handle messages from content script sidebar

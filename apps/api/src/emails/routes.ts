@@ -9,7 +9,7 @@ import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
 import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, NotFoundError } from '@crm/shared';
 import { logger } from '../utils/logger';
-import { handleGetRequest, handleGetRequestWithParams } from '../utils/api-handler';
+import { handleApiRequest, handleGetRequest, handleGetRequestWithParams } from '../utils/api-handler';
 
 const app = new Hono();
 
@@ -315,6 +315,31 @@ app.get('/customer/:customerId', async (c) => {
         dateTo,
         query,
       });
+    }
+  );
+});
+
+/**
+ * POST /api/emails/resolve-by-messages - Resolve emails by provider message IDs.
+ * Returns each matched email's linked customer and sentiment signals so the Gmail
+ * extension can map an open thread to a customer authoritatively (by the stored
+ * email→customer link) rather than guessing from the sender's domain.
+ */
+app.post('/resolve-by-messages', async (c) => {
+  return handleApiRequest(
+    c,
+    z.object({
+      messageIds: z.array(z.string()).min(1).max(100),
+      provider: z.string().optional(),
+    }),
+    async (requestHeader: RequestHeader, body) => {
+      const service = container.resolve(EmailService);
+      const emails = await service.resolveByMessageIds(
+        requestHeader,
+        body.provider ?? 'gmail',
+        body.messageIds
+      );
+      return { emails };
     }
   );
 });

@@ -1,23 +1,40 @@
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { useCustomerLookup } from '../hooks/useCustomerLookup';
+import { useCustomerById } from '../hooks/useCustomerLookup';
+import { useThreadCustomer } from '../hooks/useThreadCustomer';
 import { CustomerHeader } from './CustomerHeader';
 import { StatsBar } from './StatsBar';
 import { ContactList } from './ContactList';
 import { ActivityFeed } from './ActivityFeed';
 import { FieldsSection } from './FieldsSection';
+import { NegativeEmailResolution } from './NegativeEmailResolution';
 import { NoCustomer } from './NoCustomer';
 import { RefreshCw, Loader2 } from 'lucide-react';
 
 interface SidebarAppProps {
-  senderDomain: string;
+  /** The external sender's email, used to highlight the matching contact. */
   senderEmail?: string | null;
+  /** Gmail message IDs of the messages in the open thread. */
+  threadMessageIds?: string[];
+  /** True once the content script has finished collecting the thread's message IDs. */
+  messageIdsReady?: boolean;
 }
 
-export function SidebarApp({ senderDomain, senderEmail }: SidebarAppProps): React.ReactElement {
+export function SidebarApp({
+  senderEmail,
+  threadMessageIds = [],
+  messageIdsReady = false,
+}: SidebarAppProps): React.ReactElement {
   const { user, isLoading: authLoading, isAuthenticated, refresh } = useAuth();
-  const { customer, isLoading: customerLoading } = useCustomerLookup(
-    isAuthenticated ? senderDomain : null,
+
+  // Resolve the customer authoritatively from the thread's emails (not by domain).
+  const {
+    customerId,
+    negativeEmails,
+    isLoading: resolving,
+  } = useThreadCustomer(isAuthenticated && messageIdsReady ? threadMessageIds : []);
+  const { customer, isLoading: customerLoading } = useCustomerById(
+    isAuthenticated ? customerId : null,
   );
 
   // Loading auth
@@ -35,8 +52,8 @@ export function SidebarApp({ senderDomain, senderEmail }: SidebarAppProps): Reac
     return <LoginScreen />;
   }
 
-  // Loading customer
-  if (customerLoading) {
+  // Resolving the thread → customer
+  if (!messageIdsReady || resolving || (customerId && customerLoading)) {
     return (
       <div className="p-4">
         <Header userName={user?.firstName ?? 'User'} onRefresh={refresh} />
@@ -49,12 +66,12 @@ export function SidebarApp({ senderDomain, senderEmail }: SidebarAppProps): Reac
     );
   }
 
-  // No customer found
+  // No customer linked to this conversation
   if (!customer) {
     return (
       <div className="p-4">
         <Header userName={user?.firstName ?? 'User'} onRefresh={refresh} />
-        <NoCustomer domain={senderDomain} />
+        <NoCustomer label={senderEmail ?? undefined} />
       </div>
     );
   }
@@ -63,6 +80,7 @@ export function SidebarApp({ senderDomain, senderEmail }: SidebarAppProps): Reac
   return (
     <div className="p-4 space-y-4">
       <Header userName={user?.firstName ?? 'User'} onRefresh={refresh} />
+      <NegativeEmailResolution customerId={customer.id} negativeEmails={negativeEmails} />
       <CustomerHeader customer={customer} />
       <hr className="border-border" />
       <StatsBar customer={customer} />
@@ -98,7 +116,7 @@ function LoginScreen(): React.ReactElement {
   return (
     <div className="flex flex-col items-center justify-center min-h-[200px] p-6">
       <div className="w-full max-w-sm space-y-4 text-center">
-        <h1 className="text-lg font-semibold text-foreground">CRM</h1>
+        <h1 className="text-lg font-semibold text-foreground">InboxPulse</h1>
         <p className="text-sm text-muted-foreground">
           View customer data alongside your Gmail conversations.
         </p>
@@ -138,7 +156,7 @@ function Header({
   return (
     <div className="flex items-center justify-between">
       <h1 className="text-sm font-semibold text-foreground">
-        CRM <span className="text-muted-foreground font-normal">| {userName}</span>
+        InboxPulse <span className="text-muted-foreground font-normal">| {userName}</span>
       </h1>
       <button
         onClick={onRefresh}

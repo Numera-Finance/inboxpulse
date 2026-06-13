@@ -260,6 +260,18 @@ export class EmailService {
   }
 
   /**
+   * Resolve emails by provider message IDs → linked customer + sentiment signals.
+   * Powers the Gmail extension's authoritative thread→customer mapping.
+   */
+  async resolveByMessageIds(
+    requestHeader: RequestHeader,
+    provider: string,
+    messageIds: string[]
+  ) {
+    return this.emailRepo.findByMessageIdsScoped(requestHeader, provider, messageIds);
+  }
+
+  /**
    * Check if email exists
    */
   async exists(tenantId: string, provider: string, messageId: string): Promise<boolean> {
