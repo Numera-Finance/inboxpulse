@@ -690,6 +690,13 @@ export class EmailRepository extends ScopedRepository {
           eq(emails.tenantId, header.tenantId),
           eq(emails.provider, provider),
           inArray(emails.messageId, messageIds),
+          // Resolve the customer from the external SENDER only. Recipients (to/cc)
+          // are full of internal teammates linked to the tenant's own org, and
+          // internal 'user' participants carry that org's customerId — both would
+          // mis-resolve the thread to the tenant itself. The 'from' contact is the
+          // external party the thread is actually about.
+          eq(emailParticipants.direction, 'from'),
+          eq(emailParticipants.participantType, 'contact'),
           sql`${emailParticipants.customerId} IS NOT NULL`,
           this.customerAccessFilter(emailParticipants.customerId, header)
         )
