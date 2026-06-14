@@ -38,10 +38,11 @@ export function useAuth(): AuthState {
     },
     retry: false,
     staleTime: 5_000,
-    // Poll every 3s when not authenticated so panel auto-updates after login
-    refetchInterval: (query) => {
-      return query.state.data ? false : 3000;
-    },
+    // Poll every 3s only when we got a definitive "not logged in" (queryFn
+    // returned null on a 401), so the panel auto-updates after login. On a
+    // transient error the query is in the error state (data === undefined) — do
+    // NOT poll, otherwise a failing /me would hammer the API every 3s forever.
+    refetchInterval: (query) => (query.state.data === null ? 3000 : false),
     refetchOnWindowFocus: true,
   });
 

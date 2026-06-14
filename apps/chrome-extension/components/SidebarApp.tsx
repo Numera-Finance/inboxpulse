@@ -16,14 +16,11 @@ interface SidebarAppProps {
   senderEmail?: string | null;
   /** Gmail message IDs of the messages in the open thread. */
   threadMessageIds?: string[];
-  /** True once the content script has finished collecting the thread's message IDs. */
-  messageIdsReady?: boolean;
 }
 
 export function SidebarApp({
   senderEmail,
   threadMessageIds = [],
-  messageIdsReady = false,
 }: SidebarAppProps): React.ReactElement {
   const { user, isLoading: authLoading, isAuthenticated, refresh } = useAuth();
 
@@ -32,7 +29,7 @@ export function SidebarApp({
     customerId,
     negativeEmails,
     isLoading: resolving,
-  } = useThreadCustomer(isAuthenticated && messageIdsReady ? threadMessageIds : []);
+  } = useThreadCustomer(isAuthenticated ? threadMessageIds : []);
   const { customer, isLoading: customerLoading } = useCustomerById(
     isAuthenticated ? customerId : null,
   );
@@ -52,8 +49,8 @@ export function SidebarApp({
     return <LoginScreen />;
   }
 
-  // Resolving the thread → customer
-  if (!messageIdsReady || resolving || (customerId && customerLoading)) {
+  // Resolving the thread → customer (useCustomerById is a no-op when customerId is null)
+  if (resolving || customerLoading) {
     return (
       <div className="p-4">
         <Header userName={user?.firstName ?? 'User'} onRefresh={refresh} />

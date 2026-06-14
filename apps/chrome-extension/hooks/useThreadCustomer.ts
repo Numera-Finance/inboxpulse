@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Signal } from '@crm/shared';
+import { getSentimentFromSignals } from '@crm/shared';
 import { API_BASE_URL } from '../lib/clients';
 
 interface ResolvedEmail {
@@ -69,8 +69,17 @@ export function useThreadCustomer(threadMessageIds: string[]): ThreadCustomerRes
   const customerId =
     [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
+  // Only surface negatives belonging to the resolved customer — a thread can
+  // contain emails from more than one customer (forwards/quotes), and we render
+  // these under the single resolved customer.id. Use the shared sentiment helper
+  // so classification matches the rest of the app (positive takes precedence on
+  // mixed-signal emails).
   const negativeEmails: ThreadNegativeEmail[] = resolved
-    .filter((email) => (email.signals ?? []).includes(Signal.SENTIMENT_NEGATIVE))
+    .filter(
+      (email) =>
+        email.customerId === customerId &&
+        getSentimentFromSignals(email.signals) === 'negative',
+    )
     .map((email) => ({
       id: email.id,
       subject: email.subject ?? '',

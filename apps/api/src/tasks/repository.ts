@@ -74,6 +74,7 @@ export class TaskRepository extends ScopedRepository {
       status?: number;
       assignedToId?: string;
       customerId?: string;
+      emailId?: string;
       search?: string;
       dateFrom?: Date;
       dateTo?: Date;
@@ -88,6 +89,10 @@ export class TaskRepository extends ScopedRepository {
 
     if (options.status !== undefined) {
       conditions.push(eq(tasks.status, options.status));
+    }
+
+    if (options.emailId) {
+      conditions.push(eq(tasks.emailId, options.emailId));
     }
 
     if (options.assignedToId !== undefined) {
@@ -221,6 +226,7 @@ export class TaskRepository extends ScopedRepository {
       status?: number;
       assignedToId?: string;
       customerId?: string;
+      emailId?: string;
       search?: string;
       sortBy?: 'createdAt' | 'updatedAt';
       sortOrder?: 'asc' | 'desc';

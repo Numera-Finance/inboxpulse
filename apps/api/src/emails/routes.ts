@@ -372,6 +372,12 @@ app.get('/customer/:customerId', async (c) => {
  * Returns each matched email's linked customer and sentiment signals so the Gmail
  * extension can map an open thread to a customer authoritatively (by the stored
  * email→customer link) rather than guessing from the sender's domain.
+ *
+ * Authorization: like every other email read route, this is gated by the session
+ * middleware (authenticated user + tenant) plus per-row access control inside
+ * findByMessageIdsScoped (customerAccessFilter) — it only ever returns emails for
+ * customers the caller can access. There is no read-level Permission in the RBAC
+ * model, so no requirePermission() is applied (consistent with GET /api/emails/*).
  */
 app.post('/resolve-by-messages', async (c) => {
   return handleApiRequest(

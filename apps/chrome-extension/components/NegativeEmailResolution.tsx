@@ -51,19 +51,13 @@ function NegativeEmailItem({
   customerId: string;
   email: ThreadNegativeEmail;
 }): React.ReactElement {
-  // Find the escalation task linked to this email. The server search can't filter
-  // by emailId, so we pull the customer's tasks and match client-side.
+  // Find the escalation task(s) linked to this specific email via the server-side
+  // emailId filter — avoids fetching/scanning the customer's whole task list.
   const { data: tasks, isLoading } = useQuery<Task[]>({
     queryKey: ['tasks', 'by-email', customerId, email.id],
     queryFn: async () => {
-      const client = getTaskClient();
-      const result = await client.search({
-        customerId,
-        sortBy: 'createdAt',
-        sortOrder: 'desc',
-        limit: 100,
-      });
-      return result.items.filter((task) => task.emailId === email.id);
+      const result = await getTaskClient().search({ customerId, emailId: email.id, limit: 10 });
+      return result.items;
     },
     staleTime: 30_000,
   });

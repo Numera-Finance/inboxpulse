@@ -68,6 +68,7 @@ export interface TaskSearchRequest {
   status?: 'open' | 'done';
   assignedToId?: string;
   customerId?: string;
+  emailId?: string;
   search?: string;
   sortBy?: 'createdAt' | 'updatedAt';
   sortOrder?: 'asc' | 'desc';

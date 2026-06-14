@@ -117,6 +117,18 @@ export default defineContentScript({
       if (currentUserDomain) tenantDomains.add(currentUserDomain);
     }
 
+    // One shared QueryClient for all thread panels. Per-thread data is keyed by
+    // customerId/messageIds so it never collides; sharing means the auth query
+    // (and its unauthenticated 3s poll) runs once, not once per open thread.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          staleTime: 30_000,
+          retry: 1,
+        },
+      },
+    });
+
     sdk.Conversations.registerThreadViewHandler((threadView) => {
       const messages = threadView.getMessageViews();
       if (messages.length === 0) return;
@@ -168,18 +180,14 @@ export default defineContentScript({
       mountPoint.style.fontFamily = '"Segoe UI", system-ui, -apple-system, sans-serif';
       shadow.appendChild(mountPoint);
 
-      // Fresh QueryClient per thread to avoid stale data across navigations
-      const queryClient = new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: 30_000,
-            retry: 1,
-          },
-        },
-      });
-
       const root = ReactDOM.createRoot(mountPoint);
-      const renderSidebar = (threadMessageIds: string[], messageIdsReady: boolean): void => {
+      let destroyed = false;
+
+      // Render once the thread's message IDs are collected. SidebarApp shows its
+      // own loading skeleton while the customer resolves. Guard against rendering
+      // after the thread was destroyed (the async resolve can outlive the view).
+      void collectThreadMessageIds().then((threadMessageIds) => {
+        if (destroyed) return;
         root.render(
           React.createElement(
             React.StrictMode,
@@ -187,21 +195,10 @@ export default defineContentScript({
             React.createElement(
               QueryClientProvider,
               { client: queryClient },
-              React.createElement(SidebarApp, {
-                senderEmail,
-                threadMessageIds,
-                messageIdsReady,
-              }),
+              React.createElement(SidebarApp, { senderEmail, threadMessageIds }),
             ),
           ),
         );
-      };
-
-      // Render a loading state immediately, then resolve the customer once the
-      // thread's message IDs are collected.
-      renderSidebar([], false);
-      void collectThreadMessageIds().then((ids) => {
-        renderSidebar(ids, true);
       });
 
       // Register the sidebar panel with InboxSDK
@@ -211,10 +208,11 @@ export default defineContentScript({
         iconUrl: chrome.runtime.getURL('icons/icon-32.png'),
       });
 
-      // Clean up React and QueryClient when thread is destroyed
+      // Clean up React when thread is destroyed. The QueryClient is shared and
+      // intentionally NOT cleared here (other open threads may still use it).
       threadView.on('destroy', () => {
+        destroyed = true;
         root.unmount();
-        queryClient.clear();
       });
     });
   },
