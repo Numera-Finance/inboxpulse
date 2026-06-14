@@ -1,5 +1,6 @@
 import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker } from './types';
 
 /**
  * Email input type for bulk insert API
@@ -117,6 +118,23 @@ export class EmailClient extends BaseClient {
       });
       throw error;
     }
+  }
+
+  /**
+   * Record first-reply markers (header-only) for outbound/reply messages the
+   * Gmail sync drops at the blacklist stage. The API applies the reply rules and
+   * sets first_reply_at on the answered customer emails. Best-effort (TAT data):
+   * callers should not fail their sync if this throws.
+   */
+  async setFirstReplyMarkers(
+    tenantId: string,
+    integrationId: string,
+    markers: FirstReplyMarker[]
+  ): Promise<{ updatedCount: number }> {
+    return await this.post<{ updatedCount: number }>(
+      '/api/emails/first-reply-markers',
+      { tenantId, integrationId, markers }
+    );
   }
 
   /**
@@ -305,6 +323,55 @@ export class EmailClient extends BaseClient {
     const response = await this.get<ApiResponse<TATMetricRow[]>>(url);
 
     return response?.data ?? [];
+  }
+
+  // ===========================================================================
+  // Analyzed Email Search
+  // ===========================================================================
+
+  /**
+   * Search analyzed emails with optional task overlay
+   */
+  async searchAnalyzed(
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailSearchResponse> {
+    const response = await this.post<ApiResponse<AnalyzedEmailSearchResponse>>(
+      '/api/emails/analyzed/search',
+      request
+    );
+
+    return (response as unknown as ApiResponse<AnalyzedEmailSearchResponse>)?.data ?? {
+      items: [],
+      total: 0,
+      limit: request.limit ?? 50,
+      offset: request.offset ?? 0,
+    };
+  }
+
+  /**
+   * Export analyzed emails with comments and contact roles (no pagination)
+   */
+  async exportAnalyzed(
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailExportItem[]> {
+    const response = await this.post<ApiResponse<AnalyzedEmailExportItem[]>>(
+      '/api/emails/analyzed/export',
+      request
+    );
+
+    return (response as unknown as ApiResponse<AnalyzedEmailExportItem[]>)?.data ?? [];
+  }
+
+  /**
+   * Get a single analyzed email by ID with task overlay
+   */
+  async getAnalyzedById(emailId: string, signal?: AbortSignal): Promise<AnalyzedEmail | null> {
+    const response = await this.get<ApiResponse<AnalyzedEmail>>(
+      `/api/emails/analyzed/${encodeURIComponent(emailId)}`,
+      signal
+    );
+
+    return response?.data ?? null;
   }
 }
 

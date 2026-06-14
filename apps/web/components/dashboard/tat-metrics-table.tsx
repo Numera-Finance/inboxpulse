@@ -60,11 +60,11 @@ export function TATMetricsTable({ filters }: TATMetricsTableProps) {
               <thead className="sticky top-0 bg-card">
                 <tr className="border-b text-left text-muted-foreground">
                   <th className="pb-2 font-medium">Customer</th>
-                  <th className="pb-2 font-medium text-center">6+ Days</th>
-                  <th className="pb-2 font-medium text-center">5+ Days</th>
-                  <th className="pb-2 font-medium text-center">3+ Days</th>
-                  <th className="pb-2 font-medium text-center">2+ Days</th>
-                  <th className="pb-2 font-medium text-center">1+ Days</th>
+                  <th className="pb-2 font-medium text-center">6 Days</th>
+                  <th className="pb-2 font-medium text-center">5 Days</th>
+                  <th className="pb-2 font-medium text-center">3 Days</th>
+                  <th className="pb-2 font-medium text-center">2 Days</th>
+                  <th className="pb-2 font-medium text-center">1 Days</th>
                 </tr>
               </thead>
               <tbody>

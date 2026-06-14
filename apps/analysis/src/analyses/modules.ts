@@ -23,7 +23,7 @@ Return:
 - value: positive|negative|neutral
 - confidence: 0-1 (how confident you are in the sentiment classification)
 
-CRITICAL: Default to NEUTRAL. Only classify as POSITIVE when there is EXPLICIT emotional language expressing genuine satisfaction, delight, or heartfelt gratitude.
+CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) are NEUTRAL. Only classify as POSITIVE when the PRIMARY PURPOSE of the email is to express genuine satisfaction, praise, or heartfelt gratitude — not as a side effect of politeness.
 
 **NEUTRAL** - Standard business communication (THIS IS THE DEFAULT):
 - Routine confirmations ("I have scheduled the payment", "confirming receipt")
@@ -36,21 +36,47 @@ CRITICAL: Default to NEUTRAL. Only classify as POSITIVE when there is EXPLICIT e
 - Standard business pleasantries without emotional content
 - Automated notifications or transactional emails
 - New Year/holiday greetings without additional emotional content
+- Operational requests even with polite language ("I would also need...", "Could you please send...")
+- Emails that contain a request or action item, even if they include "thank you"
+- Enthusiastic sign-offs ("thank you so much!", "thanks a ton!") when the email body is a request, update, or operational matter
+- Emails about HR, invoicing, onboarding, compliance, or administrative tasks — these are inherently operational regardless of tone
 
-**POSITIVE** - Genuine satisfaction or praise (REQUIRES EXPLICIT EMOTIONAL LANGUAGE):
-- Must contain words expressing genuine emotion: "happy", "delighted", "grateful", "impressed", "amazing", "fantastic", "love", "thrilled", "excellent"
-- Expressions of happiness or delight ("I'm so happy with...", "This is amazing!")
-- Compliments about service or product ("Your team has been fantastic")
-- Heartfelt gratitude beyond routine politeness ("I really appreciate all the extra effort", "Grateful to be working together")
+**POSITIVE** - Genuine satisfaction or praise (REQUIRES ALL of the following):
+1. The email must contain words expressing genuine emotion: "happy", "delighted", "grateful", "impressed", "amazing", "fantastic", "love", "thrilled", "excellent", "outstanding"
+2. The positive sentiment must be the PRIMARY PURPOSE of the email, not incidental politeness
+3. The praise or gratitude must be ABOUT a specific service, product, outcome, or person — not just a generic closing pleasantry
+- Examples: Compliments about service ("Your team has been fantastic at handling this")
+- Heartfelt gratitude for specific help ("I really appreciate all the extra effort your team put in to resolve this")
 - Testimonials or recommendations
-- Relief after problem resolution WITH expressed satisfaction
+- Expressed relief or satisfaction after problem resolution ("So glad this is finally working, you guys nailed it")
 
-**NEGATIVE** - Dissatisfaction or frustration:
-- Complaints or expressions of frustration
-- Disappointment with service or product
-- Urgency due to problems ("This is unacceptable", "I need this fixed immediately")
-- Threats to cancel or escalate
-- Sarcasm or passive-aggressive language
+**NEGATIVE** — Genuine dissatisfaction directed at US, or urgency/time-pressure about our work.
+
+Classify as NEGATIVE when either condition holds:
+1. DISSATISFACTION WITH US: the customer is unhappy with something WE did or failed to do — our service, deliverable, timeline, error, or communication — and that dissatisfaction is the PRIMARY PURPOSE of the email, not a passing remark in an otherwise operational message.
+2. URGENCY: the customer signals time-pressure about our work — an explicit deadline, or a request to prioritize, expedite, or act quickly — regardless of tone, and even when no dissatisfaction is expressed.
+
+Signals of dissatisfaction with us (NOT EXHAUSTIVE — reason about cases not listed here):
+- Complaints about our work quality
+- Disappointment with our responsiveness
+- Threats to cancel, leave, or escalate to management/legal
+- Anger or sarcasm aimed at our firm
+- Being blamed for a problem that caused the customer real harm
+- Pointing out a likely error, discrepancy, or omission in our work — even when phrased politely or as a question ("this looks incorrect", "why is this missing?", "we missed the point here")
+
+Signals that do NOT by themselves make an email NEGATIVE (NOT EXHAUSTIVE — reason about cases not listed here):
+- A price / fee / quote negotiation
+- A genuine question, clarification, or help request that does NOT challenge the correctness of our work
+- Frustration aimed at a third party (a bank, tax authority, vendor, or tool) rather than at us — UNLESS the customer expects us to act on it (investigate, intervene, or get it resolved)
+- The customer apologizing for their own delay or mistake
+- An automated or transactional notice
+
+DOUBLE-CHECK before finalizing your classification. Re-read the email and ask:
+"Is the customer unhappy with something WE did or failed to do, as the main point of the email — OR are they expressing urgency or time-pressure about our work?"
+- If YES to either → NEGATIVE.
+- A question that challenges whether our work is correct, or flags a missing or incorrect figure, counts as dissatisfaction → NEGATIVE.
+- If the negativity is only about price, a third party they do not expect us to act on, or their own mistake, AND there is no urgency → NEUTRAL.
+Revise your initial classification if this check disagrees with it.
 
 EXAMPLES - Classify as NEUTRAL (NOT positive):
 - "Yes, that works. Thank you." → NEUTRAL (simple acknowledgment)
@@ -59,16 +85,22 @@ EXAMPLES - Classify as NEUTRAL (NOT positive):
 - "Got it, will review." → NEUTRAL (acknowledgment)
 - "Happy New Year! Please share the report." → NEUTRAL (greeting + request)
 - "Thank you for the update." → NEUTRAL (routine thanks)
+- "We got it from here, thank you so much!!!!" → NEUTRAL (acknowledgment with enthusiastic sign-off, but primary purpose is confirming they'll handle it)
+- "I would also need the Passport Barcode Page Image. Please share." → NEUTRAL (operational request)
+- "Thank you so much for your help! Can you also send me the invoice?" → NEUTRAL (request with polite opening)
+- "Great, thanks! I'll review and get back to you." → NEUTRAL (acknowledgment)
 
 EXAMPLES - Classify as POSITIVE:
-- "Grateful to be working together!" → POSITIVE (explicit gratitude)
-- "Your team has been fantastic, thank you so much!" → POSITIVE (praise + enthusiasm)
-- "I'm really happy with how this turned out" → POSITIVE (explicit happiness)
-- "This is exactly what we needed, amazing work!" → POSITIVE (enthusiasm + praise)
+- "Your team has been fantastic, I can't thank you enough for going above and beyond!" → POSITIVE (specific praise about team + emotional gratitude)
+- "I'm really happy with how this turned out, excellent work" → POSITIVE (explicit happiness about outcome)
+- "This is exactly what we needed, amazing work!" → POSITIVE (enthusiasm + praise about deliverable)
+- "I wanted to write to say how impressed I am with the level of support we've received" → POSITIVE (dedicated email expressing satisfaction)
 
-Remember: "Thank you" alone is NEVER sufficient for positive. Scheduling a meeting is NEVER positive. Simple agreements are NEVER positive.`,
+KEY TEST: Ask yourself — "Is the primary purpose of this email to express positive emotion, or is positive language just used as social courtesy?" If it's courtesy, classify as NEUTRAL.
+
+Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
-  version: 'v1.2',
+  version: 'v1.4',
 };
 
 /**
@@ -104,21 +136,62 @@ export const upsellModule: AnalysisModule = {
   name: 'upsell',
   description: 'Identify upsell opportunities',
   instructions: `## Upsell Detection
-Identify if this email contains an upsell opportunity.
+
+MyStartupCFO is a finance & accounting services firm. An upsell is a **new sales or account-expansion opportunity** for a service MyStartupCFO offers but is not already delivering to this client.
 
 Return:
-- detected: true if upsell opportunity exists, false otherwise
+- detected: true ONLY if all conditions below are met. Default to false.
 - confidence: 0-1
-- opportunity: description of the upsell opportunity (if detected)
-- product: product or service mentioned (if detected)
+- opportunity: ≤30 words paraphrasing what the client said and which MyStartupCFO service addresses it. Do not invent details.
+- product: the matching service group name from the taxonomy (exact text).
 
-Upsell indicators:
-- Customer asking about premium features
-- Interest in higher-tier plans
-- Questions about additional products/services
-- Mentions of needing more capacity/features`,
+## Conditions for detected: true (all four required)
+
+1. **Pain or ask in the Email Body** — either:
+   - A problem, delay, penalty, quality issue, confusion, manual workaround, or open F&A / tax / compliance question the client is currently shouldering on their own.
+   - A direct ask for MyStartupCFO to take on, start, or expand work.
+
+2. **Signal maps cleanly to exactly one taxonomy group below, excluding Bookkeeping (basic).**
+
+3. **The service is NOT already being delivered to this client.** Judge from thread participants and prior turns:
+   - If any @mystartupcfo.com address or MyStartupCFO service partner is on the thread (sender, To, Cc, or any prior turn) executing or coordinating that same work, the service is in-flight → detected: false.
+   - The active presence of MyStartupCFO staff replying about the work is sufficient evidence the service is being delivered. Do not require an explicit statement.
+   - Operational coordination on existing work — providing data, answering open items, approving drafts, asking for status, requesting corrections — is not an upsell signal.
+
+4. **The client is not winding down, dissolving, shutting down, or leaving.** Closing-out work for a dissolving entity, a customer announcing they are switching to another provider, or a customer ending the engagement is churn or transition work, not upsell → detected: false. This applies even when dissolution filings or final-period work are part of MyStartupCFO's service taxonomy.
+
+## Service taxonomy (use these exact group names for \`product\`)
+
+**Bookkeeping (basic)** — INCLUDED in every engagement, NEVER upsell:
+- Standard ledger maintenance covered by the base engagement: bank and credit-card reconciliation, payroll journal entries, monthly close entries, standard balance sheet / P&L / cash flow reporting, balance-sheet schedules, and recording invoices from client-provided data.
+
+**Bookkeeping (advanced)**:
+- Chart-of-accounts restructuring, class / department / location / project tagging, revenue recognition under ASC 606, inventory reconciliation, sales-tax administration, and grant reporting.
+
+**F&A operations**:
+- Accounts payable operations, accounts receivable operations, payroll operations, cap-table maintenance, financial modeling, CFO advisory and investor / management reporting, M&A and due-diligence support, audit support, and finance-tool setup.
+
+**Custom reporting**:
+- Entity consolidation, budget vs. actuals, MIS in client format, and custom F&A reports.
+
+**Compliance and tax**:
+- 1099 filings, state annual reports and Statements of Information, state registrations and de-registrations, payroll and tax notice handling, sales-nexus studies, sales-tax filings, federal and state income-tax returns, foreign tax filings, BOI, BE-12, TRC, dissolution filings, tax planning, and R&D credit studies.
+
+**F&A and company admin**:
+- Company formation, EIN registration, state incorporation, compliance registrations, virtual office services, and registered-agent services.
+
+## Rules
+
+- Derive pain signals and asks ONLY from the Email Body. Ignore the Email Signature section.
+- Use thread participants and thread context ONLY to judge whether the service is already being delivered, never to source pain signals.
+- If the sender is MyStartupCFO staff or a third-party partner / vendor writing about their own ops rather than as a client, detected: false.
+- \`product\` must be one of the six exact taxonomy group names above. If the signal doesn't cleanly map to one, detected: false. Do not invent product names.
+- Acknowledgments, scheduling, FYIs, forwards with no commentary, and routine status updates are not upsell signals.
+- Confidence ≥ 0.85 only when the signal is concrete, the service is clearly not already being delivered, the client is not winding down, and the taxonomy match is unambiguous. When any of these are uncertain, prefer detected: false.
+
+When uncertain on any of the four conditions, default to detected: false.`,
   schema: upsellSchema,
-  version: 'v1.0',
+  version: 'v1.3',
 };
 
 /**
@@ -203,64 +276,44 @@ export const signatureModule: AnalysisModule = {
   name: 'signature-extraction',
   description: 'Extract contact information from email signature',
   instructions: `## Signature Extraction
-Extract contact information from the "Email Signature" section provided.
+The "Email Signature" section contains the sender's reply text with the signature
+attached at the end. Find the signature within it and extract the structured fields.
 
-Return:
-- name: full name (if found)
-- title: job title or position (if found)
-- company: company name (if found)
-- email: email address from signature (if different from sender)
-- phone: phone number (if found)
-- mobile: mobile/cell number (if found)
-- address: physical address (if found)
-- website: website URL (if found)
-- linkedin: LinkedIn profile URL (if found)
-- x: X (formerly Twitter) handle or URL (if found)
-- linktree: Linktree profile URL (if found)
+Return (each field nullable; omit if not clearly present):
+- name: full name
+- title: job title or position
+- company: company or organization name
+- email: email address shown in the signature
+- phone: phone number
+- mobile: mobile / cell number
+- address: physical address
+- website: website URL
+- linkedin: LinkedIn profile URL
+- x: X (formerly Twitter) handle or URL
+- linktree: Linktree profile URL
 
-IMPORTANT: Only extract from the "Email Signature" section. If no signature section is provided, return empty values.
-Do NOT extract information from the email body - only from the signature.`,
+CRITICAL — sender ownership rule:
+The signature must belong to the sender of this email. The "From:" line above
+identifies the sender. If the only signature you can find in the text clearly
+belongs to a different person (e.g., a forwarded/quoted message embedded in the
+reply, where the signature names someone other than the sender or carries an
+email address on a different domain), return ALL fields as null. Do not attribute
+someone else's signature to the sender.
+
+Other rules:
+- Do not invent or guess. If a field is not clearly visible in the signature,
+  it must be null.
+- The reply text may be short and contain no real signature (e.g., just "Best,
+  John"). In that case return all fields as null — there is nothing to extract.
+- Do not extract from the email body content above the signature, only from the
+  signature itself.`,
   schema: signatureSchema,
-  version: 'v1.1',
+  version: 'v1.2',
 };
 
 /**
- * Domain Extraction Module (placeholder - handled by DomainExtractionService)
- * Note: Domain extraction doesn't use LLM, it's regex-based
- */
-export const domainExtractionModule: AnalysisModule = {
-  name: 'domain-extraction',
-  description: 'Extract company domains from email addresses',
-  instructions: 'Extract company domains from email addresses (handled by DomainExtractionService)',
-  schema: z.object({
-    domains: z.array(z.object({
-      domain: z.string(),
-    })),
-  }),
-  version: 'v1.0',
-};
-
-/**
- * Contact Extraction Module (placeholder - handled by ContactExtractionService)
- * Note: Contact extraction doesn't use LLM, it's regex-based
- */
-export const contactExtractionModule: AnalysisModule = {
-  name: 'contact-extraction',
-  description: 'Extract contacts from email addresses',
-  instructions: 'Extract contacts from email addresses (handled by ContactExtractionService)',
-  schema: z.object({
-    contacts: z.array(z.object({
-      id: z.string(),
-      email: z.string(),
-      name: z.string().optional(),
-      companyId: z.string().optional(),
-    })),
-  }),
-  version: 'v1.0',
-};
-
-/**
- * All analysis modules
+ * All analysis modules (LLM analyses only — domain and contact extraction are
+ * pure regex on the analyze handler, not analyses).
  */
 export const allModules: AnalysisModule[] = [
   sentimentModule,
@@ -270,8 +323,6 @@ export const allModules: AnalysisModule[] = [
   kudosModule,
   competitorModule,
   signatureModule,
-  domainExtractionModule,
-  contactExtractionModule,
 ];
 
 /**
@@ -285,6 +336,4 @@ export const modulesByName: Record<string, AnalysisModule> = {
   'kudos': kudosModule,
   'competitor': competitorModule,
   'signature-extraction': signatureModule,
-  'domain-extraction': domainExtractionModule,
-  'contact-extraction': contactExtractionModule,
 };

@@ -3,8 +3,8 @@ import { CustomerRepository } from '../customers/repository';
 import { TenantRepository } from '../tenants/repository';
 import { RoleRepository } from '../roles/repository';
 import { TaskRepository } from '../tasks/repository';
-import { sql, desc, asc, and, isNull, inArray } from 'drizzle-orm';
-import { NotFoundError, ValidationError, isAdmin, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
+import { sql, desc, asc, and, isNull, inArray, type SQL } from 'drizzle-orm';
+import { NotFoundError, ValidationError, isAdmin, withAutoSuffix, type SearchRequest, type SearchResponse, type ImportResponse, type ImportError, getCustomerRoleByName, getCustomerRoleName } from '@crm/shared';
 import { scopedSearch } from '@crm/database';
 import type { Database } from '@crm/database';
 import { UserRepository } from './repository';
@@ -116,24 +116,35 @@ export class UserService {
 
     const where = and(...conditions);
 
-    // Determine sort column (case-insensitive for text columns)
-    const sortBy = searchRequest.sortBy as keyof typeof this.fieldMapping | undefined;
-    const sortColumn = sortBy && this.fieldMapping[sortBy]
-      ? this.fieldMapping[sortBy]
-      : users.createdAt;
-    const textFields = ['firstName', 'lastName', 'email'] as const;
-    const isTextField = sortBy && (textFields as readonly string[]).includes(sortBy);
-    const orderExpr = isTextField ? sql`lower(${sortColumn})` : sortColumn;
-    const orderByClause = searchRequest.sortOrder === 'asc'
-      ? asc(orderExpr)
-      : desc(orderExpr);
+    // Determine sort expression. Supports:
+    //  - direct columns from fieldMapping (case-insensitive for text)
+    //  - 'name': firstName + lastName, case-insensitive
+    //  - 'role': roles.name (LEFT JOIN, case-insensitive, nulls last via COALESCE)
+    //  - 'lastLoginAt': direct column
+    const sortBy = searchRequest.sortBy;
+    const sortDir = searchRequest.sortOrder === 'desc' ? desc : asc;
+    const textFields = new Set(['firstName', 'lastName', 'email']);
+    let orderByClause: SQL;
+    if (sortBy === 'name') {
+      orderByClause = sortDir(sql`lower(${users.firstName} || ' ' || ${users.lastName})`);
+    } else if (sortBy === 'role') {
+      orderByClause = sortDir(sql`lower(coalesce(${roles.name}, ''))`);
+    } else if (sortBy === 'lastLoginAt') {
+      orderByClause = sortDir(users.lastLoginAt);
+    } else if (sortBy && this.fieldMapping[sortBy as keyof typeof this.fieldMapping]) {
+      const col = this.fieldMapping[sortBy as keyof typeof this.fieldMapping];
+      orderByClause = sortDir(textFields.has(sortBy) ? sql`lower(${col})` : col);
+    } else {
+      orderByClause = sortDir(users.createdAt);
+    }
 
     // Pagination
     const limit = searchRequest.limit || 20;
     const offset = searchRequest.offset || 0;
 
-    // Execute search with sorting and pagination
-    // Join with roles to get role name
+    // Execute search with sorting and pagination.
+    // The LEFT JOIN on roles is required by UserRepository.buildFreeformSearch
+    // (matches roles.name) and by the 'role' sort branch above.
     const results = await this.db
       .select({
         user: users,
@@ -152,10 +163,13 @@ export class UserService {
       role: r.role,
     }));
 
-    // Get total count
+    // Get total count. The LEFT JOIN on roles mirrors the main select so that
+    // the shared `where` clause — which may reference roles.name via
+    // buildFreeformSearch — resolves here too.
     const countResult = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(users)
+      .leftJoin(roles, eq(users.roleId, roles.id))
       .where(where);
 
     const total = Number(countResult[0]?.count ?? 0);
@@ -262,19 +276,19 @@ export class UserService {
       return result;
     }
 
-    // Get tenant domain
+    // Get tenant domains
     const tenant = await this.tenantRepository.findById(tenantId);
-    if (!tenant?.domain) {
-      logger.debug({ tenantId }, 'No tenant domain configured, skipping user auto-creation');
+    if (!tenant?.domains?.length) {
+      logger.debug({ tenantId }, 'No tenant domains configured, skipping user auto-creation');
       return result;
     }
 
-    const tenantDomain = tenant.domain.toLowerCase();
+    const tenantDomains = tenant.domains.map(d => d.toLowerCase());
 
-    // Filter participants matching tenant domain
+    // Filter participants matching any tenant domain
     const tenantParticipants = participants.filter((p) => {
       const emailDomain = p.email.split('@')[1]?.toLowerCase();
-      return emailDomain === tenantDomain;
+      return emailDomain && tenantDomains.includes(emailDomain);
     });
 
     if (tenantParticipants.length === 0) {
@@ -310,13 +324,20 @@ export class UserService {
         // Parse name into first/last
         const { firstName, lastName } = this.parseEmailName(participant.email, participant.name);
 
+        // Mark ingestion-time auto-creates with the same " (Auto)" suffix
+        // used for auto-created customers, so they're distinguishable in the
+        // UI and exports from users added manually. withAutoSuffix returns
+        // "(Auto)" alone when there's no parsed last name.
+        const suffixedLastName = withAutoSuffix(lastName);
+
         const newUser = await this.userRepository.create({
           tenantId,
           firstName,
-          lastName,
+          lastName: suffixedLastName,
           email: participant.email.toLowerCase(),
           roleId: userRole?.id,
           rowStatus: RowStatus.ACTIVE,
+          canLogin: false, // System-created users cannot login until explicitly enabled
         });
 
         result.set(participant.email.toLowerCase(), newUser);
@@ -865,8 +886,8 @@ export class UserService {
     return result;
   }
 
-  async exportUsers(tenantId: string): Promise<string> {
-    const { generateCSV } = await import('./import-export');
+  async exportUsers(tenantId: string): Promise<Buffer> {
+    const { generateUserExport } = await import('./import-export');
     const users = await this.getByTenantId(tenantId);
 
     const exportData = await Promise.all(
@@ -877,7 +898,7 @@ export class UserService {
         // Get customer domains and role names
         const customers = await Promise.all(
           customerAssignments.map(async (assignment) => {
-            const domains = await this.customerRepository.getDomains(assignment.customerId);
+            const domains = await this.customerRepository.getDomains(assignment.customerId, tenantId);
             return {
               domain: domains.length > 0 ? domains[0] : '',
               roleName: getCustomerRoleName(assignment.roleId),
@@ -893,7 +914,7 @@ export class UserService {
       })
     );
 
-    return generateCSV(exportData);
+    return generateUserExport(exportData);
   }
 
   // ===========================================================================

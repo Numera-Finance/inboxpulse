@@ -4,6 +4,28 @@
 
 - **NEVER commit or push changes without explicitly asking the user first.** Always show the diff and ask for confirmation before committing.
 
+## TypeScript Rules
+
+- Always use explicit types for function parameters and return values. Never use `any` or `undefined` as a type — use proper types, union types, or `unknown` when the type is truly unknown.
+
+## Error Handling
+
+All API errors use the standard `ApiResponse` format:
+
+```typescript
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: { code: string; message: string; statusCode: number; };
+}
+```
+
+**Rules:**
+- NEVER return stack traces or internal details in production responses
+- Use descriptive error codes and messages that are understandable by the UI
+- Zod validation errors should map to clear field-level error messages
+- Background job failures must store structured errors and notify users
+
 ## Export Rules
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.
@@ -288,6 +310,14 @@ Drizzle schemas live in `apps/api/src/{module}/schema.ts`. Key tables:
 3. Run `pnpm db:push` to apply schema to database
 4. Update `apps/api/sql/README.md` with execution order
 
+### Migration Rules
+
+- **All SQL must be idempotent.** Use `IF NOT EXISTS` / `IF EXISTS` for all DDL statements (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`, etc.) so migrations can be safely re-run without errors.
+- When modifying an existing table (ALTER), create a NEW migration file — never edit a previous one
+- Drizzle schema files (`apps/api/src/{module}/schema.ts`) must always match the latest migration state
+- If a migration needs to be rolled back, create a separate rollback migration file
+- **PRs with SQL changes**: The PR description MUST list all migration files included and a summary of schema changes
+
 ### SQL Migration Execution Order
 
 See `apps/api/sql/README.md` for the full execution order. Apply with:
@@ -302,6 +332,21 @@ psql $DATABASE_URL -f apps/api/sql/{filename}.sql
 - **Location**: Test files alongside source as `*.test.ts` / `*.test.tsx`
 - **Config**: Each package has its own `vitest.config.ts`
 - **Run**: `pnpm test` (all) or `pnpm --filter @crm/{package} test`
+
+### Backend (API)
+- Unit tests for service functions (business logic)
+- Integration tests for API endpoints (request → response)
+- Test both success paths and error paths
+- Test Zod validation (invalid inputs return correct field errors)
+
+### Frontend
+- Component tests for shared/reusable components
+- Hook tests for custom hooks
+- Use Vitest + React Testing Library
+
+### Test File Convention
+- `*.test.ts` / `*.test.tsx` for unit tests, colocated with source
+- `*.integration.test.ts` for API integration tests in `apps/api/src/__tests__/`
 
 ## Deployment
 
@@ -355,6 +400,61 @@ INTERNAL_API_KEY=<shared secret>
 ```
 
 `.env.local` takes precedence over `.env`. Turbo watches `.env.*local` as global dependencies.
+
+## UI & Styling Rules
+
+### shadcn/ui Components
+- **NEVER modify** files in `packages/ui/src/components/` (the shadcn primitives)
+- If you need custom behavior, create a **wrapper component** that composes the shadcn primitive
+- All shadcn components must be installed via the shadcn CLI
+
+### Adaptable UI Components
+- Shared/reusable components accept configuration via props (field definitions, action definitions, column definitions)
+- They do NOT import from specific modules — data flows in via props/hooks
+- New modules should reuse existing shared components, not create parallel implementations
+
+### Icons & Styling
+- Use **Lucide React** for all icons
+- Icon sizing: `size={16}` in tables/compact, `size={20}` default, `size={24}` in headers
+- Colors: use Tailwind CSS variables from the theme (`text-primary`, `text-muted-foreground`, `text-destructive`)
+- NEVER use inline styles. NEVER use arbitrary Tailwind values unless absolutely necessary
+
+### Theming
+- All colors MUST use CSS variables (`hsl(var(--primary))`) — never hardcode hex/rgb values
+
+## Environment & Secrets
+
+- NEVER commit `.env` or `.env.local` files — only `.env.example` with placeholder values
+- All secrets (API keys, DB credentials, auth secrets) MUST come from environment variables
+- Validate all env vars at startup with Zod — fail fast if missing
+
+## Documentation
+
+Architecture decisions and design changes MUST be captured — not left in chat history.
+
+| What happened | Update where |
+|---------------|-------------|
+| New coding rule or convention | `CLAUDE.md` (this file) |
+| Architecture/design decision (schema change, new pattern, flow change) | Create or update relevant doc |
+| Key decision with rationale (why X over Y) | `docs/decisions.md` — append a new ADR entry |
+| Bug pattern or gotcha discovered | `CLAUDE.md` if it's a rule, `docs/decisions.md` if it's context |
+
+### Architecture Decision Records (ADRs)
+
+Lightweight format in `docs/decisions.md`:
+
+```markdown
+### ADR-NNN: Title (YYYY-MM-DD)
+**Status:** Accepted | Superseded by ADR-XXX
+**Context:** What problem or question came up
+**Decision:** What we decided
+**Consequences:** What this means for the codebase
+```
+
+**Rules:**
+- If a conversation produces a design decision, capture it before moving on to code
+- If a code change modifies an API contract, schema, or shared component interface, document it
+- ADRs are append-only — never delete, mark superseded ones as such
 
 ## Quick Reference
 

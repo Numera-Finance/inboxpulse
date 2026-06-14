@@ -24,11 +24,15 @@ interface CustomerTableProps {
   onSignalClick?: (customer: Customer, signal: string) => void
   pagination?: { pageIndex: number; pageSize: number }
   onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
+  sorting?: SortingState
+  onSortingChange?: (sorting: SortingState) => void
   totalCount?: number
 }
 
-export function CustomerTable({ customers, onSelect, onSignalClick, pagination, onPaginationChange, totalCount }: CustomerTableProps) {
-  const [sorting, setSorting] = useState<SortingState>([])
+export function CustomerTable({ customers, onSelect, onSignalClick, pagination, onPaginationChange, sorting: controlledSorting, onSortingChange, totalCount }: CustomerTableProps) {
+  const [internalSorting, setInternalSorting] = useState<SortingState>([])
+  const sorting = controlledSorting ?? internalSorting
+  const setSorting = onSortingChange ?? setInternalSorting
 
   // Use server-side pagination if props are provided
   const isServerSide = pagination !== undefined && onPaginationChange !== undefined
@@ -198,7 +202,7 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
         </Button>
       ),
       cell: ({ row }) => <span className="text-sm text-muted-foreground">{row.getValue("lastContact")}</span>,
-      size: 130,
+      size: 150,
     },
   ]
 
@@ -206,13 +210,17 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
     data: customers,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    ...(!isServerSide && { getSortedRowModel: getSortedRowModel() }),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      const newSorting = typeof updater === 'function' ? updater(sorting) : updater;
+      setSorting(newSorting);
+    },
     ...(isServerSide
       ? {
           manualPagination: true,
+          manualSorting: true,
           pageCount: Math.ceil((totalCount ?? 0) / (pagination?.pageSize ?? 50)),
           state: {
             sorting,
@@ -240,15 +248,20 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
   return (
     <div className="space-y-2">
       <div className="rounded-lg border border-border overflow-hidden">
-        <Table>
+        <Table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            {table.getHeaderGroups()[0]?.headers.map((header) => (
+              <col
+                key={header.id}
+                style={header.column.id === 'name' ? { width: '22%' } : { width: header.column.getSize() }}
+              />
+            ))}
+          </colgroup>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id} className="bg-muted/50">
                 {headerGroup.headers.map((header) => (
-                  <TableHead
-                    key={header.id}
-                    style={{ width: header.column.getSize() }}
-                  >
+                  <TableHead key={header.id}>
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
                 ))}
@@ -266,7 +279,7 @@ export function CustomerTable({ customers, onSelect, onSignalClick, pagination, 
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}
-                      style={{ width: cell.column.getSize() }}
+                      className="overflow-hidden text-ellipsis whitespace-nowrap"
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>

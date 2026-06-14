@@ -5,14 +5,15 @@ export {
   useUsersByCustomer,
   useCreateUser,
   useUpdateUser,
-  useMarkUserActive,
-  useMarkUserInactive,
+  useActivateUser,
+  useDeactivateUser,
   useAddManager,
   useRemoveManager,
   useAddCustomerToUser,
   useRemoveCustomerFromUser,
   useSetUserCustomerAssignments,
   useImportUsers,
+  useExportUsers,
   useTransferUser,
   userKeys,
 } from './use-users';
@@ -28,6 +29,7 @@ export {
   useImportCustomers,
   useExportCustomers,
   useImportTemplate,
+  useMergeCustomer,
   customerKeys,
 } from './use-customers';
 

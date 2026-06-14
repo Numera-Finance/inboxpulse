@@ -244,11 +244,11 @@ export function TATDrilldownDialog({
             </span>
           </div>
           <div className="flex gap-4 text-sm">
-            <StatBadge label="1+ Days" count={tatRow.onePlusDays} threshold={1} />
-            <StatBadge label="2+ Days" count={tatRow.twoPlusDays} threshold={2} />
-            <StatBadge label="3+ Days" count={tatRow.threePlusDays} threshold={3} />
-            <StatBadge label="5+ Days" count={tatRow.fivePlusDays} threshold={5} />
-            <StatBadge label="6+ Days" count={tatRow.sixPlusDays} threshold={6} />
+            <StatBadge label="1 Days" count={tatRow.onePlusDays} threshold={1} />
+            <StatBadge label="2 Days" count={tatRow.twoPlusDays} threshold={2} />
+            <StatBadge label="3 Days" count={tatRow.threePlusDays} threshold={3} />
+            <StatBadge label="5 Days" count={tatRow.fivePlusDays} threshold={5} />
+            <StatBadge label="6 Days" count={tatRow.sixPlusDays} threshold={6} />
           </div>
         </div>
 

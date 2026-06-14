@@ -1,5 +1,6 @@
 import { Context, Next } from 'hono';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 const SERVICE_API_KEY_HEADER = 'x-internal-api-key';
 
@@ -11,7 +12,7 @@ const SERVICE_API_KEY_HEADER = 'x-internal-api-key';
  */
 export async function verifyServiceApiKey(c: Context, next: Next) {
   const apiKey = c.req.header(SERVICE_API_KEY_HEADER);
-  const expectedApiKey = process.env.SERVICE_API_KEY;
+  const expectedApiKey = getEnv().SERVICE_API_KEY;
 
   if (!expectedApiKey) {
     logger.error('SERVICE_API_KEY environment variable is not set');

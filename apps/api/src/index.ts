@@ -6,29 +6,23 @@ import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env.local') });
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
-// Validate required environment variables
-const requiredEnvVars = [
-  'DATABASE_URL',
-  'GOOGLE_CLIENT_ID',
-  'GOOGLE_CLIENT_SECRET',
-  'SERVICE_GMAIL_URL',
-  'SERVICE_ANALYSIS_URL',
-  // Better-auth: BETTER_AUTH_SECRET is optional (falls back to SESSION_SECRET)
-  // WEB_URL is optional (defaults to http://localhost:4000 for local dev)
-  // In production (Cloud Run), set WEB_URL to your frontend URL
-];
-
-const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
-  console.error('Please set them in .env.local or .env file');
-  process.exit(1);
-}
+// Validate environment variables via Zod schema (exits on failure)
+import { getEnv } from './env';
+getEnv();
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { google } from 'googleapis';
+import { configureIdTokenProvider } from '@crm/clients';
+
+// Configure OIDC token provider for Cloud Run service-to-service auth
+const gauth = new google.auth.GoogleAuth();
+configureIdTokenProvider(async (targetUrl: string) => {
+  const client = await gauth.getIdTokenClient(targetUrl);
+  const headers = await client.getRequestHeaders();
+  return headers.get('Authorization') ?? null;
+});
 import { logger as honoLogger } from 'hono/logger';
 import { createServer } from 'http';
 import { setupContainer } from './di/container';
@@ -42,6 +36,7 @@ import type { HonoEnv } from './types/hono';
 // Routes
 import { healthRoutes } from './routes/health';
 import { userRoutes } from './users/routes';
+import { loginHistoryRoutes } from './users/login-history-routes';
 import integrationsRoutes from './integrations/routes';
 import tenantsRoutes from './tenants/routes';
 import emailsRoutes from './emails/routes';
@@ -107,7 +102,7 @@ app.use('*', cors({
     const allowedOrigins = [
       'http://localhost:4000',
       'http://127.0.0.1:4000',
-      process.env.WEB_URL,
+      getEnv().WEB_URL,
     ].filter(Boolean) as string[];
 
     // Allow Chrome extension origins
@@ -180,16 +175,17 @@ app.on(['POST', 'GET', 'OPTIONS'], '/api/auth/*', async (c) => {
       const location = handlerResponse.headers.get('Location');
 
       // If better-auth is redirecting to a chrome-extension:// URL, let it through
-      // This happens when the Chrome extension initiated the OAuth flow
+      // (the Chrome extension initiated the OAuth flow)
       if (location?.startsWith('chrome-extension://')) {
         return handlerResponse;
       }
 
-      // If redirecting to the API server itself, redirect to web app instead
-      const apiUrl = process.env.BETTER_AUTH_URL || process.env.SERVICE_API_URL || 'http://localhost:4001';
+      // If redirecting to the API server itself, redirect to web app instead.
+      // WEB_URL should be set in Cloud Run environment variables for production.
+      const env = getEnv();
+      const apiUrl = env.BETTER_AUTH_URL;
       if (location && location.startsWith(apiUrl)) {
-        const webUrl = process.env.WEB_URL || 'http://localhost:4000';
-        return c.redirect(`${webUrl}/?auth=success`);
+        return c.redirect(`${env.WEB_URL}/?auth=success`);
       }
     }
     
@@ -242,13 +238,11 @@ app.on(['POST', 'GET', 'OPTIONS'], '/api/auth/*', async (c) => {
           }
           
           // Fallback: redirect to web app
-          const webUrl = process.env.WEB_URL || 'http://localhost:4000';
-          return c.redirect(`${webUrl}/?auth=success`);
+          return c.redirect(`${getEnv().WEB_URL}/?auth=success`);
         }
       } catch (error: any) {
         console.error('[Better-Auth] Callback error:', error);
-        const webUrl = process.env.WEB_URL || 'http://localhost:4000';
-        return c.redirect(`${webUrl}/?auth=error&message=${encodeURIComponent(error.message)}`);
+        return c.redirect(`${getEnv().WEB_URL}/?auth=error&message=${encodeURIComponent(error.message)}`);
       }
       
       // Fallback to handler response
@@ -268,12 +262,14 @@ app.route('/oauth', oauthRoutes);
 app.route('/', inngestRoutes); // Inngest webhook handler at /api/inngest/*
 
 // Internal service-to-service routes (validated by SERVICE_API_KEY, no session needed)
+// Customers and contacts are NOT mounted here: they have no service-to-service
+// callers, and the dual mount made tenant resolution ambiguous (session vs
+// x-tenant-id header). Browser callers go through the session-authenticated
+// mounts below — the only path that exists.
 app.use('/api/internal/*', requireInternalAuth());
 app.route('/api/internal/integrations', integrationsRoutes);
 app.route('/api/internal/runs', runsRoutes);
 app.route('/api/internal/emails', emailsRoutes);
-app.route('/api/internal/customers', customerRoutes);
-app.route('/api/internal/contacts', contactRoutes);
 
 // Protected routes (auth required)
 // Use better-auth middleware chain (tries better-auth first, falls back to legacy in dev)
@@ -289,8 +285,10 @@ app.use('/api/tasks/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/dashboards/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/holidays/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/keywords/*', betterAuthRequestHeaderMiddleware);
+app.use('/api/login-history/*', betterAuthRequestHeaderMiddleware);
 
 app.route('/api/users', userRoutes);
+app.route('/api/login-history', loginHistoryRoutes);
 app.route('/api/integrations', integrationsRoutes);
 app.route('/api/tenants', tenantsRoutes);
 app.route('/api/emails', emailsRoutes);
@@ -303,7 +301,7 @@ app.route('/api/dashboards', dashboardRoutes);
 app.route('/api/holidays', holidayRoutes);
 app.route('/api/keywords', keywordRoutes);
 
-const port = process.env.PORT ? parseInt(process.env.PORT) : 4001;
+const port = getEnv().PORT;
 
 logger.info({ port }, 'CRM API service starting');
 

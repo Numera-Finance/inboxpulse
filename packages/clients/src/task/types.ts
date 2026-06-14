@@ -25,10 +25,14 @@ export const taskSchema = z.object({
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   completedAt: z.coerce.date().nullable().optional(),
+  completedById: z.string().uuid().nullable().optional(),
+  problem: z.string().nullable().optional(),
+  resolution: z.string().nullable().optional(),
   // Relations (populated by API)
   customerName: z.string().nullable().optional(),
   customerDomain: z.string().optional(),
   assignedToName: z.string().nullable().optional(),
+  completedByName: z.string().nullable().optional(),
   emailSubject: z.string().nullable().optional(),
   emailBody: z.string().nullable().optional(),
   emailFromEmail: z.string().nullable().optional(),
@@ -112,6 +116,14 @@ export interface TaskExportRequest {
   dateFrom?: Date | string;
   dateTo?: Date | string;
   signal?: SignalFilterType;
+}
+
+/**
+ * Request to mark a task as done
+ */
+export interface MarkDoneRequest {
+  problem: string;
+  resolution: string;
 }
 
 /**

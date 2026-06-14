@@ -83,7 +83,6 @@ export class EmailParserService {
         subject: firstMessage.subject,
         firstMessageAt: firstMessage.receivedAt,
         lastMessageAt: lastMessage.receivedAt,
-        messageCount: emails.length,
         metadata: {
           // Store Gmail-specific thread metadata (gmailThreadId is redundant - already in providerThreadId)
         },
@@ -130,6 +129,10 @@ export class EmailParserService {
         rfcMessageId: headers.get('message-id') || undefined,
         references: headers.get('references') || undefined,
         inReplyTo: headers.get('in-reply-to') || undefined,
+        // Headers used to detect automated mail (auto-replies, bulk senders) so
+        // they don't count as a genuine first reply for time-to-response (TAT).
+        autoSubmitted: headers.get('auto-submitted') || undefined,
+        precedence: headers.get('precedence') || undefined,
       },
     };
   }
@@ -181,7 +184,7 @@ export class EmailParserService {
     return headers;
   }
 
-  private parseHeaders(headers: Map<string, string>): ParsedEmail {
+  private parseHeaders(headers: Map<string, string>) {
     const subject = headers.get('subject') || '(No Subject)';
     const from = this.parseAddress(headers.get('from') || '');
     const tos = this.parseAddressList(headers.get('to') || '');
@@ -204,7 +207,9 @@ export class EmailParserService {
     };
   }
 
-  private parseAddress(address: string): { email: string; name?: string } {
+  // Public so other services (e.g. the Gmail sync's first-reply markers) can
+  // reuse the same address parsing instead of re-implementing it.
+  parseAddress(address: string): { email: string; name?: string } {
     // Format can be: "Name <email@example.com>" or just "email@example.com"
     const match = address.match(/^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/);
 
@@ -217,7 +222,7 @@ export class EmailParserService {
     return { email: address.trim() };
   }
 
-  private parseAddressList(addresses: string): Array<{ email: string; name?: string }> {
+  parseAddressList(addresses: string): Array<{ email: string; name?: string }> {
     if (!addresses) return [];
 
     // Split by comma, but not commas within quotes

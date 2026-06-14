@@ -29,7 +29,6 @@ export const emailThreads = pgTable('email_threads', {
   // Timestamps
   firstMessageAt: timestamp('first_message_at').notNull(),
   lastMessageAt: timestamp('last_message_at').notNull(),
-  messageCount: integer('message_count').notNull().default(0),
 
   // Provider-specific data
   metadata: jsonb('metadata').$type<Record<string, any>>(),
@@ -97,10 +96,9 @@ export const emails = pgTable('emails', {
   // Set during email ingestion to avoid expensive domain matching in queries
   isCustomerEmail: boolean('is_customer_email'),
 
-  // firstReplyEmailId: ID of the first reply email from tenant domain
-  // firstReplyAt: Timestamp when the first reply was sent
-  // These are populated during email sync when a reply is detected
-  firstReplyEmailId: uuid('first_reply_email_id'),
+  // firstReplyAt: Timestamp of the first reply (tenant's outbound message) in the
+  // thread that arrived after this customer email — the time-to-response anchor.
+  // Reply emails are not stored as rows, so only the timestamp is recorded here.
   firstReplyAt: timestamp('first_reply_at'),
 
   // Tracking

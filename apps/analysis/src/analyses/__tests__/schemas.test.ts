@@ -191,19 +191,74 @@ describe('Analysis Schemas', () => {
       expect(parsed.email).toBe('john@example.com');
     });
 
-    it('should validate email format', () => {
+    it('should accept a malformed email without rejecting the analysis', () => {
+      // Intentionally no .email() validation: a malformed extraction must not
+      // reject the entire (batched) analysis result.
       const result = {
-        email: 'invalid-email', // Invalid format
+        email: 'john [at] acme.com',
       };
 
-      expect(() => signatureSchema.parse(result)).toThrow();
+      const parsed = signatureSchema.parse(result);
+      expect(parsed.email).toBe('john [at] acme.com');
     });
 
     it('should allow all fields to be optional', () => {
       const result = {};
 
       const parsed = signatureSchema.parse(result);
-      expect(parsed).toEqual({});
+      expect(parsed).toEqual({
+        name: undefined,
+        title: undefined,
+        company: undefined,
+        email: undefined,
+        phone: undefined,
+        mobile: undefined,
+        address: undefined,
+        website: undefined,
+        linkedin: undefined,
+        x: undefined,
+        linktree: undefined,
+      });
+    });
+
+    it('should normalize null and placeholder strings to undefined', () => {
+      // Module instructions tell the model to return null for absent fields,
+      // and Gemini structured output often emits "" instead — both rejected
+      // the whole analysis before (the June 2026 retry-storm root cause).
+      const result = {
+        name: null,
+        title: '',
+        company: 'null',
+        email: '',
+        phone: 'N/A',
+        website: '  ',
+      };
+
+      const parsed = signatureSchema.parse(result);
+      expect(parsed.name).toBeUndefined();
+      expect(parsed.title).toBeUndefined();
+      expect(parsed.company).toBeUndefined();
+      expect(parsed.email).toBeUndefined();
+      expect(parsed.phone).toBeUndefined();
+      expect(parsed.website).toBeUndefined();
+    });
+
+    it('should accept null for optional fields across analysis schemas', () => {
+      expect(
+        escalationSchema.parse({ detected: false, confidence: 0.9, reason: null, urgency: null })
+      ).toMatchObject({ detected: false, confidence: 0.9 });
+      expect(
+        upsellSchema.parse({ detected: false, confidence: 0.9, opportunity: null, product: null })
+      ).toMatchObject({ detected: false });
+      expect(
+        kudosSchema.parse({ detected: false, confidence: 0.9, message: null, category: null })
+      ).toMatchObject({ detected: false });
+      expect(
+        competitorSchema.parse({ detected: false, confidence: 0.9, competitors: null, context: null })
+      ).toMatchObject({ detected: false });
+      expect(
+        churnSchema.parse({ riskLevel: 'low', confidence: 0.9, indicators: [], reason: null })
+      ).toMatchObject({ riskLevel: 'low' });
     });
   });
 

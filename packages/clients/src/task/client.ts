@@ -9,6 +9,7 @@ import type {
   TaskWithComments,
   CreateTaskRequest,
   AssignableUser,
+  MarkDoneRequest,
 } from './types';
 
 /**
@@ -56,8 +57,8 @@ export class TaskClient extends BaseClient {
   /**
    * Mark task as done
    */
-  async markDone(id: string, signal?: AbortSignal): Promise<Task> {
-    const response = await this.post<ApiResponse<Task>>(`/api/tasks/${id}/done`, {}, signal);
+  async markDone(id: string, data: MarkDoneRequest, signal?: AbortSignal): Promise<Task> {
+    const response = await this.post<ApiResponse<Task>>(`/api/tasks/${id}/done`, data, signal);
 
     if (!response?.data) {
       throw new Error('Invalid API response: missing data');

@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS email_threads (
     -- Timestamps
     first_message_at TIMESTAMP NOT NULL,
     last_message_at TIMESTAMP NOT NULL,
-    message_count INTEGER NOT NULL DEFAULT 0,
 
     -- Provider-specific data
     metadata JSONB,

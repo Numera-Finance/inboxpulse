@@ -7,7 +7,8 @@ import { RunService } from '../runs/service';
 import { dbEmailToEmail } from './converter';
 import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
-import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, NotFoundError } from '@crm/shared';
+import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError } from '@crm/shared';
+import { analyzedEmailSearchRequestSchema, firstReplyMarkersRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 import { handleApiRequest, handleGetRequest, handleGetRequestWithParams } from '../utils/api-handler';
 
@@ -28,88 +29,112 @@ app.post('/bulk-with-threads', async (c) => {
 
   // Validate request body structure
   if (!body.tenantId || !body.integrationId || !body.emailCollections) {
-    return c.json({ error: 'tenantId, integrationId, and emailCollections are required' }, 400);
+    throw new InvalidInputError('tenantId, integrationId, and emailCollections are required');
   }
 
   // Validate email collections array
   const validationResult = emailCollectionSchema.array().safeParse(body.emailCollections);
   if (!validationResult.success) {
-    logger.error({ errors: validationResult.error.issues }, 'Invalid email collections');
-    return c.json({ error: 'Invalid email collections', details: validationResult.error.issues }, 400);
+    throw new ValidationError(
+      'Invalid email collections',
+      { issues: validationResult.error.issues },
+      validationResult.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message, code: i.code }))
+    );
   }
 
+  // Force every bulk-insert failure to surface as 500 so Pub/Sub redelivers.
+  // Without this wrap, the global handler would map postgres FK / unique /
+  // NOT NULL violations (23503 / 23505 / 23502) to 4xx, which Pub/Sub treats
+  // as permanent — losing the retry on transient DB issues.
   const emailService = container.resolve(EmailService);
-
+  let result: Awaited<ReturnType<typeof emailService.bulkInsertWithThreads>>;
   try {
-    // Store emails synchronously
-    const result = await emailService.bulkInsertWithThreads(
+    result = await emailService.bulkInsertWithThreads(
       body.tenantId,
       body.integrationId,
       validationResult.data
     );
-
-    logger.info(
-      {
-        tenantId: body.tenantId,
-        integrationId: body.integrationId,
-        runId: body.runId,
-        insertedCount: result.insertedCount,
-        skippedCount: result.skippedCount,
-        threadsCreated: result.threadsCreated,
-      },
-      'Bulk insert completed successfully'
+  } catch (error) {
+    throw new InternalError(
+      'Bulk insert failed',
+      { tenantId: body.tenantId, integrationId: body.integrationId },
+      error instanceof Error ? error : new Error(String(error))
     );
+  }
 
-    // Update run status synchronously if runId provided
-    if (body.runId) {
-      try {
-        const runService = container.resolve(RunService);
-
-        await runService.update(body.runId, {
-          status: 'completed',
-          itemsProcessed: result.insertedCount + result.skippedCount,
-          itemsInserted: result.insertedCount,
-          itemsSkipped: result.skippedCount,
-          completedAt: new Date(),
-        });
-
-        logger.info(
-          { tenantId: body.tenantId, runId: body.runId },
-          'Run status updated successfully'
-        );
-      } catch (runUpdateError: any) {
-        // Log but don't fail - emails are already stored
-        logger.error(
-          {
-            error: {
-              message: runUpdateError.message,
-              stack: runUpdateError.stack,
-            },
-            tenantId: body.tenantId,
-            runId: body.runId,
-          },
-          'Failed to update run status (emails already stored)'
-        );
-      }
-    }
-
-    // Return success with actual counts
-    return c.json(result);
-  } catch (error: any) {
-    logger.error({
-      error: {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
-      },
+  logger.info(
+    {
       tenantId: body.tenantId,
       integrationId: body.integrationId,
-      emailCollectionsCount: body.emailCollections?.length,
-    }, 'Bulk insert failed - returning 500 for retry');
+      runId: body.runId,
+      insertedCount: result.insertedCount,
+      skippedCount: result.skippedCount,
+      threadsCreated: result.threadsCreated,
+    },
+    'Bulk insert completed successfully'
+  );
 
-    // Return 500 so Gmail service can retry via Pub/Sub
-    return c.json({ error: 'Failed to bulk insert emails', message: error.message }, 500);
+  // Update run status if runId provided. Fail-soft: emails are already stored,
+  // so a run-update failure shouldn't propagate as a 500 (which would make
+  // Pub/Sub redeliver and re-insert).
+  if (body.runId) {
+    try {
+      const runService = container.resolve(RunService);
+      await runService.update(body.runId, {
+        status: 'completed',
+        itemsProcessed: result.insertedCount + result.skippedCount,
+        itemsInserted: result.insertedCount,
+        itemsSkipped: result.skippedCount,
+        completedAt: new Date(),
+      });
+      logger.info({ tenantId: body.tenantId, runId: body.runId }, 'Run status updated successfully');
+    } catch (runUpdateError) {
+      logger.error(
+        { error: runUpdateError, tenantId: body.tenantId, runId: body.runId },
+        'Failed to update run status (emails already stored)'
+      );
+    }
   }
+
+  return c.json(result);
+});
+
+/**
+ * Record first-reply markers (header-only) for outbound/reply messages the Gmail
+ * sync drops at the blacklist stage. Sets first_reply_at on the answered customer
+ * emails. No email rows are created. Best-effort: the caller (sync) does not fail
+ * if this errors, but invalid bodies still return 4xx.
+ */
+app.post('/first-reply-markers', async (c) => {
+  const body = await c.req.json();
+
+  const parsed = firstReplyMarkersRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new ValidationError(
+      'Invalid first-reply markers request',
+      { issues: parsed.error.issues },
+      parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message, code: i.code }))
+    );
+  }
+
+  const emailService = container.resolve(EmailService);
+  const result = await emailService.applyFirstReplyMarkers(
+    parsed.data.tenantId,
+    parsed.data.integrationId,
+    parsed.data.markers
+  );
+
+  logger.info(
+    {
+      tenantId: parsed.data.tenantId,
+      integrationId: parsed.data.integrationId,
+      markerCount: parsed.data.markers.length,
+      updatedCount: result.updatedCount,
+    },
+    'Applied first-reply markers'
+  );
+
+  return c.json(result);
 });
 
 /**
@@ -119,25 +144,8 @@ app.post('/bulk', async (c) => {
   const { emails } = await c.req.json<{ emails: NewEmail[] }>();
 
   const emailService = container.resolve(EmailService);
-
-  try {
-    const result = await emailService.bulkInsert(emails);
-    return c.json(result);
-  } catch (error: any) {
-    logger.error({
-      error: {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
-      },
-      emailCount: emails?.length,
-      sampleEmail: emails?.[0] ? {
-        tenantId: emails[0].tenantId,
-        messageId: emails[0].messageId,
-      } : undefined,
-    }, 'Bulk insert error');
-    return c.json({ error: error.message }, 400);
-  }
+  const result = await emailService.bulkInsert(emails);
+  return c.json(result);
 });
 
 /**
@@ -278,6 +286,46 @@ app.get('/tat-metrics', async (c) => {
 });
 
 /**
+ * POST /api/emails/analyzed/search - Search analyzed emails with task overlay
+ * Returns paginated list of analyzed emails with optional task information
+ */
+app.post('/analyzed/search', async (c) => {
+  return handleApiRequest(c, analyzedEmailSearchRequestSchema, async (requestHeader: RequestHeader, request) => {
+    const service = container.resolve(EmailService);
+    return await service.searchAnalyzedEmails(requestHeader, request);
+  });
+});
+
+/**
+ * POST /api/emails/analyzed/export - Export analyzed emails with comments and contact roles
+ * Same filters as search, but returns all matching results (no pagination)
+ */
+app.post('/analyzed/export', async (c) => {
+  return handleApiRequest(c, analyzedEmailSearchRequestSchema, async (requestHeader: RequestHeader, request) => {
+    const service = container.resolve(EmailService);
+    return await service.exportAnalyzedEmails(requestHeader, request);
+  });
+});
+
+/**
+ * GET /api/emails/analyzed/:emailId - Get single analyzed email with task overlay
+ */
+app.get('/analyzed/:emailId', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ emailId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      const email = await service.getAnalyzedEmailById(requestHeader, params.emailId);
+      if (!email) {
+        throw new NotFoundError('Email', params.emailId);
+      }
+      return email;
+    }
+  );
+});
+
+/**
  * GET /api/emails/customer/:customerId - Get emails by customer (with access control)
  * Query params:
  *   - limit: number (default 50)
@@ -350,7 +398,7 @@ app.post('/resolve-by-messages', async (c) => {
 app.get('/:emailId', async (c) => {
   // Skip this route for specific paths that should be handled by other routes
   const emailId = c.req.param('emailId');
-  if (emailId === 'exists' || emailId === 'thread' || emailId === 'bulk' || emailId === 'bulk-with-threads') {
+  if (emailId === 'exists' || emailId === 'thread' || emailId === 'bulk' || emailId === 'bulk-with-threads' || emailId === 'analyzed') {
     return c.notFound();
   }
 
@@ -376,14 +424,12 @@ app.get('/exists', async (c) => {
   const provider = c.req.query('provider') || 'gmail';
   const messageId = c.req.query('messageId');
 
-  const emailService = container.resolve(EmailService);
+  if (!tenantId) throw new InvalidInputError('tenantId query parameter is required');
+  if (!messageId) throw new InvalidInputError('messageId query parameter is required');
 
-  try {
-    const exists = await emailService.exists(tenantId!, provider, messageId!);
-    return c.json({ exists });
-  } catch (error: any) {
-    return c.json({ error: error.message }, 400);
-  }
+  const emailService = container.resolve(EmailService);
+  const exists = await emailService.exists(tenantId, provider, messageId);
+  return c.json({ exists });
 });
 
 /**
@@ -414,74 +460,53 @@ app.post('/:emailId/analyze', async (c) => {
   const emailService = container.resolve(EmailService);
   const analysisService = container.resolve(EmailAnalysisService);
 
-  try {
-    // Fetch email from database (by ID only - tenantId is in the email record)
-    const dbEmail = await emailService.findById(emailId);
-    if (!dbEmail) {
-      return c.json({ error: 'Email not found' }, 404);
-    }
+  // Fetch email from database (by ID only - tenantId is in the email record)
+  const dbEmail = await emailService.findById(emailId);
+  if (!dbEmail) throw new NotFoundError('Email', emailId);
 
-    // Get tenantId from the email record
-    const tenantId = dbEmail.tenantId;
+  // Get tenantId from the email record
+  const tenantId = dbEmail.tenantId;
 
-    // Get thread emails for context
-    const threadResult = await emailService.findByThread(tenantId, dbEmail.threadId);
+  // Get thread emails for context
+  const threadResult = await emailService.findByThread(tenantId, dbEmail.threadId);
 
-    // Build thread context (same logic as Inngest function)
-    const threadContext = buildThreadContext(threadResult.emails, dbEmail.messageId);
+  // Build thread context (same logic as Inngest function)
+  const threadContext = buildThreadContext(threadResult.emails, dbEmail.messageId);
 
-    // Convert DB email to shared Email type
-    const email = dbEmailToEmail(dbEmail);
+  // Convert DB email to shared Email type
+  const email = dbEmailToEmail(dbEmail);
 
-    logger.info(
-      {
-        tenantId,
-        emailId,
-        persist,
-        threadEmailsCount: threadResult.emails.length,
-      },
-      'Starting on-demand email analysis'
-    );
+  logger.info(
+    { tenantId, emailId, persist, threadEmailsCount: threadResult.emails.length },
+    'Starting on-demand email analysis'
+  );
 
-    // Execute analysis using shared service
-    // Note: We pass threadContext from raw emails for now, but the service will use thread summaries if available
-    const result = await analysisService.executeAnalysis({
-      tenantId,
-      emailId,
-      email,
-      threadId: dbEmail.threadId,
-      threadContext: threadContext.threadContext, // Fallback if no summaries exist
-      persist,
-      analysisTypes,
-      useThreadSummaries: false, // Disabled - thread summaries not used in UI yet
-    });
+  // Execute analysis using shared service.
+  // Note: threadContext is built from raw emails; the service will prefer
+  // thread summaries when available.
+  const result = await analysisService.executeAnalysis({
+    tenantId,
+    emailId,
+    email,
+    threadId: dbEmail.threadId,
+    threadContext: threadContext.threadContext,
+    persist,
+    analysisTypes,
+    useThreadSummaries: false, // Disabled - thread summaries not used in UI yet
+  });
 
-    return c.json({
-      success: true,
-      emailId,
-      persist,
-      result: {
-        customersCreated: result.domainResult?.customers?.length || 0,
-        contactsCreated: result.contactResult?.contacts?.length || 0,
-        analyses: result.analysisResults || {},
-        customers: result.domainResult?.customers || [],
-        contacts: result.contactResult?.contacts || [],
-      },
-    });
-  } catch (error: any) {
-    logger.error(
-      {
-        error: {
-          message: error.message,
-          stack: error.stack,
-          name: error.name,
-        },
-        emailId,
-      },
-      'Failed to analyze email'
-    );
-    return c.json({ error: error.message }, 500);
-  }
+  return c.json({
+    success: true,
+    emailId,
+    persist,
+    result: {
+      customersCreated: result.customers?.length || 0,
+      contactsCreated: result.contacts?.length || 0,
+      analyses: result.analysisResults || {},
+      customers: result.customers || [],
+      contacts: result.contacts || [],
+    },
+  });
 });
 
 export default app;

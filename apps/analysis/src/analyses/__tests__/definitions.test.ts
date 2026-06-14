@@ -123,9 +123,12 @@ describe('Analysis Definitions', () => {
       expect(definitionsByType['signature-extraction']).toBe(signatureExtractionAnalysisDefinition);
     });
 
-    it('should have definitions for domain-extraction and contact-extraction', () => {
-      expect(definitionsByType['domain-extraction']).toBeDefined();
-      expect(definitionsByType['contact-extraction']).toBeDefined();
+    it('should NOT have entries for the regex-only extraction types', () => {
+      // domain-extraction and contact-extraction are pure regex returned in
+      // the /analyze response payload, not LLM analyses. They were removed
+      // from the AnalysisType union as part of the pipeline refactor.
+      expect((definitionsByType as any)['domain-extraction']).toBeUndefined();
+      expect((definitionsByType as any)['contact-extraction']).toBeUndefined();
     });
   });
 
@@ -133,11 +136,6 @@ describe('Analysis Definitions', () => {
     it('should return definition for valid type', () => {
       expect(getAnalysisDefinition('sentiment')).toBe(sentimentAnalysisDefinition);
       expect(getAnalysisDefinition('escalation')).toBe(escalationAnalysisDefinition);
-    });
-
-    it('should return definitions for domain-extraction and contact-extraction', () => {
-      expect(getAnalysisDefinition('domain-extraction')).toBeDefined();
-      expect(getAnalysisDefinition('contact-extraction')).toBeDefined();
     });
   });
 

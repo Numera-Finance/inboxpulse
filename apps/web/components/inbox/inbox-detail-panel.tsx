@@ -13,7 +13,6 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { SentimentIndicator } from "@/components/ui/sentiment-indicator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -136,8 +135,8 @@ function MessageContent({ message }: { message: InboxItemContent }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
-            <p className="font-medium text-sm">{message.from.name}</p>
-            <span className="text-xs text-muted-foreground">
+            <p className="font-medium text-sm truncate">{message.from.name}</p>
+            <span className="text-xs text-muted-foreground shrink-0">
               {formatTimestamp(message.timestamp)}
             </span>
           </div>
@@ -161,10 +160,10 @@ function MessageContent({ message }: { message: InboxItemContent }) {
         )}
 
         {/* Body */}
-        <div className="prose prose-sm dark:prose-invert max-w-none [&_*]:border-0">
+        <div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto [&_*]:border-0 [&_*]:max-w-full">
           {message.bodyFormat === "html" ? (
             <div
-              className="text-sm leading-relaxed"
+              className="text-sm leading-relaxed break-words [overflow-wrap:anywhere]"
               dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(message.body) }}
             />
           ) : (
@@ -330,17 +329,19 @@ export function InboxDetailPanel({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 h-0 min-h-0 border-0 border-t-0">
+      <div className="flex-1 h-0 min-h-0 overflow-y-auto overflow-x-hidden">
         <div className="px-4 pb-4 pt-2">
           {/* Header */}
           <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <h2 className="text-xl font-semibold flex-1">{item.subject}</h2>
-              {item.sentiment && (
-                <SentimentIndicator sentiment={item.sentiment} size="md" showLabel />
-              )}
-              {/* Header actions slot (e.g., "Done" button for tasks) */}
-              {headerActions}
+            <div className="flex items-start gap-2 mb-2">
+              <h2 className="text-xl font-semibold min-w-0 flex-1">{item.subject}</h2>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {item.sentiment && (
+                  <SentimentIndicator sentiment={item.sentiment} size="md" showLabel />
+                )}
+                {/* Header actions slot (e.g., "Done" button for tasks) */}
+                {headerActions}
+              </div>
             </div>
             {(item.isStarred || item.priority || item.status || headerBadges) && (
               <div className="flex items-center gap-2 flex-wrap">
@@ -414,7 +415,7 @@ export function InboxDetailPanel({
           {afterContent}
 
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }

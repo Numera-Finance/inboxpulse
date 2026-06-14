@@ -1,43 +1,68 @@
 /**
- * Postmark Email Sender
+ * SES Email Sender
  *
- * Implements ChannelSender interface for sending emails via Postmark.
- * Supports EMAIL_OVERRIDE for development/testing.
+ * Implements ChannelSender interface for sending emails via Amazon SES.
+ * Honors EMAIL_OVERRIDE (redirect every outbound to a sandbox list) and
+ * EMAIL_BCC (silently BCC every outbound to a monitor list).
  */
 
 import type { ChannelPayload, ChannelSender, SendResult } from '@crm/notifications';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 // =============================================================================
-// Configuration
+// SES Email Sender
 // =============================================================================
 
-const FROM_EMAIL = process.env.FROM_EMAIL || 'hello@9mo.ai';
-const FROM_NAME = process.env.FROM_NAME || 'MSCFO Email Sentiment';
-
-// =============================================================================
-// Postmark Email Sender
-// =============================================================================
-
-export class PostmarkEmailSender implements ChannelSender {
-  private serverToken: string | undefined;
-  /** Comma-separated allowlist of emails. If set, only these recipients receive mail; others are redirected to the first address. */
-  private allowedEmails: string[];
+export class SesEmailSender implements ChannelSender {
+  private client: unknown | null = null;
+  private initialized = false;
+  /** Comma-separated override list. When set, ALL emails are redirected to these addresses instead of the real recipient (dev/staging sandbox). */
+  private overrideEmails: string[];
+  /** Comma-separated BCC list. Added to every outbound email so we can monitor delivery in production. Skipped when override is active. */
+  private bccEmails: string[];
 
   constructor() {
-    this.serverToken = process.env.POSTMARK_API_TOKEN;
-    this.allowedEmails = (process.env.EMAIL_OVERRIDE || '')
+    const env = getEnv();
+    this.overrideEmails = env.EMAIL_OVERRIDE
       .split(',')
-      .map(e => e.trim().toLowerCase())
+      .map(e => e.trim())
+      .filter(Boolean);
+    this.bccEmails = env.EMAIL_BCC
+      .split(',')
+      .map(e => e.trim())
       .filter(Boolean);
 
-    if (!this.serverToken) {
-      logger.warn('POSTMARK_API_TOKEN not set - emails will not be sent');
+    if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
+      logger.warn('AWS SES credentials not set - emails will not be sent');
     }
 
-    if (this.allowedEmails.length > 0) {
-      logger.info({ allowedEmails: this.allowedEmails }, 'EMAIL_OVERRIDE is set - only allowed recipients will receive emails, others redirected');
+    if (this.overrideEmails.length > 0) {
+      logger.info({ overrideEmails: this.overrideEmails }, 'EMAIL_OVERRIDE is active - all emails will be redirected');
     }
+
+    if (this.bccEmails.length > 0) {
+      logger.info({ bccEmails: this.bccEmails }, 'EMAIL_BCC is active - all emails will BCC these addresses');
+    }
+  }
+
+  private async getClient() {
+    if (!this.initialized) {
+      const { SESClient } = await import('@aws-sdk/client-ses');
+      const env = getEnv();
+
+      this.client = new SESClient({
+        region: env.AWS_REGION,
+        ...(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY && {
+          credentials: {
+            accessKeyId: env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+          },
+        }),
+      });
+      this.initialized = true;
+    }
+    return this.client;
   }
 
   async send(payload: ChannelPayload): Promise<SendResult> {
@@ -46,94 +71,100 @@ export class PostmarkEmailSender implements ChannelSender {
       return {
         sent: false,
         skipped: true,
-        skipReason: `PostmarkEmailSender only handles email, got: ${payload.channel}`,
+        skipReason: `SesEmailSender only handles email, got: ${payload.channel}`,
       };
     }
 
-    if (!this.serverToken) {
+    const env = getEnv();
+    if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
       return {
         sent: false,
         skipped: true,
-        skipReason: 'POSTMARK_API_TOKEN not configured',
+        skipReason: 'AWS SES credentials not configured',
       };
     }
 
-    // Determine recipient: if allowlist is set, only deliver to allowed emails; redirect others to first allowed email
+    // Determine recipients: if EMAIL_OVERRIDE is set, send a separate email to
+    // each override address (sandbox mode). Otherwise send to the real recipient.
     const actualRecipient = payload.to;
-    let effectiveRecipient = actualRecipient;
-    if (this.allowedEmails.length > 0) {
-      if (this.allowedEmails.includes(actualRecipient.toLowerCase())) {
-        effectiveRecipient = actualRecipient; // Recipient is on the allowlist — deliver normally
-      } else {
-        effectiveRecipient = this.allowedEmails[0]; // Redirect to first allowed email
-      }
-    }
+    const recipients = this.overrideEmails.length > 0
+      ? this.overrideEmails
+      : [actualRecipient];
 
-    // Build subject (add prefix if redirecting)
+    // Subject prefix only applies in override mode so we know who it was for.
     let subject = payload.subject;
-    if (this.allowedEmails.length > 0 && actualRecipient.toLowerCase() !== effectiveRecipient.toLowerCase()) {
+    if (this.overrideEmails.length > 0) {
       subject = `[To: ${actualRecipient}] ${subject}`;
     }
 
-    try {
-      const response = await fetch('https://api.postmarkapp.com/email', {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          'X-Postmark-Server-Token': this.serverToken,
-        },
-        body: JSON.stringify({
-          From: payload.from || `${FROM_NAME} <${FROM_EMAIL}>`,
-          To: effectiveRecipient,
-          Subject: subject,
-          HtmlBody: payload.html,
-          TextBody: payload.text,
-          MessageStream: 'outbound',
-        }),
-      });
+    // BCC monitor list applies only in normal mode. In override mode the entire
+    // delivery is already going to the override list — adding BCC would just
+    // duplicate copies to addresses that may overlap.
+    const bcc = this.overrideEmails.length === 0 ? this.bccEmails : [];
 
-      const data = (await response.json()) as {
-        MessageID?: string;
-        ErrorCode?: number;
-        Message?: string;
-      };
+    const errors: string[] = [];
+    const messageIds: string[] = [];
+    const from = payload.from || `${env.FROM_NAME} <${env.FROM_EMAIL}>`;
 
-      if (!response.ok || (data.ErrorCode && data.ErrorCode !== 0)) {
-        logger.error(
-          { recipient: effectiveRecipient, error: data.Message },
-          'Postmark send failed'
+    for (const recipient of recipients) {
+      try {
+        const { SendEmailCommand } = await import('@aws-sdk/client-ses');
+        const client = await this.getClient() as { send: (cmd: unknown) => Promise<{ MessageId?: string }> };
+
+        const command = new SendEmailCommand({
+          Source: from,
+          Destination: {
+            ToAddresses: [recipient],
+            ...(bcc.length > 0 && { BccAddresses: bcc }),
+          },
+          Message: {
+            Subject: { Data: subject, Charset: 'UTF-8' },
+            Body: {
+              ...(payload.html && {
+                Html: { Data: payload.html, Charset: 'UTF-8' },
+              }),
+              ...(payload.text && {
+                Text: { Data: payload.text, Charset: 'UTF-8' },
+              }),
+            },
+          },
+        });
+
+        const response = await client.send(command);
+
+        logger.info(
+          {
+            messageId: response.MessageId,
+            recipient,
+            originalRecipient: this.overrideEmails.length > 0 ? actualRecipient : undefined,
+            bcc: bcc.length > 0 ? bcc : undefined,
+          },
+          'Email sent via SES'
         );
-        return {
-          sent: false,
-          skipped: false,
-          error: data.Message || `HTTP ${response.status}`,
-        };
+
+        if (response.MessageId) {
+          messageIds.push(response.MessageId);
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : JSON.stringify(error);
+        logger.error({ error: message, errorDetail: error, recipient }, 'Failed to send email via SES');
+        errors.push(`${recipient}: ${message}`);
       }
+    }
 
-      logger.info(
-        {
-          messageId: data.MessageID,
-          recipient: effectiveRecipient,
-          originalRecipient: effectiveRecipient !== actualRecipient ? actualRecipient : undefined,
-        },
-        'Email sent via Postmark'
-      );
-
-      return {
-        sent: true,
-        skipped: false,
-        messageId: data.MessageID,
-      };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      logger.error({ error: message }, 'Failed to send email via Postmark');
+    if (messageIds.length === 0) {
       return {
         sent: false,
         skipped: false,
-        error: message,
+        error: errors.join('; '),
       };
     }
+
+    return {
+      sent: true,
+      skipped: false,
+      messageId: messageIds.join(','),
+    };
   }
 }
 
@@ -141,11 +172,11 @@ export class PostmarkEmailSender implements ChannelSender {
 // Singleton Instance
 // =============================================================================
 
-let emailSenderInstance: PostmarkEmailSender | null = null;
+let emailSenderInstance: SesEmailSender | null = null;
 
-export function getEmailSender(): PostmarkEmailSender {
+export function getEmailSender(): SesEmailSender {
   if (!emailSenderInstance) {
-    emailSenderInstance = new PostmarkEmailSender();
+    emailSenderInstance = new SesEmailSender();
   }
   return emailSenderInstance;
 }

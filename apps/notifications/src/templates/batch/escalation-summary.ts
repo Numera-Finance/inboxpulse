@@ -17,9 +17,7 @@ import {
 import { getServiceAuthHeaders } from '@crm/shared';
 import { EscalationBatchEmail, type EscalationItem, type EscalationMetrics } from '../emails';
 import { logger } from '../../utils/logger';
-
-// API base URL for fetching escalation data
-const API_BASE_URL = process.env.SERVICE_API_URL || 'http://localhost:4001';
+import { getEnv } from '../../env';
 
 // =============================================================================
 // Types
@@ -71,7 +69,7 @@ export class EscalationSummaryTemplate extends BaseBatchTemplate<EscalationData>
       }
 
       const response = await fetch(
-        `${API_BASE_URL}/api/tasks/escalations-for-manager?${params}`,
+        `${getEnv().SERVICE_API_URL}/api/tasks/escalations-for-manager?${params}`,
         {
           method: 'GET',
           headers: {

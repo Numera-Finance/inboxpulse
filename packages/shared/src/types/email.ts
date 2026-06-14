@@ -75,7 +75,6 @@ export const emailThreadSchema = z.object({
   subject: z.string().min(1),
   firstMessageAt: z.coerce.date(), // Accepts Date objects or ISO date strings
   lastMessageAt: z.coerce.date(), // Accepts Date objects or ISO date strings
-  messageCount: z.number().int().min(1),
 
   // Provider-specific data
   metadata: z.record(z.string(), z.any()).optional(),

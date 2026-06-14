@@ -2,15 +2,9 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTaskClient } from '../lib/clients';
 import { TaskStatus } from '@crm/clients';
-import type { Task, TaskComment } from '@crm/clients';
+import type { Task } from '@crm/clients';
 import type { ThreadNegativeEmail } from '../hooks/useThreadCustomer';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  MessageSquare,
-  Send,
-} from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface NegativeEmailResolutionProps {
@@ -108,98 +102,50 @@ function NegativeEmailItem({
 }
 
 /**
- * Resolution UI for an open escalation task: comment thread + add-comment box +
- * "Mark resolved". Marking resolved requires at least one comment, matching the
- * web app's "comment required before done" rule.
+ * Resolution UI for an open escalation task. Mirrors the web app's resolve flow:
+ * marking a task done requires a structured problem + resolution (the API's
+ * MarkDoneRequest), not a free-form comment.
  */
 function ResolutionPanel({ task }: { task: Task }): React.ReactElement {
   const queryClient = useQueryClient();
-  const [commentText, setCommentText] = useState('');
+  const [problem, setProblem] = useState('');
+  const [resolution, setResolution] = useState('');
 
-  const { data: comments } = useQuery<TaskComment[]>({
-    queryKey: ['tasks', task.id, 'comments'],
-    queryFn: async () => getTaskClient().getComments(task.id),
-    staleTime: 30_000,
-  });
-
-  const invalidateTaskLists = (): void => {
-    queryClient.invalidateQueries({ queryKey: ['tasks', 'by-email'] });
-    queryClient.invalidateQueries({ queryKey: ['tasks', 'customer', task.customerId] });
-  };
-
-  const addCommentMutation = useMutation({
-    mutationFn: async (content: string) => getTaskClient().addComment(task.id, content),
+  const markDoneMutation = useMutation({
+    mutationFn: async () =>
+      getTaskClient().markDone(task.id, {
+        problem: problem.trim(),
+        resolution: resolution.trim(),
+      }),
     onSuccess: () => {
-      setCommentText('');
-      queryClient.invalidateQueries({ queryKey: ['tasks', task.id, 'comments'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', 'by-email'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', 'customer', task.customerId] });
     },
   });
 
-  const markDoneMutation = useMutation({
-    mutationFn: async () => getTaskClient().markDone(task.id),
-    onSuccess: invalidateTaskLists,
-  });
-
-  const hasComments = (comments?.length ?? 0) > 0;
-
-  const handleSubmitComment = (): void => {
-    const trimmed = commentText.trim();
-    if (trimmed) addCommentMutation.mutate(trimmed);
-  };
+  const canResolve = problem.trim().length > 0 && resolution.trim().length > 0;
 
   return (
     <div className="space-y-2">
-      {comments && comments.length > 0 && (
-        <div className="space-y-1">
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <MessageSquare size={10} />
-            <span className="font-medium">Resolution notes ({comments.length})</span>
-          </div>
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {comments.map((comment) => (
-              <div key={comment.id} className="rounded bg-muted/50 px-2 py-1 text-xs">
-                <span className="font-medium">{comment.userName}:</span> {comment.content}
-                <span className="text-muted-foreground ml-1">
-                  {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="flex items-center gap-1.5">
-        <input
-          type="text"
-          value={commentText}
-          onChange={(e) => setCommentText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmitComment();
-            }
-          }}
-          placeholder="Add a resolution note…"
-          className="flex-1 rounded border border-input bg-background px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-        />
-        <button
-          onClick={handleSubmitComment}
-          disabled={!commentText.trim() || addCommentMutation.isPending}
-          className="rounded p-1 text-primary hover:bg-primary/10 disabled:opacity-50 transition-colors"
-          title="Add note"
-        >
-          {addCommentMutation.isPending ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <Send size={14} />
-          )}
-        </button>
-      </div>
+      <input
+        type="text"
+        value={problem}
+        onChange={(e) => setProblem(e.target.value)}
+        placeholder="Problem…"
+        className="w-full rounded border border-input bg-background px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+      <textarea
+        value={resolution}
+        onChange={(e) => setResolution(e.target.value)}
+        placeholder="Resolution…"
+        rows={2}
+        className="w-full rounded border border-input bg-background px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
+      />
 
       <button
         onClick={() => markDoneMutation.mutate()}
-        disabled={!hasComments || markDoneMutation.isPending}
-        title={hasComments ? 'Mark resolved' : 'Add a resolution note first'}
+        disabled={!canResolve || markDoneMutation.isPending}
+        title={canResolve ? 'Mark resolved' : 'Enter a problem and resolution first'}
         className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium bg-success/10 text-success hover:bg-success/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         {markDoneMutation.isPending ? (
@@ -210,15 +156,15 @@ function ResolutionPanel({ task }: { task: Task }): React.ReactElement {
         Mark resolved
       </button>
 
-      {!hasComments && (
+      {!canResolve && (
         <p className="text-[11px] text-muted-foreground">
-          Add a resolution note before marking resolved.
+          Enter a problem and resolution before marking resolved.
         </p>
       )}
 
-      {(addCommentMutation.error || markDoneMutation.error) && (
+      {markDoneMutation.error && (
         <p className="text-xs text-destructive">
-          {((addCommentMutation.error ?? markDoneMutation.error) as Error).message}
+          {(markDoneMutation.error as Error).message}
         </p>
       )}
     </div>

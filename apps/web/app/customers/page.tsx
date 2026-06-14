@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
+import { subDays, startOfDay, endOfDay } from "date-fns"
 import { Search, Plus, Upload } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ViewToggle } from "@/components/view-toggle"
@@ -14,6 +15,7 @@ import { ImportResultsDialog, type ImportResults } from "@/components/import-res
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ExportButton } from "@/components/ui/export-button"
+import { DateRangeFilter } from "@/components/ui/date-range-filter"
 import { CustomerTableSkeleton } from "@/components/ui/table-skeleton"
 import { useCustomers, useCustomer, useUpsertCustomer, useImportCustomers, useExportCustomers } from "@/lib/hooks"
 import { type Customer, mapApiCustomerToCustomer } from "@/lib/types"
@@ -21,6 +23,17 @@ import { SearchOperator } from "@crm/shared"
 import type { SignalFilterType } from "@crm/clients"
 import { toast } from "sonner"
 import { PermissionGate, Permission } from "@/src/components/PermissionGate"
+
+// Map table column accessorKeys to API sortBy field names
+const COLUMN_TO_SORT_FIELD: Record<string, string> = {
+  name: 'name',
+  totalEmails: 'emailCount',
+  escalations: 'negativeCount',
+  upsellCount: 'upsellCount',
+  churnCount: 'churnCount',
+  positiveCount: 'positiveCount',
+  lastContact: 'lastContactDate',
+}
 
 // Debounce hook for search
 function useDebounce<T>(value: T, delay: number): T {
@@ -44,6 +57,8 @@ export default function CustomersPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const signalFromUrl = searchParams.get("signal") as SignalFilterType | null
+  const initialDateFrom = searchParams.get("from")
+  const initialDateTo = searchParams.get("to")
 
   const [view, setView] = React.useState<"grid" | "table">("table")
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -52,26 +67,61 @@ export default function CustomersPage() {
   const [importResults, setImportResults] = React.useState<ImportResults | null>(null)
   const [importResultsOpen, setImportResultsOpen] = React.useState(false)
 
-  // Pagination state
+  // Pagination and sorting state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
+  const [sorting, setSorting] = React.useState<Array<{ id: string; desc: boolean }>>([])
+  const sortBy = sorting.length > 0 ? (COLUMN_TO_SORT_FIELD[sorting[0].id] || 'name') : 'name'
+  const sortOrder = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : 'asc'
+
+  // Date filter state (default to Last 30 days or URL values)
+  const [dateFrom, setDateFrom] = React.useState(
+    () => initialDateFrom ?? startOfDay(subDays(new Date(), 30)).toISOString()
+  )
+  const [dateTo, setDateTo] = React.useState(
+    () => initialDateTo ?? endOfDay(new Date()).toISOString()
+  )
+
+  const handleDateRangeChange = React.useCallback((newDateFrom: string, newDateTo: string) => {
+    setDateFrom(newDateFrom)
+    setDateTo(newDateTo)
+    setPagination(prev => ({ ...prev, pageIndex: 0 }))
+
+    const params = new URLSearchParams(searchParams)
+    params.set("from", newDateFrom)
+    params.set("to", newDateTo)
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
 
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
-  // Reset pagination when search changes
+  // Reset pagination when search or sorting changes
   React.useEffect(() => {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
-  }, [debouncedSearch])
+  }, [debouncedSearch, sorting])
+
+  // Keep the date range in sync with the URL when the query string changes.
+  // Only react when the URL actually carries date params — otherwise we would
+  // recompute a fresh "Last 30 days from now" on every unrelated param change.
+  const urlFrom = searchParams.get("from")
+  const urlTo = searchParams.get("to")
+  React.useEffect(() => {
+    if (urlFrom) setDateFrom(urlFrom)
+    if (urlTo) setDateTo(urlTo)
+  }, [urlFrom, urlTo])
 
   // Fetch customers using React Query with server-side pagination
   const { data, isLoading, isError, error } = useCustomers({
     queries: debouncedSearch
       ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
       : [],
-    sortOrder: 'asc',
+    sortBy,
+    sortOrder,
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     include: ['emailCount', 'lastContactDate', 'sentiment', 'escalationCount', 'upsellCount', 'churnCount', 'positiveCount', 'averageTat'],
+    dateFrom,
+    dateTo,
   })
 
   // Fetch single customer when customerId is in URL (for direct link access)
@@ -103,36 +153,45 @@ export default function CustomersPage() {
   // Total count from server for pagination
   const totalCount = data?.total ?? 0
 
+  const preserveSearchPath = (path: string) => {
+    const params = new URLSearchParams(searchParams)
+    const queryString = params.toString()
+    return queryString ? `${path}?${queryString}` : path
+  }
+
   const handleSelectCustomer = (customer: Customer) => {
-    navigate(`/customers/${customer.id}/emails`)
+    navigate(preserveSearchPath(`/customers/${customer.id}/emails`))
   }
 
   const handleCloseDrawer = () => {
-    navigate('/customers', { replace: true })
+    navigate(preserveSearchPath('/customers'), { replace: true })
   }
 
   const handleTabChange = (newTab: string) => {
     if (customerId) {
-      navigate(`/customers/${customerId}/${newTab}`)
+      navigate(preserveSearchPath(`/customers/${customerId}/${newTab}`), { replace: true })
     }
   }
 
   const handleEmailSelect = (selectedEmailId: string | null) => {
-    if (customerId && selectedEmailId) {
-      navigate(`/customers/${customerId}/emails/${selectedEmailId}`, { replace: true })
-    } else if (customerId) {
-      navigate(`/customers/${customerId}/emails`, { replace: true })
+    if (!customerId) return
+
+    if (selectedEmailId) {
+      navigate(preserveSearchPath(`/customers/${customerId}/emails/${selectedEmailId}`), { replace: true })
+    } else {
+      navigate(preserveSearchPath(`/customers/${customerId}/emails`), { replace: true })
     }
   }
 
   const handleSignalClick = (customer: Customer, signal: string) => {
-    navigate(`/customers/${customer.id}/emails?signal=${signal}`)
+    const params = new URLSearchParams(searchParams)
+    params.set('signal', signal)
+    navigate(`/customers/${customer.id}/emails?${params.toString()}`, { replace: true })
   }
 
   const handleAddCustomer = async (customerData: CustomerFormData) => {
     try {
       await upsertCustomer.mutateAsync({
-        tenantId: customerData.tenantId,
         domains: customerData.domains,
         name: customerData.name,
         website: customerData.website,
@@ -173,15 +232,7 @@ export default function CustomersPage() {
     }
   }
 
-  const handleExport = React.useCallback(async () => {
-    try {
-      const blob = await exportCustomers.mutateAsync()
-      return blob
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to export customers")
-      throw err
-    }
-  }, [exportCustomers])
+  const handleExport = React.useCallback(() => exportCustomers.mutateAsync(), [exportCustomers])
 
   return (
     <AppShell>
@@ -218,13 +269,20 @@ export default function CustomersPage() {
         </div>
 
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search by company, domain, contact, or labels..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+          <div className="flex items-center gap-2 flex-1">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by company, domain, or labels..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <DateRangeFilter
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onChange={handleDateRangeChange}
             />
           </div>
           <ViewToggle view={view} onViewChange={setView} />
@@ -232,7 +290,7 @@ export default function CustomersPage() {
 
         {/* Loading state */}
         {isLoading && (
-          <CustomerTableSkeleton rows={8} />
+          <CustomerTableSkeleton rows={15} />
         )}
 
         {/* Error state */}
@@ -263,6 +321,8 @@ export default function CustomersPage() {
                 onSignalClick={handleSignalClick}
                 pagination={pagination}
                 onPaginationChange={setPagination}
+                sorting={sorting}
+                onSortingChange={setSorting}
                 totalCount={totalCount}
               />
             )}
@@ -279,12 +339,18 @@ export default function CustomersPage() {
           customer={selectedCustomer}
           open={drawerOpen}
           onClose={handleCloseDrawer}
+          onMerged={(targetId) => {
+            navigate(`/customers/${targetId}/emails`)
+          }}
           activeTab={tab === 'contacts' ? 'contacts' : tab === 'team' ? 'team' : 'emails'}
           onTabChange={handleTabChange}
           isLoading={Boolean(customerId) && !selectedCustomer && isLoadingCustomer}
           selectedEmailId={emailId}
           onEmailSelect={handleEmailSelect}
           initialSignalFilter={signalFromUrl}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateRangeChange={handleDateRangeChange}
         />
 
         <AddCustomerDrawer

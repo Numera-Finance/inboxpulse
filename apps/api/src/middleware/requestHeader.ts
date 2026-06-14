@@ -8,6 +8,7 @@ import {
   shouldRefreshSession,
   getSessionDurationSeconds,
 } from '../auth/session';
+import { getEnv } from '../env';
 
 // Import middleware chain components
 import { betterAuthSessionMiddleware } from './better-auth-session';
@@ -72,7 +73,7 @@ export async function requestHeaderMiddleware(c: Context, next: Next) {
     // Set refreshed cookie for browser
     setCookie(c, SESSION_COOKIE, newToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: getEnv().NODE_ENV === 'production',
       sameSite: 'Lax',
       maxAge: getSessionDurationSeconds(),
       path: '/',

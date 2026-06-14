@@ -1,3 +1,4 @@
+import * as React from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
@@ -55,9 +56,26 @@ interface AppSidebarProps {
 }
 
 export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   const navigate = useNavigate()
   const { user, signOut, hasPermission, isAdmin } = useAuth()
+
+  const dateRangeQuery = React.useMemo(() => {
+    const params = new URLSearchParams(search)
+    const preserved = new URLSearchParams()
+    const from = params.get("from")
+    const to = params.get("to")
+
+    if (from) {
+      preserved.set("from", from)
+    }
+    if (to) {
+      preserved.set("to", to)
+    }
+
+    const queryString = preserved.toString()
+    return queryString ? `?${queryString}` : ""
+  }, [search])
 
   // Filter navigation items based on permissions
   const visibleNavigation = navigation.filter((item) => {
@@ -110,7 +128,7 @@ export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
               const NavItem = (
                 <Link
                   key={item.name}
-                  to={item.href}
+                  to={`${item.href}${dateRangeQuery}`}
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                     isActive

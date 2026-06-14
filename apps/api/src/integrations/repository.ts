@@ -439,25 +439,29 @@ export class IntegrationRepository {
    */
   async findIntegrationsNeedingWatchRenewal(
     source: IntegrationSource,
-    daysBeforeExpiry: number = 2
+    daysBeforeExpiry: number = 2,
+    tenantId?: string
   ) {
     const now = new Date();
     const thresholdDate = new Date(now.getTime() + daysBeforeExpiry * 24 * 60 * 60 * 1000);
 
+    const conditions = [
+      eq(integrations.source, source),
+      eq(integrations.isActive, true),
+      // Watch expires within threshold OR no watch set
+      or(
+        isNull(integrations.watchExpiresAt),
+        lt(integrations.watchExpiresAt, thresholdDate)
+      )!,
+    ];
+    if (tenantId) {
+      conditions.push(eq(integrations.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select()
       .from(integrations)
-      .where(
-        and(
-          eq(integrations.source, source),
-          eq(integrations.isActive, true),
-          // Watch expires within threshold OR no watch set
-          or(
-            isNull(integrations.watchExpiresAt),
-            lt(integrations.watchExpiresAt, thresholdDate)
-          )
-        )
-      );
+      .where(and(...conditions));
 
     // mapToIntegration is async, so we need to await all mappings
     return Promise.all(result.map((integration) => this.mapToIntegration(integration)));
@@ -504,11 +508,16 @@ export class IntegrationRepository {
    * Find integration by email address (for webhook lookup)
    * Returns the full integration so we have the ID for subsequent updates
    */
-  async findByEmail(email: string, source: IntegrationSource = 'gmail') {
+  async findByEmail(email: string, source: IntegrationSource = 'gmail', tenantId?: string) {
+    const conditions = [eq(integrations.source, source), eq(integrations.isActive, true)];
+    if (tenantId) {
+      conditions.push(eq(integrations.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select()
       .from(integrations)
-      .where(and(eq(integrations.source, source), eq(integrations.isActive, true)));
+      .where(and(...conditions));
 
     for (const row of result) {
       const params = parametersToObject(row.parameters as IntegrationParameters);

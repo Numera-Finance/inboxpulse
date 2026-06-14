@@ -31,6 +31,34 @@ export class NotFoundError extends HttpError {
 const isBrowser = typeof globalThis !== 'undefined' && 'window' in globalThis;
 
 /**
+ * Token provider for GCP OIDC identity tokens.
+ * Set via configureIdTokenProvider() at app startup (server-side only).
+ * Returns an Authorization header value (e.g., "Bearer <token>") for the target URL.
+ */
+type IdTokenProvider = (targetUrl: string) => Promise<string | null>;
+let idTokenProvider: IdTokenProvider | null = null;
+
+/**
+ * Configure the OIDC identity token provider for Cloud Run service-to-service auth.
+ * Call this once at app startup (server-side only).
+ */
+export function configureIdTokenProvider(provider: IdTokenProvider): void {
+  idTokenProvider = provider;
+}
+
+/**
+ * Get an OIDC identity token for the target URL using the configured provider.
+ */
+async function getIdToken(targetUrl: string): Promise<string | null> {
+  if (!idTokenProvider) return null;
+  try {
+    return await idTokenProvider(targetUrl);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Parse error response body into a message
  */
 function parseErrorMessage(
@@ -123,11 +151,17 @@ export class AuthBaseClient {
    */
   protected async request<T>(url: string, options: RequestOptions = {}): Promise<T> {
     const finalUrl = this.rewriteUrl(url);
-    const response = await fetch(`${this.baseUrl}${finalUrl}`, {
+    const fullUrl = `${this.baseUrl}${finalUrl}`;
+
+    // Get OIDC token for Cloud Run auth (server-side only, no-op in browser)
+    const oidcToken = !isBrowser ? await getIdToken(fullUrl) : null;
+
+    const response = await fetch(fullUrl, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        ...(this.sessionToken && { Authorization: `Bearer ${this.sessionToken}` }),
+        ...(oidcToken && { Authorization: oidcToken }),
+        ...(this.sessionToken && !oidcToken && { Authorization: `Bearer ${this.sessionToken}` }),
         ...(this.internalApiKey && { 'x-internal-api-key': this.internalApiKey }),
         ...options.headers,
       },
@@ -333,10 +367,16 @@ export class InternalBaseClient {
    * Make HTTP request with context headers
    */
   protected async request<T>(url: string, ctx: ServiceContext, options: RequestOptions = {}): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${url}`, {
+    const fullUrl = `${this.baseUrl}${url}`;
+
+    // Get OIDC token for Cloud Run auth (server-side only)
+    const oidcToken = await getIdToken(fullUrl);
+
+    const response = await fetch(fullUrl, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...(oidcToken && { Authorization: oidcToken }),
         ...this.buildContextHeaders(ctx),
         ...options.headers,
       },

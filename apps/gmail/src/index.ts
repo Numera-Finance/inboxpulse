@@ -5,27 +5,17 @@ import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env.local') });
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
-// Validate required environment variables
-const requiredEnvVars = [
-  'SERVICE_API_URL',
-  'GMAIL_PUBSUB_TOPIC',
-  'GOOGLE_CLIENT_ID',
-  'GOOGLE_CLIENT_SECRET',
-];
-
-const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-  console.error(`❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
-  console.error('Please set them in .env.local or .env file');
-  process.exit(1);
-}
+// Validate environment variables via Zod schema (exits on failure)
+import { getEnv } from './env';
+getEnv();
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import { logger } from './utils/logger';
+import { toStructuredError, sanitizeErrorForClient } from '@crm/shared';
+import type { ApiResponse } from '@crm/shared';
 
 // Routes
 import webhooksRoutes from './routes/webhooks';
@@ -34,6 +24,27 @@ import watchRenewalRoutes from './routes/watch-renewal';
 import { verifyServiceApiKey } from './middleware/internal-auth';
 
 const app = new Hono();
+
+// Global error handler
+app.onError((error, c) => {
+  const structuredError = toStructuredError(error);
+
+  if (structuredError.statusCode >= 500) {
+    logger.error(
+      { error: structuredError, path: c.req.path, method: c.req.method },
+      `Server error occurred: ${structuredError.message}`
+    );
+  } else {
+    logger.warn(
+      { error: structuredError, path: c.req.path, method: c.req.method },
+      `Client error occurred: ${structuredError.message}`
+    );
+  }
+
+  const sanitizedError = sanitizeErrorForClient(structuredError);
+  const response: ApiResponse<never> = { success: false, error: sanitizedError };
+  return c.json(response, sanitizedError.statusCode as any);
+});
 
 // Middleware
 app.use('*', honoLogger());
@@ -62,9 +73,10 @@ try {
   logger.error({ error: error.message }, 'Failed to register routes');
 }
 
-const port = process.env.PORT ? parseInt(process.env.PORT) : 4002;
+const env = getEnv();
+const port = env.PORT;
 
-logger.info({ port, env: process.env.NODE_ENV }, 'Gmail sync service starting');
+logger.info({ port, env: env.NODE_ENV }, 'Gmail sync service starting');
 
 try {
   serve({

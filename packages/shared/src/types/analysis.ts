@@ -3,6 +3,10 @@
  * Shared types for the modular analysis system
  */
 
+import { z } from 'zod';
+
+import { DEFAULT_LLM_MODEL, DEFAULT_LLM_FALLBACK_MODEL } from '../constants/models';
+
 // =============================================================================
 // Email Signals - Integer constants for the signals[] array on emails table
 // Using ranges to group related signals and leave room for future additions
@@ -137,18 +141,34 @@ export function getSignalFromClassification(classification: EmailClassification)
 // =============================================================================
 
 /**
- * Analysis types that can be enabled/disabled per tenant
+ * LLM analysis types that can be enabled/disabled per tenant.
+ *
+ * Note: domain extraction and contact extraction are NOT analyses — they are
+ * pure regex performed on every email and returned in the `extracted` field of
+ * the /analyze response. They were previously listed here as "always run"
+ * pseudo-analyses; that was misleading and has been removed.
+ *
+ * Single source of truth — both the TS type and the Zod schema are derived
+ * from `ANALYSIS_TYPES` so they cannot drift.
  */
-export type AnalysisType =
-  | 'domain-extraction'      // Always run (sync)
-  | 'contact-extraction'     // Always run (sync)
-  | 'signature-extraction'   // Conditional (if signature detected)
-  | 'sentiment'              // Conditional (if enabled)
-  | 'escalation'             // Conditional (if enabled)
-  | 'upsell'                 // Conditional (if enabled)
-  | 'churn'                  // Conditional (if enabled)
-  | 'kudos'                  // Conditional (if enabled)
-  | 'competitor';            // Conditional (if enabled)
+export const ANALYSIS_TYPES = [
+  'signature-extraction',  // Conditional (if signature detected)
+  'sentiment',             // Conditional (if enabled)
+  'escalation',            // Conditional (if enabled)
+  'upsell',                // Conditional (if enabled)
+  'churn',                 // Conditional (if enabled)
+  'kudos',                 // Conditional (if enabled)
+  'competitor',            // Conditional (if enabled)
+] as const;
+
+export type AnalysisType = (typeof ANALYSIS_TYPES)[number];
+
+/**
+ * Zod schema mirroring `AnalysisType`. Use at the API boundary so callers
+ * sending unknown / removed types get a clean validation error instead of
+ * the executor silently ignoring them.
+ */
+export const analysisTypeSchema = z.enum(ANALYSIS_TYPES);
 
 /**
  * Model configuration with primary and optional fallback
@@ -187,57 +207,45 @@ export interface AnalysisConfig {
  */
 export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
   enabledAnalyses: {
-    'domain-extraction': true,      // Always enabled
-    'contact-extraction': true,     // Always enabled
     'signature-extraction': true,   // Enable signature extraction
     'sentiment': true,               // Enable sentiment analysis
-    'escalation': true,              // Enable escalation detection
+    'escalation': false,              // Disabled — negative sentiment drives escalation workflow
     'upsell': true,                   // Enable upsell detection
-    'churn': false,                   // Enable churn risk assessment
+    'churn': true,                    // Enable churn risk assessment
     'kudos': false,                   // Enable kudos detection
     'competitor': false,              // Enable competitor mentions
   },
   modelConfigs: {
-    'domain-extraction': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
-    },
-    'contact-extraction': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
-    },
     'signature-extraction': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'sentiment': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'escalation': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'upsell': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'churn': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'kudos': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
     'competitor': {
-      primary: 'gemini-2.0-flash',
-      fallback: 'gemini-1.5-flash',
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
   },
   promptVersions: {
-    'domain-extraction': 'v1.0',
-    'contact-extraction': 'v1.0',
     'signature-extraction': 'v1.0',
     'sentiment': 'v1.1',
     'escalation': 'v1.0',
@@ -247,8 +255,6 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'competitor': 'v1.0',
   },
   analysisSettings: {
-    'domain-extraction': {},
-    'contact-extraction': {},
     'signature-extraction': {
       requireLLMIfRegexFieldsMissing: 2,
       alwaysUseLLM: false,

@@ -2,7 +2,10 @@
 
 import * as React from "react"
 import { useSearchParams, useNavigate, useParams } from "react-router-dom"
+import { subDays, startOfDay, endOfDay } from "date-fns"
 import { Inbox, CheckCircle } from "lucide-react"
+import { ClassificationIndicator } from "@/components/ui/classification-indicator"
+import { Separator } from "@/components/ui/separator"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import { ExportButton } from "@/components/ui/export-button"
@@ -10,37 +13,37 @@ import { createXlsxBlob } from "@/lib/utils/export"
 import {
   InboxView,
   SignalFilter,
-  apiTaskToInboxItem,
-  apiTaskToInboxContent,
+  analyzedEmailToInboxItem,
+  analyzedEmailToInboxContent,
   type InboxItem,
   type InboxFilter,
   type InboxPagination,
   type InboxPage,
   type InboxItemContent,
   type InboxSentimentFilter,
-  type TaskWithComments,
 } from "@/components/inbox"
 import {
   TaskFilters,
   TaskComments,
   TaskMetaInfo,
+  MarkDoneDialog,
+  TaskResolutionInfo,
   type TaskFilter,
 } from "@/components/tasks"
-import { toast } from "sonner"
 import {
-  useTask,
   useMarkTaskDone,
   useCustomers,
   taskKeys,
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
-import type { Task, TaskSearchRequest, TaskExportRequest } from "@crm/clients"
+import type { AnalyzedEmail, AnalyzedEmailSearchRequest } from "@crm/clients"
+import { Signal, hasSignal, SIGNAL_LABELS, type SignalType } from "@crm/shared"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { getTaskClient } from "@/lib/api/clients"
+import { getEmailClient, getTaskClient } from "@/lib/api/clients"
 
 export default function EscalationsPage() {
   const navigate = useNavigate()
-  const { taskId: taskIdFromUrl } = useParams<{ taskId?: string }>()
+  const { emailId: emailIdFromUrl } = useParams<{ emailId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
 
@@ -48,23 +51,37 @@ export default function EscalationsPage() {
   const { user } = useAuth()
   const currentUserId = user?.id
 
+  // Dialog state for mark done
+  const [doneDialogTaskId, setDoneDialogTaskId] = React.useState<string | null>(null)
+
   // Get filter state from URL search params
-  // Default to "open" if no status specified
+  // Default to "all" if no status specified (since we now show all analyzed emails)
   const statusFromUrl = searchParams.get("status") as "open" | "done" | "all" | null
-  const effectiveStatus = statusFromUrl || "open"  // Default to "open"
+  const effectiveStatus = statusFromUrl || "open"
   const assignedFromUrl = searchParams.get("assigned")
   const customerIdFromUrl = searchParams.get("customer")
-  const dateFromUrl = searchParams.get("dateFrom")
-  const dateToUrl = searchParams.get("dateTo")
+  const dateFromUrl = searchParams.get("from")
+  const dateToUrl = searchParams.get("to")
   const signalFromUrl = searchParams.get("signal") as TaskFilter['signal'] | null
-  const effectiveSignal = signalFromUrl || 'negative'
+
+  const defaultDateFrom = React.useMemo(
+    () => startOfDay(subDays(new Date(), 30)),
+    []
+  )
+  const defaultDateTo = React.useMemo(
+    () => endOfDay(new Date()),
+    []
+  )
+
+  // Default to 'negative' on initial load, but 'all' is explicitly set via signal=all in URL
+  const effectiveSignal = (signalFromUrl as string) === 'all' ? undefined : (signalFromUrl || 'negative')
 
   // Task filter state (synced with URL params)
   const taskFilters = React.useMemo<TaskFilter>(() => {
     const filters: TaskFilter = {
-      status: effectiveStatus,  // Default to 'open'
+      status: effectiveStatus,
     }
-    
+
     if (assignedFromUrl) {
       if (assignedFromUrl === "unassigned") {
         filters.assignedToId = "unassigned"
@@ -76,21 +93,15 @@ export default function EscalationsPage() {
         filters.assignedToId = assignedFromUrl
       }
     } else {
-      // No assignee filter means "all" - set to "all" for the Select component
       filters.assignedToId = "all"
     }
-    
+
     if (customerIdFromUrl) {
       filters.customerId = customerIdFromUrl
     }
-    
-    if (dateFromUrl) {
-      filters.dateFrom = new Date(dateFromUrl)
-    }
-    
-    if (dateToUrl) {
-      filters.dateTo = new Date(dateToUrl)
-    }
+
+    filters.dateFrom = dateFromUrl ? new Date(dateFromUrl) : defaultDateFrom
+    filters.dateTo = dateToUrl ? new Date(dateToUrl) : defaultDateTo
 
     if (effectiveSignal) {
       filters.signal = effectiveSignal
@@ -99,17 +110,14 @@ export default function EscalationsPage() {
     return filters
   }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, effectiveSignal])
 
-  // Data fetching
-  const { data: selectedTaskData } = useTask(taskIdFromUrl || "")
-
   // Mutations
   const markDone = useMarkTaskDone()
 
   // Build search request from URL params
   const buildSearchRequest = React.useCallback(
-    (filter: InboxFilter, pagination: InboxPagination): TaskSearchRequest => {
-      const request: TaskSearchRequest = {
-        sortBy: "createdAt",
+    (filter: InboxFilter, pagination: InboxPagination): AnalyzedEmailSearchRequest => {
+      const request: AnalyzedEmailSearchRequest = {
+        sortBy: "receivedAt",
         sortOrder: "desc",
         limit: pagination.limit,
         offset: (pagination.page - 1) * pagination.limit,
@@ -119,18 +127,9 @@ export default function EscalationsPage() {
         request.search = filter.query
       }
 
-      // Status filter - default to "open"
-      // Priority: URL param > InboxFilter > default "open"
-      if (effectiveStatus === "all") {
-        // "All" means show all statuses - don't set status filter
-        // Backend will return all when status is undefined
-      } else if (effectiveStatus) {
+      // Status filter
+      if (effectiveStatus && effectiveStatus !== "all") {
         request.status = effectiveStatus
-      } else if (filter.status && filter.status !== "all") {
-        request.status = filter.status === "resolved" ? "done" : "open"
-      } else {
-        // Default to open if no status specified
-        request.status = "open"
       }
 
       // Assignee filter
@@ -141,13 +140,10 @@ export default function EscalationsPage() {
           request.assignedToId = currentUserId || undefined
         } else if (assignedFromUrl === "team") {
           // "My Team" - server will handle subordinates filtering
-          // For now we don't filter by assignee, letting scoped access handle it
         } else {
-          // Specific user ID
           request.assignedToId = assignedFromUrl
         }
       }
-      // If assignedFromUrl is "all" or undefined, don't set assignedToId (show all)
 
       // Customer filter
       if (customerIdFromUrl) {
@@ -156,26 +152,18 @@ export default function EscalationsPage() {
         request.customerId = filter.customerId
       }
 
-      // Date filters - use start/end of day in UTC for inclusive date range
-      if (dateFromUrl) {
-        const fromDate = new Date(dateFromUrl)
-        fromDate.setUTCHours(0, 0, 0, 0)
-        request.dateFrom = fromDate.toISOString()
-      } else if (filter.dateFrom) {
-        const fromDate = new Date(filter.dateFrom)
-        fromDate.setUTCHours(0, 0, 0, 0)
-        request.dateFrom = fromDate.toISOString()
-      }
+      // Date filters — always send a range so the API result matches the
+      // displayed filter; fall back to the page's default 30-day window when
+      // the URL and inbox filter both omit dates.
+      const dateFromSource = dateFromUrl ?? (filter.dateFrom ? new Date(filter.dateFrom).toISOString() : defaultDateFrom.toISOString())
+      const fromDate = new Date(dateFromSource)
+      fromDate.setUTCHours(0, 0, 0, 0)
+      request.dateFrom = fromDate.toISOString()
 
-      if (dateToUrl) {
-        const toDate = new Date(dateToUrl)
-        toDate.setUTCHours(23, 59, 59, 999)
-        request.dateTo = toDate.toISOString()
-      } else if (filter.dateTo) {
-        const toDate = new Date(filter.dateTo)
-        toDate.setUTCHours(23, 59, 59, 999)
-        request.dateTo = toDate.toISOString()
-      }
+      const dateToSource = dateToUrl ?? (filter.dateTo ? new Date(filter.dateTo).toISOString() : defaultDateTo.toISOString())
+      const toDate = new Date(dateToSource)
+      toDate.setUTCHours(23, 59, 59, 999)
+      request.dateTo = toDate.toISOString()
 
       // Signal filter
       if (effectiveSignal) {
@@ -184,21 +172,21 @@ export default function EscalationsPage() {
 
       return request
     },
-    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId, effectiveSignal]
+    [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, defaultDateFrom, defaultDateTo, currentUserId, effectiveSignal]
   )
 
-  // Fetch tasks callback for InboxView
+  // Fetch analyzed emails callback for InboxView
   const handleFetchItems = React.useCallback(
     async (
       filter: InboxFilter,
       pagination: InboxPagination
-    ): Promise<InboxPage<InboxItem<Task>>> => {
+    ): Promise<InboxPage<InboxItem<AnalyzedEmail>>> => {
       const request = buildSearchRequest(filter, pagination)
-      const taskClient = getTaskClient()
-      const data = await taskClient.search(request)
+      const emailClient = getEmailClient()
+      const data = await emailClient.searchAnalyzed(request)
 
       return {
-        items: data.items.map(apiTaskToInboxItem),
+        items: data.items.map(analyzedEmailToInboxItem),
         total: data.total,
         page: pagination.page,
         limit: pagination.limit,
@@ -208,39 +196,45 @@ export default function EscalationsPage() {
     [buildSearchRequest]
   )
 
-  // Fetch task content callback for InboxView
+  // Fetch email content callback for InboxView. Accepts an AbortSignal so a
+  // slower earlier request can't clobber a faster later one when the user
+  // clicks rapidly between items.
   const handleFetchContent = React.useCallback(
-    async (itemId: string): Promise<InboxItemContent> => {
-      const taskClient = getTaskClient()
+    async (itemId: string, signal?: AbortSignal): Promise<InboxItemContent> => {
+      const emailClient = getEmailClient()
+      const email = await emailClient.getAnalyzedById(itemId, signal)
 
-      // Use already-fetched task data if it matches, otherwise fetch it
-      // This avoids duplicate API calls since useTask already fetched the task
-      const existingTask = selectedTaskData?.id === itemId ? selectedTaskData : null
-
-      // Fetch task (only if needed) and comments
-      const [task, taskComments] = await Promise.all([
-        existingTask ? Promise.resolve(existingTask) : taskClient.getById(itemId),
-        taskClient.getComments(itemId),
-      ])
-
-      if (!task) {
-        throw new Error("Failed to fetch task")
+      if (!email) {
+        throw new Error("Failed to fetch email")
       }
 
-      const taskWithComments: TaskWithComments = {
-        ...task,
-        comments: taskComments,
+      // Only fetch comments if the email has an associated task
+      let comments = undefined
+      if (email.taskId) {
+        const taskClient = getTaskClient()
+        comments = await taskClient.getComments(email.taskId, signal)
       }
 
-      return apiTaskToInboxContent(taskWithComments)
+      return analyzedEmailToInboxContent(email, comments)
     },
-    [selectedTaskData]
+    []
   )
 
-  // Handle task selection - navigate to task URL
+  // Fetch a single item by id for deep-link selection when it isn't on the
+  // current page (off-page or filtered out). getAnalyzedById tolerates a task
+  // id, so older task-id escalation links resolve to the right email too.
+  const handleFetchItem = React.useCallback(
+    async (itemId: string, signal?: AbortSignal): Promise<InboxItem<AnalyzedEmail> | null> => {
+      const emailClient = getEmailClient()
+      const email = await emailClient.getAnalyzedById(itemId, signal)
+      return email ? analyzedEmailToInboxItem(email) : null
+    },
+    []
+  )
+
+  // Handle item selection - navigate to email URL
   const handleSelectItem = React.useCallback(
     (item: InboxItem<unknown>) => {
-      // Preserve current search params when navigating
       const currentParams = searchParams.toString()
       const queryString = currentParams ? `?${currentParams}` : ""
       navigate(`/escalations/${item.id}${queryString}`)
@@ -248,32 +242,14 @@ export default function EscalationsPage() {
     [navigate, searchParams]
   )
 
-  // Handle mark done
+  // Handle mark done with problem/resolution
   const handleResolve = React.useCallback(
-    async (itemId: string) => {
-      await markDone.mutateAsync(itemId)
+    async (taskId: string, problem: string, resolution: string) => {
+      await markDone.mutateAsync({ id: taskId, problem, resolution })
       queryClient.invalidateQueries({ queryKey: taskKeys.lists() })
-      queryClient.invalidateQueries({ queryKey: taskKeys.detail(itemId) })
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) })
     },
     [markDone, queryClient]
-  )
-
-  // Handle mark done with comment check - requires at least one comment
-  const handleDoneWithCommentCheck = React.useCallback(
-    async (itemId: string) => {
-      const taskClient = getTaskClient()
-      const comments = await taskClient.getComments(itemId)
-
-      if (comments.length === 0) {
-        toast.error("Comment required", {
-          description: "Please add a comment before marking this task as done.",
-        })
-        return
-      }
-
-      await handleResolve(itemId)
-    },
-    [handleResolve]
   )
 
   // Handle filter changes - sync to URL params
@@ -281,14 +257,13 @@ export default function EscalationsPage() {
     setSearchParams((prev) => {
       const params = new URLSearchParams(prev)
 
-      // Status - always set the status param to preserve selection
+      // Status
       if (newFilters.status) {
         params.set("status", newFilters.status)
       } else {
-        // Default to 'open' if not specified
-        params.set("status", "open")
+        params.set("status", "all")
       }
-      
+
       // Assignee
       if (newFilters.assignedToId && newFilters.assignedToId !== 'all') {
         if (newFilters.assignedToId === 'me') {
@@ -301,59 +276,51 @@ export default function EscalationsPage() {
           params.set("assigned", newFilters.assignedToId)
         }
       } else {
-        // "all" or undefined means show all - remove param
         params.delete("assigned")
       }
-      
+
       // Customer
       if (newFilters.customerId) {
         params.set("customer", newFilters.customerId)
       } else {
         params.delete("customer")
       }
-      
+
       // Date range
       if (newFilters.dateFrom) {
-        params.set("dateFrom", newFilters.dateFrom.toISOString())
+        params.set("from", newFilters.dateFrom.toISOString())
       } else {
-        params.delete("dateFrom")
+        params.delete("from")
       }
 
       if (newFilters.dateTo) {
-        params.set("dateTo", newFilters.dateTo.toISOString())
+        params.set("to", newFilters.dateTo.toISOString())
       } else {
-        params.delete("dateTo")
+        params.delete("to")
       }
 
-      // Signal
+      // Signal - use 'all' explicitly so it doesn't fall back to 'negative' default
       if (newFilters.signal) {
         params.set("signal", newFilters.signal)
       } else {
-        params.delete("signal")
+        params.set("signal", "all")
       }
 
       return params
     })
   }, [setSearchParams])
 
-  // Get the selected task from URL and convert to InboxItem
-  const selectedTask = selectedTaskData || null
-  const selectedInboxItem = React.useMemo(() => {
-    if (!selectedTask) return null
-    return apiTaskToInboxItem(selectedTask)
-  }, [selectedTask])
-
   // Memoize callbacks to prevent InboxView re-renders
   const inboxCallbacks = React.useMemo(() => ({
     onFetchItems: handleFetchItems,
     onFetchContent: handleFetchContent,
+    onFetchItem: handleFetchItem,
     onSelect: handleSelectItem,
-    onResolve: handleResolve,
-  }), [handleFetchItems, handleFetchContent, handleSelectItem, handleResolve])
+  }), [handleFetchItems, handleFetchContent, handleFetchItem, handleSelectItem])
 
   // Memoize config to prevent re-renders
   const inboxConfig = React.useMemo(() => ({
-    itemType: "task" as const,
+    itemType: "email" as const,
     showSearch: true,
     showStatusFilter: false,
     showCustomer: true,
@@ -363,38 +330,94 @@ export default function EscalationsPage() {
       { value: "resolved" as const, label: "Done" },
     ],
     embedded: true,
-    emptyMessage: "No tasks found",
-    searchPlaceholder: "Search tasks...",
+    emptyMessage: "No analyzed emails found",
+    searchPlaceholder: "Search emails...",
   }), [])
 
   // Memoize render functions to prevent re-renders
-  const renderHeaderActions = React.useCallback((item: InboxItem) => (
-    item.status !== "resolved" ? (
+  // Show "Done" button for negative-sentiment escalations and for TAT breaches.
+  // TAT resolutions don't collect a problem/resolution comment — they're a
+  // status acknowledgement, so we resolve directly instead of opening the
+  // MarkDoneDialog.
+  const isTatView = effectiveSignal === 'tat'
+  const renderHeaderActions = React.useCallback((item: InboxItem) => {
+    const email = item.originalData as AnalyzedEmail
+    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
+    const hasTask = email?.taskId !== null
+    const showDone = (isNegative || isTatView) && hasTask && item.status !== "resolved"
+    if (!showDone) return null
+    return (
       <Button
         className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
-        onClick={() => handleDoneWithCommentCheck(item.id)}
+        onClick={() => {
+          if (!email?.taskId) return
+          if (isTatView) {
+            handleResolve(email.taskId, '', '')
+          } else {
+            setDoneDialogTaskId(email.taskId)
+          }
+        }}
       >
         <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
-        Done
+        Resolve
       </Button>
-    ) : null
-  ), [handleDoneWithCommentCheck])
+    )
+  }, [isTatView, handleResolve])
 
-  const renderMetaInfo = React.useCallback((item: InboxItem) => (
-    <TaskMetaInfo
-      taskId={item.id}
-      customerName={item.customerName}
-      assigneeId={item.recipients?.[0]?.id}
-      assigneeName={item.recipients?.[0]?.name}
-      createdAt={item.timestamp}
-    />
-  ), [])
+  const renderMetaInfo = React.useCallback((item: InboxItem) => {
+    const email = item.originalData as AnalyzedEmail
+    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
+    const showTaskMeta = isNegative && email?.taskId
+    if (!showTaskMeta) {
+      // Not negative or no task - show minimal meta info (just customer and date)
+      return (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+          {item.customerName && (
+            <>
+              <span className="text-muted-foreground">Customer</span>
+              <span>{item.customerName}</span>
+            </>
+          )}
+          <span className="text-muted-foreground">Received</span>
+          <span>{item.timestamp.toLocaleDateString()}</span>
+        </div>
+      )
+    }
+    return (
+      <TaskMetaInfo
+        taskId={email.taskId!}
+        customerName={item.customerName}
+        assigneeId={email.assignedToId || undefined}
+        assigneeName={email.assignedToName || undefined}
+        createdAt={item.timestamp}
+      />
+    )
+  }, [])
 
-  const renderSidePanel = React.useCallback((item: InboxItem) => (
-    <TaskComments taskId={item.id} variant="panel" />
-  ), [])
+  const renderHeaderBadges = React.useCallback((item: InboxItem) => {
+    if (!item.classification || item.classification.value === 'business') return null
+    return (
+      <ClassificationIndicator classification={item.classification} size="sm" showLabel />
+    )
+  }, [])
 
-  // Get customer name for display (if needed)
+  const renderSidePanel = React.useCallback((item: InboxItem) => {
+    const email = item.originalData as AnalyzedEmail
+    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
+    if (!isNegative || !email?.taskId || isTatView) {
+      // Not negative, no task, or TAT view — no resolution/comments panel
+      return null
+    }
+    return (
+      <div className="space-y-4">
+        <TaskResolutionInfo taskId={email.taskId} />
+        <Separator />
+        <TaskComments taskId={email.taskId} variant="panel" />
+      </div>
+    )
+  }, [isTatView])
+
+  // Get customer name for display
   const { data: customersData } = useCustomers({
     queries: [],
     sortBy: 'name',
@@ -402,21 +425,20 @@ export default function EscalationsPage() {
     limit: 1000,
     offset: 0,
   })
-  
+
   const customerName = React.useMemo(() => {
     if (!customerIdFromUrl) return null
     const customer = customersData?.items?.find(c => c.id === customerIdFromUrl)
     return customer?.name || null
   }, [customerIdFromUrl, customersData])
 
-  // Export escalations with comments to Excel
+  // Export analyzed emails with comments to Excel
   const handleExportEscalations = React.useCallback(async (): Promise<Blob> => {
-    const taskClient = getTaskClient()
+    const emailClient = getEmailClient()
 
     // Build export request with current filters
-    const exportRequest: TaskExportRequest = {}
+    const exportRequest: AnalyzedEmailSearchRequest = {}
 
-    // Apply current filters
     if (effectiveStatus && effectiveStatus !== "all") {
       exportRequest.status = effectiveStatus
     }
@@ -451,42 +473,65 @@ export default function EscalationsPage() {
       exportRequest.signal = effectiveSignal
     }
 
-    // Fetch all escalations with comments and contact roles in one request
-    const escalationsWithComments = await taskClient.exportWithComments(exportRequest)
+    const analyzedEmails = await emailClient.exportAnalyzed(exportRequest)
 
-    // Build export data
-    const exportData = escalationsWithComments.map(escalation => ({
-      customerName: escalation.customerName || "",
-      emailSubject: escalation.emailSubject || escalation.title || "",
-      comments: (escalation.comments || [])
+    const exportData = analyzedEmails.map(email => ({
+      customerName: email.customerName || "",
+      emailSubject: email.subject || "",
+      from: email.fromName || email.fromEmail || "",
+      receivedAt: new Date(email.receivedAt).toLocaleDateString(),
+      signals: (email.signals || [])
+        .map(s => SIGNAL_LABELS[s as SignalType] || "")
+        .filter(Boolean)
+        .join(", "),
+      status: email.taskId
+        ? (email.taskStatus === 1 ? "Done" : "Open")
+        : "\u2014",
+      assignedTo: email.assignedToName || "",
+      problem: email.problem || "",
+      resolution: email.resolution || "",
+      completedBy: email.completedByName || "",
+      completedAt: email.completedAt
+        ? new Date(email.completedAt).toLocaleDateString()
+        : "",
+      comments: (email.comments || [])
         .map(c => {
           const time = new Date(c.createdAt).toLocaleString()
           return `[${time} - ${c.userName}]: ${c.content}`
         })
         .join("\n"),
-      bookKeeping: escalation.contactRoles?.bookKeeping || "",
-      accountant: escalation.contactRoles?.accountant || "",
-      controller: escalation.contactRoles?.controller || "",
-      srController: escalation.contactRoles?.srController || "",
+      bookKeeping: email.contactRoles?.bookKeeping || "",
+      accountant: email.contactRoles?.accountant || "",
+      controller: email.contactRoles?.controller || "",
+      srController: email.contactRoles?.srController || "",
     }))
 
     return createXlsxBlob(exportData, {
       columns: [
         { key: "customerName", header: "Customer Name", width: 30 },
         { key: "emailSubject", header: "Email Subject", width: 50 },
+        { key: "from", header: "From", width: 25 },
+        { key: "receivedAt", header: "Received At", width: 15 },
+        { key: "signals", header: "Signals", width: 30 },
+        { key: "status", header: "Status", width: 10 },
+        { key: "assignedTo", header: "Assigned To", width: 20 },
+        { key: "problem", header: "Problem", width: 40 },
+        { key: "resolution", header: "Resolution", width: 40 },
+        { key: "completedBy", header: "Completed By", width: 20 },
+        { key: "completedAt", header: "Completed At", width: 15 },
         { key: "comments", header: "Comments", width: 80 },
         { key: "bookKeeping", header: "Book Keeping", width: 20 },
         { key: "accountant", header: "Accountant", width: 20 },
         { key: "controller", header: "Controller", width: 20 },
         { key: "srController", header: "Sr Controller", width: 20 },
       ],
-      sheetName: "Escalations",
+      sheetName: "AI Analysis",
     })
   }, [effectiveStatus, assignedFromUrl, customerIdFromUrl, dateFromUrl, dateToUrl, currentUserId, effectiveSignal])
 
   return (
     <AppShell>
-      <div className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
+      <div className="flex flex-col h-full overflow-hidden">
         {/* Page Header */}
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between mb-4">
@@ -509,6 +554,7 @@ export default function EscalationsPage() {
               <SignalFilter
                 value={(effectiveSignal || 'all') as InboxSentimentFilter}
                 onChange={(v) => handleFiltersChange({ ...taskFilters, signal: v === 'all' ? undefined : v as TaskFilter['signal'] })}
+                excludeNeutral
               />
             }
           />
@@ -520,16 +566,43 @@ export default function EscalationsPage() {
             key={searchParams.toString()}
             config={inboxConfig}
             callbacks={inboxCallbacks}
+            initialSelectedId={emailIdFromUrl}
             initialFilter={{
               status: effectiveStatus === 'all' ? 'all' : 'open',
             }}
-            selectedItem={selectedInboxItem}
             renderHeaderActions={renderHeaderActions}
             renderMetaInfo={renderMetaInfo}
+            renderHeaderBadges={renderHeaderBadges}
             renderSidePanel={renderSidePanel}
           />
         </div>
 
+        <MarkDoneDialog
+          open={!!doneDialogTaskId}
+          onClose={() => setDoneDialogTaskId(null)}
+          onConfirm={async (problem, resolution) => {
+            if (doneDialogTaskId) {
+              await handleResolve(doneDialogTaskId, problem, resolution)
+              setDoneDialogTaskId(null)
+            }
+          }}
+          isLoading={markDone.isPending}
+          {...(effectiveSignal === 'upsell'
+            ? {
+                problemLabel: 'Upsell requested',
+                resolutionLabel: 'Do we have the ability to serve? List Upsell services & partnership followed up',
+                problemPlaceholder: 'Describe the upsell requested...',
+                resolutionPlaceholder: 'List upsell services and partnership follow-up...',
+              }
+            : effectiveSignal === 'churn'
+              ? {
+                  problemLabel: 'Churn signal',
+                  resolutionLabel: 'Root cause and retention plan / partnership followed up',
+                  problemPlaceholder: 'Describe the churn signal...',
+                  resolutionPlaceholder: 'Describe the root cause, retention plan, and partnership follow-up...',
+                }
+              : {})}
+        />
       </div>
     </AppShell>
   )

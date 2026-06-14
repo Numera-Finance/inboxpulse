@@ -2,26 +2,28 @@ import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { NotFoundError } from '@crm/shared';
 import { ContactService } from './service';
-import type { ApiResponse, RequestHeader } from '@crm/shared';
+import type { RequestHeader } from '@crm/shared';
 import { createContactRequestSchema } from '@crm/clients';
-import { handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
+import { handleApiRequestWithStatus, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { z } from 'zod';
 
 export const contactRoutes = new Hono();
 
+/**
+ * POST /api/contacts - Create/upsert contact
+ *
+ * Tenant comes from `requestHeader.tenantId` (resolved by the session middleware),
+ * never from the request body.
+ */
 contactRoutes.post('/', async (c) => {
-  const body = await c.req.json();
-  const validated = createContactRequestSchema.parse(body);
-
-  const contactService = container.resolve(ContactService);
-  const contact = await contactService.upsertContact(validated);
-
-  return c.json<ApiResponse<typeof contact>>(
-    {
-      success: true,
-      data: contact,
-    },
-    201
+  return handleApiRequestWithStatus(
+    c,
+    createContactRequestSchema,
+    201,
+    async (requestHeader: RequestHeader, data) => {
+      const contactService = container.resolve(ContactService);
+      return await contactService.upsertContact(requestHeader.tenantId, data);
+    }
   );
 });
 
@@ -86,9 +88,7 @@ contactRoutes.get('/:id', async (c) => {
   );
 });
 
-const updateContactRequestSchema = createContactRequestSchema.partial().extend({
-  tenantId: z.uuid().optional(), // Optional for updates
-});
+const updateContactRequestSchema = createContactRequestSchema.partial();
 
 /**
  * PATCH /api/contacts/:id - Update contact (with access control)

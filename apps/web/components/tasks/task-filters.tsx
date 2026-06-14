@@ -1,14 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { Calendar } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar as CalendarComponent } from "@/components/ui/calendar"
 import { CustomerAutocomplete } from "@/components/ui/customer-autocomplete"
 import { UserAutocomplete } from "@/components/ui/user-autocomplete"
-import { format } from "date-fns"
+import { DateRangeFilter } from "@/components/ui/date-range-filter"
 import { cn } from "@/lib/utils"
 
 export interface TaskFilter {
@@ -52,29 +49,6 @@ export function TaskFilters({
   afterStatus,
   className,
 }: TaskFiltersProps) {
-  const [dateRange, setDateRange] = React.useState<{from?: Date; to?: Date}>(() => ({
-    from: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    to: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  }))
-
-  // Sync dateRange with filters when they change externally
-  React.useEffect(() => {
-    const newFrom = filters.dateFrom ? new Date(filters.dateFrom) : undefined
-    const newTo = filters.dateTo ? new Date(filters.dateTo) : undefined
-    
-    // Only update if dates actually changed to avoid unnecessary re-renders
-    const fromChanged = newFrom?.getTime() !== dateRange.from?.getTime()
-    const toChanged = newTo?.getTime() !== dateRange.to?.getTime()
-    
-    if (fromChanged || toChanged) {
-      setDateRange({
-        from: newFrom,
-        to: newTo,
-      })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.dateFrom, filters.dateTo])
-
   const updateFilter = (key: keyof TaskFilter, value: any) => {
     const newFilters = { ...filters }
     if (value === undefined || value === null || value === '') {
@@ -202,75 +176,17 @@ export function TaskFilters({
 
         {/* Date Range Filter (Always Visible) */}
         {alwaysVisibleConfigs.find(c => c.id === 'date') && (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn(
-                  "h-8 justify-start text-left font-normal",
-                  !dateRange.from && !dateRange.to && "text-muted-foreground"
-                )}
-              >
-                <Calendar className="h-4 w-4 mr-2" />
-                {dateRange.from && dateRange.to ? (
-                  <>
-                    {format(dateRange.from, "MMM dd")} - {format(dateRange.to, "MMM dd")}
-                  </>
-                ) : dateRange.from ? (
-                  format(dateRange.from, "MMM dd, y")
-                ) : (
-                  "Date Range"
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <CalendarComponent
-                mode="range"
-                defaultMonth={dateRange.from || new Date()}
-                selected={
-                  dateRange.from || dateRange.to
-                    ? {
-                        from: dateRange.from,
-                        to: dateRange.to,
-                      }
-                    : undefined
-                }
-                onSelect={(range) => {
-                  if (range) {
-                    // Update local state immediately for UI feedback
-                    const newRange = {
-                      from: range.from,
-                      to: range.to,
-                    }
-                    setDateRange(newRange)
-
-                    // Batch both date updates into a single call to avoid stale state issues
-                    const newFilters = { ...filters }
-                    if (range.from) {
-                      newFilters.dateFrom = range.from
-                    } else {
-                      delete newFilters.dateFrom
-                    }
-                    if (range.to) {
-                      newFilters.dateTo = range.to
-                    } else {
-                      delete newFilters.dateTo
-                    }
-                    onFiltersChange(newFilters)
-                  } else {
-                    // Range cleared
-                    setDateRange({ from: undefined, to: undefined })
-                    const newFilters = { ...filters }
-                    delete newFilters.dateFrom
-                    delete newFilters.dateTo
-                    onFiltersChange(newFilters)
-                  }
-                }}
-                numberOfMonths={2}
-              />
-            </PopoverContent>
-          </Popover>
+          <DateRangeFilter
+            dateFrom={filters.dateFrom?.toISOString()}
+            dateTo={filters.dateTo?.toISOString()}
+            onChange={(dateFrom, dateTo) => {
+              const newFilters = { ...filters }
+              newFilters.dateFrom = new Date(dateFrom)
+              newFilters.dateTo = new Date(dateTo)
+              onFiltersChange(newFilters)
+            }}
+            className="h-8 ml-2"
+          />
         )}
 
         {/* Reset Button */}
@@ -280,8 +196,6 @@ export function TaskFilters({
             size="sm"
             className="h-8"
             onClick={() => {
-              // Reset to default state
-              setDateRange({ from: undefined, to: undefined })
               onFiltersChange({
                 status: 'open',
                 assignedToId: 'all',

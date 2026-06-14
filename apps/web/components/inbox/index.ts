@@ -111,6 +111,8 @@ export {
   apiEmailToInboxContent,
   apiTaskToInboxItem,
   apiTaskToInboxContent,
+  analyzedEmailToInboxItem,
+  analyzedEmailToInboxContent,
 } from "./adapters"
 
 export type { ApiEmailResponse, TaskWithComments } from "./adapters"

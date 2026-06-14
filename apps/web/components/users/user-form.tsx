@@ -1,5 +1,5 @@
 import * as React from "react"
-import { X, ChevronsUpDown, Plus, Trash2, Loader2 } from "lucide-react"
+import { X, ChevronsUpDown, Plus, Trash2, Loader2, Check, Search as SearchIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -7,7 +7,6 @@ import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RoleSelect } from "@/components/ui/role-select"
 import { SystemRoleSelect } from "@/components/ui/system-role-select"
@@ -74,6 +73,7 @@ export function UserForm({
   )
 
   const [managerPopoverOpen, setManagerPopoverOpen] = React.useState(false)
+  const [managerSearch, setManagerSearch] = React.useState("")
   // Track validation errors for customer assignment rows (keyed by row id)
   const [assignmentErrors, setAssignmentErrors] = React.useState<Record<string, string>>({})
 
@@ -92,6 +92,55 @@ export function UserForm({
       label: `${user.firstName} ${user.lastName} (${user.email})`,
     })) || []
   }, [usersData])
+
+  const filteredManagers = React.useMemo(() => {
+    const q = managerSearch.trim().toLowerCase()
+    if (!q) return managers
+    return managers.filter(m => m.label.toLowerCase().includes(q))
+  }, [managers, managerSearch])
+
+  // Highlighted row index for keyboard navigation inside the managers popover
+  const [managerHighlight, setManagerHighlight] = React.useState(0)
+  const managerListRef = React.useRef<HTMLDivElement | null>(null)
+
+  // Reset search + highlight when closing
+  React.useEffect(() => {
+    if (!managerPopoverOpen) {
+      setManagerSearch("")
+      setManagerHighlight(0)
+    }
+  }, [managerPopoverOpen])
+
+  // Clamp highlight when the filtered list shrinks
+  React.useEffect(() => {
+    setManagerHighlight(prev => {
+      if (filteredManagers.length === 0) return 0
+      return Math.min(prev, filteredManagers.length - 1)
+    })
+  }, [filteredManagers.length])
+
+  // Keep the highlighted row in view as the user arrow-navigates
+  React.useEffect(() => {
+    if (!managerPopoverOpen) return
+    const container = managerListRef.current
+    if (!container) return
+    const el = container.querySelector<HTMLElement>(`[data-index="${managerHighlight}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [managerHighlight, managerPopoverOpen])
+
+  const handleManagerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (filteredManagers.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setManagerHighlight(i => (i + 1) % filteredManagers.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setManagerHighlight(i => (i - 1 + filteredManagers.length) % filteredManagers.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      toggleManager(filteredManagers[managerHighlight].value)
+    }
+  }
 
   // Get already selected customer IDs to exclude from dropdown
   const selectedCustomerIds = React.useMemo(() => {
@@ -182,8 +231,8 @@ export function UserForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col h-full">
-      <ScrollArea className="flex-1">
+    <form onSubmit={handleSubmit} className="flex flex-col h-full min-h-0">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="space-y-4 px-6 py-4 pr-8">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -285,37 +334,60 @@ export function UserForm({
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-[350px] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search managers..." className="h-9" />
-                  <CommandList>
-                    <CommandEmpty>No managers found.</CommandEmpty>
-                    <CommandGroup>
-                      {managers.map((manager) => (
-                        <CommandItem
+              <PopoverContent
+                className="w-[350px] max-h-[min(350px,var(--radix-popover-content-available-height))] p-0 flex flex-col overflow-hidden"
+                align="start"
+              >
+                <div className="flex items-center gap-2 border-b px-3 h-9 shrink-0">
+                  <SearchIcon className="size-4 shrink-0 opacity-50" />
+                  <input
+                    type="text"
+                    autoFocus
+                    value={managerSearch}
+                    onChange={(e) => {
+                      setManagerSearch(e.target.value)
+                      setManagerHighlight(0)
+                    }}
+                    onKeyDown={handleManagerKeyDown}
+                    placeholder="Search managers..."
+                    className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                  />
+                </div>
+                <div ref={managerListRef} className="flex-1 overflow-y-auto overscroll-contain p-1">
+                  {filteredManagers.length === 0 ? (
+                    <div className="py-6 text-center text-sm text-muted-foreground">
+                      No managers found.
+                    </div>
+                  ) : (
+                    filteredManagers.map((manager, index) => {
+                      const selected = managerEmails.includes(manager.value)
+                      const highlighted = index === managerHighlight
+                      return (
+                        <button
+                          type="button"
                           key={manager.value}
-                          value={manager.label}
-                          onSelect={() => toggleManager(manager.value)}
+                          data-index={index}
+                          onClick={() => toggleManager(manager.value)}
+                          onMouseEnter={() => setManagerHighlight(index)}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm",
+                            highlighted && "bg-accent text-accent-foreground"
+                          )}
                         >
-                          <div className="flex items-center gap-2 flex-1">
-                            <div
-                              className={`h-4 w-4 rounded border-2 flex items-center justify-center ${
-                                managerEmails.includes(manager.value)
-                                  ? "bg-primary border-primary"
-                                  : "border-input"
-                              }`}
-                            >
-                              {managerEmails.includes(manager.value) && (
-                                <X className="h-3 w-3 text-primary-foreground" />
-                              )}
-                            </div>
-                            <span className="flex-1">{manager.label}</span>
+                          <div
+                            className={cn(
+                              "h-4 w-4 shrink-0 rounded border-2 flex items-center justify-center",
+                              selected ? "bg-primary border-primary" : "border-input"
+                            )}
+                          >
+                            {selected && <Check className="h-3 w-3 text-primary-foreground" />}
                           </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
+                          <span className="flex-1 truncate">{manager.label}</span>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
               </PopoverContent>
             </Popover>
             {managerEmails.length > 0 && (

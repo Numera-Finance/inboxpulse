@@ -7,10 +7,10 @@ import type { Contact, CreateContactRequest } from './types';
  */
 export class ContactClient extends BaseClient {
   /**
-   * Create or update a contact
+   * Create or update a contact. Tenant is resolved server-side from the session.
    */
   async upsertContact(data: CreateContactRequest, signal?: AbortSignal): Promise<Contact> {
-    const response = await this.post<ApiResponse<Contact>>('/api/contacts', data, signal, data.tenantId);
+    const response = await this.post<ApiResponse<Contact>>('/api/contacts', data, signal);
     if (!response || !response.data) {
       throw new Error('Invalid API response: missing data');
     }
@@ -70,7 +70,7 @@ export class ContactClient extends BaseClient {
    * Update a contact
    */
   async updateContact(id: string, data: Partial<CreateContactRequest>, signal?: AbortSignal): Promise<Contact> {
-    const response = await this.patch<ApiResponse<Contact>>(`/api/contacts/${id}`, data, signal, data.tenantId);
+    const response = await this.patch<ApiResponse<Contact>>(`/api/contacts/${id}`, data, signal);
     if (!response || !response.data) {
       throw new Error('Invalid API response: missing data');
     }

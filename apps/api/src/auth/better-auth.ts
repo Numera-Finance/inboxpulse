@@ -1,7 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { customSession } from 'better-auth/plugins';
-import { eq, sql } from 'drizzle-orm';
+import { and, arrayContains, eq, sql } from 'drizzle-orm';
 import { container } from 'tsyringe';
 import type { Database } from '@crm/database';
 import {
@@ -11,9 +11,10 @@ import {
   betterAuthVerification,
 } from './better-auth-schema';
 import { tenants } from '../tenants/schema';
-import { users } from '../users/schema';
+import { users, loginHistory } from '../users/schema';
 import { BetterAuthUserService } from './better-auth-user-service';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 // Lazy getter for database instance from DI container
 // This allows better-auth to be imported before container is initialized
@@ -56,11 +57,11 @@ function getAuth() {
       },
       socialProviders: {
         // Only enable Google if credentials are provided
-        ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+        ...(getEnv().GOOGLE_CLIENT_ID && getEnv().GOOGLE_CLIENT_SECRET
           ? {
               google: {
-                clientId: process.env.GOOGLE_CLIENT_ID,
-                clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+                clientId: getEnv().GOOGLE_CLIENT_ID,
+                clientSecret: getEnv().GOOGLE_CLIENT_SECRET,
                 // Scopes are optional - better-auth uses defaults if not specified
                 // scope: [
                 //   'openid',
@@ -78,14 +79,14 @@ function getAuth() {
           enabled: false, // Disabled to ensure tenant_id is read from DB after updates
         },
       },
-      baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:4001', // API runs on 4001
+      baseURL: getEnv().BETTER_AUTH_URL, // API runs on 4001
       basePath: '/api/auth', // Better-auth will handle routes under this path
       trustedOrigins: (request) => {
         const origins: string[] = [
-          process.env.WEB_URL || 'http://localhost:4000', // Web app runs on 4000
-          process.env.SERVICE_API_URL || 'http://localhost:4001', // API runs on 4001
-        ];
-        // Add Chrome extension origin
+          getEnv().WEB_URL, // Web app runs on 4000
+          getEnv().SERVICE_API_URL, // API runs on 4001
+        ].filter(Boolean) as string[];
+        // Add Chrome extension origin (extension talks to the API directly)
         const extensionId = process.env.CHROME_EXTENSION_ID;
         if (extensionId) {
           origins.push(`chrome-extension://${extensionId}`);
@@ -98,10 +99,10 @@ function getAuth() {
         }
         return origins;
       },
-      secret: process.env.BETTER_AUTH_SECRET || process.env.SESSION_SECRET || 'dev-secret-change-in-production-minimum-32-characters',
+      secret: getEnv().BETTER_AUTH_SECRET || getEnv().SESSION_SECRET || 'dev-secret-change-in-production-minimum-32-characters',
       advanced: {
         // Enable cross-origin cookies for separate API/Web domains
-        useSecureCookies: process.env.NODE_ENV === 'production',
+        useSecureCookies: getEnv().NODE_ENV === 'production',
         defaultCookieAttributes: {
           sameSite: 'none' as const, // Required for cross-origin
           secure: true, // Required when sameSite is 'none'
@@ -160,33 +161,59 @@ function getAuth() {
       databaseHooks: {
         session: {
           create: {
-            // Update lastLoginAt when a new session is created (user logs in)
+            // Update lastLoginAt and append to login_history when a new session is created
             after: async (session: any) => {
               try {
-                // Get the user's email from better-auth user table
                 const betterAuthUserRecord = await db
-                  .select({ email: betterAuthUser.email })
+                  .select({
+                    email: betterAuthUser.email,
+                    tenantId: betterAuthUser.tenantId,
+                  })
                   .from(betterAuthUser)
                   .where(eq(betterAuthUser.id, session.userId))
                   .limit(1);
 
-                if (betterAuthUserRecord[0]?.email) {
-                  // Update lastLoginAt in our users table
-                  await db
-                    .update(users)
-                    .set({ lastLoginAt: sql`CURRENT_TIMESTAMP` })
-                    .where(eq(users.email, betterAuthUserRecord[0].email));
-
-                  logger.info(
-                    { email: betterAuthUserRecord[0].email, sessionId: session.id },
-                    'Updated lastLoginAt for user'
+                const email = betterAuthUserRecord[0]?.email;
+                const tenantId = betterAuthUserRecord[0]?.tenantId;
+                if (!email || !tenantId) {
+                  logger.warn(
+                    { sessionUserId: session.userId, hasEmail: !!email, hasTenantId: !!tenantId },
+                    'Skipping login event — better-auth user missing email or tenantId'
                   );
+                  return;
                 }
+
+                const updated = await db
+                  .update(users)
+                  .set({ lastLoginAt: sql`CURRENT_TIMESTAMP` })
+                  .where(and(eq(users.email, email), eq(users.tenantId, tenantId)))
+                  .returning({ id: users.id, tenantId: users.tenantId });
+
+                if (!updated[0]) {
+                  logger.warn(
+                    { email, tenantId, sessionId: session.id },
+                    'No matching users row for login event — skipping login_history insert'
+                  );
+                  return;
+                }
+
+                logger.info(
+                  { email, sessionId: session.id },
+                  'Updated lastLoginAt for user'
+                );
+
+                await db.insert(loginHistory).values({
+                  userId: updated[0].id,
+                  tenantId: updated[0].tenantId,
+                  betterAuthSessionId: session.id ?? null,
+                  ipAddress: session.ipAddress ?? null,
+                  userAgent: session.userAgent ?? null,
+                });
               } catch (error: any) {
                 // Log but don't fail session creation
                 logger.error(
                   { error: error.message, sessionUserId: session.userId },
-                  'Failed to update lastLoginAt'
+                  'Failed to record login event'
                 );
               }
             },
@@ -210,7 +237,7 @@ function getAuth() {
               const matchingTenant = await db
                 .select()
                 .from(tenants)
-                .where(eq(tenants.domain, emailDomain))
+                .where(arrayContains(tenants.domains, [emailDomain]))
                 .limit(1);
 
               if (!matchingTenant[0]) {
@@ -233,7 +260,7 @@ function getAuth() {
             after: async (user: any, context: any) => {
               const account = context?.account;
 
-              if (user.email && process.env.GOOGLE_CLIENT_ID) {
+              if (user.email && getEnv().GOOGLE_CLIENT_ID) {
                 try {
                   const betterAuthUserService = container.resolve(BetterAuthUserService);
 

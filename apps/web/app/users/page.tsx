@@ -5,6 +5,7 @@ import { useParams, useNavigate } from "react-router-dom"
 import { Search, Plus, Upload } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ViewToggle } from "@/components/view-toggle"
+import { cn } from "@/lib/utils"
 import { UserCard } from "@/components/users/user-card"
 import { UserTable } from "@/components/users/user-table"
 import { UserDrawer } from "@/components/user-drawer"
@@ -15,13 +16,19 @@ import { ImportResultsDialog, type ImportResults } from "@/components/import-res
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ExportButton } from "@/components/ui/export-button"
-import { createXlsxBlob } from "@/lib/utils/export"
 import { UserTableSkeleton } from "@/components/ui/table-skeleton"
-import { useUsers, useCreateUser, useImportUsers, useUpdateUser, useSetUserCustomerAssignments } from "@/lib/hooks"
+import { useUsers, useCreateUser, useImportUsers, useUpdateUser, useSetUserCustomerAssignments, useExportUsers } from "@/lib/hooks"
 import { type User, mapUserToUser } from "@/lib/types"
-import { SearchOperator } from "@crm/shared"
+import { SearchOperator, RowStatus } from "@crm/shared"
 import { toast } from "sonner"
 import { PermissionGate, usePermission, Permission } from "@/src/components/PermissionGate"
+
+// Map table column accessorKeys to API sortBy field names
+const COLUMN_TO_SORT_FIELD: Record<string, string> = {
+  name: 'name',
+  role: 'role',
+  lastLoginAt: 'lastLoginAt',
+}
 
 // Debounce hook for search
 function useDebounce<T>(value: T, delay: number): T {
@@ -45,29 +52,42 @@ export default function UsersPage() {
   const navigate = useNavigate()
 
   const [view, setView] = React.useState<"grid" | "table">("table")
+  const [statusFilter, setStatusFilter] = React.useState<"active" | "inactive">("active")
   const [searchQuery, setSearchQuery] = React.useState("")
   const [addDrawerOpen, setAddDrawerOpen] = React.useState(false)
   const [importDialogOpen, setImportDialogOpen] = React.useState(false)
   const [importResults, setImportResults] = React.useState<ImportResults | null>(null)
   const [importResultsOpen, setImportResultsOpen] = React.useState(false)
 
-  // Pagination state
+  // Pagination and sorting state
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 })
+  const [sorting, setSorting] = React.useState<Array<{ id: string; desc: boolean }>>([])
+  const sortBy = sorting.length > 0 ? (COLUMN_TO_SORT_FIELD[sorting[0].id] || 'name') : 'name'
+  const sortOrder = sorting.length > 0 ? (sorting[0].desc ? 'desc' : 'asc') : 'asc'
 
   // Debounce search to avoid too many API calls
   const debouncedSearch = useDebounce(searchQuery, 300)
 
-  // Reset pagination when search changes
+  // Reset pagination when search, status filter, or sorting changes
   React.useEffect(() => {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
-  }, [debouncedSearch])
+  }, [debouncedSearch, statusFilter, sorting])
+
+  // Status filter query — Inactive tab also includes archived users (rowStatus=2)
+  const statusQuery = statusFilter === "active"
+    ? { field: 'rowStatus', operator: SearchOperator.EQUALS, value: RowStatus.ACTIVE }
+    : { field: 'rowStatus', operator: SearchOperator.IN, value: [RowStatus.INACTIVE, RowStatus.ARCHIVED] }
 
   // Fetch users using React Query with server-side pagination
   const { data, isLoading, isError, error } = useUsers({
-    queries: debouncedSearch
-      ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
-      : [],
-    sortOrder: 'asc',
+    queries: [
+      statusQuery,
+      ...(debouncedSearch
+        ? [{ field: '_search', operator: SearchOperator.ILIKE, value: debouncedSearch }]
+        : []),
+    ],
+    sortBy,
+    sortOrder,
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     include: ['customerAssignments', 'managers'],
@@ -78,6 +98,7 @@ export default function UsersPage() {
   const updateUser = useUpdateUser()
   const setCustomerAssignments = useSetUserCustomerAssignments()
   const importUsers = useImportUsers()
+  const exportUsers = useExportUsers()
 
   // Map API response to User type
   const users: User[] = React.useMemo(() => {
@@ -183,26 +204,7 @@ export default function UsersPage() {
     }
   }
 
-  const handleExport = React.useCallback(async () => {
-    const exportData = users.map(user => ({
-      name: user.name,
-      email: user.email,
-      role: user.role || "",
-      department: user.department || "",
-      status: user.status,
-    }))
-
-    return createXlsxBlob(exportData, {
-      columns: [
-        { key: "name", header: "Name", width: 25 },
-        { key: "email", header: "Email", width: 35 },
-        { key: "role", header: "Role", width: 20 },
-        { key: "department", header: "Department", width: 20 },
-        { key: "status", header: "Status", width: 15 },
-      ],
-      sheetName: "Users",
-    })
-  }, [users])
+  const handleExport = React.useCallback(() => exportUsers.mutateAsync(), [exportUsers])
 
   return (
     <AppShell>
@@ -242,13 +244,33 @@ export default function UsersPage() {
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by name, email, role, or department..."
+              placeholder="Search by name, email, or role..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9"
             />
           </div>
-          <ViewToggle view={view} onViewChange={setView} />
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-lg border border-border bg-muted p-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStatusFilter("active")}
+                className={cn("h-8 px-3", statusFilter === "active" && "bg-background shadow-sm")}
+              >
+                Active
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStatusFilter("inactive")}
+                className={cn("h-8 px-3", statusFilter === "inactive" && "bg-background shadow-sm")}
+              >
+                Inactive
+              </Button>
+            </div>
+            <ViewToggle view={view} onViewChange={setView} />
+          </div>
         </div>
 
         {/* Loading state */}
@@ -283,6 +305,8 @@ export default function UsersPage() {
                 onSelect={handleSelectUser}
                 pagination={pagination}
                 onPaginationChange={setPagination}
+                sorting={sorting}
+                onSortingChange={setSorting}
                 totalCount={totalCount}
               />
             )}

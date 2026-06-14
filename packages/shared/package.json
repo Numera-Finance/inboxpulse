@@ -19,6 +19,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "drizzle-orm": "catalog:",
     "hono": "^4.11.3",
     "reflect-metadata": "catalog:",
     "tsyringe": "catalog:",

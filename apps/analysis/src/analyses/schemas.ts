@@ -1,6 +1,37 @@
 import { z } from 'zod';
 
 /**
+ * Optional field for LLM structured output.
+ *
+ * Module instructions tell the model to return null for absent fields, but
+ * z.optional() only accepts a MISSING key — a literal null failed validation,
+ * which rejected the entire (batched) analysis object and triggered the full
+ * retry/fallback chain. Accept null and normalize to undefined so downstream
+ * types are unchanged.
+ */
+function llmOptional<T extends z.ZodTypeAny>(schema: T) {
+  return schema
+    .nullish()
+    .transform((v): z.infer<T> | undefined => v ?? undefined);
+}
+
+/**
+ * Optional signature field: like llmOptional, but also strips the literal
+ * strings "null" / "n/a" / "" that models emit for absent signature fields.
+ */
+function signatureField() {
+  return z
+    .string()
+    .nullish()
+    .transform((v): string | undefined => {
+      if (!v) return undefined;
+      const trimmed = v.trim();
+      if (trimmed === '' || /^(null|none|n\/a)$/i.test(trimmed)) return undefined;
+      return trimmed;
+    });
+}
+
+/**
  * Sentiment Analysis Schema
  */
 export const sentimentSchema = z.object({
@@ -16,8 +47,8 @@ export type SentimentResult = z.infer<typeof sentimentSchema>;
 export const escalationSchema = z.object({
   detected: z.boolean(),
   confidence: z.number().min(0).max(1),
-  reason: z.string().optional(),
-  urgency: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  reason: llmOptional(z.string()),
+  urgency: llmOptional(z.enum(['low', 'medium', 'high', 'critical'])),
 });
 
 export type EscalationResult = z.infer<typeof escalationSchema>;
@@ -28,8 +59,8 @@ export type EscalationResult = z.infer<typeof escalationSchema>;
 export const upsellSchema = z.object({
   detected: z.boolean(),
   confidence: z.number().min(0).max(1),
-  opportunity: z.string().optional(), // Description of the upsell opportunity
-  product: z.string().optional(), // Product/service mentioned
+  opportunity: llmOptional(z.string()), // Description of the upsell opportunity
+  product: llmOptional(z.string()), // Product/service mentioned
 });
 
 export type UpsellResult = z.infer<typeof upsellSchema>;
@@ -41,7 +72,7 @@ export const churnSchema = z.object({
   riskLevel: z.enum(['low', 'medium', 'high', 'critical']),
   confidence: z.number().min(0).max(1),
   indicators: z.array(z.string()).describe('Specific phrases or behaviors indicating churn risk'),
-  reason: z.string().optional(),
+  reason: llmOptional(z.string()),
 });
 
 export type ChurnResult = z.infer<typeof churnSchema>;
@@ -52,8 +83,8 @@ export type ChurnResult = z.infer<typeof churnSchema>;
 export const kudosSchema = z.object({
   detected: z.boolean(),
   confidence: z.number().min(0).max(1),
-  message: z.string().optional(), // The positive feedback message
-  category: z.enum(['product', 'service', 'team', 'other']).optional(),
+  message: llmOptional(z.string()), // The positive feedback message
+  category: llmOptional(z.enum(['product', 'service', 'team', 'other'])),
 });
 
 export type KudosResult = z.infer<typeof kudosSchema>;
@@ -64,8 +95,8 @@ export type KudosResult = z.infer<typeof kudosSchema>;
 export const competitorSchema = z.object({
   detected: z.boolean(),
   confidence: z.number().min(0).max(1),
-  competitors: z.array(z.string()).optional(), // List of competitor names mentioned
-  context: z.string().optional(), // How competitors were mentioned
+  competitors: llmOptional(z.array(z.string())), // List of competitor names mentioned
+  context: llmOptional(z.string()), // How competitors were mentioned
 });
 
 export type CompetitorResult = z.infer<typeof competitorSchema>;
@@ -75,17 +106,19 @@ export type CompetitorResult = z.infer<typeof competitorSchema>;
  * Note: This matches the schema in signature-extraction.ts
  */
 export const signatureSchema = z.object({
-  name: z.string().optional(),
-  title: z.string().optional(),
-  company: z.string().optional(),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-  mobile: z.string().optional(),
-  address: z.string().optional(),
-  website: z.string().optional(),
-  linkedin: z.string().optional(),
-  x: z.string().optional(),
-  linktree: z.string().optional(),
+  name: signatureField(),
+  title: signatureField(),
+  company: signatureField(),
+  // Intentionally NOT z.string().email(): a malformed extraction (e.g.
+  // "john [at] acme.com") must not reject the entire analysis batch.
+  email: signatureField(),
+  phone: signatureField(),
+  mobile: signatureField(),
+  address: signatureField(),
+  website: signatureField(),
+  linkedin: signatureField(),
+  x: signatureField(),
+  linktree: signatureField(),
 });
 
 export type SignatureResult = z.infer<typeof signatureSchema>;

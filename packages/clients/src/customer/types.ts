@@ -5,16 +5,17 @@ import { z } from 'zod';
  * Used for validation at API boundaries
  *
  * Note: domains array is serialized to customer_domains table internally
- * Physical implementation (customers + customer_domains) is hidden from callers
+ * Physical implementation (customers + customer_domains) is hidden from callers.
+ * Tenant is resolved server-side from the session — never from the request body.
  */
 export const createCustomerRequestSchema = z.object({
-  tenantId: z.uuid(),
   domains: z.array(z.string().min(1).max(255)).min(1), // At least one domain required
   name: z.string().optional(),
   website: z.string().url().optional(),
   industry: z.string().max(100).optional(),
   externalId: z.string().max(255).optional(), // External system identifier (e.g., Client ID)
   metadata: z.record(z.string(), z.any()).optional(),
+  isAutoCreated: z.boolean().optional(), // Set by email analysis, not by manual creation
 });
 
 export type CreateCustomerRequest = z.infer<typeof createCustomerRequestSchema>;
@@ -35,6 +36,7 @@ export const customerSchema = z.object({
   labels: z.array(z.string()).optional(), // Customer labels/tags
   externalId: z.string().nullable().optional(), // External system identifier (e.g., Client ID)
   metadata: z.record(z.string(), z.any()).nullable().optional(),
+  isAutoCreated: z.boolean().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   // Optional aggregated fields (populated when requested via include parameter)
@@ -53,3 +55,22 @@ export const customerSchema = z.object({
 });
 
 export type Customer = z.infer<typeof customerSchema>;
+
+// Merge customer types
+export const mergeCustomerRequestSchema = z.object({
+  sourceCustomerId: z.string().uuid(),
+});
+
+export type MergeCustomerRequest = z.infer<typeof mergeCustomerRequestSchema>;
+
+export const mergeCustomerResponseSchema = z.object({
+  targetCustomerId: z.string().uuid(),
+  sourceCustomerId: z.string().uuid(),
+  movedDomains: z.number().int(),
+  movedContacts: z.number().int(),
+  movedTasks: z.number().int(),
+  movedEmailParticipants: z.number().int(),
+  movedUserAssignments: z.number().int(),
+});
+
+export type MergeCustomerResponse = z.infer<typeof mergeCustomerResponseSchema>;

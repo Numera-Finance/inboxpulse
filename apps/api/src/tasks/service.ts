@@ -1,9 +1,9 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, type SQL, type Column } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
-import { type RequestHeader, getServiceAuthHeaders } from '@crm/shared';
+import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
@@ -12,6 +12,7 @@ import { users } from '../users/schema';
 import { UserRepository } from '../users/repository';
 import { ContactRepository } from '../contacts/repository';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 // =============================================================================
 // Zod Schemas for request validation
@@ -55,6 +56,15 @@ export const addCommentRequestSchema = z.object({
   content: z.string().min(1).max(5000),
 });
 
+// Problem/resolution are required for sentiment-driven escalations (the UI's
+// MarkDoneDialog enforces non-empty client-side), but the TAT-breach resolve
+// path is a status acknowledgement and supplies them as empty strings. Allow
+// empty here so that path doesn't fail server-side validation.
+export const markDoneRequestSchema = z.object({
+  problem: z.string().max(5000),
+  resolution: z.string().max(5000),
+});
+
 // =============================================================================
 // Derived types from Zod schemas
 // =============================================================================
@@ -64,6 +74,7 @@ export type TaskExportRequest = z.infer<typeof taskExportRequestSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type ReassignTaskRequest = z.infer<typeof reassignTaskRequestSchema>;
 export type AddCommentRequest = z.infer<typeof addCommentRequestSchema>;
+export type MarkDoneRequest = z.infer<typeof markDoneRequestSchema>;
 
 export interface TaskSearchResponse {
   items: TaskWithRelations[];
@@ -271,7 +282,8 @@ export class TaskService {
   }
 
   /**
-   * Create task from negative email (system-created)
+   * Create task from negative email (system-created).
+   * Auto-assigns to the customer's controller or account manager if available.
    */
   async createFromEmail(
     tenantId: string,
@@ -288,21 +300,79 @@ export class TaskService {
 
     logger.info({ emailId, customerId }, 'Auto-creating task from negative email');
 
-    return this.taskRepository.create({
+    const task = await this.taskRepository.create({
       tenantId,
       customerId,
       emailId,
       title: emailSubject || 'Negative sentiment email',
       createdBySystem: true,
     });
+
+    // Auto-assign to customer's controller or account manager
+    await this.autoAssignTask(tenantId, task.id, customerId, emailId);
+
+    return task;
+  }
+
+  /**
+   * Auto-assign a system-created task to the customer's team member.
+   *
+   * Priority: Controller > Account Manager.
+   * Uses a system RequestHeader to call reassign() with the same semantics
+   * as the UI (notifications, logging).
+   * Non-blocking — logs and continues on failure.
+   */
+  private async autoAssignTask(
+    tenantId: string,
+    taskId: string,
+    customerId: string,
+    emailId: string
+  ): Promise<void> {
+    try {
+      const teamMembers = await this.userRepository.getUsersByCustomer(customerId);
+      if (teamMembers.length === 0) {
+        logger.debug({ taskId, customerId }, 'No team members for customer, skipping auto-assign');
+        return;
+      }
+
+      // Priority 1: Controller
+      const controller = teamMembers.find(m => m.roleId === CUSTOMER_ROLES.CONTROLLER.id);
+      // Priority 2: Account Manager
+      const accountManager = teamMembers.find(m => m.roleId === CUSTOMER_ROLES.ACCOUNT_MANAGER.id);
+
+      const assignee = controller || accountManager;
+      if (!assignee) {
+        logger.debug({ taskId, customerId }, 'No controller or account manager found, skipping auto-assign');
+        return;
+      }
+
+      const systemHeader: RequestHeader = {
+        tenantId,
+        userId: '00000000-0000-0000-0000-000000000000',
+        permissions: [Permission.ADMIN],
+      };
+
+      await this.reassign(systemHeader, taskId, assignee.id);
+
+      logger.info(
+        { taskId, emailId, customerId, assigneeId: assignee.id, role: controller ? 'Controller' : 'Account Manager' },
+        'Auto-assigned task to customer team member'
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { taskId, emailId, customerId, error: message },
+        'Failed to auto-assign task (non-blocking)'
+      );
+    }
   }
 
   /**
    * Mark task as done
    */
-  async markDone(header: RequestHeader, id: string): Promise<Task | undefined> {
+  async markDone(header: RequestHeader, id: string, problem: string, resolution: string): Promise<Task | undefined> {
     logger.info({ taskId: id }, 'Marking task as done');
-    return this.taskRepository.markDone(header, id);
+    return this.taskRepository.markDone(header, id, problem, resolution);
   }
 
   /**
@@ -387,7 +457,9 @@ export class TaskService {
         and(
           eq(tasks.tenantId, tenantId),
           eq(tasks.status, TaskStatus.OPEN),
-          eq(tasks.createdBySystem, true)
+          eq(tasks.createdBySystem, true),
+          // Only escalations openable on the page (sender mapped to a customer).
+          this.escalationOpenableCondition(tasks.emailId, tasks.tenantId)
         )
       );
 
@@ -480,7 +552,7 @@ export class TaskService {
             dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
             assignedTo: assignedToName,
             accountOwner: accountOwnerName,
-            detailsUrl: `${process.env.APP_URL || 'http://localhost:3000'}/tasks/${task.id}`,
+            detailsUrl: this.escalationDetailsUrl(task.emailId),
           });
 
           // Categorize this task for per-manager metrics
@@ -532,7 +604,9 @@ export class TaskService {
       eq(tasks.tenantId, header.tenantId),
       eq(tasks.status, TaskStatus.OPEN),
       eq(tasks.createdBySystem, true),
-      inArray(tasks.customerId, customerIds)
+      inArray(tasks.customerId, customerIds),
+      // Only escalations openable on the page (sender mapped to a customer).
+      this.escalationOpenableCondition(tasks.emailId, tasks.tenantId)
     );
 
     // Apply 'since' filter if provided (for incremental updates)
@@ -604,7 +678,7 @@ export class TaskService {
         dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
         assignedTo: assignedToName,
         accountOwner: accountOwnerName,
-        detailsUrl: `${process.env.APP_URL || 'http://localhost:3000'}/tasks/${task.id}`,
+        detailsUrl: this.escalationDetailsUrl(task.emailId),
       });
     }
 
@@ -680,7 +754,7 @@ export class TaskService {
     data: ManagerEscalationData
   ): Promise<boolean> {
     try {
-      const notificationsUrl = process.env.SERVICE_NOTIFICATIONS_URL || 'http://localhost:4004';
+      const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
       const response = await fetch(
         `${notificationsUrl}/api/notifications/send/escalation-batch`,
         {
@@ -721,6 +795,56 @@ export class TaskService {
   }
 
   /**
+   * Single source of truth for "can this escalation be opened on the page".
+   *
+   * Mirrors the openability rule of the detail fetch (`getAnalyzedEmailById`):
+   * the email exists for the tenant and its SENDER (direction='from') maps to a
+   * customer. Escalations whose sender isn't a mapped customer (e.g. customer
+   * identified via a to/cc address) can't be opened from the escalations page,
+   * so their links are dead-ends.
+   *
+   * NOTE: deliberately does NOT filter on analysis_status — the detail page
+   * opens such emails regardless of analysis state, so a stricter check here
+   * would suppress notifications whose links actually work. Both the per-task
+   * gate and the digest filter consume this one predicate so they can't drift.
+   *
+   * @param emailIdExpr  email id — a bound value or a correlated column (e.g. `tasks.emailId`)
+   * @param tenantIdExpr tenant id — a bound value or a correlated column
+   */
+  private escalationOpenableCondition(
+    emailIdExpr: SQL | Column | string,
+    tenantIdExpr: SQL | Column | string
+  ): SQL {
+    return sql`EXISTS (
+      SELECT 1
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c2 ON c2.id = ep.customer_id
+      WHERE e.id = ${emailIdExpr}
+        AND e.tenant_id = ${tenantIdExpr}
+    )`;
+  }
+
+  /** Whether a specific escalation email is openable on the page. */
+  private async isEscalationOpenable(tenantId: string, emailId: string): Promise<boolean> {
+    const rows = await this.db.execute<{ openable: boolean }>(
+      sql`SELECT ${this.escalationOpenableCondition(emailId, tenantId)} AS openable`
+    );
+    return rows[0]?.openable ?? false;
+  }
+
+  /**
+   * Build the escalations deep-link for a task's email. The escalations page
+   * resolves by analyzed-email id; when there's no email we fall back to the
+   * list. Single web base (WEB_URL) so every escalation link — assignment
+   * notifications and manager digests — points at the same host.
+   */
+  private escalationDetailsUrl(emailId: string | null): string {
+    const base = getEnv().WEB_URL;
+    return emailId ? `${base}/escalations/${emailId}` : `${base}/escalations`;
+  }
+
+  /**
    * Send task-assigned notification via the notifications service.
    * Called when a task is created with an assignee or reassigned.
    * Checks user preferences before sending.
@@ -740,8 +864,26 @@ export class TaskService {
       return false;
     }
 
-    const notificationsUrl = process.env.SERVICE_NOTIFICATIONS_URL || 'http://localhost:4004';
-    const webUrl = process.env.WEB_URL || 'http://localhost:4000';
+    // Auto-created escalations link to the escalations page, which can only open
+    // an escalation whose email sender maps to a customer. If such an escalation
+    // isn't openable, its link is a dead-end, so skip the notification. This
+    // gate is scoped to system-created escalations only — manually-created tasks
+    // keep the original behaviour (notify whenever there's a recipient), since
+    // they aren't subject to the escalations-page sender-attribution rule.
+    if (
+      task.createdBySystem &&
+      (!task.emailId || !(await this.isEscalationOpenable(task.tenantId, task.emailId)))
+    ) {
+      logger.info(
+        { taskId: task.id, emailId: task.emailId },
+        'Escalation not openable on escalations page (sender not mapped to a customer); skipping assignment notification'
+      );
+      return false;
+    }
+
+    const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
+
+    const detailsUrl = this.escalationDetailsUrl(task.emailId);
 
     try {
       // Call /send - the notification service handles preference checks
@@ -767,7 +909,7 @@ export class TaskService {
                 assignedTo: task.assignedToName || 'Unassigned',
                 assignedBy: assignedByName || null,
                 accountOwner: task.assignedToName || 'Unknown', // TODO: Get actual account owner
-                detailsUrl: `${webUrl}/escalations/${task.id}`,
+                detailsUrl,
               },
               recipientName: task.assignedToName?.split(' ')[0] || 'Team',
             },

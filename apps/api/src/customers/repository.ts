@@ -1,9 +1,9 @@
 import { eq, and, sql, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
-import { customers, customerDomains, type Customer, type NewCustomer, type NewCustomerDomain } from './schema';
+import { customers, customerDomains, CustomerRowStatus, type Customer, type NewCustomer, type NewCustomerDomain } from './schema';
 import { logger } from '../utils/logger';
 
 @injectable()
@@ -14,7 +14,7 @@ export class CustomerRepository extends ScopedRepository {
 
   /**
    * Build freeform search condition for customers.
-   * Searches across: name and domains (via subquery).
+   * Searches across: name, domains (via subquery), and labels (JSONB array).
    */
   override buildFreeformSearch(searchTerm: string): SQL | undefined {
     if (!searchTerm || searchTerm.trim() === '') {
@@ -27,18 +27,28 @@ export class CustomerRepository extends ScopedRepository {
         SELECT ${customerDomains.customerId}
         FROM ${customerDomains}
         WHERE ${customerDomains.domain} ILIKE ${term}
+      ) OR
+      EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(${customers.labels}) AS lbl
+        WHERE lbl ILIKE ${term}
       )
     )`;
   }
 
   /**
-   * Find customer by domain (queries customer_domains table internally)
-   * Domain is automatically lowercased
+   * Find customer by domain (queries customer_domains table internally).
+   * Domain is automatically lowercased. Accepts an optional transaction so
+   * the read participates in a wider transaction (used by the email pipeline).
    */
-  async findByDomain(tenantId: string, domain: string): Promise<Customer | undefined> {
+  async findByDomain(
+    tenantId: string,
+    domain: string,
+    tx?: Transaction
+  ): Promise<Customer | undefined> {
     const normalizedDomain = domain.toLowerCase();
+    const dbHandle = (tx ?? this.db) as Database;
 
-    const result = await this.db
+    const result = await dbHandle
       .select({
         id: customers.id,
         tenantId: customers.tenantId,
@@ -48,6 +58,8 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        isAutoCreated: customers.isAutoCreated,
+        rowStatus: customers.rowStatus,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
       })
@@ -74,20 +86,21 @@ export class CustomerRepository extends ScopedRepository {
   }
 
   /**
-   * Create customer and automatically create domain record in customer_domains
-   * Domain is required and will be stored in lowercase
+   * Create customer and automatically create the corresponding row in
+   * customer_domains. Domain is required and stored lowercased.
+   *
+   * Accepts an optional outer transaction. When provided, the writes happen
+   * within the caller's transaction (used by the email pipeline so a customer
+   * created here participates in the same atomic email write).
    */
-  async create(data: NewCustomer & { domain: string }): Promise<Customer> {
+  async create(data: NewCustomer & { domain: string }, tx?: Transaction): Promise<Customer> {
     const normalizedDomain = data.domain.toLowerCase();
-
-    return await this.db.transaction(async (tx) => {
-      // Create customer (without domain column)
+    const runner = async (innerTx: Transaction): Promise<Customer> => {
       const { domain, ...customerData } = data;
-      const customerResult = await tx.insert(customers).values(customerData).returning();
+      const customerResult = await innerTx.insert(customers).values(customerData).returning();
       const customer = customerResult[0];
 
-      // Create domain record
-      await tx.insert(customerDomains).values({
+      await innerTx.insert(customerDomains).values({
         customerId: customer.id,
         tenantId: customer.tenantId,
         domain: normalizedDomain,
@@ -96,7 +109,10 @@ export class CustomerRepository extends ScopedRepository {
 
       logger.debug({ customerId: customer.id, domain: normalizedDomain }, 'Created customer with domain');
       return customer;
-    });
+    };
+
+    if (tx) return runner(tx);
+    return await this.db.transaction(runner);
   }
 
   /**
@@ -140,8 +156,13 @@ export class CustomerRepository extends ScopedRepository {
     });
   }
 
-  async update(id: string, data: Partial<NewCustomer>): Promise<Customer | undefined> {
-    const result = await this.db
+  async update(
+    id: string,
+    data: Partial<NewCustomer>,
+    tx?: Transaction
+  ): Promise<Customer | undefined> {
+    const dbHandle = (tx ?? this.db) as Database;
+    const result = await dbHandle
       .update(customers)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(customers.id, id))
@@ -176,7 +197,7 @@ export class CustomerRepository extends ScopedRepository {
       if (existingDomain.length > 0) {
         // Update existing customer
         const customerId = existingDomain[0].customerId;
-        const { domains, id, createdAt, ...customerData } = data;
+        const { domains, id, createdAt, isAutoCreated, ...customerData } = data;
 
         const updated = await tx
           .update(customers)
@@ -268,11 +289,16 @@ export class CustomerRepository extends ScopedRepository {
    * Get first domain for a customer (oldest by created_at)
    * Internal method for domain management
    */
-  async getFirstDomain(customerId: string): Promise<string | undefined> {
+  async getFirstDomain(customerId: string, tenantId?: string): Promise<string | undefined> {
+    const conditions = [eq(customerDomains.customerId, customerId)];
+    if (tenantId) {
+      conditions.push(eq(customerDomains.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select({ domain: customerDomains.domain })
       .from(customerDomains)
-      .where(eq(customerDomains.customerId, customerId))
+      .where(and(...conditions))
       .orderBy(customerDomains.createdAt)
       .limit(1);
 
@@ -283,11 +309,16 @@ export class CustomerRepository extends ScopedRepository {
    * Get all domains for a customer
    * Internal method for domain management
    */
-  async getDomains(customerId: string): Promise<string[]> {
+  async getDomains(customerId: string, tenantId?: string): Promise<string[]> {
+    const conditions = [eq(customerDomains.customerId, customerId)];
+    if (tenantId) {
+      conditions.push(eq(customerDomains.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select({ domain: customerDomains.domain })
       .from(customerDomains)
-      .where(eq(customerDomains.customerId, customerId));
+      .where(and(...conditions));
 
     return result.map(r => r.domain);
   }
@@ -296,19 +327,24 @@ export class CustomerRepository extends ScopedRepository {
    * Batch get domains for multiple customers (fixes N+1 query problem)
    * Returns a map of customerId -> domains[]
    */
-  async getDomainsBatch(customerIds: string[]): Promise<Map<string, string[]>> {
+  async getDomainsBatch(customerIds: string[], tenantId?: string): Promise<Map<string, string[]>> {
     if (customerIds.length === 0) {
       return new Map();
     }
 
     const { inArray } = await import('drizzle-orm');
+    const conditions = [inArray(customerDomains.customerId, customerIds)];
+    if (tenantId) {
+      conditions.push(eq(customerDomains.tenantId, tenantId));
+    }
+
     const result = await this.db
       .select({
         customerId: customerDomains.customerId,
         domain: customerDomains.domain,
       })
       .from(customerDomains)
-      .where(inArray(customerDomains.customerId, customerIds));
+      .where(and(...conditions));
 
     // Group domains by customerId
     const domainsMap = new Map<string, string[]>();
@@ -381,6 +417,8 @@ export class CustomerRepository extends ScopedRepository {
         labels: customers.labels,
         externalId: customers.externalId,
         metadata: customers.metadata,
+        isAutoCreated: customers.isAutoCreated,
+        rowStatus: customers.rowStatus,
         createdAt: customers.createdAt,
         updatedAt: customers.updatedAt,
       })
@@ -463,44 +501,34 @@ export class CustomerRepository extends ScopedRepository {
    * If customer with externalId exists, update it; otherwise create new
    * Returns customer with domains array
    */
-  async upsertByExternalId(
+  async upsertCustomer(
     data: {
       tenantId: string;
-      externalId: string;
+      existingCustomerId?: string;
+      externalId?: string;
       name?: string;
       website?: string;
       domains: string[];
     }
   ): Promise<Customer & { domains: string[] }> {
     return await this.db.transaction(async (tx) => {
-      // Check if customer with externalId exists
-      const existing = await tx
-        .select()
-        .from(customers)
-        .where(
-          and(
-            eq(customers.tenantId, data.tenantId),
-            eq(customers.externalId, data.externalId)
-          )
-        )
-        .limit(1);
-
       let customer: Customer;
 
-      if (existing.length > 0) {
-        // Update existing customer
+      if (data.existingCustomerId) {
+        // Update existing customer (matched by externalId or domain in service layer)
+        const updateSet: Record<string, unknown> = { updatedAt: new Date() };
+        if (data.name) updateSet.name = data.name;
+        if (data.website) updateSet.website = data.website;
+        if (data.externalId) updateSet.externalId = data.externalId;
+
         const updated = await tx
           .update(customers)
-          .set({
-            name: data.name,
-            website: data.website,
-            updatedAt: new Date(),
-          })
-          .where(eq(customers.id, existing[0].id))
+          .set(updateSet)
+          .where(eq(customers.id, data.existingCustomerId))
           .returning();
 
         customer = updated[0];
-        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Updated customer by externalId');
+        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Updated existing customer');
       } else {
         // Create new customer
         const created = await tx
@@ -514,16 +542,14 @@ export class CustomerRepository extends ScopedRepository {
           .returning();
 
         customer = created[0];
-        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Created customer with externalId');
+        logger.debug({ customerId: customer.id, externalId: data.externalId }, 'Created new customer');
       }
 
       // Replace domains
-      // First delete existing domains
       await tx
         .delete(customerDomains)
         .where(eq(customerDomains.customerId, customer.id));
 
-      // Then insert new domains
       for (const domain of data.domains) {
         await tx.insert(customerDomains).values({
           customerId: customer.id,
@@ -555,11 +581,63 @@ export class CustomerRepository extends ScopedRepository {
     }
 
     const customerIds = customerList.map(c => c.id);
-    const domainsMap = await this.getDomainsBatch(customerIds);
+    const domainsMap = await this.getDomainsBatch(customerIds, tenantId);
 
     return customerList.map(customer => ({
       ...customer,
       domains: domainsMap.get(customer.id) || [],
     }));
+  }
+
+  // ===========================================================================
+  // Customer Merge Support
+  // ===========================================================================
+
+  /**
+   * Lock both customer rows for merge (prevents concurrent merges/archival).
+   * Returns locked rows for validation. Must be called inside a transaction.
+   */
+  async lockForMerge(tenantId: string, sourceId: string, targetId: string, tx: Transaction): Promise<Array<{ id: string; row_status: number }>> {
+    const locked = await tx.execute<{ id: string; row_status: number }>(sql`
+      SELECT id, row_status FROM customers
+      WHERE id IN (${sourceId}, ${targetId}) AND tenant_id = ${tenantId}
+      FOR UPDATE
+    `);
+    return locked as unknown as Array<{ id: string; row_status: number }>;
+  }
+
+  /**
+   * Reassign domains from source to target customer.
+   * Moves non-conflicting domains, deletes remaining source duplicates.
+   */
+  async reassignDomains(tenantId: string, sourceId: string, targetId: string, tx?: Transaction): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      UPDATE customer_domains
+      SET customer_id = ${targetId}, updated_at = NOW()
+      WHERE customer_id = ${sourceId}
+        AND tenant_id = ${tenantId}
+        AND domain NOT IN (
+          SELECT domain FROM customer_domains
+          WHERE customer_id = ${targetId} AND tenant_id = ${tenantId}
+        )
+    `);
+    await db.execute(sql`
+      DELETE FROM customer_domains
+      WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
+    `);
+    return (result as any).rowCount ?? 0;
+  }
+
+  /**
+   * Archive a customer (set row_status to ARCHIVED).
+   */
+  async archive(tenantId: string, customerId: string, tx?: Transaction): Promise<void> {
+    const db = tx ?? this.db;
+    await db.execute(sql`
+      UPDATE customers
+      SET row_status = ${CustomerRowStatus.ARCHIVED}, updated_at = NOW()
+      WHERE id = ${customerId} AND tenant_id = ${tenantId}
+    `);
   }
 }

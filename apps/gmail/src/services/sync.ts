@@ -1,7 +1,9 @@
-import { IntegrationClient, RunClient, EmailClient, Integration } from '@crm/clients';
-import { GmailService } from './gmail';
+import { IntegrationClient, RunClient, EmailClient, Integration, type FirstReplyMarker } from '@crm/clients';
+import { withRetry } from '@crm/shared';
+import { GmailService, type MessageHeaderMeta } from './gmail';
 import { EmailParserService } from './email-parser';
 import { logger } from '../utils/logger';
+import { getEnv } from '../env';
 
 export class SyncService {
   constructor(
@@ -81,9 +83,12 @@ export class SyncService {
 
     const query = `after:${Math.floor(thirtyDaysAgo.getTime() / 1000)}`;
 
-    let totalProcessed = 0;
-    let totalInserted = 0;
-    let totalSkipped = 0;
+    // Gmail returns messages newest-first. Collect all message IDs across pages,
+    // then process them oldest-first so a customer email is always stored before
+    // the reply that answers it. Otherwise a reply in an earlier (newer) page
+    // would be processed before its thread exists, get dropped, and its
+    // firstReplyAt / time-to-response would be lost.
+    const allMessageIds: string[] = [];
     let pageToken: string | undefined;
 
     do {
@@ -93,22 +98,22 @@ export class SyncService {
         pageToken,
       });
 
-      if (messages.length === 0) break;
-
-      const messageIds = messages.map((m) => m.id!).filter(Boolean);
-      const result = await this.processMessageIds(integration, runId, messageIds);
-
-      totalProcessed += result.processed;
-      totalInserted += result.inserted;
-      totalSkipped += result.skipped;
+      for (const m of messages) {
+        if (m.id) allMessageIds.push(m.id);
+      }
       pageToken = nextPageToken;
-
-      await this.runClient.update(runId, {
-        itemsProcessed: totalProcessed,
-        itemsInserted: totalInserted,
-        itemsSkipped: totalSkipped,
-      });
     } while (pageToken);
+
+    // Reverse newest-first → oldest-first before processing.
+    allMessageIds.reverse();
+
+    const result = await this.processMessageIds(integration, runId, allMessageIds);
+
+    await this.runClient.update(runId, {
+      itemsProcessed: result.processed,
+      itemsInserted: result.inserted,
+      itemsSkipped: result.skipped,
+    });
 
     // Get current history ID for future incremental syncs
     const historyId = await this.gmailService.getCurrentHistoryId(tenantId);
@@ -143,13 +148,24 @@ export class SyncService {
       return { processed: 0, inserted: 0, skipped: 0 };
     }
 
-    // Fetch integration credentials to get blacklist emails
+    // Fetch integration credentials to get blacklist entries (emails and domains)
     const credentials = await this.integrationClient.getCredentials(tenantId, 'gmail');
-    const blacklistEmails: string[] = Array.isArray(credentials?.blacklistEmails) ? credentials.blacklistEmails : [];
-    const normalizedBlacklist = new Set(blacklistEmails.map(email => email.toLowerCase()));
+    const blacklistEntries: string[] = Array.isArray(credentials?.blacklistEmails) ? credentials.blacklistEmails : [];
 
-    if (blacklistEmails.length > 0) {
-      logger.info({ integrationId, blacklistCount: blacklistEmails.length }, 'Applying email blacklist filter');
+    // Partition blacklist into email addresses and domains
+    const emailBlacklist = new Set<string>();
+    const domainBlacklist = new Set<string>();
+    for (const entry of blacklistEntries) {
+      const normalized = entry.toLowerCase();
+      if (normalized.includes('@')) {
+        emailBlacklist.add(normalized);
+      } else {
+        domainBlacklist.add(normalized);
+      }
+    }
+
+    if (blacklistEntries.length > 0) {
+      logger.info({ integrationId, emailBlacklistCount: emailBlacklist.size, domainBlacklistCount: domainBlacklist.size }, 'Applying blacklist filter');
     }
 
     let totalProcessed = 0;
@@ -157,13 +173,18 @@ export class SyncService {
     let totalSkipped = 0;
     let totalBlacklisted = 0;
 
+    // Reply markers for blacklisted tenant-domain (outbound) messages. These are
+    // never fetched or stored; we forward header metadata so the API can set
+    // first_reply_at (time-to-response) on the customer email they answer.
+    const replyMarkers: FirstReplyMarker[] = [];
+
     for (let i = 0; i < messageIds.length; i += CHUNK_SIZE) {
       const chunkMessageIds = messageIds.slice(i, i + CHUNK_SIZE);
       let filteredMessageIds = chunkMessageIds;
       let highestHistoryId: string | null = null;
 
       // Phase 1: If blacklist is configured, fetch headers first to filter
-      if (normalizedBlacklist.size > 0) {
+      if (emailBlacklist.size > 0 || domainBlacklist.size > 0) {
         const headers = await this.gmailService.batchGetMessageHeaders(tenantId, chunkMessageIds);
 
         // Filter out blacklisted senders and track highest historyId
@@ -178,13 +199,34 @@ export class SyncService {
             }
           }
 
-          // Check if sender is blacklisted
+          // Check if sender is blacklisted (by email or domain)
           if (header.from) {
             const fromEmail = this.extractEmailFromHeader(header.from);
-            if (fromEmail && normalizedBlacklist.has(fromEmail.toLowerCase())) {
-              totalBlacklisted++;
-              logger.debug({ integrationId, from: fromEmail }, 'Skipping blacklisted sender');
-              continue;
+            if (fromEmail) {
+              const normalizedFrom = fromEmail.toLowerCase();
+              const domain = this.extractDomainFromEmail(normalizedFrom);
+              const emailBlacklisted = emailBlacklist.has(normalizedFrom);
+              const domainBlacklisted = !!domain && domainBlacklist.has(domain);
+
+              if (emailBlacklisted || domainBlacklisted) {
+                totalBlacklisted++;
+                logger.debug(
+                  { integrationId, from: normalizedFrom, domain, rule: domainBlacklisted ? 'domain' : 'email' },
+                  'Skipping blacklisted sender'
+                );
+                // Senders on a tenant (domain-blacklisted) domain are outbound /
+                // reply messages. We never store them, but their header metadata
+                // lets the API set first_reply_at on the customer email they
+                // answer — even when the address ALSO matched the email blacklist.
+                // The API applies the authoritative reply rules.
+                if (domainBlacklisted) {
+                  const marker = this.buildReplyMarker(header, normalizedFrom);
+                  if (marker) {
+                    replyMarkers.push(marker);
+                  }
+                }
+                continue;
+              }
             }
           }
 
@@ -260,7 +302,64 @@ export class SyncService {
       logger.info({ integrationId, totalBlacklisted }, 'Total messages skipped due to blacklist');
     }
 
+    // Forward first-reply markers for the outbound (tenant-domain) messages we
+    // dropped above. Best-effort: TAT data is non-critical, so a failure here
+    // must never fail the sync.
+    if (replyMarkers.length > 0) {
+      try {
+        // Retry transient failures (network / 5xx / 429) so a single blip doesn't
+        // drop the whole batch of reply timestamps — there's no Pub/Sub redelivery
+        // for markers alone.
+        const { updatedCount } = await withRetry(
+          () => this.emailClient.setFirstReplyMarkers(tenantId, integrationId, replyMarkers),
+          {
+            maxRetries: 3,
+            shouldRetry: (error: { status?: number }) => {
+              const status = error?.status;
+              return status === undefined || status >= 500 || status === 429;
+            },
+          }
+        );
+        logger.info(
+          { integrationId, markerCount: replyMarkers.length, updatedCount },
+          'Forwarded first-reply markers'
+        );
+      } catch (error) {
+        logger.warn(
+          { integrationId, markerCount: replyMarkers.length, error: error instanceof Error ? error.message : 'Unknown error' },
+          'Failed to forward first-reply markers'
+        );
+      }
+    }
+
     return { processed: totalProcessed, inserted: totalInserted, skipped: totalSkipped };
+  }
+
+  /**
+   * Build a first-reply marker from a blacklisted message's header metadata.
+   * Returns null when the message lacks the thread id / timestamp needed to
+   * attribute the reply. Recipient/automation classification is left to the API.
+   */
+  private buildReplyMarker(header: MessageHeaderMeta, fromEmail: string): FirstReplyMarker | null {
+    if (!header.threadId || !header.internalDate) {
+      return null;
+    }
+    const epochMs = Number(header.internalDate);
+    if (!Number.isFinite(epochMs)) {
+      return null;
+    }
+    return {
+      providerThreadId: header.threadId,
+      fromEmail,
+      // Reuse the email parser's address-list parsing (handles "Name <a@b>, c@d"
+      // and bracket-less display names) instead of re-implementing it.
+      tos: this.emailParser.parseAddressList(header.to ?? ''),
+      ccs: this.emailParser.parseAddressList(header.cc ?? ''),
+      labels: [],
+      receivedAt: new Date(epochMs).toISOString(),
+      autoSubmitted: header.autoSubmitted,
+      precedence: header.precedence,
+    };
   }
 
   /**
@@ -284,13 +383,19 @@ export class SyncService {
   }
 
   /**
+   * Extract domain from an email address (part after @)
+   */
+  private extractDomainFromEmail(email: string): string | null {
+    const atIndex = email.lastIndexOf('@');
+    if (atIndex === -1) return null;
+    return email.substring(atIndex + 1).toLowerCase();
+  }
+
+  /**
    * Renew watch for a specific integration
    */
   async renewWatch(integration: Integration): Promise<{ historyId: string; watchExpiresAt: Date; watchSetAt: Date }> {
-    const topicName = process.env.GMAIL_PUBSUB_TOPIC;
-    if (!topicName) {
-      throw new Error('GMAIL_PUBSUB_TOPIC not configured');
-    }
+    const topicName = getEnv().GMAIL_PUBSUB_TOPIC;
 
     const { historyId, expiration } = await this.gmailService.setupWatch(integration.tenantId, topicName);
 
@@ -319,11 +424,7 @@ export class SyncService {
 
     logger.info({ integrationId: integration.id }, 'Watch expired, renewing');
 
-    const topicName = process.env.GMAIL_PUBSUB_TOPIC;
-    if (!topicName) {
-      logger.warn({ integrationId: integration.id }, 'GMAIL_PUBSUB_TOPIC not set');
-      return;
-    }
+    const topicName = getEnv().GMAIL_PUBSUB_TOPIC;
 
     try {
       const { historyId, expiration } = await this.gmailService.setupWatch(integration.tenantId, topicName);

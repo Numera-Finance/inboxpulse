@@ -18,7 +18,6 @@ interface AddCustomerDrawerProps {
 }
 
 export interface CustomerFormData {
-  tenantId: string
   name: string
   domains: string[]
   website?: string
@@ -59,7 +58,6 @@ export function AddCustomerDrawer({ open, onClose, onSave, isLoading }: AddCusto
 
   const handleSave = () => {
     onSave({
-      tenantId: "default", // This should come from auth context in a real app
       name,
       domains,
       website: website || undefined,

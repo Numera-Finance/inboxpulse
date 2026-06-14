@@ -9,7 +9,7 @@ import {
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table"
-import { X, Plus, Search, Pencil, Trash2, Mail, Phone, Building2, Globe, Check, Loader2, ArrowUpDown, Users } from "lucide-react"
+import { X, Plus, Search, Pencil, Trash2, Mail, Phone, Building2, Globe, Check, Loader2, ArrowUpDown, Users, GitMerge } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DateRangeFilter } from "@/components/ui/date-range-filter"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { EmailDrawer } from "@/components/email-drawer"
 import {
@@ -40,20 +41,28 @@ import { getCustomerRoleName } from "@crm/shared"
 import { UserAutocomplete } from "@/components/ui/user-autocomplete"
 import { RoleSelect } from "@/components/ui/role-select"
 import { useQueryClient } from "@tanstack/react-query"
+import { PermissionGate, Permission } from "@/src/components/PermissionGate"
+import { MergeCustomerDialog } from "@/components/merge-customer-dialog"
 
 interface CustomerDrawerProps {
   customer: Customer | null
   open: boolean
   onClose: () => void
+  onMerged?: (targetCustomerId: string) => void
   activeTab?: "emails" | "contacts" | "team"
   onTabChange?: (tab: string) => void
   isLoading?: boolean
   selectedEmailId?: string
   onEmailSelect?: (emailId: string | null) => void
   initialSignalFilter?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | null
+  /** Optional date filters to scope email results (passed from customer page) */
+  dateFrom?: string
+  dateTo?: string
+  /** Parent callback to update shared date filters across customer drawer and page */
+  onDateRangeChange?: (dateFrom: string, dateTo: string) => void
 }
 
-export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter }: CustomerDrawerProps) {
+export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = "emails", onTabChange, isLoading = false, selectedEmailId, onEmailSelect, initialSignalFilter, dateFrom, dateTo, onDateRangeChange }: CustomerDrawerProps) {
   // Track visibility separately from open to allow exit animation
   const [isVisible, setIsVisible] = React.useState(open)
   const [shouldRender, setShouldRender] = React.useState(open)
@@ -89,15 +98,23 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   })
   const [selectedEmail, setSelectedEmail] = React.useState<Email | null>(null)
   const [emailDrawerOpen, setEmailDrawerOpen] = React.useState(false)
-  const [isEditingLabels, setIsEditingLabels] = React.useState(false)
-  const [labels, setLabels] = React.useState<string[]>([])
   const [labelPopoverOpen, setLabelPopoverOpen] = React.useState(false)
   const [newLabelInput, setNewLabelInput] = React.useState("")
   const [isEditingName, setIsEditingName] = React.useState(false)
   const [editName, setEditName] = React.useState("")
   const [isEditingDomains, setIsEditingDomains] = React.useState(false)
+  const [mergeDialogOpen, setMergeDialogOpen] = React.useState(false)
   const [editDomains, setEditDomains] = React.useState<string[]>([])
   const [newDomainInput, setNewDomainInput] = React.useState("")
+  const domainInputRef = React.useRef<HTMLInputElement>(null)
+
+  // Auto-focus the "Add domain..." input when entering edit mode so the user
+  // can type immediately without an extra click.
+  React.useEffect(() => {
+    if (isEditingDomains) {
+      domainInputRef.current?.focus()
+    }
+  }, [isEditingDomains])
   const [contactSorting, setContactSorting] = React.useState<SortingState>([])
 
   // Team tab state
@@ -133,13 +150,13 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
   const inFlightRef = React.useRef<Map<string, Promise<EmailsByCustomerResponse>>>(new Map())
   const [emailTotal, setEmailTotal] = React.useState<number | null>(null)
 
-  // Clear caches when customer or filter changes
+  // Clear caches when customer, filter, or date range changes
   React.useEffect(() => {
     pageCacheRef.current.clear()
     emailCacheRef.current.clear()
     inFlightRef.current.clear()
     setEmailTotal(null)
-  }, [customer?.id, emailSentimentFilter])
+  }, [customer?.id, emailSentimentFilter, dateFrom, dateTo])
 
   // Fetch contacts for customer from API
   const {
@@ -175,7 +192,6 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       setNewContact({ name: "", email: "", phone: "", title: "" })
       setSelectedEmail(null)
       setEmailDrawerOpen(false)
-      setIsEditingLabels(false)
       setLabelPopoverOpen(false)
       setNewLabelInput("")
       setIsEditingName(false)
@@ -210,11 +226,31 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [open, emailDrawerOpen, onClose])
 
+  // Graceful Back for the nested email modal: push a history entry when it
+  // opens so the browser Back button closes it without unwinding the customer
+  // drawer's URL state. The popstate listener detects the back action and
+  // closes the modal; the explicit close path pops history to keep it in sync.
+  const emailDrawerHistoryPushed = React.useRef(false)
+  React.useEffect(() => {
+    if (!emailDrawerOpen) return
+    window.history.pushState({ emailDrawer: true }, "")
+    emailDrawerHistoryPushed.current = true
+    const handlePop = () => {
+      emailDrawerHistoryPushed.current = false
+      setEmailDrawerOpen(false)
+    }
+    window.addEventListener("popstate", handlePop)
+    return () => {
+      window.removeEventListener("popstate", handlePop)
+      if (emailDrawerHistoryPushed.current) {
+        emailDrawerHistoryPushed.current = false
+        window.history.back()
+      }
+    }
+  }, [emailDrawerOpen])
+
   // Reset filters and customer-specific state when customer changes
   React.useEffect(() => {
-    if (customer) {
-      setLabels(customer.labels)
-    }
     // Always reset filters when customer ID changes (including to undefined)
     setEmailSentimentFilter(initialSignalFilter || 'negative')
     setContactSearch('')
@@ -235,9 +271,13 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       signal?: 'upsell' | 'churn';
       tatViolation?: boolean;
       query?: string;
+      dateFrom?: string;
+      dateTo?: string;
     } = { limit, offset };
 
-    const sentimentVal = filter.sentiment || emailSentimentFilter;
+    // filter.sentiment is undefined when "All" is selected (from InboxView)
+    // Only fall back to emailSentimentFilter if filter has no sentiment key at all
+    const sentimentVal = filter.sentiment || undefined;
     if (sentimentVal && sentimentVal !== 'all') {
       if (sentimentVal === 'upsell' || sentimentVal === 'churn') {
         options.signal = sentimentVal;
@@ -252,14 +292,21 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       options.query = filter.query;
     }
 
+    if (dateFrom) {
+      options.dateFrom = dateFrom;
+    }
+    if (dateTo) {
+      options.dateTo = dateTo;
+    }
+
     return options;
-  }, [emailSentimentFilter])
+  }, [dateFrom, dateTo])
 
   // Helper: build cache key from filter + page
   const getCacheKey = React.useCallback((filter: InboxFilter, page: number, limit: number) => {
-    const sentiment = filter.sentiment || emailSentimentFilter || 'all';
-    return `${page}_${limit}_${sentiment}_${filter.query || ''}`;
-  }, [emailSentimentFilter])
+    const sentiment = filter.sentiment || 'all';
+    return `${page}_${limit}_${sentiment}_${filter.query || ''}_${dateFrom || ''}_${dateTo || ''}`;
+  }, [dateFrom, dateTo])
 
   // Fetch 2 pages from API starting at `startPage`, split and cache each page individually.
   // Deduplicates in-flight requests: if a prefetch is already running for this page,
@@ -301,6 +348,18 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
       }
 
       setEmailTotal(result.total);
+      // If no emails were cached (empty result), cache an empty page
+      if (!pageCacheRef.current.has(cacheKey)) {
+        const emptyPage: EmailsByCustomerResponse = {
+          emails: [],
+          total: result.total,
+          count: 0,
+          limit: pageSize,
+          offset: (startPage - 1) * pageSize,
+          hasMore: false,
+        };
+        pageCacheRef.current.set(cacheKey, emptyPage);
+      }
       return pageCacheRef.current.get(cacheKey)!;
     })();
 
@@ -543,15 +602,15 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     // Show loading state when drawer is open but customer is still loading
     return (
       <>
-        {/* Overlay */}
+        {/* Overlay - constrained to area right of sidebar so sidebar stays interactive */}
         <div
-          className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
+          className={`fixed top-0 right-0 bottom-0 left-[var(--sidebar-width,16rem)] bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
             isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
           onClick={onClose}
         />
-        {/* Drawer with loading state */}
-        <div className={`fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
+        {/* Drawer with loading state - spans only the main content area */}
+        <div className={`fixed right-0 top-0 z-50 h-full left-[var(--sidebar-width,16rem)] transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
           isVisible ? "translate-x-0" : "translate-x-full"
         }`}>
           <div className="flex h-full flex-col items-center justify-center">
@@ -600,33 +659,34 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     setNewContact({ name: "", email: "", phone: "", title: "" })
   }
 
-  const handleAddLabel = (label: string) => {
-    if (!labels.includes(label)) {
-      setLabels([...labels, label])
+  const persistLabels = async (next: string[]) => {
+    if (!customer) return
+    try {
+      await updateCustomer.mutateAsync({
+        id: customer.id,
+        data: { labels: next },
+      })
+      queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
+      queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
+    } catch (error) {
+      console.error("Failed to save labels:", error)
     }
+  }
+
+  const handleAddLabel = (label: string) => {
+    if (!customer || customer.labels.includes(label)) {
+      setLabelPopoverOpen(false)
+      setNewLabelInput("")
+      return
+    }
+    persistLabels([...customer.labels, label])
     setLabelPopoverOpen(false)
     setNewLabelInput("")
   }
 
   const handleRemoveLabel = (label: string) => {
-    setLabels(labels.filter((l) => l !== label))
-  }
-
-  const handleSaveLabels = async () => {
     if (!customer) return
-
-    try {
-      await updateCustomer.mutateAsync({
-        id: customer.id,
-        data: { labels },
-      })
-      // Invalidate customer queries to refresh data
-      queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
-      queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
-      setIsEditingLabels(false)
-    } catch (error) {
-      console.error("Failed to save labels:", error)
-    }
+    persistLabels(customer.labels.filter((l) => l !== label))
   }
 
   const handleSaveName = async () => {
@@ -645,13 +705,13 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     }
   }
 
-  const handleSaveDomains = async () => {
-    if (!customer || editDomains.length === 0) return
+  const persistDomains = async (domains: string[]) => {
+    if (!customer || domains.length === 0) return
 
     try {
       await updateCustomer.mutateAsync({
         id: customer.id,
-        data: { domains: editDomains },
+        data: { domains },
       })
       queryClient.invalidateQueries({ queryKey: customerKeys.detail(customer.id) })
       queryClient.invalidateQueries({ queryKey: customerKeys.lists() })
@@ -670,10 +730,27 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     }
   }
 
+  // Fold any pending typed domain into the list before persisting, so users
+  // who save (Enter or checkmark) with text still in the input don't lose it.
+  const handleSaveDomains = () => {
+    const typed = newDomainInput.trim().toLowerCase()
+    const next = typed && !editDomains.includes(typed)
+      ? [...editDomains, typed]
+      : editDomains
+    persistDomains(next)
+  }
+
   const handleRemoveDomain = (domain: string) => {
     if (editDomains.length > 1) {
       setEditDomains(editDomains.filter((d) => d !== domain))
     }
+  }
+
+  // Delete a domain directly from the display badges (no edit mode needed).
+  // Persists immediately. Blocked when only one domain remains.
+  const handleDeleteDomainFromBadge = (domain: string) => {
+    if (!customer || customer.domains.length <= 1) return
+    persistDomains(customer.domains.filter((d) => d !== domain))
   }
 
   // Team member handlers
@@ -782,26 +859,30 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
     }
   }
 
-  const availableLabels = predefinedLabels.filter(
-    (label) => !labels.includes(label) && label.toLowerCase().includes(newLabelInput.toLowerCase()),
-  )
+  const availableLabels = customer
+    ? predefinedLabels.filter(
+        (label) =>
+          !customer.labels.includes(label) &&
+          label.toLowerCase().includes(newLabelInput.toLowerCase()),
+      )
+    : []
 
   // Don't render if not visible and animation complete
   if (!shouldRender) return null
 
   return (
     <>
-      {/* Overlay */}
+      {/* Overlay - constrained to area right of sidebar so sidebar stays interactive */}
       <div
-        className={`fixed inset-0 bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
+        className={`fixed top-0 right-0 bottom-0 left-[var(--sidebar-width,16rem)] bg-background/80 backdrop-blur-sm z-40 transition-opacity duration-300 ease-out ${
           isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}
       />
 
-      {/* Drawer - Always full width */}
+      {/* Drawer - spans only the main content area, never the sidebar */}
       <div
-        className={`fixed right-0 top-0 z-50 h-full w-full transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
+        className={`fixed right-0 top-0 z-50 h-full left-[var(--sidebar-width,16rem)] transform bg-background border-l border-border shadow-xl transition-transform duration-300 ease-out ${
           isVisible ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -827,8 +908,6 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                           setIsEditingName(true)
                           setIsEditingDomains(false)
                           setNewDomainInput("")
-                          setLabels(customer.labels)
-                          setIsEditingLabels(false)
                         }}
                       >
                         <Pencil className="h-3 w-3" />
@@ -870,131 +949,80 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                     </>
                   )}
                   {/* Labels */}
-                  {labels.map((label) => (
+                  {customer.labels.map((label) => (
                     <Badge key={label} variant="outline" className="text-xs">
                       {label}
-                      {isEditingLabels && (
-                        <button className="ml-1 hover:text-destructive" onClick={() => handleRemoveLabel(label)}>
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
+                      <button
+                        className="ml-1 hover:text-destructive disabled:opacity-50"
+                        onClick={() => handleRemoveLabel(label)}
+                        disabled={updateCustomer.isPending}
+                        title="Remove label"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
                     </Badge>
                   ))}
-                  {!isEditingLabels ? (
-                    <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-xs bg-transparent"
-                          onClick={() => {
-                            setIsEditingLabels(true)
-                            setLabelPopoverOpen(true)
-                            setIsEditingName(false)
-                            setIsEditingDomains(false)
-                            setNewDomainInput("")
-                          }}
-                        >
-                          <Plus className="h-3 w-3 mr-1" />
-                          Labels
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-[200px] p-0" align="start">
-                        <Command>
-                          <CommandInput
-                            placeholder="Search or add..."
-                            value={newLabelInput}
-                            onValueChange={setNewLabelInput}
-                          />
-                          <CommandList>
-                            <CommandEmpty>
-                              {newLabelInput && (
-                                <button
-                                  className="w-full px-2 py-1.5 text-sm text-left hover:bg-accent"
-                                  onClick={() => handleAddLabel(newLabelInput)}
-                                >
-                                  Create "{newLabelInput}"
-                                </button>
-                              )}
-                            </CommandEmpty>
-                            <CommandGroup>
-                              {availableLabels.map((label) => (
-                                <CommandItem key={label} value={label} onSelect={() => handleAddLabel(label)}>
-                                  {label}
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
-                  ) : (
-                    <>
-                      <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
-                        <PopoverTrigger asChild>
-                          <Button variant="outline" size="sm" className="h-6 text-xs bg-transparent">
-                            <Plus className="h-3 w-3 mr-1" />
-                            Add
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[200px] p-0" align="start">
-                          <Command>
-                            <CommandInput
-                              placeholder="Search or add..."
-                              value={newLabelInput}
-                              onValueChange={setNewLabelInput}
-                            />
-                            <CommandList>
-                              <CommandEmpty>
-                                {newLabelInput && (
-                                  <button
-                                    className="w-full px-2 py-1.5 text-sm text-left hover:bg-accent"
-                                    onClick={() => handleAddLabel(newLabelInput)}
-                                  >
-                                    Create "{newLabelInput}"
-                                  </button>
-                                )}
-                              </CommandEmpty>
-                              <CommandGroup>
-                                {availableLabels.map((label) => (
-                                  <CommandItem key={label} value={label} onSelect={() => handleAddLabel(label)}>
-                                    {label}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
+                  <Popover open={labelPopoverOpen} onOpenChange={setLabelPopoverOpen}>
+                    <PopoverTrigger asChild>
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => {
-                          setLabels(customer.labels)
-                          setIsEditingLabels(false)
-                        }}
+                        className="h-6 text-xs bg-transparent"
+                        disabled={updateCustomer.isPending}
                       >
-                        Cancel
+                        <Plus className="h-3 w-3 mr-1" />
+                        Labels
                       </Button>
-                      <Button size="sm" className="h-6 text-xs" onClick={handleSaveLabels} disabled={updateCustomer.isPending}>
-                        {updateCustomer.isPending ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Check className="h-3 w-3 mr-1" />
-                        )}
-                        Save
-                      </Button>
-                    </>
-                  )}
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[200px] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Search or add..."
+                          value={newLabelInput}
+                          onValueChange={setNewLabelInput}
+                        />
+                        <CommandList>
+                          <CommandEmpty>
+                            {newLabelInput && (
+                              <button
+                                className="w-full px-2 py-1.5 text-sm text-left hover:bg-accent"
+                                onClick={() => handleAddLabel(newLabelInput)}
+                              >
+                                Create "{newLabelInput}"
+                              </button>
+                            )}
+                          </CommandEmpty>
+                          <CommandGroup>
+                            {availableLabels.map((label) => (
+                              <CommandItem key={label} value={label} onSelect={() => handleAddLabel(label)}>
+                                {label}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 {/* Row 2: Domains */}
-                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                <div className="flex items-center gap-1 text-sm text-muted-foreground flex-wrap">
                   {!isEditingDomains ? (
                     <>
                       <Globe className="h-3 w-3" />
-                      {customer.domains.join(", ")}
+                      {customer.domains.map((domain) => (
+                        <Badge key={domain} variant="outline" className="text-xs">
+                          {domain}
+                          <button
+                            className="ml-1 hover:text-destructive disabled:opacity-50"
+                            onClick={() => handleDeleteDomainFromBadge(domain)}
+                            disabled={customer.domains.length <= 1 || updateCustomer.isPending}
+                            title={customer.domains.length <= 1 ? "At least one domain is required" : "Remove domain"}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      ))}
                       <Button
                         variant="ghost"
                         size="icon"
@@ -1003,11 +1031,10 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                           setEditDomains([...customer.domains])
                           setIsEditingDomains(true)
                           setIsEditingName(false)
-                          setLabels(customer.labels)
-                          setIsEditingLabels(false)
                         }}
+                        title="Add domain"
                       >
-                        <Pencil className="h-3 w-3" />
+                        <Plus className="h-3 w-3" />
                       </Button>
                     </>
                   ) : (
@@ -1026,6 +1053,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                         </Badge>
                       ))}
                       <Input
+                        ref={domainInputRef}
                         value={newDomainInput}
                         onChange={(e) => setNewDomainInput(e.target.value)}
                         placeholder="Add domain..."
@@ -1033,7 +1061,7 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault()
-                            handleAddDomain()
+                            handleSaveDomains()
                           }
                           if (e.key === "Escape") {
                             setIsEditingDomains(false)
@@ -1071,9 +1099,26 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
 
               </div>
             </div>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="h-5 w-5" />
-            </Button>
+            <div className="flex items-center gap-2">
+            {onDateRangeChange && (
+              <DateRangeFilter
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onChange={onDateRangeChange}
+                className="min-w-[240px]"
+              />
+            )}
+            <div className="flex items-center gap-1">
+              <PermissionGate permission={Permission.CUSTOMER_EDIT}>
+                <Button variant="ghost" size="icon" onClick={() => setMergeDialogOpen(true)} title="Merge customer">
+                  <GitMerge className="h-5 w-5" />
+                </Button>
+              </PermissionGate>
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            </div>
           </div>
 
           {/* Content */}
@@ -1485,6 +1530,18 @@ export function CustomerDrawer({ customer, open, onClose, activeTab = "emails", 
         open={emailDrawerOpen}
         onClose={() => setEmailDrawerOpen(false)}
       />
+
+      {customer && (
+        <MergeCustomerDialog
+          sourceCustomer={customer}
+          open={mergeDialogOpen}
+          onClose={() => setMergeDialogOpen(false)}
+          onMerged={(targetId) => {
+            setMergeDialogOpen(false)
+            onMerged?.(targetId)
+          }}
+        />
+      )}
     </>
   )
 }

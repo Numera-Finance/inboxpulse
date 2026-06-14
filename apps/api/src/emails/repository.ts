@@ -4,8 +4,12 @@ import type { Database, Transaction } from '@crm/database';
 import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
 import { emails, EmailAnalysisStatus, emailParticipants, emailAnalyses } from './schema';
-import { eq, and, desc, sql, inArray, or, ilike, SQL } from 'drizzle-orm';
+import { taskComments } from '../tasks/schema';
+import { customers } from '../customers/schema';
+import { users } from '../users/schema';
+import { eq, and, desc, asc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
+import type { AnalyzedEmail, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
 
 // Re-export TATMetricRow from shared
 export type { TATMetricRow } from '@crm/shared';
@@ -504,6 +508,14 @@ export class EmailRepository extends ScopedRepository {
       )!);
     }
 
+    // Add date range filter
+    if (options?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${options.dateFrom}::timestamp`);
+    }
+    if (options?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${options.dateTo}::timestamp`);
+    }
+
     // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
     if (options?.tatViolation) {
       conditions.push(sql`${emails.id} IN (${this.getTATViolationSubquery(header, customerId, options.dateFrom, options.dateTo)})`);
@@ -517,9 +529,9 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(signalContains(signalValue));
     }
 
-    // Add escalation filter using signals array
+    // Add escalation filter using signals array (backed by negative sentiment)
     if (options?.escalation) {
-      conditions.push(signalContains(Signal.ESCALATION));
+      conditions.push(signalContains(Signal.SENTIMENT_NEGATIVE));
     }
 
     // Add signal filter (upsell, churn)
@@ -593,6 +605,14 @@ export class EmailRepository extends ScopedRepository {
       )!);
     }
 
+    // Add date range filter
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Add TAT violation filter as subquery (uses same CTE logic as TAT metrics)
     if (filters?.tatViolation) {
       conditions.push(sql`${emails.id} IN (${this.getTATViolationSubquery(header, customerId, filters.dateFrom, filters.dateTo)})`);
@@ -606,9 +626,9 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(signalContains(signalValue));
     }
 
-    // Add escalation filter using signals array
+    // Add escalation filter using signals array (backed by negative sentiment)
     if (filters?.escalation) {
-      conditions.push(signalContains(Signal.ESCALATION));
+      conditions.push(signalContains(Signal.SENTIMENT_NEGATIVE));
     }
 
     // Add signal filter (upsell, churn)
@@ -747,7 +767,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -762,6 +783,18 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Count emails per customer
     const result = await this.db
       .select({
@@ -770,12 +803,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     // Build result map
@@ -797,7 +825,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getLastContactDatesByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, Date>> {
     if (customerIds.length === 0) {
       return {};
@@ -812,6 +841,18 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Get the most recent email date per customer using email_participants
     const result = await this.db
       .select({
@@ -820,12 +861,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const lastContacts: Record<string, Date> = {};
@@ -844,7 +880,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getAggregateSentimentByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, { value: 'positive' | 'negative' | 'neutral'; confidence: number }>> {
     if (customerIds.length === 0) {
       return {};
@@ -859,6 +896,20 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      // Has any sentiment signal
+      signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Query emails with sentiment signals via email_participants
     const emailsResult = await this.db
       .select({
@@ -867,14 +918,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          // Has any sentiment signal
-          signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL])
-        )
-      )
+      .where(and(...conditions))
       .orderBy(desc(emails.receivedAt))
       .limit(1000);
 
@@ -943,7 +987,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getEscalationCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -958,6 +1003,19 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalContains(Signal.SENTIMENT_NEGATIVE),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Count negative sentiment emails per customer (used as escalation indicator)
     const result = await this.db
       .select({
@@ -966,13 +1024,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalContains(Signal.SENTIMENT_NEGATIVE)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     // Build result map with zeros for customers with no negative sentiment emails
@@ -995,7 +1047,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getUpsellCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -1009,6 +1062,19 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalContains(Signal.UPSELL),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     const result = await this.db
       .select({
         customerId: emailParticipants.customerId,
@@ -1016,13 +1082,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalContains(Signal.UPSELL)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const counts: Record<string, number> = {};
@@ -1044,7 +1104,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getChurnCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -1060,6 +1121,19 @@ export class EmailRepository extends ScopedRepository {
 
     const churnSignals = [Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL];
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalOverlaps(churnSignals),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     const result = await this.db
       .select({
         customerId: emailParticipants.customerId,
@@ -1067,13 +1141,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalOverlaps(churnSignals)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const counts: Record<string, number> = {};
@@ -1095,7 +1163,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getPositiveCountsByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number>> {
     if (customerIds.length === 0) {
       return {};
@@ -1109,6 +1178,19 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      signalContains(Signal.SENTIMENT_POSITIVE),
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     const result = await this.db
       .select({
         customerId: emailParticipants.customerId,
@@ -1116,13 +1198,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          signalContains(Signal.SENTIMENT_POSITIVE)
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const counts: Record<string, number> = {};
@@ -1145,7 +1221,8 @@ export class EmailRepository extends ScopedRepository {
    */
   async getAverageTatByCustomerIdsScoped(
     header: RequestHeader,
-    customerIds: string[]
+    customerIds: string[],
+    filters?: { dateFrom?: string; dateTo?: string }
   ): Promise<Record<string, number | null>> {
     if (customerIds.length === 0) {
       return {};
@@ -1159,6 +1236,20 @@ export class EmailRepository extends ScopedRepository {
       return {};
     }
 
+    // Build conditions
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      inArray(emailParticipants.customerId, accessible),
+      eq(emails.isCustomerEmail, true),
+      sql`${emails.firstReplyAt} IS NOT NULL`,
+    ];
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+    }
+
     // Calculate average TAT in hours for customer emails with a reply
     const result = await this.db
       .select({
@@ -1167,14 +1258,7 @@ export class EmailRepository extends ScopedRepository {
       })
       .from(emailParticipants)
       .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, header.tenantId),
-          inArray(emailParticipants.customerId, accessible),
-          eq(emails.isCustomerEmail, true),
-          sql`${emails.firstReplyAt} IS NOT NULL`
-        )
-      )
+      .where(and(...conditions))
       .groupBy(emailParticipants.customerId);
 
     const avgTats: Record<string, number | null> = {};
@@ -1228,20 +1312,13 @@ export class EmailRepository extends ScopedRepository {
   ): Promise<{ total: number; analyzed: number }> {
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      this.emailAccessSubquery(header),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emails.id} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
     }
-
-    // Add date filters
     if (filters?.dateFrom) {
       conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
     }
@@ -1249,15 +1326,27 @@ export class EmailRepository extends ScopedRepository {
       conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
     }
 
+    // Count per customer, then sum to match customer table's per-row counts
+    const perCustomer = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        total: sql<number>`count(DISTINCT ${emails.id})::int`.as('total'),
+        analyzed: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emails.id} IN (
+          SELECT DISTINCT ea.email_id FROM email_analyses ea
+        ))::int`.as('analyzed'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(emailParticipants.customerId)
+      .as('per_customer');
+
     const result = await this.db
       .select({
-        total: sql<number>`count(*)::int`,
-        analyzed: sql<number>`count(*) FILTER (WHERE ${emails.id} IN (
-          SELECT DISTINCT ea.email_id FROM email_analyses ea
-        ))::int`,
+        total: sql<number>`coalesce(sum(${perCustomer.total}), 0)::int`,
+        analyzed: sql<number>`coalesce(sum(${perCustomer.analyzed}), 0)::int`,
       })
-      .from(emails)
-      .where(and(...conditions));
+      .from(perCustomer);
 
     return {
       total: result[0]?.total ?? 0,
@@ -1268,7 +1357,7 @@ export class EmailRepository extends ScopedRepository {
   /**
    * Get sentiment distribution for dashboard chart with access control
    * Returns counts for positive, neutral, and negative sentiment
-   * Queries email_analyses table for sentiment data
+   * Uses emails.signals array instead of email_analyses table
    */
   async getSentimentStatsScoped(
     header: RequestHeader,
@@ -1279,46 +1368,44 @@ export class EmailRepository extends ScopedRepository {
     }
   ): Promise<{ positive: number; neutral: number; negative: number }> {
     const conditions: SQL[] = [
-      eq(emailAnalyses.tenantId, header.tenantId),
-      eq(emailAnalyses.analysisType, 'sentiment'),
-      this.emailAnalysesAccessFilter(header),
+      eq(emails.tenantId, header.tenantId),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
+      // Only include emails that have at least one sentiment signal
+      signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emailAnalyses.emailId} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
+    }
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
     }
 
-    // Add date filters via emails table
-    if (filters?.dateFrom || filters?.dateTo) {
-      const dateConditions: SQL[] = [];
-      if (filters?.dateFrom) {
-        dateConditions.push(sql`e.received_at >= ${filters.dateFrom}::timestamp`);
-      }
-      if (filters?.dateTo) {
-        dateConditions.push(sql`e.received_at <= ${filters.dateTo}::timestamp`);
-      }
-      conditions.push(
-        sql`${emailAnalyses.emailId} IN (
-          SELECT e.id FROM emails e
-          WHERE ${and(...dateConditions)}
-        )`
-      );
-    }
+    // Count per customer, then sum to match customer table's per-row counts
+    const perCustomer = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_POSITIVE)})::int`.as('positive'),
+        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEUTRAL)})::int`.as('neutral'),
+        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEGATIVE)})::int`.as('negative'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(emailParticipants.customerId)
+      .as('per_customer');
 
     const result = await this.db
       .select({
-        positive: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`,
-        neutral: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`,
-        negative: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`,
+        positive: sql<number>`coalesce(sum(${perCustomer.positive}), 0)::int`,
+        neutral: sql<number>`coalesce(sum(${perCustomer.neutral}), 0)::int`,
+        negative: sql<number>`coalesce(sum(${perCustomer.negative}), 0)::int`,
       })
-      .from(emailAnalyses)
-      .where(and(...conditions));
+      .from(perCustomer);
 
     return {
       positive: result[0]?.positive ?? 0,
@@ -1331,6 +1418,7 @@ export class EmailRepository extends ScopedRepository {
    * Get sentiment trend data for dashboard chart with access control
    * Returns monthly counts for positive, neutral, and negative sentiment over last 6 months
    * Returns percentages (stacked to 100%)
+   * Uses emails.signals array instead of email_analyses table
    */
   async getSentimentTrendScoped(
     header: RequestHeader,
@@ -1347,34 +1435,44 @@ export class EmailRepository extends ScopedRepository {
     }
 
     const conditions: SQL[] = [
-      eq(emailAnalyses.tenantId, header.tenantId),
-      eq(emailAnalyses.analysisType, 'sentiment'),
-      this.emailAnalysesAccessFilter(header),
-      // Filter to last 6 months
-      sql`${emailAnalyses.createdAt} >= date_trunc('month', now() - interval '5 months')`,
+      eq(emails.tenantId, header.tenantId),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
+      // Only include emails that have at least one sentiment signal
+      signalOverlaps([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEUTRAL]),
+      // Filter to last 6 months using emails.receivedAt
+      sql`${emails.receivedAt} >= date_trunc('month', now() - interval '5 months')`,
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emailAnalyses.emailId} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
     }
+
+    // Count per customer per month, then sum per month
+    const perCustomerMonth = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        month: sql<string>`to_char(${emails.receivedAt}, 'YYYY-MM')`.as('month'),
+        positive: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_POSITIVE)})::int`.as('positive'),
+        neutral: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEUTRAL)})::int`.as('neutral'),
+        negative: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_NEGATIVE)})::int`.as('negative'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(emailParticipants.customerId, sql`to_char(${emails.receivedAt}, 'YYYY-MM')`)
+      .as('per_customer_month');
 
     const result = await this.db
       .select({
-        month: sql<string>`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`,
-        positive: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'positive')::int`,
-        neutral: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'neutral')::int`,
-        negative: sql<number>`count(*) FILTER (WHERE ${emailAnalyses.sentimentValue} = 'negative')::int`,
+        month: perCustomerMonth.month,
+        positive: sql<number>`coalesce(sum(${perCustomerMonth.positive}), 0)::int`,
+        neutral: sql<number>`coalesce(sum(${perCustomerMonth.neutral}), 0)::int`,
+        negative: sql<number>`coalesce(sum(${perCustomerMonth.negative}), 0)::int`,
       })
-      .from(emailAnalyses)
-      .where(and(...conditions))
-      .groupBy(sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`)
-      .orderBy(sql`to_char(${emailAnalyses.createdAt}, 'YYYY-MM')`);
+      .from(perCustomerMonth)
+      .groupBy(perCustomerMonth.month)
+      .orderBy(perCustomerMonth.month);
 
     // Convert to percentages and ensure all months are represented
     const resultMap = new Map(result.map(r => [r.month, r]));
@@ -1411,31 +1509,42 @@ export class EmailRepository extends ScopedRepository {
   ): Promise<Array<{ week: string; totalEmails: number; escalations: number }>> {
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      this.emailAccessSubquery(header),
+      isNotNull(emailParticipants.customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
       // Filter to last 4 weeks
       sql`${emails.receivedAt} >= date_trunc('week', now() - interval '3 weeks')`,
     ];
 
-    // Add customer filter via email_participants
     if (filters?.customerId) {
-      conditions.push(
-        sql`${emails.id} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+      conditions.push(eq(emailParticipants.customerId, filters.customerId));
     }
+
+    // Count per customer per week, then sum per week
+    const perCustomerWeek = this.db
+      .select({
+        customerId: emailParticipants.customerId,
+        weekStart: sql<string>`to_char(date_trunc('week', ${emails.receivedAt}), 'Mon DD, YYYY')`.as('week_start'),
+        totalEmails: sql<number>`count(DISTINCT ${emails.id})::int`.as('total_emails'),
+        escalations: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${emails.signals} @> ARRAY[2]::integer[])::int`.as('escalations'),
+      })
+      .from(emailParticipants)
+      .innerJoin(emails, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions))
+      .groupBy(
+        emailParticipants.customerId,
+        sql`date_trunc('week', ${emails.receivedAt})`
+      )
+      .as('per_customer_week');
 
     const result = await this.db
       .select({
-        weekStart: sql<string>`to_char(date_trunc('week', ${emails.receivedAt}), 'Mon DD, YYYY')`,
-        totalEmails: sql<number>`count(*)::int`,
-        escalations: sql<number>`count(*) FILTER (WHERE ${emails.signals} @> ARRAY[10]::integer[])::int`,
+        weekStart: perCustomerWeek.weekStart,
+        totalEmails: sql<number>`coalesce(sum(${perCustomerWeek.totalEmails}), 0)::int`,
+        escalations: sql<number>`coalesce(sum(${perCustomerWeek.escalations}), 0)::int`,
       })
-      .from(emails)
-      .where(and(...conditions))
-      .groupBy(sql`date_trunc('week', ${emails.receivedAt})`)
-      .orderBy(sql`date_trunc('week', ${emails.receivedAt})`);
+      .from(perCustomerWeek)
+      .groupBy(perCustomerWeek.weekStart)
+      .orderBy(perCustomerWeek.weekStart);
 
     // Generate last 4 weeks with start dates
     const weeks: Array<{ week: string; totalEmails: number; escalations: number }> = [];
@@ -1463,7 +1572,14 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Get upsell opportunity count for dashboard with access control
+   * Get open upsell opportunity count for dashboard with access control.
+   *
+   * Mirrors the AI Analysis drilldown query (`searchAnalyzedEmails` with
+   * `signal=upsell&status=open`) so the tile and the drilldown list always
+   * agree: distinct analyzed emails with the UPSELL signal whose sender is a
+   * customer the caller can access AND that have an open task (t.status = 0).
+   * Upsell emails without a task (e.g. pure-upsell with no negative sentiment)
+   * are not auto-created today, so they are not "open" and don't count here.
    */
   async getUpsellCountScoped(
     header: RequestHeader,
@@ -1473,36 +1589,562 @@ export class EmailRepository extends ScopedRepository {
       dateTo?: string;
     }
   ): Promise<number> {
-    const conditions: SQL[] = [
-      this.tenantFilter(emails.tenantId, header),
-      this.emailAccessSubquery(header),
-      signalContains(Signal.UPSELL),
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
+      sql`e.signals @> ARRAY[${Signal.UPSELL}]::integer[]`,
+      sql`ep.customer_id IS NOT NULL`,
+      sql`t.status = 0`,
     ];
 
-    // Add customer filter
-    if (filters?.customerId) {
-      conditions.push(
-        sql`${emails.id} IN (
-          SELECT ep.email_id FROM email_participants ep
-          WHERE ep.customer_id = ${filters.customerId}
-        )`
-      );
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
     }
 
-    // Add date filters
+    if (filters?.customerId) {
+      whereParts.push(sql`ep.customer_id = ${filters.customerId}`);
+    }
     if (filters?.dateFrom) {
-      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamp`);
+      whereParts.push(sql`e.received_at >= ${filters.dateFrom}::timestamp`);
     }
     if (filters?.dateTo) {
-      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamp`);
+      whereParts.push(sql`e.received_at <= ${filters.dateTo}::timestamp`);
     }
 
-    const result = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(emails)
-      .where(and(...conditions));
+    const whereClause = sql.join(whereParts, sql` AND `);
+
+    const result = await this.db.execute<{ count: number }>(sql`
+      SELECT count(DISTINCT e.id)::int AS count
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      LEFT JOIN tasks t ON t.email_id = e.id
+      WHERE ${whereClause}
+    `);
 
     return result[0]?.count ?? 0;
+  }
+
+  // ===========================================================================
+  // Analyzed Email Search
+  // ===========================================================================
+
+  /**
+   * Map a signal filter string to raw SQL conditions (using table alias "e" for emails)
+   * Used in raw SQL queries where emails is aliased as "e"
+   */
+  private getSignalFilterCondition(signal: string): SQL | null {
+    switch (signal) {
+      case 'positive':
+        return sql`e.signals @> ARRAY[${Signal.SENTIMENT_POSITIVE}]::integer[]`;
+      case 'negative':
+        return sql`e.signals @> ARRAY[${Signal.SENTIMENT_NEGATIVE}]::integer[]`;
+      case 'neutral':
+        return sql`e.signals @> ARRAY[${Signal.SENTIMENT_NEUTRAL}]::integer[]`;
+      case 'upsell':
+        return sql`e.signals @> ARRAY[${Signal.UPSELL}]::integer[]`;
+      case 'churn':
+        return sql`e.signals && ARRAY[${Signal.CHURN_LOW}, ${Signal.CHURN_MEDIUM}, ${Signal.CHURN_HIGH}, ${Signal.CHURN_CRITICAL}]::integer[]`;
+      case 'tat':
+        // TAT breach: customer emails unreplied for >= 1 business day,
+        // excluding non-business emails (spam, marketing, transactional, automated)
+        return sql`e.is_customer_email = true
+          AND e.first_reply_at IS NULL
+          AND NOT (e.signals && ARRAY[${Signal.CLASSIFICATION_SPAM}, ${Signal.CLASSIFICATION_MARKETING}, ${Signal.CLASSIFICATION_TRANSACTIONAL}, ${Signal.CLASSIFICATION_AUTOMATED}]::integer[])
+          AND (
+            SELECT GREATEST(0, COUNT(*) - 1)::int
+            FROM generate_series(
+              e.received_at::date,
+              CURRENT_DATE,
+              '1 day'::interval
+            ) d
+            WHERE EXTRACT(dow FROM d) BETWEEN 1 AND 5
+              AND d::date NOT IN (
+                SELECT h.date::date FROM holiday_calendars h
+                WHERE h.tenant_id = e.tenant_id
+              )
+          ) >= 1`;
+      case 'all':
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Search analyzed emails with optional task overlay
+   * Returns emails that have been analyzed (analysis_status = 3)
+   * with LEFT JOIN to tasks for task overlay information
+   */
+  async searchAnalyzedEmails(
+    header: RequestHeader,
+    request: AnalyzedEmailSearchRequest
+  ): Promise<AnalyzedEmailSearchResponse> {
+    const limit = request.limit ?? 50;
+    const offset = request.offset ?? 0;
+
+    // Build raw SQL WHERE conditions (using table aliases e, ep, t, c).
+    // The join to email_participants is restricted to the sender
+    // (direction='from') so the displayed customer, the customer-access
+    // filter, and the customer-dropdown filter all reflect the sender's
+    // customer — never a recipient's. This matches the product rule that
+    // customer attribution follows the sender exclusively.
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
+      sql`ep.customer_id IS NOT NULL`,
+    ];
+
+    // Customer access filter — sender's customer must be accessible.
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
+    }
+
+    // Signal filter
+    if (request.signal && request.signal !== 'all') {
+      const signalCondition = this.getSignalFilterCondition(request.signal);
+      if (signalCondition) {
+        whereParts.push(signalCondition);
+      }
+    }
+
+    // Status filter (only show emails with tasks matching status)
+    if (request.status && request.status !== 'all') {
+      const taskStatus = request.status === 'done' ? 1 : 0;
+      whereParts.push(sql`t.status = ${taskStatus}`);
+    }
+
+    // Assignee filter
+    if (request.assignedToId) {
+      if (request.assignedToId === 'unassigned') {
+        whereParts.push(sql`t.id IS NOT NULL AND t.assigned_to_id IS NULL`);
+      } else {
+        whereParts.push(sql`t.assigned_to_id = ${request.assignedToId}`);
+      }
+    }
+
+    // Customer filter — matches the sender's customer (ep is sender only).
+    if (request.customerId) {
+      whereParts.push(sql`ep.customer_id = ${request.customerId}`);
+    }
+
+    // Date range filters
+    if (request.dateFrom) {
+      whereParts.push(sql`e.received_at >= ${request.dateFrom}::timestamp`);
+    }
+    if (request.dateTo) {
+      whereParts.push(sql`e.received_at <= ${request.dateTo}::timestamp`);
+    }
+
+    // Text search
+    if (request.search) {
+      const term = `%${request.search}%`;
+      whereParts.push(sql`(
+        e.subject ILIKE ${term} OR
+        e.id IN (
+          SELECT ep2.email_id FROM email_participants ep2
+          WHERE ep2.email ILIKE ${term} OR ep2.name ILIKE ${term}
+        )
+      )`);
+    }
+
+    const whereClause = sql.join(whereParts, sql` AND `);
+
+    // Sort direction
+    const sortColumn = request.sortBy === 'createdAt' ? sql`e.created_at` : sql`e.received_at`;
+    const sortDir = request.sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
+
+    // Count query — ep is sender-only (direction='from'), so each email
+    // contributes exactly one row; DISTINCT isn't needed but harmless.
+    const countResult = await this.db.execute<{ count: number }>(sql`
+      SELECT count(DISTINCT e.id)::int AS count
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      WHERE ${whereClause}
+    `);
+
+    const total = countResult[0]?.count ?? 0;
+
+    // Main query - use subquery for DISTINCT ON then sort in outer query
+    const rows = await this.db.execute<{
+      id: string;
+      subject: string;
+      body: string | null;
+      from_email: string;
+      from_name: string | null;
+      received_at: Date;
+      signals: number[];
+      customer_id: string;
+      customer_name: string | null;
+      task_id: string | null;
+      task_status: number | null;
+      assigned_to_id: string | null;
+      assigned_to_name: string | null;
+      assigned_to_email: string | null;
+      problem: string | null;
+      resolution: string | null;
+      completed_at: Date | null;
+      completed_by_id: string | null;
+      completed_by_name: string | null;
+      task_created_at: Date | null;
+    }>(sql`
+      SELECT
+        e.id,
+        e.subject,
+        e.body,
+        e.from_email,
+        e.from_name,
+        e.received_at,
+        e.created_at,
+        e.signals,
+        ep.customer_id,
+        c.name AS customer_name,
+        t.id AS task_id,
+        t.status AS task_status,
+        t.assigned_to_id,
+        CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
+        assignee_u.email AS assigned_to_email,
+        t.problem,
+        t.resolution,
+        t.completed_at,
+        t.completed_by_id,
+        CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
+        t.created_at AS task_created_at
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+      LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+      WHERE ${whereClause}
+      ORDER BY ${sortColumn} ${sortDir}
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `);
+
+    const items: AnalyzedEmail[] = rows.map(row => ({
+      id: row.id,
+      subject: row.subject,
+      body: row.body,
+      fromEmail: row.from_email,
+      fromName: row.from_name,
+      receivedAt: new Date(row.received_at),
+      signals: row.signals ?? [],
+      customerId: row.customer_id,
+      customerName: row.customer_name,
+      taskId: row.task_id,
+      taskStatus: row.task_status,
+      assignedToId: row.assigned_to_id,
+      assignedToName: row.assigned_to_name,
+      assignedToEmail: row.assigned_to_email,
+      problem: row.problem,
+      resolution: row.resolution,
+      completedAt: row.completed_at ? new Date(row.completed_at) : null,
+      completedById: row.completed_by_id,
+      completedByName: row.completed_by_name,
+      taskCreatedAt: row.task_created_at ? new Date(row.task_created_at) : null,
+    }));
+
+    return { items, total, limit, offset };
+  }
+
+  /**
+   * Export analyzed emails with comments - no pagination limit
+   * Returns all matching analyzed emails with task comments
+   */
+  async exportAnalyzedEmails(
+    header: RequestHeader,
+    request: AnalyzedEmailSearchRequest
+  ): Promise<Array<AnalyzedEmail & { taskComments: Array<{ userName: string; content: string; createdAt: Date }> }>> {
+    // Build raw SQL WHERE conditions (same as searchAnalyzedEmails)
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`e.analysis_status = ${EmailAnalysisStatus.Completed}`,
+      sql`ep.customer_id IS NOT NULL`,
+    ];
+
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
+    }
+
+    if (request.signal && request.signal !== 'all') {
+      const signalCondition = this.getSignalFilterCondition(request.signal);
+      if (signalCondition) {
+        whereParts.push(signalCondition);
+      }
+    }
+
+    if (request.status && request.status !== 'all') {
+      const taskStatus = request.status === 'done' ? 1 : 0;
+      whereParts.push(sql`t.status = ${taskStatus}`);
+    }
+
+    if (request.assignedToId) {
+      if (request.assignedToId === 'unassigned') {
+        whereParts.push(sql`t.id IS NOT NULL AND t.assigned_to_id IS NULL`);
+      } else {
+        whereParts.push(sql`t.assigned_to_id = ${request.assignedToId}`);
+      }
+    }
+
+    if (request.customerId) {
+      whereParts.push(sql`ep.customer_id = ${request.customerId}`);
+    }
+
+    if (request.dateFrom) {
+      whereParts.push(sql`e.received_at >= ${request.dateFrom}::timestamp`);
+    }
+    if (request.dateTo) {
+      whereParts.push(sql`e.received_at <= ${request.dateTo}::timestamp`);
+    }
+
+    if (request.search) {
+      const term = `%${request.search}%`;
+      whereParts.push(sql`(
+        e.subject ILIKE ${term} OR
+        e.id IN (
+          SELECT ep2.email_id FROM email_participants ep2
+          WHERE ep2.email ILIKE ${term} OR ep2.name ILIKE ${term}
+        )
+      )`);
+    }
+
+    const whereClause = sql.join(whereParts, sql` AND `);
+
+    // Main query - no LIMIT/OFFSET for export
+    const rows = await this.db.execute<{
+      id: string;
+      subject: string;
+      body: string | null;
+      from_email: string;
+      from_name: string | null;
+      received_at: Date;
+      signals: number[];
+      customer_id: string;
+      customer_name: string | null;
+      task_id: string | null;
+      task_status: number | null;
+      assigned_to_id: string | null;
+      assigned_to_name: string | null;
+      assigned_to_email: string | null;
+      problem: string | null;
+      resolution: string | null;
+      completed_at: Date | null;
+      completed_by_id: string | null;
+      completed_by_name: string | null;
+      task_created_at: Date | null;
+    }>(sql`
+      SELECT
+        e.id,
+        e.subject,
+        e.body,
+        e.from_email,
+        e.from_name,
+        e.received_at,
+        e.created_at,
+        e.signals,
+        ep.customer_id,
+        c.name AS customer_name,
+        t.id AS task_id,
+        t.status AS task_status,
+        t.assigned_to_id,
+        CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
+        assignee_u.email AS assigned_to_email,
+        t.problem,
+        t.resolution,
+        t.completed_at,
+        t.completed_by_id,
+        CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
+        t.created_at AS task_created_at
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+      LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+      WHERE ${whereClause}
+      ORDER BY e.received_at DESC
+    `);
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    // Collect task IDs for comment fetching
+    const taskIds = rows
+      .map(r => r.task_id)
+      .filter((id): id is string => id !== null);
+
+    // Fetch all comments for tasks in one query
+    let commentsByTaskId = new Map<string, Array<{ userName: string; content: string; createdAt: Date }>>();
+    if (taskIds.length > 0) {
+      const allComments = await this.db
+        .select({
+          taskId: taskComments.taskId,
+          content: taskComments.content,
+          createdAt: taskComments.createdAt,
+          userName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('userName'),
+        })
+        .from(taskComments)
+        .innerJoin(users, eq(taskComments.userId, users.id))
+        .where(inArray(taskComments.taskId, taskIds))
+        .orderBy(asc(taskComments.createdAt));
+
+      for (const comment of allComments) {
+        const existing = commentsByTaskId.get(comment.taskId) || [];
+        existing.push({
+          userName: comment.userName,
+          content: comment.content,
+          createdAt: comment.createdAt,
+        });
+        commentsByTaskId.set(comment.taskId, existing);
+      }
+    }
+
+    return rows.map(row => ({
+      id: row.id,
+      subject: row.subject,
+      body: row.body,
+      fromEmail: row.from_email,
+      fromName: row.from_name,
+      receivedAt: new Date(row.received_at),
+      signals: row.signals ?? [],
+      customerId: row.customer_id,
+      customerName: row.customer_name,
+      taskId: row.task_id,
+      taskStatus: row.task_status,
+      assignedToId: row.assigned_to_id,
+      assignedToName: row.assigned_to_name,
+      assignedToEmail: row.assigned_to_email,
+      problem: row.problem,
+      resolution: row.resolution,
+      completedAt: row.completed_at ? new Date(row.completed_at) : null,
+      completedById: row.completed_by_id,
+      completedByName: row.completed_by_name,
+      taskCreatedAt: row.task_created_at ? new Date(row.task_created_at) : null,
+      taskComments: row.task_id ? (commentsByTaskId.get(row.task_id) || []) : [],
+    }));
+  }
+
+  /**
+   * Get a single analyzed email by ID with task overlay
+   */
+  async getAnalyzedEmailById(
+    header: RequestHeader,
+    id: string
+  ): Promise<AnalyzedEmail | null> {
+    // `id` may be an email id OR a task id. Resolve task→email so old/stray
+    // links that carry a task id (notification emails historically linked by
+    // task id) still open the right escalation. The task lookup is tenant-scoped.
+    const whereParts: SQL[] = [
+      sql`e.tenant_id = ${header.tenantId}`,
+      sql`(
+        e.id = ${id}
+        OR e.id = (
+          SELECT t2.email_id FROM tasks t2
+          WHERE t2.id = ${id} AND t2.tenant_id = ${header.tenantId}
+        )
+      )`,
+      sql`ep.customer_id IS NOT NULL`,
+    ];
+
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
+    }
+
+    const whereClause = sql.join(whereParts, sql` AND `);
+
+    const rows = await this.db.execute<{
+      id: string;
+      subject: string;
+      body: string | null;
+      from_email: string;
+      from_name: string | null;
+      received_at: Date;
+      signals: number[];
+      customer_id: string;
+      customer_name: string | null;
+      task_id: string | null;
+      task_status: number | null;
+      assigned_to_id: string | null;
+      assigned_to_name: string | null;
+      assigned_to_email: string | null;
+      problem: string | null;
+      resolution: string | null;
+      completed_at: Date | null;
+      completed_by_id: string | null;
+      completed_by_name: string | null;
+      task_created_at: Date | null;
+    }>(sql`
+      SELECT
+        e.id,
+        e.subject,
+        e.body,
+        e.from_email,
+        e.from_name,
+        e.received_at,
+        e.signals,
+        ep.customer_id,
+        c.name AS customer_name,
+        t.id AS task_id,
+        t.status AS task_status,
+        t.assigned_to_id,
+        CONCAT(assignee_u.first_name, ' ', assignee_u.last_name) AS assigned_to_name,
+        assignee_u.email AS assigned_to_email,
+        t.problem,
+        t.resolution,
+        t.completed_at,
+        t.completed_by_id,
+        CONCAT(completed_u.first_name, ' ', completed_u.last_name) AS completed_by_name,
+        t.created_at AS task_created_at
+      FROM emails e
+      INNER JOIN email_participants ep ON ep.email_id = e.id AND ep.direction = 'from'
+      INNER JOIN customers c ON c.id = ep.customer_id
+      LEFT JOIN tasks t ON t.email_id = e.id
+      LEFT JOIN users assignee_u ON assignee_u.id = t.assigned_to_id
+      LEFT JOIN users completed_u ON completed_u.id = t.completed_by_id
+      WHERE ${whereClause}
+      LIMIT 1
+    `);
+
+    if (rows.length === 0) return null;
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      subject: row.subject,
+      body: row.body,
+      fromEmail: row.from_email,
+      fromName: row.from_name,
+      receivedAt: new Date(row.received_at),
+      signals: row.signals ?? [],
+      customerId: row.customer_id,
+      customerName: row.customer_name,
+      taskId: row.task_id,
+      taskStatus: row.task_status,
+      assignedToId: row.assigned_to_id,
+      assignedToName: row.assigned_to_name,
+      assignedToEmail: row.assigned_to_email,
+      problem: row.problem,
+      resolution: row.resolution,
+      completedAt: row.completed_at ? new Date(row.completed_at) : null,
+      completedById: row.completed_by_id,
+      completedByName: row.completed_by_name,
+      taskCreatedAt: row.task_created_at ? new Date(row.task_created_at) : null,
+    };
   }
 
   // ===========================================================================
@@ -1689,49 +2331,148 @@ export class EmailRepository extends ScopedRepository {
    * @param threadId - Thread ID
    * @param replyEmailId - ID of the reply email
    * @param replyReceivedAt - Timestamp of when the reply was received
-   * @param _tenantDomain - Unused (kept for backwards compatibility)
+   * @param _tenantDomains - Unused (kept for backwards compatibility)
    */
-  async updateFirstReplyForThread(
+  /**
+   * Set first_reply_at on customer emails for a batch of (thread, reply-timestamp)
+   * pairs in a single set-based UPDATE.
+   *
+   * For each customer email we record the EARLIEST reply that arrived strictly
+   * after it (MIN(reply_at) WHERE reply_at > received_at) — i.e. the time-to-response.
+   * The `first_reply_at IS NULL` guard means an earlier batch's value is never
+   * overwritten, so this is safe to call repeatedly as replies trickle in.
+   *
+   * Reply emails themselves are never stored (first_reply_email_id stays null);
+   * we only persist their timestamp on the customer email they answered.
+   *
+   * @param threadIds         Internal thread UUIDs, parallel to replyReceivedAts
+   * @param replyReceivedAts  Reply timestamps, parallel to threadIds
+   */
+  /**
+   * Shared core for the first-reply UPDATEs. Sets first_reply_at on customer
+   * emails to the earliest reply that arrived strictly after them. The caller
+   * supplies the JOIN fragment that relates a `r(…, reply_at)` VALUES table to
+   * `emails e2` (directly by thread_id, or via email_threads by provider id);
+   * everything else — the guards, MIN/GROUP BY, and logging — is identical.
+   */
+  private async runFirstReplyUpdate(
     tenantId: string,
-    threadId: string,
-    replyEmailId: string,
-    replyReceivedAt: Date,
-    _tenantDomain: string
+    joinFragment: SQL,
+    logContext: Record<string, unknown>,
+    message: string
   ): Promise<number> {
-    // Update customer emails in this thread that don't have a firstReplyAt yet
-    // and were received before this reply
-    // Uses is_customer_email column set during ingestion
-    // Convert Date to ISO string for SQL compatibility
-    const replyReceivedAtStr = replyReceivedAt.toISOString();
-
-    // Update first_reply_at for customer emails in the thread that haven't been replied to yet
     const result = await this.db.execute(sql`
-      UPDATE emails
+      UPDATE emails e
       SET
-        first_reply_email_id = ${replyEmailId},
-        first_reply_at = ${replyReceivedAtStr}::timestamp,
+        first_reply_at = sub.min_reply,
         updated_at = NOW()
-      WHERE tenant_id = ${tenantId}
-        AND thread_id = ${threadId}
-        AND first_reply_at IS NULL
-        AND received_at < ${replyReceivedAtStr}::timestamp
-        AND is_customer_email = true
+      FROM (
+        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
+        FROM emails e2
+        ${joinFragment}
+        WHERE e2.tenant_id = ${tenantId}
+          AND e2.is_customer_email = true
+          AND e2.first_reply_at IS NULL
+        GROUP BY e2.id
+      ) sub
+      WHERE e.id = sub.email_id
     `);
 
     const rowCount = (result as any).rowCount || 0;
 
     if (rowCount > 0) {
-      logger.info(
-        {
-          tenantId,
-          threadId,
-          replyEmailId,
-          updatedCount: rowCount,
-        },
-        'Updated firstReplyAt for customer emails in thread'
-      );
+      logger.info({ tenantId, ...logContext, updatedCount: rowCount }, message);
     }
 
     return rowCount;
+  }
+
+  async setFirstReplyForThreads(
+    tenantId: string,
+    threadIds: string[],
+    replyReceivedAts: Date[]
+  ): Promise<number> {
+    if (threadIds.length === 0 || threadIds.length !== replyReceivedAts.length) {
+      return 0;
+    }
+
+    // Build a VALUES list of (thread_id, reply_at) pairs. The casts on the row
+    // fragments establish the column types for the VALUES-derived table.
+    const pairs = threadIds.map(
+      (threadId, i) => sql`(${threadId}::uuid, ${replyReceivedAts[i].toISOString()}::timestamp)`
+    );
+    const valuesList = sql.join(pairs, sql`, `);
+    const joinFragment = sql`
+      JOIN (VALUES ${valuesList}) AS r(thread_id, reply_at)
+        ON r.thread_id = e2.thread_id
+       AND r.reply_at > e2.received_at`;
+
+    return this.runFirstReplyUpdate(
+      tenantId,
+      joinFragment,
+      { threadCount: new Set(threadIds).size, replyCount: threadIds.length },
+      'Updated firstReplyAt for customer emails'
+    );
+  }
+
+  /**
+   * Set first_reply_at on customer emails from a batch of (provider-thread,
+   * reply-timestamp) pairs in a single set-based UPDATE.
+   *
+   * Same semantics as {@link setFirstReplyForThreads} (earliest reply strictly
+   * after each customer email; never overwrites an existing value), but keyed by
+   * the provider's thread id so callers that only have header metadata — e.g.
+   * blacklisted tenant-domain replies the Gmail sync never stores — don't need to
+   * resolve internal thread UUIDs first. Threads are scoped by (tenant,
+   * integration) to match the email_threads uniqueness.
+   *
+   * @param integrationId       Integration the threads belong to
+   * @param providerThreadIds   Provider thread ids, parallel to replyReceivedAts
+   * @param replyReceivedAts    Reply timestamps, parallel to providerThreadIds
+   */
+  async setFirstReplyForProviderThreads(
+    tenantId: string,
+    integrationId: string,
+    providerThreadIds: string[],
+    replyReceivedAts: Date[]
+  ): Promise<number> {
+    if (providerThreadIds.length === 0 || providerThreadIds.length !== replyReceivedAts.length) {
+      return 0;
+    }
+
+    // Build a VALUES list of (provider_thread_id, reply_at) pairs. The casts on
+    // the row fragments establish the column types for the VALUES-derived table.
+    const pairs = providerThreadIds.map(
+      (providerThreadId, i) => sql`(${providerThreadId}::text, ${replyReceivedAts[i].toISOString()}::timestamp)`
+    );
+    const valuesList = sql.join(pairs, sql`, `);
+    const joinFragment = sql`
+      JOIN email_threads et
+        ON et.id = e2.thread_id
+       AND et.tenant_id = ${tenantId}
+       AND et.integration_id = ${integrationId}
+      JOIN (VALUES ${valuesList}) AS r(provider_thread_id, reply_at)
+        ON r.provider_thread_id = et.provider_thread_id
+       AND r.reply_at > e2.received_at`;
+
+    return this.runFirstReplyUpdate(
+      tenantId,
+      joinFragment,
+      { integrationId, threadCount: new Set(providerThreadIds).size, replyCount: providerThreadIds.length },
+      'Updated firstReplyAt for customer emails (from reply markers)'
+    );
+  }
+
+  /**
+   * Reassign all email participants from one customer to another.
+   */
+  async reassignParticipantCustomer(tenantId: string, sourceCustomerId: string, targetCustomerId: string, tx?: Transaction): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      UPDATE email_participants
+      SET customer_id = ${targetCustomerId}
+      WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
+    `);
+    return (result as any).rowCount ?? 0;
   }
 }

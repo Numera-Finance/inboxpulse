@@ -96,23 +96,25 @@ export default defineContentScript({
 
     const sdk = await InboxSDK.load(2, INBOXSDK_APP_ID);
 
-    // Fetch the tenant domain from the API so we correctly identify
+    // Fetch the tenant's email domains from the API so we correctly identify
     // internal vs external participants regardless of who has access.
-    let tenantDomain = '';
+    const tenantDomains = new Set<string>();
     try {
       const res = await fetch(`${API_BASE_URL}/api/users/me`, { credentials: 'include' });
       if (res.ok) {
-        const json = (await res.json()) as { success: boolean; data?: { tenantDomain?: string | null } };
-        tenantDomain = json.data?.tenantDomain?.toLowerCase() ?? '';
+        const json = (await res.json()) as { success: boolean; data?: { tenantDomains?: string[] } };
+        for (const d of json.data?.tenantDomains ?? []) {
+          if (d) tenantDomains.add(d.toLowerCase());
+        }
       }
     } catch {
       // Fall back to user's email domain if API is unreachable
     }
 
-    // Fall back to the logged-in user's email domain if tenant domain unavailable
-    if (!tenantDomain) {
-      const currentUser = sdk.User.getEmailAddress();
-      tenantDomain = currentUser.split('@')[1]?.toLowerCase() ?? '';
+    // Fall back to the logged-in user's email domain if no tenant domains available
+    if (tenantDomains.size === 0) {
+      const currentUserDomain = sdk.User.getEmailAddress().split('@')[1]?.toLowerCase();
+      if (currentUserDomain) tenantDomains.add(currentUserDomain);
     }
 
     sdk.Conversations.registerThreadViewHandler((threadView) => {
@@ -126,7 +128,7 @@ export default defineContentScript({
       for (const msg of messages) {
         const email = msg.getSender().emailAddress.toLowerCase();
         const d = email.split('@')[1];
-        if (d && d !== tenantDomain) {
+        if (d && !tenantDomains.has(d)) {
           senderEmail = email;
           break;
         }

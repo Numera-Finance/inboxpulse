@@ -4,6 +4,8 @@ import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, Legend } f
 import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDashboardSentimentTrend } from "@/lib/hooks"
+import { useNavigate } from "react-router-dom"
+import { appendDateRange } from "./drilldown-utils"
 import type { TileFilters } from "./tiles"
 
 const COLORS = {
@@ -17,6 +19,7 @@ interface SentimentTrendChartProps {
 }
 
 export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
+  const navigate = useNavigate()
   const { data, isLoading, error } = useDashboardSentimentTrend(filters)
 
   const chartData = data?.trendData ?? []
@@ -87,6 +90,8 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 stroke={COLORS.Positive}
                 fill={COLORS.Positive}
                 fillOpacity={0.8}
+                style={{ cursor: "pointer" }}
+                onClick={() => navigate(appendDateRange('/escalations?signal=positive&status=all', filters))}
               />
               <Area
                 type="monotone"
@@ -95,6 +100,8 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 stroke={COLORS.Neutral}
                 fill={COLORS.Neutral}
                 fillOpacity={0.8}
+                style={{ cursor: "pointer" }}
+                onClick={() => navigate(appendDateRange('/escalations?signal=neutral&status=all', filters))}
               />
               <Area
                 type="monotone"
@@ -103,6 +110,8 @@ export function SentimentTrendChart({ filters }: SentimentTrendChartProps) {
                 stroke={COLORS.Negative}
                 fill={COLORS.Negative}
                 fillOpacity={0.8}
+                style={{ cursor: "pointer" }}
+                onClick={() => navigate(appendDateRange('/escalations?signal=negative&status=all', filters))}
               />
             </AreaChart>
           </ResponsiveContainer>

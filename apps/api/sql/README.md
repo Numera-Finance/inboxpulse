@@ -24,10 +24,11 @@ Execute files in the following order to set up the database from scratch:
 10. **email_analyses.sql** - Create email_analyses table (stores analysis results for emails, references emails and tenants)
 11. **runs.sql** - Create runs table with foreign keys and indexes (includes run_status and run_type enums)
 12. **better_auth_tables.sql** - Create better-auth tables for Google SSO (better_auth_user, better_auth_session, better_auth_account, better_auth_verification)
+13. **login_history.sql** - Create login_history append-only audit table (references users and tenants)
 
 ## File Structure
 
-- `tenants.sql` - Tenants table (includes account_manager_role_id for TAT metrics)
+- `tenants.sql` - Tenants table (includes domains TEXT[] for multi-domain SSO, account_manager_role_id for TAT metrics)
 - `users.sql` - Users table
 - `integrations.sql` - Integrations table + integration enums (integration_source, integration_auth_type)
 - `customers.sql` - Customers table (references tenants, domain info stored in customer_domains table)
@@ -41,6 +42,7 @@ Execute files in the following order to set up the database from scratch:
 - `better_auth_tables.sql` - Better-auth tables for authentication
 - `holiday_calendars.sql` - Holiday calendars for TAT business days calculation (references tenants)
 - `analysis_keywords.sql` - Analysis keyword rules for keyword-based email analysis (references tenants)
+- `login_history.sql` - Login history append-only audit table (references users and tenants)
 - `migrations/` - Directory containing incremental migration scripts for existing databases
 
 ## Migrations
@@ -56,6 +58,22 @@ psql $DATABASE_URL -f apps/api/sql/migrations/003_email_dedup.sql
 
 # Apply analysis keywords migration (adds analysis_keywords table)
 psql $DATABASE_URL -f apps/api/sql/migrations/004_analysis_keywords.sql
+
+# Apply task problem/resolution migration (adds problem and resolution columns to tasks)
+psql $DATABASE_URL -f apps/api/sql/migrations/005_task_problem_resolution.sql
+
+# Apply tenant domains array migration (migrates domain VARCHAR to domains TEXT[])
+psql $DATABASE_URL -f apps/api/sql/migrations/006_tenant_domains_array.sql
+
+# Add GIN index on emails.signals for efficient signal filtering queries
+psql $DATABASE_URL -f apps/api/sql/migrations/007_emails_signals_gin_index.sql
+
+# Bake "(Auto)" suffix into auto-created customer names so it's searchable / exportable
+psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
+
+# Create analysis_cache table (LLM analysis result cache used by crm-analysis;
+# the Drizzle schema existed but the table was never created in production)
+psql $DATABASE_URL -f apps/api/sql/migrations/011_analysis_cache.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
@@ -96,6 +114,7 @@ psql $DATABASE_URL -f apps/api/sql/thread_analyses.sql
 psql $DATABASE_URL -f apps/api/sql/email_analyses.sql
 psql $DATABASE_URL -f apps/api/sql/runs.sql
 psql $DATABASE_URL -f apps/api/sql/better_auth_tables.sql
+psql $DATABASE_URL -f apps/api/sql/login_history.sql
 ```
 
 Or in PostgreSQL interactive mode (from project root):
@@ -113,6 +132,7 @@ Or in PostgreSQL interactive mode (from project root):
 \i apps/api/sql/email_analyses.sql
 \i apps/api/sql/runs.sql
 \i apps/api/sql/better_auth_tables.sql
+\i apps/api/sql/login_history.sql
 ```
 
 ## Verification Queries

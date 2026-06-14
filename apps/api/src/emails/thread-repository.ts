@@ -23,7 +23,6 @@ export class EmailThreadRepository {
           set: {
             subject: threadData.subject,
             lastMessageAt: threadData.lastMessageAt,
-            messageCount: threadData.messageCount,
             metadata: threadData.metadata,
             updatedAt: new Date(),
           },

@@ -10,7 +10,7 @@ import {
   type ColumnDef,
   flexRender,
 } from "@tanstack/react-table"
-import { ArrowUpDown, MoreHorizontal } from "lucide-react"
+import { ArrowUpDown, MoreHorizontal, Pencil } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils"
 import { type User } from "@/lib/types"
 import { TablePagination } from "@/components/ui/table-pagination"
 import { TransferUserDialog } from "./transfer-user-dialog"
-import { useTransferUser } from "@/lib/hooks"
+import { useTransferUser, useActivateUser, useDeactivateUser } from "@/lib/hooks"
 import { toast } from "sonner"
 
 interface UserTableProps {
@@ -35,13 +35,19 @@ interface UserTableProps {
   onSelect: (user: User) => void
   pagination?: { pageIndex: number; pageSize: number }
   onPaginationChange?: (pagination: { pageIndex: number; pageSize: number }) => void
+  sorting?: SortingState
+  onSortingChange?: (sorting: SortingState) => void
   totalCount?: number
 }
 
-export function UserTable({ users, onSelect, pagination, onPaginationChange, totalCount }: UserTableProps) {
-  const [sorting, setSorting] = React.useState<SortingState>([])
+export function UserTable({ users, onSelect, pagination, onPaginationChange, sorting: controlledSorting, onSortingChange, totalCount }: UserTableProps) {
+  const [internalSorting, setInternalSorting] = React.useState<SortingState>([])
+  const sorting = controlledSorting ?? internalSorting
+  const setSorting = onSortingChange ?? setInternalSorting
   const [transferUser, setTransferUser] = React.useState<User | null>(null)
   const transferMutation = useTransferUser()
+  const activateMutation = useActivateUser()
+  const deactivateMutation = useDeactivateUser()
 
   // Use server-side pagination if props are provided
   const isServerSide = pagination !== undefined && onPaginationChange !== undefined
@@ -183,14 +189,17 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
         return (
           <div className="flex items-center justify-end gap-2">
             <Button
-              size="sm"
-              variant="outline"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              aria-label="Edit user"
+              title="Edit"
               onClick={(e) => {
                 e.stopPropagation()
                 onSelect(user)
               }}
             >
-              Edit
+              <Pencil className="h-4 w-4" />
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -203,7 +212,32 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
                 <DropdownMenuItem>Send Message</DropdownMenuItem>
                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setTransferUser(user) }}>Transfer</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive">Deactivate</DropdownMenuItem>
+                {user.status === "Active" ? (
+                  <DropdownMenuItem
+                    className="text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      deactivateMutation.mutate(user.id, {
+                        onSuccess: () => toast.success(`${user.name} has been deactivated`),
+                        onError: () => toast.error("Failed to deactivate user"),
+                      })
+                    }}
+                  >
+                    Deactivate
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      activateMutation.mutate(user.id, {
+                        onSuccess: () => toast.success(`${user.name} has been activated`),
+                        onError: () => toast.error("Failed to activate user"),
+                      })
+                    }}
+                  >
+                    Activate
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -217,12 +251,16 @@ export function UserTable({ users, onSelect, pagination, onPaginationChange, tot
     data: users,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    ...(!isServerSide && { getSortedRowModel: getSortedRowModel() }),
     getPaginationRowModel: getPaginationRowModel(),
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      const newSorting = typeof updater === 'function' ? updater(sorting) : updater
+      setSorting(newSorting)
+    },
     ...(isServerSide
       ? {
           manualPagination: true,
+          manualSorting: true,
           pageCount: Math.ceil((totalCount ?? 0) / (pagination?.pageSize ?? 50)),
           state: {
             sorting,

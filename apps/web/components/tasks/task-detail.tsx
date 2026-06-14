@@ -257,7 +257,7 @@ export function TaskDetail({
             ) : (
               <Check className="h-4 w-4 mr-2" />
             )}
-            Mark Done
+            Resolve
           </Button>
         )}
       </div>

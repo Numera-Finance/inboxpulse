@@ -61,21 +61,21 @@ export default function DashboardPage() {
     return () => clearTimeout(timer)
   }, [filters])
 
-  // Update URL when filters change (debounced)
+  // Update URL when filters change immediately so other tabs stay in sync.
   useEffect(() => {
     const params = new URLSearchParams()
 
-    if (debouncedFilters.customerId) {
-      params.set("customer", debouncedFilters.customerId)
+    if (filters.customerId) {
+      params.set("customer", filters.customerId)
     }
-    if (debouncedFilters.userId) {
-      params.set("user", debouncedFilters.userId)
+    if (filters.userId) {
+      params.set("user", filters.userId)
     }
-    if (debouncedFilters.dateFrom) {
-      params.set("from", debouncedFilters.dateFrom)
+    if (filters.dateFrom) {
+      params.set("from", filters.dateFrom)
     }
-    if (debouncedFilters.dateTo) {
-      params.set("to", debouncedFilters.dateTo)
+    if (filters.dateTo) {
+      params.set("to", filters.dateTo)
     }
 
     // Only update if different from current URL
@@ -84,7 +84,7 @@ export default function DashboardPage() {
     if (newParams !== currentParams) {
       setSearchParams(params, { replace: true })
     }
-  }, [debouncedFilters, searchParams, setSearchParams])
+  }, [filters, searchParams, setSearchParams])
 
   // Handle filter changes from UI
   const handleFiltersChange = useCallback((newFilters: TileFilters) => {

@@ -78,31 +78,31 @@ export function useUpdateUser() {
 }
 
 /**
- * Hook to mark a user as active
+ * Hook to activate a user (rowStatus = active)
  */
-export function useMarkUserActive() {
+export function useActivateUser() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => api.markUserActive(id),
+    mutationFn: (id: string) => api.activateUser(id),
     onSuccess: (user) => {
       queryClient.setQueryData(userKeys.detail(user.id), user);
-      queryClient.invalidateQueries({ queryKey: userKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: userKeys.all, refetchType: 'active' });
     },
   });
 }
 
 /**
- * Hook to mark a user as inactive
+ * Hook to deactivate a user (rowStatus = inactive)
  */
-export function useMarkUserInactive() {
+export function useDeactivateUser() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => api.markUserInactive(id),
+    mutationFn: (id: string) => api.deactivateUser(id),
     onSuccess: (user) => {
       queryClient.setQueryData(userKeys.detail(user.id), user);
-      queryClient.invalidateQueries({ queryKey: userKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: userKeys.all, refetchType: 'active' });
     },
   });
 }
@@ -206,6 +206,15 @@ export function useImportUsers() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.lists() });
     },
+  });
+}
+
+/**
+ * Hook to export users to CSV file
+ */
+export function useExportUsers() {
+  return useMutation({
+    mutationFn: () => api.exportUsers(),
   });
 }
 

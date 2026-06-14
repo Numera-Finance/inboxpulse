@@ -114,22 +114,40 @@ userRoutes.get('/me', async (c) => {
     throw new NotFoundError('User', requestHeader.userId);
   }
 
-  // tenantDomain is best-effort enrichment — a failure here (e.g. a tenants
-  // schema/migration mismatch) must not take down the core auth endpoint.
-  let tenantDomain: string | null = null;
+  // tenantDomains is best-effort enrichment — a failure here (e.g. a tenants
+  // lookup error) must not take down the core auth endpoint.
+  let tenantDomains: string[] = [];
   try {
     const tenant = await tenantRepository.findById(requestHeader.tenantId);
-    tenantDomain = tenant?.domain ?? null;
+    tenantDomains = tenant?.domains ?? [];
   } catch (error) {
-    logger.error({ error, tenantId: requestHeader.tenantId }, 'Failed to load tenant domain for /me');
+    logger.error({ error, tenantId: requestHeader.tenantId }, 'Failed to load tenant domains for /me');
   }
 
-  const data = { ...user, tenantDomain };
+  const data = { ...user, tenantDomains };
 
   return c.json<ApiResponse<typeof data>>({
     success: true,
     data,
   });
+});
+
+/**
+ * GET /api/users/export - Export users to Excel workbook
+ * Registered before /:id so Hono doesn't route "export" as a UUID id.
+ * Mirrors the customer export handler: xlsx buffer + c.header/c.body.
+ */
+userRoutes.get('/export', async (c) => {
+  const requestHeader = getRequestHeader(c);
+  const service = container.resolve(UserService);
+
+  const buffer = await service.exportUsers(requestHeader.tenantId);
+
+  c.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  c.header('Content-Disposition', 'attachment; filename="users.xlsx"');
+
+  // Convert Node.js Buffer to Uint8Array for Hono
+  return c.body(new Uint8Array(buffer));
 });
 
 /**
@@ -271,10 +289,10 @@ userRoutes.patch('/:id', requirePermission(Permission.USER_EDIT), async (c) => {
 });
 
 /**
- * PATCH /api/users/:id/active - Mark user as active
+ * PATCH /api/users/:id/activate - Mark user as active (rowStatus=0)
  * Requires USER_EDIT permission
  */
-userRoutes.patch('/:id/active', requirePermission(Permission.USER_EDIT), async (c) => {
+userRoutes.patch('/:id/activate', requirePermission(Permission.USER_EDIT), async (c) => {
   return handleGetRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
@@ -286,10 +304,10 @@ userRoutes.patch('/:id/active', requirePermission(Permission.USER_EDIT), async (
 });
 
 /**
- * PATCH /api/users/:id/inactive - Mark user as inactive
+ * PATCH /api/users/:id/deactivate - Mark user as inactive (rowStatus=1)
  * Requires USER_DEL permission (deactivating is a form of deletion)
  */
-userRoutes.patch('/:id/inactive', requirePermission(Permission.USER_DEL), async (c) => {
+userRoutes.patch('/:id/deactivate', requirePermission(Permission.USER_DEL), async (c) => {
   return handleGetRequestWithParams(
     c,
     z.object({ id: z.uuid() }),
@@ -471,23 +489,6 @@ userRoutes.post('/import', requirePermission(Permission.USER_ADD), async (c) => 
   return c.json<ApiResponse<typeof result>>({
     success: true,
     data: result,
-  });
-});
-
-/**
- * GET /api/users/export - Export users to CSV
- */
-userRoutes.get('/export', async (c) => {
-  const requestHeader = getRequestHeader(c);
-  const service = container.resolve(UserService);
-
-  const csvContent = await service.exportUsers(requestHeader.tenantId);
-
-  return new Response(csvContent, {
-    headers: {
-      'Content-Type': 'text/csv',
-      'Content-Disposition': `attachment; filename="users-${new Date().toISOString().split('T')[0]}.csv"`,
-    },
   });
 });
 

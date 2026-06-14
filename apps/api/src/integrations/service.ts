@@ -1,12 +1,16 @@
 import { injectable, inject } from 'tsyringe';
 import { IntegrationRepository, type CreateIntegrationInput, type UpdateKeysInput, type IntegrationKeys } from './repository';
+import { TenantRepository } from '../tenants/repository';
 import type { IntegrationSource } from './schema';
 import type { UpdateRunState, UpdateAccessToken, UpdateWatchExpiry } from '@crm/clients';
 import { logger } from '../utils/logger';
 
 @injectable()
 export class IntegrationService {
-  constructor(@inject(IntegrationRepository) private integrationRepo: IntegrationRepository) {}
+  constructor(
+    @inject(IntegrationRepository) private integrationRepo: IntegrationRepository,
+    @inject(TenantRepository) private tenantRepo: TenantRepository,
+  ) {}
 
   /**
    * Create or update integration
@@ -109,8 +113,8 @@ export class IntegrationService {
    * Find integration by email (for webhook lookup)
    * Returns the full integration so we have the ID for subsequent updates
    */
-  async findByEmail(email: string, source: IntegrationSource = 'gmail') {
-    return this.integrationRepo.findByEmail(email, source);
+  async findByEmail(email: string, source: IntegrationSource = 'gmail', tenantId?: string) {
+    return this.integrationRepo.findByEmail(email, source, tenantId);
   }
 
   /**
@@ -132,11 +136,13 @@ export class IntegrationService {
    */
   async findIntegrationsNeedingWatchRenewal(
     source: IntegrationSource,
-    daysBeforeExpiry: number = 2
+    daysBeforeExpiry: number = 2,
+    tenantId?: string
   ) {
     const integrations = await this.integrationRepo.findIntegrationsNeedingWatchRenewal(
       source,
-      daysBeforeExpiry
+      daysBeforeExpiry,
+      tenantId
     );
 
     // Return without sensitive data
@@ -191,5 +197,60 @@ export class IntegrationService {
   async updateParameters(integrationId: string, parameters: Record<string, any>) {
     logger.info({ integrationId, parameters }, 'Updating integration parameters');
     return this.integrationRepo.updateParameters(integrationId, parameters);
+  }
+
+  /**
+   * Ensure tenant domains are in the integration's blacklist.
+   * Prevents collecting internal emails during Gmail sync.
+   * Called after OAuth connection to auto-configure the blacklist.
+   */
+  async ensureTenantDomainsBlacklisted(tenantId: string, source: IntegrationSource): Promise<void> {
+    try {
+      const tenant = await this.tenantRepo.findById(tenantId);
+      if (!tenant?.domains?.length) {
+        logger.debug({ tenantId }, 'No tenant domains configured, skipping blacklist auto-add');
+        return;
+      }
+
+      const integration = await this.integrationRepo.getIntegration(tenantId, source);
+      if (!integration) {
+        logger.debug({ tenantId, source }, 'No active integration found, skipping blacklist auto-add');
+        return;
+      }
+
+      // Get current blacklist
+      const credentials = await this.integrationRepo.getCredentials(tenantId, source);
+      const currentBlacklist: string[] = Array.isArray(credentials?.blacklistEmails)
+        ? credentials.blacklistEmails
+        : [];
+      const existingDomains = new Set(currentBlacklist.map(e => e.toLowerCase()));
+
+      // Find tenant domains not yet in blacklist
+      const domainsToAdd = tenant.domains
+        .map(d => d.toLowerCase())
+        .filter(d => !existingDomains.has(d));
+
+      if (domainsToAdd.length === 0) {
+        logger.debug({ tenantId }, 'All tenant domains already in blacklist');
+        return;
+      }
+
+      // Merge and update
+      const updatedBlacklist = [...currentBlacklist, ...domainsToAdd];
+      await this.integrationRepo.updateParameters(integration.id, {
+        blacklistEmails: updatedBlacklist,
+      });
+
+      logger.info(
+        { tenantId, addedDomains: domainsToAdd, totalBlacklist: updatedBlacklist.length },
+        'Auto-added tenant domains to Gmail blacklist'
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { tenantId, source, error: message },
+        'Failed to auto-add tenant domains to blacklist (non-blocking)'
+      );
+    }
   }
 }

@@ -1,8 +1,17 @@
-import { pgTable, text, timestamp, uuid, varchar, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, varchar, jsonb, smallint, boolean, uniqueIndex } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { tenants } from '../tenants/schema';
 import { customerDomains } from './customer-domains-schema';
+
+// Matches users.RowStatus for consistency across entities
+export const CustomerRowStatus = {
+  ACTIVE: 0,
+  INACTIVE: 1,
+  ARCHIVED: 2,
+} as const;
+
+export type CustomerRowStatusType = (typeof CustomerRowStatus)[keyof typeof CustomerRowStatus];
 
 // Note: Database table is named 'customers' for backwards compatibility
 export const customers = pgTable(
@@ -20,6 +29,12 @@ export const customers = pgTable(
 
     // Metadata
     metadata: jsonb('metadata').$type<Record<string, any>>(),
+
+    // True if created automatically during email analysis (domain extraction)
+    isAutoCreated: boolean('is_auto_created').notNull().default(false),
+
+    // Status: 0=ACTIVE, 1=INACTIVE, 2=ARCHIVED (consistent with users.row_status)
+    rowStatus: smallint('row_status').notNull().default(0),
 
     // Tracking
     createdAt: timestamp('created_at').notNull().defaultNow(),

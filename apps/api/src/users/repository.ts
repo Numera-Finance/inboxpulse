@@ -1,7 +1,7 @@
 import { eq, and, sql, isNull, inArray, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
-import type { Database } from '@crm/database';
+import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
 import {
   users,
@@ -17,6 +17,7 @@ import {
   type NewUserCustomer,
   RowStatus,
 } from './schema';
+import { roles } from '../roles/schema';
 import { logger } from '../utils/logger';
 
 export interface RebuildResult {
@@ -33,7 +34,8 @@ export class UserRepository extends ScopedRepository {
 
   /**
    * Build freeform search condition for users.
-   * Searches across: firstName, lastName, full name (concatenated), and email.
+   * Searches across: firstName, lastName, full name, email, and role name.
+   * The role match relies on the caller LEFT JOINing the roles table.
    */
   override buildFreeformSearch(searchTerm: string): SQL | undefined {
     if (!searchTerm || searchTerm.trim() === '') {
@@ -44,7 +46,8 @@ export class UserRepository extends ScopedRepository {
       ${users.firstName} ILIKE ${term} OR
       ${users.lastName} ILIKE ${term} OR
       (${users.firstName} || ' ' || ${users.lastName}) ILIKE ${term} OR
-      ${users.email} ILIKE ${term}
+      ${users.email} ILIKE ${term} OR
+      ${roles.name} ILIKE ${term}
     )`;
   }
 
@@ -925,5 +928,27 @@ export class UserRepository extends ScopedRepository {
       .where(eq(userCustomers.customerId, customerId));
 
     return result;
+  }
+
+  /**
+   * Reassign user-customer assignments from one customer to another.
+   * Uses ON CONFLICT DO NOTHING for users already assigned to target.
+   * Deletes remaining source assignments after transfer.
+   */
+  async reassignCustomer(tenantId: string, sourceCustomerId: string, targetCustomerId: string, tx?: Transaction): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      INSERT INTO user_customers (user_id, customer_id, role_id, created_at)
+      SELECT user_id, ${targetCustomerId}, role_id, NOW()
+      FROM user_customers
+      WHERE customer_id = ${sourceCustomerId}
+      ON CONFLICT (user_id, customer_id) DO NOTHING
+    `);
+    await db.execute(sql`
+      DELETE FROM user_customers
+      WHERE customer_id = ${sourceCustomerId}
+        AND customer_id IN (SELECT id FROM customers WHERE tenant_id = ${tenantId})
+    `);
+    return (result as any).rowCount ?? 0;
   }
 }

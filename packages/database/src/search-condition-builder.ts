@@ -17,6 +17,18 @@ import type { PgColumn } from 'drizzle-orm/pg-core';
 import { SearchOperator, ValidationError } from '@crm/shared';
 
 /**
+ * Coerce a string value to a Date if it looks like an ISO date string.
+ * Drizzle timestamp columns call .toISOString() on values, so raw strings
+ * passed from API search queries need conversion to Date objects.
+ */
+function coerceDate(value: unknown): number | Date {
+  if (typeof value === 'string' && !isNaN(Date.parse(value))) {
+    return new Date(value);
+  }
+  return value as number | Date;
+}
+
+/**
  * Escape special LIKE/ILIKE characters in user input.
  * Treats % and _ as literal characters, not wildcards.
  * Then wraps with % for "contains" search.
@@ -53,19 +65,19 @@ export function buildCondition(
 
     case SearchOperator.GREATER_THAN:
     case 'gt':
-      return gt(column, value as number | Date);
+      return gt(column, coerceDate(value));
 
     case SearchOperator.GREATER_THAN_OR_EQUAL:
     case 'gte':
-      return gte(column, value as number | Date);
+      return gte(column, coerceDate(value));
 
     case SearchOperator.LESS_THAN:
     case 'lt':
-      return lt(column, value as number | Date);
+      return lt(column, coerceDate(value));
 
     case SearchOperator.LESS_THAN_OR_EQUAL:
     case 'lte':
-      return lte(column, value as number | Date);
+      return lte(column, coerceDate(value));
 
     case SearchOperator.LIKE:
     case 'like':

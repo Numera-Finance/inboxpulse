@@ -3,14 +3,26 @@ import { container } from 'tsyringe';
 import { IntegrationService } from './service';
 import type { IntegrationSource } from './schema';
 import { updateRunStateSchema, updateAccessTokenSchema, updateWatchExpirySchema, updateParametersRequestSchema } from '@crm/clients';
+import { InvalidInputError, NotFoundError, type RequestHeader } from '@crm/shared';
 import { logger } from '../utils/logger';
 import { internalFetch } from '../utils/internal-fetch';
+import { getEnv } from '../env';
+
+/** Try to get tenantId from requestHeader (set by session auth middleware on external routes) */
+function getTenantIdFromContext(c: { get: (key: string) => unknown }): string | undefined {
+  const header = c.get('requestHeader') as RequestHeader | undefined;
+  return header?.tenantId;
+}
 
 const app = new Hono();
 
 // Helper to validate integration source
 function isValidSource(source: string): source is IntegrationSource {
   return ['gmail', 'outlook', 'slack', 'other'].includes(source);
+}
+
+function assertValidSource(source: string): asserts source is IntegrationSource {
+  if (!isValidSource(source)) throw new InvalidInputError('Invalid source');
 }
 
 /**
@@ -21,18 +33,14 @@ app.get('/', async (c) => {
   const tenantId = c.req.query('tenantId');
   const sourceParam = c.req.query('source');
 
-  if (!tenantId) {
-    return c.json({ error: 'tenantId query parameter is required' }, 400);
-  }
+  if (!tenantId) throw new InvalidInputError('tenantId query parameter is required');
 
   const integrationService = container.resolve(IntegrationService);
   let integrations = await integrationService.listByTenant(tenantId);
 
   // Filter by source if provided
   if (sourceParam) {
-    if (!isValidSource(sourceParam)) {
-      return c.json({ error: 'Invalid source' }, 400);
-    }
+    assertValidSource(sourceParam);
     integrations = integrations.filter(i => i.source === sourceParam);
   }
 
@@ -47,18 +55,12 @@ app.post('/', async (c) => {
   const { tenantId, authType, keys } = body;
 
   if (!tenantId || !authType || !keys) {
-    return c.json({ error: 'tenantId, authType, and keys are required' }, 400);
+    throw new InvalidInputError('tenantId, authType, and keys are required');
   }
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    const result = await integrationService.createOrUpdate({ tenantId, authType, keys });
-    return c.json(result);
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to create/update integration');
-    return c.json({ error: error.message }, 500);
-  }
+  const result = await integrationService.createOrUpdate({ tenantId, authType, keys });
+  return c.json(result);
 });
 
 /**
@@ -71,21 +73,14 @@ app.get('/lookup/by-email', async (c) => {
   const sourceParam = c.req.query('source');
   const source = (sourceParam || 'gmail') as string;
 
-  if (!email) {
-    return c.json({ error: 'email query parameter is required' }, 400);
-  }
+  if (!email) throw new InvalidInputError('email query parameter is required');
+  assertValidSource(source);
 
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
-
+  const tenantId = getTenantIdFromContext(c);
   const integrationService = container.resolve(IntegrationService);
-  const integration = await integrationService.findByEmail(email, source);
+  const integration = await integrationService.findByEmail(email, source, tenantId);
 
-  if (!integration) {
-    return c.json({ error: 'No integration found for email' }, 404);
-  }
-
+  if (!integration) throw new NotFoundError('Integration', email);
   return c.json({ data: integration });
 });
 
@@ -98,14 +93,14 @@ app.get('/watch/renewals', async (c) => {
   const source = c.req.query('source') || 'gmail';
   const daysBeforeExpiry = parseInt(c.req.query('daysBeforeExpiry') || '2', 10);
 
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
+  assertValidSource(source);
 
+  const tenantId = getTenantIdFromContext(c);
   const integrationService = container.resolve(IntegrationService);
   const integrations = await integrationService.findIntegrationsNeedingWatchRenewal(
     source,
-    daysBeforeExpiry
+    daysBeforeExpiry,
+    tenantId
   );
 
   return c.json({
@@ -122,19 +117,12 @@ app.get('/watch/renewals', async (c) => {
 app.get('/:tenantId/:source/credentials', async (c) => {
   const tenantId = c.req.param('tenantId');
   const source = c.req.param('source');
-
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
+  assertValidSource(source);
 
   const integrationService = container.resolve(IntegrationService);
   const credentials = await integrationService.getCredentials(tenantId, source);
 
-  if (!credentials) {
-    return c.json({ error: 'Integration not found' }, 404);
-  }
-
-  // Return in ApiResponse format expected by IntegrationClient
+  if (!credentials) throw new NotFoundError('Integration', `${tenantId}/${source}`);
   return c.json({ data: credentials });
 });
 
@@ -144,19 +132,12 @@ app.get('/:tenantId/:source/credentials', async (c) => {
 app.get('/:tenantId/:source', async (c) => {
   const tenantId = c.req.param('tenantId');
   const source = c.req.param('source');
-
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
+  assertValidSource(source);
 
   const integrationService = container.resolve(IntegrationService);
   const integration = await integrationService.getIntegration(tenantId, source);
 
-  if (!integration) {
-    return c.json({ error: 'Integration not found' }, 404);
-  }
-
-  // Return in ApiResponse format expected by IntegrationClient
+  if (!integration) throw new NotFoundError('Integration', `${tenantId}/${source}`);
   return c.json({ data: integration });
 });
 
@@ -168,23 +149,12 @@ app.put('/:tenantId/:source/token-expiration', async (c) => {
   const source = c.req.param('source');
   const { expiresAt } = await c.req.json();
 
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
-
-  if (!expiresAt) {
-    return c.json({ error: 'expiresAt is required' }, 400);
-  }
+  assertValidSource(source);
+  if (!expiresAt) throw new InvalidInputError('expiresAt is required');
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    await integrationService.updateTokenExpiration(tenantId, source, new Date(expiresAt));
-    return c.json({ success: true });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to update token expiration');
-    return c.json({ error: error.message }, 500);
-  }
+  await integrationService.updateTokenExpiration(tenantId, source, new Date(expiresAt));
+  return c.json({ success: true });
 });
 
 /**
@@ -195,24 +165,13 @@ app.put('/:tenantId/:source/refresh-token', async (c) => {
   const source = c.req.param('source');
   const { refreshToken } = await c.req.json();
 
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
-
-  if (!refreshToken) {
-    return c.json({ error: 'refreshToken is required' }, 400);
-  }
+  assertValidSource(source);
+  if (!refreshToken) throw new InvalidInputError('refreshToken is required');
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    await integrationService.updateRefreshToken(tenantId, source, refreshToken);
-    logger.info({ tenantId, source }, 'Refresh token updated successfully');
-    return c.json({ success: true, message: 'Refresh token updated' });
-  } catch (error: any) {
-    logger.error({ error, tenantId, source }, 'Failed to update refresh token');
-    return c.json({ error: error.message }, 500);
-  }
+  await integrationService.updateRefreshToken(tenantId, source, refreshToken);
+  logger.info({ tenantId, source }, 'Refresh token updated successfully');
+  return c.json({ success: true, message: 'Refresh token updated' });
 });
 
 /**
@@ -223,23 +182,12 @@ app.patch('/:tenantId/:source/keys', async (c) => {
   const source = c.req.param('source');
   const { keys, updatedBy } = await c.req.json();
 
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
-
-  if (!keys) {
-    return c.json({ error: 'keys is required' }, 400);
-  }
+  assertValidSource(source);
+  if (!keys) throw new InvalidInputError('keys is required');
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    const integration = await integrationService.updateKeys(tenantId, source, { keys, updatedBy });
-    return c.json({ integration });
-  } catch (error: any) {
-    logger.error({ error }, 'Failed to update keys');
-    return c.json({ error: error.message }, 500);
-  }
+  const integration = await integrationService.updateKeys(tenantId, source, { keys, updatedBy });
+  return c.json({ integration });
 });
 
 /**
@@ -252,10 +200,7 @@ app.get('/:integrationId', async (c) => {
   const integrationService = container.resolve(IntegrationService);
   const integration = await integrationService.getById(integrationId);
 
-  if (!integration) {
-    return c.json({ error: 'Integration not found' }, 404);
-  }
-
+  if (!integration) throw new NotFoundError('Integration', integrationId);
   return c.json({ data: integration });
 });
 
@@ -265,19 +210,11 @@ app.get('/:integrationId', async (c) => {
 app.patch('/:integrationId/run-state', async (c) => {
   const integrationId = c.req.param('integrationId');
   const body = await c.req.json();
+  const state = updateRunStateSchema.parse(body);
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    const state = updateRunStateSchema.parse(body);
-    await integrationService.updateRunState(integrationId, state);
-    return c.json({ success: true });
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return c.json({ error: 'Invalid request data', details: error.errors }, 400);
-    }
-    return c.json({ error: error.message }, 500);
-  }
+  await integrationService.updateRunState(integrationId, state);
+  return c.json({ success: true });
 });
 
 /**
@@ -286,19 +223,11 @@ app.patch('/:integrationId/run-state', async (c) => {
 app.patch('/:integrationId/access-token', async (c) => {
   const integrationId = c.req.param('integrationId');
   const body = await c.req.json();
+  const data = updateAccessTokenSchema.parse(body);
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    const data = updateAccessTokenSchema.parse(body);
-    await integrationService.updateAccessToken(integrationId, data);
-    return c.json({ success: true });
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return c.json({ error: 'Invalid request data', details: error.errors }, 400);
-    }
-    return c.json({ error: error.message }, 500);
-  }
+  await integrationService.updateAccessToken(integrationId, data);
+  return c.json({ success: true });
 });
 
 /**
@@ -307,19 +236,11 @@ app.patch('/:integrationId/access-token', async (c) => {
 app.patch('/:integrationId/watch-expiry', async (c) => {
   const integrationId = c.req.param('integrationId');
   const body = await c.req.json();
+  const data = updateWatchExpirySchema.parse(body);
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    const data = updateWatchExpirySchema.parse(body);
-    await integrationService.updateWatchExpiry(integrationId, data);
-    return c.json({ success: true });
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return c.json({ error: 'Invalid request data', details: error.errors }, 400);
-    }
-    return c.json({ error: error.message }, 500);
-  }
+  await integrationService.updateWatchExpiry(integrationId, data);
+  return c.json({ success: true });
 });
 
 /**
@@ -329,19 +250,11 @@ app.patch('/:integrationId/watch-expiry', async (c) => {
 app.patch('/:integrationId/parameters', async (c) => {
   const integrationId = c.req.param('integrationId');
   const body = await c.req.json();
+  const data = updateParametersRequestSchema.parse(body);
 
   const integrationService = container.resolve(IntegrationService);
-
-  try {
-    const data = updateParametersRequestSchema.parse(body);
-    await integrationService.updateParameters(integrationId, data.parameters);
-    return c.json({ success: true });
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return c.json({ error: 'Invalid request data', details: error.errors }, 400);
-    }
-    return c.json({ error: error.message }, 500);
-  }
+  await integrationService.updateParameters(integrationId, data.parameters);
+  return c.json({ success: true });
 });
 
 /**
@@ -350,17 +263,12 @@ app.patch('/:integrationId/parameters', async (c) => {
 app.get('/:tenantId/:source/watch-status', async (c) => {
   const tenantId = c.req.param('tenantId');
   const source = c.req.param('source');
-
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
+  assertValidSource(source);
 
   const integrationService = container.resolve(IntegrationService);
   const integration = await integrationService.getIntegration(tenantId, source);
 
-  if (!integration) {
-    return c.json({ error: 'Integration not found' }, 404);
-  }
+  if (!integration) throw new NotFoundError('Integration', `${tenantId}/${source}`);
 
   const now = new Date();
   const needsRenewal = !integration.watchExpiresAt || integration.watchExpiresAt < now;
@@ -384,14 +292,12 @@ app.delete('/:tenantId/:source', async (c) => {
   const source = c.req.param('source');
   const { updatedBy } = await c.req.json().catch(() => ({}));
 
-  if (!isValidSource(source)) {
-    return c.json({ error: 'Invalid source' }, 400);
-  }
+  assertValidSource(source);
 
-  // Stop Gmail watch first (if it's a gmail integration)
+  // Stop Gmail watch first. Fail-soft: a failed stop shouldn't block deactivation.
   if (source === 'gmail') {
     try {
-      const gmailServiceUrl = process.env.SERVICE_GMAIL_URL;
+      const gmailServiceUrl = getEnv().SERVICE_GMAIL_URL;
       if (gmailServiceUrl) {
         const watchResponse = await internalFetch(`${gmailServiceUrl}/api/watch?tenantId=${tenantId}`, {
           method: 'DELETE',
@@ -409,10 +315,9 @@ app.delete('/:tenantId/:source', async (c) => {
       }
     } catch (watchError: any) {
       logger.warn(
-        { tenantId, source, error: watchError.message },
+        { tenantId, source, error: watchError },
         'Failed to stop Gmail watch - continuing with deactivation'
       );
-      // Don't fail the disconnect if watch stop fails
     }
   }
 

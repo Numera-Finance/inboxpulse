@@ -96,6 +96,14 @@ export function InboxView({
     callbacksRef.current = callbacks
   }, [callbacks])
 
+  // Latest items in a ref so stable callbacks (click handler, deep-link
+  // resolver) can read them without changing identity (which would otherwise
+  // re-trigger the auto-select effect or break handler memoization).
+  const itemsRef = React.useRef(items)
+  React.useEffect(() => {
+    itemsRef.current = items
+  }, [items])
+
   // Resizable panel state
   const [panelWidth, setPanelWidth] = React.useState(() => {
     if (typeof window !== "undefined") {
@@ -197,27 +205,48 @@ export function InboxView({
     }
   }, [searchQuery, fetchItems])
 
-  // Fetch content when selection changes - uses callbacksRef to avoid re-running on callback changes
+  // Fetch content when selection changes. Uses an AbortController so that if
+  // the user clicks a different item while this fetch is still in flight, the
+  // previous request is cancelled — otherwise a slow earlier response can
+  // clobber a faster later one and the right pane shows stale content.
   React.useEffect(() => {
     if (!selectedItem) {
       setContent(null)
+      // Selection cleared while a fetch may still be in flight — clear the
+      // spinner here too, since the aborted fetch's `finally` deliberately
+      // doesn't reset isLoadingContent (that guard exists so A's resolution
+      // doesn't clobber B's loading=true during a rapid A→B click).
+      setIsLoadingContent(false)
       return
     }
+
+    const controller = new AbortController()
 
     const fetchContent = async () => {
       setIsLoadingContent(true)
       try {
-        const itemContent = await callbacksRef.current.onFetchContent(selectedItem.id)
+        const itemContent = await callbacksRef.current.onFetchContent(
+          selectedItem.id,
+          controller.signal
+        )
+        if (controller.signal.aborted) return
         setContent(itemContent)
       } catch (error) {
+        // Aborted requests are expected when selection changes — silence them.
+        if (controller.signal.aborted) return
+        if (error instanceof DOMException && error.name === 'AbortError') return
         console.error("Failed to fetch content:", error)
         setContent(null)
       } finally {
-        setIsLoadingContent(false)
+        if (!controller.signal.aborted) setIsLoadingContent(false)
       }
     }
 
     fetchContent()
+
+    return () => {
+      controller.abort()
+    }
   }, [selectedItem?.id])
 
   // Track if we're in controlled mode (selectedItem prop is provided)
@@ -242,37 +271,81 @@ export function InboxView({
     }
   }, [])
 
-  // Auto-select item when items load - prefer initialSelectedId, then first item
-  // Only auto-select once to avoid overriding user clicks during loading transitions
+  // Resolve a target id to an item and select it. Prefers the already-loaded
+  // list; when the target isn't on the current page (off-page or filtered out)
+  // it fetches the item directly via onFetchItem so a valid deep link still
+  // opens instead of being lost. `silent` updates the selection without firing
+  // onSelect (used for external URL syncs to avoid a navigation loop).
+  // Returns true when a matching item was selected.
+  const resolveAndSelectTarget = React.useCallback(
+    async (
+      targetId: string,
+      opts?: { silent?: boolean; signal?: AbortSignal }
+    ): Promise<boolean> => {
+      const select = (item: InboxItem) => {
+        if (opts?.silent) setInternalSelectedItem(item)
+        else handleSelectItem(item)
+      }
+
+      const inList = itemsRef.current.find((i) => i.id === targetId)
+      if (inList) {
+        select(inList)
+        return true
+      }
+
+      const fetchItem = callbacksRef.current.onFetchItem
+      if (!fetchItem) return false
+      try {
+        const fetched = await fetchItem(targetId, opts?.signal)
+        if (opts?.signal?.aborted || !fetched) return false
+        select(fetched)
+        return true
+      } catch {
+        return false
+      }
+    },
+    [handleSelectItem]
+  )
+
+  // Auto-select once after the initial list load settles: prefer
+  // initialSelectedId (fetched directly when it's off-page/filtered out), then
+  // the first item. Guarded so it can't override the user's own clicks.
   const hasAutoSelectedRef = React.useRef(false)
   React.useEffect(() => {
-    if (items.length > 0 && !controlledSelectedItem && !internalSelectedItem && !hasAutoSelectedRef.current) {
-      // If initialSelectedId is provided, try to find and select that item
+    if (isLoading || controlledSelectedItem || internalSelectedItem || hasAutoSelectedRef.current) {
+      return
+    }
+    const controller = new AbortController()
+    void (async () => {
+      let selected = false
       if (initialSelectedId) {
-        const targetItem = items.find(i => i.id === initialSelectedId)
-        if (targetItem) {
-          hasAutoSelectedRef.current = true
-          handleSelectItem(targetItem)
-          return
-        }
+        selected = await resolveAndSelectTarget(initialSelectedId, { signal: controller.signal })
       }
-      // Fall back to first item
-      hasAutoSelectedRef.current = true
-      handleSelectItem(items[0])
-    }
-  }, [items, controlledSelectedItem, internalSelectedItem, handleSelectItem, initialSelectedId])
+      if (controller.signal.aborted) return
+      // Fall back to the first item only when there was no resolvable target.
+      if (!selected && itemsRef.current.length > 0) {
+        handleSelectItem(itemsRef.current[0])
+        selected = true
+      }
+      // Latch ONLY after a selection actually happened, so an aborted attempt
+      // or an empty-then-populated list can still auto-select on a later run.
+      // Leaving the ref unset until success also keeps the external-URL effect
+      // (guarded by this ref) from firing a duplicate fetch during initial load.
+      if (selected) hasAutoSelectedRef.current = true
+    })()
+    return () => controller.abort()
+  }, [isLoading, items, controlledSelectedItem, internalSelectedItem, initialSelectedId, resolveAndSelectTarget, handleSelectItem])
 
-  // Handle external URL changes (e.g., when user pastes a bookmarked link)
-  // This runs when initialSelectedId changes and we have items loaded
+  // Handle external URL changes after the initial auto-select (e.g. pasting a
+  // bookmarked link or in-app navigation). Sync selection to the new id,
+  // fetching it when it's off-page; silent to avoid an onSelect→navigate loop.
   React.useEffect(() => {
-    if (initialSelectedId && items.length > 0 && internalSelectedItem?.id !== initialSelectedId) {
-      const targetItem = items.find(i => i.id === initialSelectedId)
-      if (targetItem) {
-        setInternalSelectedItem(targetItem)
-        // Don't call handleSelectItem here to avoid infinite loop with onSelect callback
-      }
-    }
-  }, [initialSelectedId, items, internalSelectedItem?.id])
+    if (!hasAutoSelectedRef.current) return
+    if (!initialSelectedId || internalSelectedItem?.id === initialSelectedId) return
+    const controller = new AbortController()
+    void resolveAndSelectTarget(initialSelectedId, { silent: true, signal: controller.signal })
+    return () => controller.abort()
+  }, [initialSelectedId, internalSelectedItem?.id, resolveAndSelectTarget])
 
   // Handle refresh
   const handleRefresh = () => {
@@ -292,14 +365,18 @@ export function InboxView({
         // Next item
         const currentIndex = items.findIndex((i) => i.id === selectedItem?.id)
         if (currentIndex < items.length - 1) {
-          handleSelectItem(items[currentIndex + 1])
+          const nextItem = items[currentIndex + 1]
+          handleSelectItem(nextItem)
+          document.querySelector(`[data-item-id="${nextItem.id}"]`)?.scrollIntoView({ block: "nearest" })
         }
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault()
         // Previous item
         const currentIndex = items.findIndex((i) => i.id === selectedItem?.id)
         if (currentIndex > 0) {
-          handleSelectItem(items[currentIndex - 1])
+          const prevItem = items[currentIndex - 1]
+          handleSelectItem(prevItem)
+          document.querySelector(`[data-item-id="${prevItem.id}"]`)?.scrollIntoView({ block: "nearest" })
         }
       } else if (e.key === "e" && callbacksRef.current.onArchive && selectedItem) {
         // Archive
@@ -356,12 +433,6 @@ export function InboxView({
     showThreadCount: config.showThreadCount,
     itemType: config.itemType,
   }), [config.showPriority, config.showCustomer, config.showThreadCount, config.itemType])
-
-  // Store items in a ref to avoid handleItemClick dependency on items
-  const itemsRef = React.useRef(items)
-  React.useEffect(() => {
-    itemsRef.current = items
-  }, [items])
 
   // Create stable click handler that uses ref
   const handleItemClick = React.useCallback((itemId: string) => {
@@ -443,16 +514,16 @@ export function InboxView({
         )}
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
           {/* Search in toolbar when embedded */}
           {config.embedded && config.showSearch && (
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={config.searchPlaceholder || "Search..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-8"
+                className="pl-7 h-7 text-xs"
               />
             </div>
           )}
@@ -460,28 +531,12 @@ export function InboxView({
           {config.showSentimentFilter && (
             <SignalFilter value={sentimentFilter} onChange={setSentimentFilter} />
           )}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={handleRefresh}
-                  disabled={isLoading}
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Refresh</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
           {callbacks.onArchive && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-7 w-7">
-                    <Archive className="h-3.5 w-3.5" />
+                  <Button variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0">
+                    <Archive className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Archive all</TooltipContent>
@@ -490,43 +545,35 @@ export function InboxView({
           )}
           {toolbarActions}
           {!config.embedded && <div className="flex-1" />}
-          {/* Pagination controls */}
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-muted-foreground mr-1">
-              {total > 0 ? `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}` : '0 items'}
-            </span>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={handlePrevPage}
-                    disabled={!canGoBack || isLoading}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Previous page</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={handleNextPage}
-                    disabled={!canGoForward || isLoading}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Next page</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+          {/* Pagination: refresh + arrows */}
+          <div className="flex items-center gap-0 flex-shrink-0 ml-auto">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => { handleRefresh(); }}
+              disabled={isLoading}
+            >
+              <RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={handlePrevPage}
+              disabled={!canGoBack || isLoading}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={handleNextPage}
+              disabled={!canGoForward || isLoading}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
           </div>
         </div>
 
@@ -605,15 +652,20 @@ export function InboxView({
             afterContent={detailItem && renderAfterContent ? renderAfterContent(detailItem, content) : undefined}
           />
         </div>
-        {detailItem && renderSidePanel && (
-          <div className="w-[320px] flex-shrink-0 border-l border-border h-full overflow-hidden">
-            <ScrollArea className="h-full">
-              <div className="p-4">
-                {renderSidePanel(detailItem, content)}
-              </div>
-            </ScrollArea>
-          </div>
-        )}
+        {(() => {
+          const sidePanelContent = detailItem && renderSidePanel
+            ? renderSidePanel(detailItem, content)
+            : null
+          return sidePanelContent ? (
+            <div className="w-[320px] flex-shrink-0 border-l border-border h-full overflow-hidden">
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  {sidePanelContent}
+                </div>
+              </ScrollArea>
+            </div>
+          ) : null
+        })()}
       </div>
     </div>
   )

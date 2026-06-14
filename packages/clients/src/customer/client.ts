@@ -1,16 +1,16 @@
 import { BaseClient } from '../base-client';
 import type { ApiResponse, SearchRequest, SearchResponse } from '@crm/shared';
-import type { Customer, CreateCustomerRequest } from './types';
+import type { Customer, CreateCustomerRequest, MergeCustomerResponse } from './types';
 
 /**
  * Client for customer-related API operations
  */
 export class CustomerClient extends BaseClient {
   /**
-   * Create or update a customer
+   * Create or update a customer. Tenant is resolved server-side from the session.
    */
   async upsertCustomer(data: CreateCustomerRequest, signal?: AbortSignal): Promise<Customer> {
-    const response = await this.post<ApiResponse<Customer>>('/api/customers', data, signal, data.tenantId);
+    const response = await this.post<ApiResponse<Customer>>('/api/customers', data, signal);
     if (!response) {
       throw new Error('Invalid API response: response is null');
     }
@@ -23,6 +23,7 @@ export class CustomerClient extends BaseClient {
     }
     return apiResponse.data;
   }
+
 
   /**
    * Get customer by domain
@@ -125,6 +126,28 @@ export class CustomerClient extends BaseClient {
    */
   async getImportTemplate(signal?: AbortSignal): Promise<Blob> {
     return this.getBlob('/api/customers/import/template', signal);
+  }
+
+  /**
+   * Merge source customer into target customer.
+   * All data moves to target, source is archived.
+   */
+  async mergeCustomer(
+    targetCustomerId: string,
+    sourceCustomerId: string,
+    signal?: AbortSignal
+  ): Promise<MergeCustomerResponse> {
+    const response = await this.post<ApiResponse<MergeCustomerResponse>>(
+      `/api/customers/${targetCustomerId}/merge`,
+      { sourceCustomerId },
+      signal
+    );
+
+    if (!response?.data) {
+      throw new Error('Invalid API response: missing data');
+    }
+
+    return response.data;
   }
 }
 

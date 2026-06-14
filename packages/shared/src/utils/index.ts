@@ -1,4 +1,5 @@
 export * from './retry';
+export * from './safe-relative-path';
 
 export function formatDate(date: Date): string {
   return date.toISOString();

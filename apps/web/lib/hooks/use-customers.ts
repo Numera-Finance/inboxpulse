@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api';
+import { getCustomerClient } from '@/lib/api/clients';
 import type { SearchRequest, Customer, CreateCustomerRequest } from '@/lib/api';
 
 // Query keys for cache management
@@ -14,6 +15,8 @@ export const customerKeys = {
       sortOrder: filters.sortOrder || 'asc',
       limit: filters.limit || 2000,
       offset: filters.offset || 0,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
     }
     return [...customerKeys.lists(), normalized] as const
   },
@@ -159,5 +162,22 @@ export function useExportCustomers() {
 export function useImportTemplate() {
   return useMutation({
     mutationFn: () => api.getImportTemplate(),
+  });
+}
+
+/**
+ * Hook to merge source customer into target customer
+ */
+export function useMergeCustomer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ targetCustomerId, sourceCustomerId }: {
+      targetCustomerId: string;
+      sourceCustomerId: string;
+    }) => getCustomerClient().mergeCustomer(targetCustomerId, sourceCustomerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: customerKeys.all });
+    },
   });
 }

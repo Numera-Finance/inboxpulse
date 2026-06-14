@@ -58,13 +58,10 @@ export const createEscalationNotificationCronFunction = (inngest: Inngest) => {
                 'Checking timezone filter for managers'
               );
 
-              // TEMP: Limit to specific test recipients
-              const testRecipients = ['mbalsara@mystartupcfo.com', 'vmohan@mystartupcfo.com'];
-              // Filter managers: must have escalations, be a test recipient, and be in their notification window (8am local)
+              // Filter managers: must have escalations and be in their notification window (8am local)
               const managersToNotify = [...managerEscalationMap.entries()].filter(
                 ([, data]) =>
                   data.escalations.length > 0 &&
-                  testRecipients.includes(data.manager.email) &&
                   taskService.shouldSendNotification(data.manager.timezone)
               );
 

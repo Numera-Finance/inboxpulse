@@ -293,10 +293,25 @@ export class AnalysisExecutor {
     config: AnalysisConfig,
     threadContext?: ThreadContext
   ): Promise<BatchAnalysisResult> {
-    // Get definitions for requested types
-    const definitions = types
-      .map((type) => this.registry.get(type))
-      .filter((def): def is AnalysisDefinition => def !== undefined);
+    // Get definitions for requested types. Schema validation at the route
+    // boundary should already reject unknown types — this fallback exists as
+    // defense-in-depth (e.g., for internal callers that bypass HTTP). Warn
+    // loudly when it fires so any drift between the type union and the
+    // registry is visible in logs.
+    const definitions: AnalysisDefinition[] = [];
+    const unknownTypes: string[] = [];
+    for (const type of types) {
+      const def = this.registry.get(type);
+      if (def) definitions.push(def);
+      else unknownTypes.push(type);
+    }
+    if (unknownTypes.length > 0) {
+      logger.warn(
+        { tenantId, unknownTypes, requestedTypes: types },
+        'Unknown analysis types passed to executor — these were skipped. ' +
+        'This is likely a bug: the route schema should have rejected these.'
+      );
+    }
 
     if (definitions.length === 0) {
       logger.warn({ tenantId, types }, 'No valid analysis definitions found for requested types');
@@ -336,15 +351,26 @@ export class AnalysisExecutor {
 
   /**
    * Helper: Build email context string
-   * - body: contains the reply content (quotes stripped)
-   * - signature: contains extracted signature (if has analyzable content like phone, title, etc.)
+   * - From: sender identity (used by signature-extraction's ownership rule, harmless to others)
+   * - Body: dequoted reply content
+   * - Signature: dequoted reply with signature attached, for signature-extraction to find
+   *             the signature within
+   * - Thread Context: optional prior-thread summary
    */
   private buildEmailContext(email: Email, threadContext?: ThreadContext): string {
-    let context = `Email Subject: ${email.subject}\n\n`;
+    const fromName = email.from?.name?.trim();
+    const fromEmail = email.from?.email?.trim();
+    const fromLine = fromEmail
+      ? fromName
+        ? `From: ${fromName} <${fromEmail}>`
+        : `From: ${fromEmail}`
+      : '';
+
+    let context = '';
+    if (fromLine) context += `${fromLine}\n`;
+    context += `Email Subject: ${email.subject}\n\n`;
     context += `Email Body:\n${email.body || ''}\n\n`;
 
-    // Include signature separately if available
-    // This allows signature-extraction to analyze it without wasting tokens on quoted content
     if (email.signature) {
       context += `Email Signature:\n${email.signature}\n\n`;
     }

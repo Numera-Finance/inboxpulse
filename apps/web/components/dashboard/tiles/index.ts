@@ -30,6 +30,7 @@ export interface StatTileConfig {
   trend?: "up" | "down" | "neutral"
   category: "stat"
   useData: (filters?: TileFilters) => UseQueryResult<StatTileData, Error>
+  drilldownPath?: string
 }
 
 // Configuration for chart tiles
@@ -78,6 +79,7 @@ export const TILE_DEFINITIONS: TileDefinition[] = [
       icon: Users,
       trend: "up",
       useData: useDashboardCustomers,
+      drilldownPath: "/customers",
     },
     layout: { w: 1, h: 1, minW: 1, minH: 1 },
   },
@@ -100,6 +102,7 @@ export const TILE_DEFINITIONS: TileDefinition[] = [
       icon: AlertTriangle,
       trend: "down",
       useData: useDashboardEscalations,
+      drilldownPath: "/escalations?signal=negative&status=open",
     },
     layout: { w: 1, h: 1, minW: 1, minH: 1 },
   },
@@ -111,6 +114,7 @@ export const TILE_DEFINITIONS: TileDefinition[] = [
       icon: TrendingUp,
       trend: "up",
       useData: useDashboardOpportunities,
+      drilldownPath: "/escalations?signal=upsell&status=open",
     },
     layout: { w: 1, h: 1, minW: 1, minH: 1 },
   },

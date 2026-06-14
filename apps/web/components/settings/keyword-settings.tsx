@@ -18,7 +18,6 @@ const CATEGORIES: Array<{
 }> = [
   { category: 'sentiment_positive', label: 'Positive Keywords', section: 'Sentiment', description: 'Triggers positive sentiment result' },
   { category: 'sentiment_negative', label: 'Negative Keywords', section: 'Sentiment', description: 'Triggers negative sentiment result' },
-  { category: 'escalation', label: 'Keywords', section: 'Escalation', description: 'Triggers escalation detection' },
   { category: 'upsell', label: 'Keywords', section: 'Upsell', description: 'Triggers upsell detection' },
   { category: 'churn', label: 'Keywords', section: 'Churn', description: 'Triggers churn risk detection' },
   { category: 'competitor', label: 'Keywords', section: 'Competitor', description: 'Triggers competitor mention detection' },
@@ -27,7 +26,6 @@ const CATEGORIES: Array<{
 // Group categories by section
 const SECTIONS = [
   { title: 'Sentiment', description: 'Keywords that trigger positive or negative sentiment results', categories: ['sentiment_positive', 'sentiment_negative'] },
-  { title: 'Escalation', description: 'Keywords that trigger escalation detection', categories: ['escalation'] },
   { title: 'Upsell', description: 'Keywords that trigger upsell opportunity detection', categories: ['upsell'] },
   { title: 'Churn', description: 'Keywords that trigger churn risk detection', categories: ['churn'] },
   { title: 'Competitor', description: 'Keywords that trigger competitor mention detection', categories: ['competitor'] },
