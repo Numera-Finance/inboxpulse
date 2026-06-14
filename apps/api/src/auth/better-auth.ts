@@ -81,10 +81,24 @@ function getAuth() {
       },
       baseURL: getEnv().BETTER_AUTH_URL, // API runs on 4001
       basePath: '/api/auth', // Better-auth will handle routes under this path
-      trustedOrigins: [
-        getEnv().WEB_URL, // Web app runs on 4000
-        getEnv().SERVICE_API_URL, // API runs on 4001
-      ].filter(Boolean),
+      trustedOrigins: (request) => {
+        const origins: string[] = [
+          getEnv().WEB_URL, // Web app runs on 4000
+          getEnv().SERVICE_API_URL, // API runs on 4001
+        ].filter(Boolean) as string[];
+        // Add Chrome extension origin (extension talks to the API directly)
+        const extensionId = process.env.CHROME_EXTENSION_ID;
+        if (extensionId) {
+          origins.push(`chrome-extension://${extensionId}`);
+        } else if (request) {
+          // In development, dynamically allow the requesting extension origin
+          const origin = request.headers.get('origin');
+          if (origin?.startsWith('chrome-extension://')) {
+            origins.push(origin);
+          }
+        }
+        return origins;
+      },
       secret: getEnv().BETTER_AUTH_SECRET || getEnv().SESSION_SECRET || 'dev-secret-change-in-production-minimum-32-characters',
       advanced: {
         // Enable cross-origin cookies for separate API/Web domains

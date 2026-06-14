@@ -183,7 +183,12 @@ customerRoutes.get('/:id', async (c) => {
     z.object({ id: z.uuid() }),
     async (requestHeader: RequestHeader, params) => {
       const service = container.resolve(CustomerService);
-      const customer = await service.getCustomerByIdScoped(requestHeader, params.id);
+      // Stats enrichment is opt-in (?stats=true) so existing callers keep the
+      // cheap single-row lookup and only consumers that need stats pay for them.
+      const withStats = c.req.query('stats') === 'true';
+      const customer = withStats
+        ? await service.getEnrichedCustomerByIdScoped(requestHeader, params.id)
+        : await service.getCustomerByIdScoped(requestHeader, params.id);
       if (!customer) {
         throw new NotFoundError('Customer', params.id);
       }

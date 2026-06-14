@@ -79,6 +79,7 @@ export const userResponseSchema = z.object({
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   lastLoginAt: z.coerce.date().nullable().optional(), // Last login timestamp
+  tenantDomains: z.array(z.string()).optional(), // Tenant email domains (e.g., ['acme.com', 'sub.com'])
   customerAssignments: z.array(customerAssignmentResponseSchema).optional(),
   managers: z.array(z.object({
     id: z.string().uuid(),

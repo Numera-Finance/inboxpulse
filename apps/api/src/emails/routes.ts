@@ -10,7 +10,7 @@ import type { NewEmail } from './schema';
 import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError } from '@crm/shared';
 import { analyzedEmailSearchRequestSchema, firstReplyMarkersRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
-import { handleGetRequest, handleGetRequestWithParams, handleApiRequest } from '../utils/api-handler';
+import { handleApiRequest, handleGetRequest, handleGetRequestWithParams } from '../utils/api-handler';
 
 const app = new Hono();
 
@@ -363,6 +363,37 @@ app.get('/customer/:customerId', async (c) => {
         dateTo,
         query,
       });
+    }
+  );
+});
+
+/**
+ * POST /api/emails/resolve-by-messages - Resolve emails by provider message IDs.
+ * Returns each matched email's linked customer and sentiment signals so the Gmail
+ * extension can map an open thread to a customer authoritatively (by the stored
+ * email→customer link) rather than guessing from the sender's domain.
+ *
+ * Authorization: like every other email read route, this is gated by the session
+ * middleware (authenticated user + tenant) plus per-row access control inside
+ * findByMessageIdsScoped (customerAccessFilter) — it only ever returns emails for
+ * customers the caller can access. There is no read-level Permission in the RBAC
+ * model, so no requirePermission() is applied (consistent with GET /api/emails/*).
+ */
+app.post('/resolve-by-messages', async (c) => {
+  return handleApiRequest(
+    c,
+    z.object({
+      messageIds: z.array(z.string()).min(1).max(100),
+      provider: z.string().optional(),
+    }),
+    async (requestHeader: RequestHeader, body) => {
+      const service = container.resolve(EmailService);
+      const emails = await service.resolveByMessageIds(
+        requestHeader,
+        body.provider ?? 'gmail',
+        body.messageIds
+      );
+      return { emails };
     }
   );
 });

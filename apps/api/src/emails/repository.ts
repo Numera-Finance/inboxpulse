@@ -651,6 +651,70 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Resolve emails by their provider message IDs, returning the linked customer
+   * and sentiment signals. Used by the Gmail extension to map an open thread to
+   * a customer authoritatively (by the stored email→customer link) instead of by
+   * guessing from the sender's domain. Access-scoped to the requesting user.
+   */
+  async findByMessageIdsScoped(
+    header: RequestHeader,
+    provider: string,
+    messageIds: string[]
+  ): Promise<
+    Array<{
+      id: string;
+      messageId: string;
+      threadId: string;
+      subject: string | null;
+      receivedAt: Date | null;
+      signals: number[] | null;
+      customerId: string;
+    }>
+  > {
+    if (messageIds.length === 0) return [];
+
+    const rows = await this.db
+      .selectDistinct({
+        id: emails.id,
+        messageId: emails.messageId,
+        threadId: emails.threadId,
+        subject: emails.subject,
+        receivedAt: emails.receivedAt,
+        signals: emails.signals,
+        customerId: emailParticipants.customerId,
+      })
+      .from(emails)
+      .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
+      .where(
+        and(
+          eq(emails.tenantId, header.tenantId),
+          eq(emails.provider, provider),
+          inArray(emails.messageId, messageIds),
+          // Resolve the customer from the external SENDER only. Recipients (to/cc)
+          // are full of internal teammates linked to the tenant's own org, and
+          // internal 'user' participants carry that org's customerId — both would
+          // mis-resolve the thread to the tenant itself. The 'from' contact is the
+          // external party the thread is actually about.
+          eq(emailParticipants.direction, 'from'),
+          eq(emailParticipants.participantType, 'contact'),
+          sql`${emailParticipants.customerId} IS NOT NULL`,
+          this.customerAccessFilter(emailParticipants.customerId, header)
+        )
+      );
+
+    // customerId is guaranteed non-null by the WHERE clause above.
+    return rows as Array<{
+      id: string;
+      messageId: string;
+      threadId: string;
+      subject: string | null;
+      receivedAt: Date | null;
+      signals: number[] | null;
+      customerId: string;
+    }>;
+  }
+
+  /**
    * Find email by ID with access control
    */
   async findByIdScoped(header: RequestHeader, emailId: string) {

@@ -1,0 +1,7 @@
+.output/
+output/
+.wxt/
+node_modules/
+
+# Build artifacts
+*.zip

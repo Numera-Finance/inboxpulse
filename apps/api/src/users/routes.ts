@@ -6,6 +6,8 @@ import { requirePermission } from '../middleware/require-permission';
 import { getRequestHeader } from '../utils/request-header';
 import { handleApiRequest, handleApiRequestWithStatus, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { UserService } from './service';
+import { TenantRepository } from '../tenants/repository';
+import { logger } from '../utils/logger';
 import {
   createUserRequestSchema,
   updateUserRequestSchema,
@@ -104,15 +106,29 @@ userRoutes.patch('/me/preferences', async (c) => {
 userRoutes.get('/me', async (c) => {
   const requestHeader = getRequestHeader(c);
   const service = container.resolve(UserService);
+  const tenantRepository = container.resolve(TenantRepository);
+
   const user = await service.getById(requestHeader, requestHeader.userId);
 
   if (!user) {
     throw new NotFoundError('User', requestHeader.userId);
   }
 
-  return c.json<ApiResponse<typeof user>>({
+  // tenantDomains is best-effort enrichment — a failure here (e.g. a tenants
+  // lookup error) must not take down the core auth endpoint.
+  let tenantDomains: string[] = [];
+  try {
+    const tenant = await tenantRepository.findById(requestHeader.tenantId);
+    tenantDomains = tenant?.domains ?? [];
+  } catch (error) {
+    logger.error({ error, tenantId: requestHeader.tenantId }, 'Failed to load tenant domains for /me');
+  }
+
+  const data = { ...user, tenantDomains };
+
+  return c.json<ApiResponse<typeof data>>({
     success: true,
-    data: user,
+    data,
   });
 });
 

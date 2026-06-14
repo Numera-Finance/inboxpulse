@@ -1182,9 +1182,17 @@ export class EmailAnalysisService {
         }
       }
 
-      // Find customer ID from email participants
+      // Find customer ID from email participants. Resolve from the external SENDER
+      // (from + contact), matching the Gmail sidebar's resolution: internal 'user'
+      // participants carry the tenant's own org customerId, and to/cc recipients
+      // would mis-attribute the task — both must be excluded. Fall back to any
+      // external contact if there's no from-contact.
       const participants = await this.emailRepo.getParticipants(ctx.emailId);
-      const participantWithCustomer = participants.find(p => p.customerId);
+      const contactParticipants = participants.filter(
+        (p) => p.participantType === 'contact' && p.customerId
+      );
+      const participantWithCustomer =
+        contactParticipants.find((p) => p.direction === 'from') ?? contactParticipants[0];
 
       if (!participantWithCustomer?.customerId) {
         logger.debug(
