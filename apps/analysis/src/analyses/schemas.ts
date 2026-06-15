@@ -37,6 +37,7 @@ function signatureField() {
 export const sentimentSchema = z.object({
   value: z.enum(['positive', 'negative', 'neutral']),
   confidence: z.number().min(0).max(1),
+  reason: llmOptional(z.string()),
 });
 
 export type SentimentResult = z.infer<typeof sentimentSchema>;

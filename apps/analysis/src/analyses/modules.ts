@@ -22,6 +22,7 @@ Analyze the emotional tone of this email from a customer relationship perspectiv
 Return:
 - value: positive|negative|neutral
 - confidence: 0-1 (how confident you are in the sentiment classification)
+- reason: one short sentence (max ~160 characters) justifying the classification, quoting or paraphrasing the specific phrase that drove it. Always provide this.
 
 CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) are NEUTRAL. Only classify as POSITIVE when the PRIMARY PURPOSE of the email is to express genuine satisfaction, praise, or heartfelt gratitude — not as a side effect of politeness.
 
@@ -50,32 +51,35 @@ CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) a
 - Testimonials or recommendations
 - Expressed relief or satisfaction after problem resolution ("So glad this is finally working, you guys nailed it")
 
-**NEGATIVE** — Genuine dissatisfaction directed at US, or urgency/time-pressure about our work.
+**NEGATIVE** — The customer is genuinely dissatisfied with US, and that dissatisfaction is the PRIMARY PURPOSE of the email.
 
-Classify as NEGATIVE when either condition holds:
-1. DISSATISFACTION WITH US: the customer is unhappy with something WE did or failed to do — our service, deliverable, timeline, error, or communication — and that dissatisfaction is the PRIMARY PURPOSE of the email, not a passing remark in an otherwise operational message.
-2. URGENCY: the customer signals time-pressure about our work — an explicit deadline, or a request to prioritize, expedite, or act quickly — regardless of tone, and even when no dissatisfaction is expressed.
+Classify as NEGATIVE only when the customer ASSERTS that we did something wrong, failed them, or caused them harm — not when they merely ask, request, or rush us. The complaint must be aimed at our firm and be the main point of the email, not a passing remark in an otherwise operational message.
 
-Signals of dissatisfaction with us (NOT EXHAUSTIVE — reason about cases not listed here):
-- Complaints about our work quality
-- Disappointment with our responsiveness
-- Threats to cancel, leave, or escalate to management/legal
+The key test is ASSERTION vs. INQUIRY. Saying "this is wrong / this is missing / you never did X" is dissatisfaction. Asking "is this right? / can you confirm X? / any update on X?" is NOT — it is a neutral question even if it voices mild doubt.
+
+NEGATIVE signals — the customer ASSERTS a problem with us (NOT EXHAUSTIVE — reason about cases not listed here):
+- States our work is wrong or does not match reality ("this is incorrect", "the numbers don't match", "you booked this to the wrong account")
+- States we missed, lost, omitted, or failed to deliver something ("this is missing", "the files are gone", "you still haven't filed X")
+- Complains we are unresponsive or slow — especially repeated or ignored follow-ups ("I've emailed twice with no reply", "every response takes weeks", "no one responded")
+- Blames us for real harm — a penalty, a bounced/declined payment, or a missed deadline that WE caused
+- Threatens to cancel, leave, switch providers, or escalate to management/legal; or expresses mistrust or loss of confidence in us
 - Anger or sarcasm aimed at our firm
-- Being blamed for a problem that caused the customer real harm
-- Pointing out a likely error, discrepancy, or omission in our work — even when phrased politely or as a question ("this looks incorrect", "why is this missing?", "we missed the point here")
 
-Signals that do NOT by themselves make an email NEGATIVE (NOT EXHAUSTIVE — reason about cases not listed here):
-- A price / fee / quote negotiation
-- A genuine question, clarification, or help request that does NOT challenge the correctness of our work
-- Frustration aimed at a third party (a bank, tax authority, vendor, or tool) rather than at us — UNLESS the customer expects us to act on it (investigate, intervene, or get it resolved)
-- The customer apologizing for their own delay or mistake
-- An automated or transactional notice
+URGENCY IS NOT ESCALATION. A deadline, due date, or a request to prioritize or expedite ("ASAP", "by Friday", "on priority", "as a matter of urgency", "urgent") does NOT make an email negative on its own. Treat an urgent request as NEUTRAL unless it ALSO carries one of the NEGATIVE signals above — for example, the customer is chasing us because we already failed to deliver, or blames us for a deadline we are about to miss.
+
+NEUTRAL even when worded strongly or with time-pressure (NOT EXHAUSTIVE — reason about cases not listed here):
+- A request to send, prepare, fix, update, process, or grant access to something — even if marked urgent or carrying a deadline ("please share the W9 by tomorrow", "give KK QBO access on priority")
+- A question, clarification, status check, or request for confirmation — even if it voices mild uncertainty ("can you confirm the fee?", "I'm not sure I see the confirmation", "is this right?", "any update on the open items?")
+- A price, fee, quote, or scope discussion ("we don't want to pay for that twice")
+- Frustration aimed at a third party (a bank, the IRS, a vendor, another provider) — even if forwarded to us — UNLESS the customer explicitly blames US or asks us to fix OUR OWN failure
+- The customer explaining or apologizing for their OWN delay, mistake, or missing information ("sorry I couldn't get to it earlier", "I don't have the 2022 W-2")
+- The customer disagreeing with a correction we proposed, or saying a change is not needed — this is a discussion, not dissatisfaction
+- An informational or operational notice — a company winding down, a routine AR/AP review, providing documents we requested, or looping in a colleague to coordinate
 
 DOUBLE-CHECK before finalizing your classification. Re-read the email and ask:
-"Is the customer unhappy with something WE did or failed to do, as the main point of the email — OR are they expressing urgency or time-pressure about our work?"
-- If YES to either → NEGATIVE.
-- A question that challenges whether our work is correct, or flags a missing or incorrect figure, counts as dissatisfaction → NEGATIVE.
-- If the negativity is only about price, a third party they do not expect us to act on, or their own mistake, AND there is no urgency → NEUTRAL.
+"Is the customer ASSERTING that WE did something wrong, failed them, or caused harm — as the MAIN point of this email?"
+- If YES → NEGATIVE.
+- If they are only requesting, asking, clarifying, confirming, negotiating price, venting about a third party, owning their own delay, or applying time-pressure without a complaint about us → NEUTRAL.
 Revise your initial classification if this check disagrees with it.
 
 EXAMPLES - Classify as NEUTRAL (NOT positive):
@@ -100,7 +104,7 @@ KEY TEST: Ask yourself — "Is the primary purpose of this email to express posi
 
 Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
-  version: 'v1.4',
+  version: 'v1.5',
 };
 
 /**
