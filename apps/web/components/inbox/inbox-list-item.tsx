@@ -7,29 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { SentimentIndicator } from "@/components/ui/sentiment-indicator"
 import { ClassificationIndicator } from "@/components/ui/classification-indicator"
 import { cn } from "@/lib/utils"
+import { formatTimestamp } from "./format-timestamp"
 import type { InboxItem, InboxListItemProps } from "./types"
-
-/**
- * Format timestamp to display string
- */
-function formatTimestamp(date: Date): string {
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  if (diffDays === 0) {
-    // Today - show time
-    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-  } else if (diffDays === 1) {
-    return "Yesterday"
-  } else if (diffDays < 7) {
-    // This week - show day name
-    return date.toLocaleDateString([], { weekday: "short" })
-  } else {
-    // Older - show date
-    return date.toLocaleDateString([], { month: "short", day: "numeric" })
-  }
-}
 
 /**
  * Get priority badge styling
