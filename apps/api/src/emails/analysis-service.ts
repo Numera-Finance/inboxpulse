@@ -844,6 +844,11 @@ export class EmailAnalysisService {
         if (result?.modelUsed === 'keyword-match') {
           metadata.modelUsed = result.modelUsed;
           metadata.reasoning = result.reasoning;
+        } else if (typeof result?.reason === 'string' && result.reason.trim().length > 0) {
+          // LLM modules (e.g. sentiment, escalation) return a `reason` in their
+          // structured output — surface it into the dedicated reasoning column
+          // so classifications can be audited without re-reading the raw email.
+          metadata.reasoning = result.reason;
         }
         const record = createEmailAnalysisRecord(
           emailId,
