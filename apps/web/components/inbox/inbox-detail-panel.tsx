@@ -19,9 +19,10 @@ import { cn } from "@/lib/utils"
 import type { InboxDetailPanelProps, InboxItemContent } from "./types"
 
 /**
- * Format timestamp for display
+ * Format an absolute, full timestamp (weekday, date, year, time) for the detail
+ * view. Distinct from the relative inbox-list formatter in `formatTimestamp`.
  */
-function formatTimestamp(date: Date): string {
+function formatFullTimestamp(date: Date): string {
   return date.toLocaleDateString([], {
     weekday: "short",
     month: "short",
@@ -137,7 +138,7 @@ function MessageContent({ message }: { message: InboxItemContent }) {
           <div className="flex items-center justify-between">
             <p className="font-medium text-sm truncate">{message.from.name}</p>
             <span className="text-xs text-muted-foreground shrink-0">
-              {formatTimestamp(message.timestamp)}
+              {formatFullTimestamp(message.timestamp)}
             </span>
           </div>
           <p className="text-xs text-muted-foreground truncate">
@@ -400,7 +401,7 @@ export function InboxDetailPanel({
                 <div className="flex items-center justify-between">
                   <p className="font-medium text-sm">{item.sender.name}</p>
                   <span className="text-xs text-muted-foreground">
-                    {formatTimestamp(item.timestamp)}
+                    {formatFullTimestamp(item.timestamp)}
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground truncate">

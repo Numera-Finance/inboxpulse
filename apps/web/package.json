@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc && vite build",
     "dev": "vite",
+    "test": "vitest run",
     "lint": "tsc --noEmit",
     "preview": "vite preview"
   },
@@ -81,6 +82,7 @@
     "tailwindcss": "^4.0.0",
     "tw-animate-css": "^1.3.0",
     "typescript": "^5",
-    "vite": "^7.2.7"
+    "vite": "^7.2.7",
+    "vitest": "catalog:"
   }
 }
