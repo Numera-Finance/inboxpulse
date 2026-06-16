@@ -1,3 +1,5 @@
+import { differenceInCalendarDays } from "date-fns"
+
 /**
  * Format a timestamp for display in the inbox list.
  *
@@ -10,13 +12,9 @@
  * @param now - The current time; defaults to `new Date()`. Injectable for tests.
  */
 export function formatTimestamp(date: Date, now: Date = new Date()): string {
-  // Normalize both timestamps to local midnight before diffing so the
-  // comparison is by calendar day, independent of the time of day.
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  const diffDays = Math.round(
-    (startOfToday.getTime() - startOfDate.getTime()) / (1000 * 60 * 60 * 24)
-  )
+  // Calendar-day difference in local time: 0 = today, 1 = yesterday, negative =
+  // future. date-fns handles the DST / time-of-day normalization for us.
+  const diffDays = differenceInCalendarDays(now, date)
 
   if (diffDays === 0) {
     // Today - show time
