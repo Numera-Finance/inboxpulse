@@ -69,7 +69,7 @@ function getPoolOptions(): Options<Record<string, never>> {
   };
 
   const options: Options<Record<string, never>> = {
-    max: toPositiveInt(process.env.DB_POOL_MAX, 5),
+    max: toPositiveInt(process.env.DB_POOL_MAX, 10),
     idle_timeout: toPositiveInt(process.env.DB_IDLE_TIMEOUT, 20),
     connect_timeout: toPositiveInt(process.env.DB_CONNECT_TIMEOUT, 10),
   };
