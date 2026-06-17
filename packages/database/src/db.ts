@@ -56,6 +56,30 @@ function getSslOptions(): Options<Record<string, never>>['ssl'] | undefined {
   return undefined;
 }
 
+// Connection-pool sizing. postgres.js defaults to max=10 per process and
+// never times out idle connections, so across all services × Cloud Run
+// instances the shared Cloud SQL instance (max_connections=50) is easily
+// exhausted — new connections then hang until connect_timeout (CONNECT_TIMEOUT).
+// Cap the pool small, release idle connections quickly so they return to the
+// shared budget, and fail fast instead of hanging. All overridable via env.
+function getPoolOptions(): Options<Record<string, never>> {
+  const toPositiveInt = (value: string | undefined, fallback: number): number => {
+    const parsed = value !== undefined ? Number.parseInt(value, 10) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  };
+
+  const options: Options<Record<string, never>> = {
+    max: toPositiveInt(process.env.DB_POOL_MAX, 10),
+    idle_timeout: toPositiveInt(process.env.DB_IDLE_TIMEOUT, 20),
+    connect_timeout: toPositiveInt(process.env.DB_CONNECT_TIMEOUT, 10),
+  };
+
+  console.error(
+    `[Drizzle] Pool: max=${options.max}, idle_timeout=${options.idle_timeout}s, connect_timeout=${options.connect_timeout}s`
+  );
+  return options;
+}
+
 // Lazy client creation - only create when createDatabase is called
 // This ensures DATABASE_URL is loaded from dotenv before connection
 let client: ReturnType<typeof postgres> | null = null;
@@ -72,7 +96,8 @@ function getClient() {
     }
 
     const ssl = getSslOptions();
-    client = postgres(connectionString, ssl ? { ssl } : {});
+    const poolOptions = getPoolOptions();
+    client = postgres(connectionString, ssl ? { ...poolOptions, ssl } : poolOptions);
   }
   return client;
 }
