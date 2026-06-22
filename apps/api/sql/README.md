@@ -74,6 +74,10 @@ psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
 # Create analysis_cache table (LLM analysis result cache used by crm-analysis;
 # the Drizzle schema existed but the table was never created in production)
 psql $DATABASE_URL -f apps/api/sql/migrations/011_analysis_cache.sql
+
+# Add GIN index on integrations.parameters for JSONB containment (@>) email lookups
+# (Gmail webhook resolves integration by email; was full-table-scanning per call)
+psql $DATABASE_URL -f apps/api/sql/migrations/012_integrations_parameters_gin_index.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
