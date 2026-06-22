@@ -379,6 +379,14 @@ export class IntegrationRepository {
     email: string,
     keys: readonly string[] = ['email', 'impersonatedUserEmail', 'userEmail']
   ): SQL {
+    // A falsy email (or empty keys) must match nothing. Without this guard,
+    // JSON.stringify drops an undefined value so the predicate degrades to
+    // `parameters @> '[{"key":"email"}]'`, which matches ANY row that merely has
+    // an email key — returning a wrong (possibly cross-tenant) integration.
+    if (!email || keys.length === 0) {
+      return sql`false`;
+    }
+
     return or(
       ...keys.map(
         (key) => sql`${integrations.parameters} @> ${JSON.stringify([{ key, value: email }])}::jsonb`
@@ -401,6 +409,8 @@ export class IntegrationRepository {
           this.emailMatchesParameters(email, ['email', 'impersonatedUserEmail'])
         )
       )
+      // Deterministic pick when more than one row matches.
+      .orderBy(integrations.createdAt, integrations.id)
       .limit(1);
 
     return result.length > 0 ? result[0].id : null;
@@ -539,6 +549,10 @@ export class IntegrationRepository {
       .select()
       .from(integrations)
       .where(and(...conditions))
+      // No tenantId is passed on the webhook path, so multiple tenants could in
+      // principle share a mailbox; order deterministically instead of letting the
+      // planner pick an arbitrary row.
+      .orderBy(integrations.createdAt, integrations.id)
       .limit(1);
 
     return result.length > 0 ? this.mapToIntegration(result[0]) : null;
