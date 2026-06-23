@@ -134,7 +134,7 @@ jobs:
           CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
-            --memory 512Mi \
+            --memory 1Gi \
             --cpu 1 \
             --timeout 300 \
             --concurrency 100
