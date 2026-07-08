@@ -5,6 +5,19 @@ import { logger } from '../utils/logger';
 import { getEnv } from '../env';
 
 /**
+ * Single-flight cache for in-progress OAuth token refreshes, keyed by tenantId.
+ *
+ * GmailClientFactory is constructed per-request, so this MUST live at module
+ * scope (not on the instance) to collapse the refresh stampede across the many
+ * concurrent webhooks that hit the same tenant at token-expiry time. Without it,
+ * every concurrent caller independently calls Google's token endpoint AND writes
+ * the same integration row, producing an external-call fan-out plus heavy
+ * row-lock contention. Cloud Run runs multiple instances, so this bounds
+ * refreshes to ~one per instance rather than one per webhook.
+ */
+const inFlightRefreshes = new Map<string, Promise<{ accessToken: string; expiresAt: Date }>>();
+
+/**
  * Gmail Client Factory
  *
  * Abstracts away credential strategy and returns a ready-to-use Gmail client.
@@ -170,10 +183,35 @@ export class GmailClientFactory {
   }
 
   /**
-   * Refresh OAuth access token
-   * Returns both access token and expiration time
+   * Refresh OAuth access token (single-flighted per tenant).
+   *
+   * Concurrent callers for the same tenant share one in-flight refresh, so we
+   * make exactly one Google token call and one DB write per tenant at a time
+   * instead of one per webhook. The promise is cleared on settle so the next
+   * expiry window triggers a fresh refresh (and a failure doesn't get cached).
    */
-  private async refreshOAuthToken(
+  private refreshOAuthToken(
+    tenantId: string,
+    credentials: any
+  ): Promise<{ accessToken: string; expiresAt: Date }> {
+    const existing = inFlightRefreshes.get(tenantId);
+    if (existing) {
+      logger.info({ tenantId }, 'Joining in-flight OAuth token refresh');
+      return existing;
+    }
+
+    const refresh = this.doRefreshOAuthToken(tenantId, credentials).finally(() => {
+      inFlightRefreshes.delete(tenantId);
+    });
+    inFlightRefreshes.set(tenantId, refresh);
+    return refresh;
+  }
+
+  /**
+   * Perform the actual OAuth access token refresh against Google.
+   * Returns both access token and expiration time.
+   */
+  private async doRefreshOAuthToken(
     tenantId: string,
     credentials: any
   ): Promise<{ accessToken: string; expiresAt: Date }> {
