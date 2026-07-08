@@ -581,6 +581,13 @@ export class IntegrationRepository {
     // single row lock and was a primary source of lock-wait contention.
     // last_used_at is telemetry only (nothing reads it for logic), so ~10 min
     // staleness is fine and this guard skips virtually all of those writes.
+    //
+    // Compare against a JS-computed cutoff rather than SQL now(): last_used_at
+    // is `timestamp` WITHOUT time zone and is written as a JS Date, so a
+    // server-side now() comparison would be reinterpreted through the session
+    // TimeZone and could shift the 10-min window (or defeat the debounce
+    // entirely). A Date cutoff uses the same serialization path as the write.
+    const staleCutoff = new Date(Date.now() - 10 * 60 * 1000);
     await this.db
       .update(integrations)
       .set({ lastUsedAt: new Date() })
@@ -589,7 +596,7 @@ export class IntegrationRepository {
           eq(integrations.id, integrationId),
           or(
             isNull(integrations.lastUsedAt),
-            lt(integrations.lastUsedAt, sql`now() - interval '10 minutes'`)
+            lt(integrations.lastUsedAt, staleCutoff)
           )
         )
       );

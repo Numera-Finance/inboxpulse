@@ -18,6 +18,21 @@ import { getEnv } from '../env';
 const inFlightRefreshes = new Map<string, Promise<{ accessToken: string; expiresAt: Date }>>();
 
 /**
+ * Credential record returned by IntegrationClient.getCredentials for a Gmail
+ * integration. All fields are optional — the auth strategy (OAuth vs service
+ * account) is chosen from which ones are present.
+ */
+interface GmailCredentials {
+  accessToken?: string;
+  accessTokenExpiresAt?: string | Date;
+  refreshToken?: string;
+  serviceAccountEmail?: string;
+  serviceAccountKey?: { private_key: string };
+  impersonatedUserEmail?: string;
+  scopes?: string[];
+}
+
+/**
  * Gmail Client Factory
  *
  * Abstracts away credential strategy and returns a ready-to-use Gmail client.
@@ -192,7 +207,7 @@ export class GmailClientFactory {
    */
   private refreshOAuthToken(
     tenantId: string,
-    credentials: any
+    credentials: GmailCredentials
   ): Promise<{ accessToken: string; expiresAt: Date }> {
     const existing = inFlightRefreshes.get(tenantId);
     if (existing) {
@@ -213,7 +228,7 @@ export class GmailClientFactory {
    */
   private async doRefreshOAuthToken(
     tenantId: string,
-    credentials: any
+    credentials: GmailCredentials
   ): Promise<{ accessToken: string; expiresAt: Date }> {
     logger.info({ tenantId }, 'Refreshing OAuth access token');
 
