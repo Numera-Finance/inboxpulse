@@ -307,10 +307,26 @@ export class IntegrationRepository {
       updateData.token = data.refreshToken; // legacy field
     }
 
+    // Concurrent Gmail webhooks can each refresh the OAuth token near expiry and
+    // race to write this same row. When only the access token changed, skip the
+    // write if another refresher already stored a token that expires at or after
+    // ours — this avoids redundant row-lock contention on the hot integration
+    // row. Always write unconditionally when a refresh token is present so a
+    // rotated refresh token is never dropped by the guard.
+    const where = data.refreshToken
+      ? eq(integrations.id, integrationId)
+      : and(
+          eq(integrations.id, integrationId),
+          or(
+            isNull(integrations.accessTokenExpiresAt),
+            lt(integrations.accessTokenExpiresAt, data.accessTokenExpiresAt)
+          )
+        );
+
     await this.db
       .update(integrations)
       .set(updateData)
-      .where(eq(integrations.id, integrationId));
+      .where(where);
   }
 
   /**
@@ -559,10 +575,31 @@ export class IntegrationRepository {
   }
 
   private async updateLastUsed(integrationId: string) {
+    // Debounce: only bump the timestamp if it's stale (>10 min). This runs on
+    // every getCredentials call across all Gmail webhooks, and they all target
+    // the same integration row — an unconditional UPDATE serializes them on a
+    // single row lock and was a primary source of lock-wait contention.
+    // last_used_at is telemetry only (nothing reads it for logic), so ~10 min
+    // staleness is fine and this guard skips virtually all of those writes.
+    //
+    // Compare against a JS-computed cutoff rather than SQL now(): last_used_at
+    // is `timestamp` WITHOUT time zone and is written as a JS Date, so a
+    // server-side now() comparison would be reinterpreted through the session
+    // TimeZone and could shift the 10-min window (or defeat the debounce
+    // entirely). A Date cutoff uses the same serialization path as the write.
+    const staleCutoff = new Date(Date.now() - 10 * 60 * 1000);
     await this.db
       .update(integrations)
       .set({ lastUsedAt: new Date() })
-      .where(eq(integrations.id, integrationId));
+      .where(
+        and(
+          eq(integrations.id, integrationId),
+          or(
+            isNull(integrations.lastUsedAt),
+            lt(integrations.lastUsedAt, staleCutoff)
+          )
+        )
+      );
   }
 
   /**
