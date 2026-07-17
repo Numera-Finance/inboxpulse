@@ -162,6 +162,45 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Whether an email's signals have been manually overridden (locked).
+   * @param emailId - Email UUID
+   * @param tx - Optional transaction context
+   */
+  async isSignalsOverridden(emailId: string, tx?: Transaction): Promise<boolean> {
+    const db = tx ?? this.db;
+    const rows = await db
+      .select({ signalsOverridden: emails.signalsOverridden })
+      .from(emails)
+      .where(eq(emails.id, emailId))
+      .limit(1);
+    return rows[0]?.signalsOverridden ?? false;
+  }
+
+  /**
+   * Manually override an email's signals and lock them.
+   * Sets `signalsOverridden = true` so the analysis pipeline will skip
+   * overwriting these signals on any future re-analysis.
+   * @param emailId - Email UUID
+   * @param signals - Array of Signal integers (from @crm/shared Signal constants)
+   * @param tx - Optional transaction context
+   */
+  async overrideSignals(
+    emailId: string,
+    signals: number[],
+    tx?: Transaction
+  ): Promise<void> {
+    const db = tx ?? this.db;
+    await db
+      .update(emails)
+      .set({
+        signals,
+        signalsOverridden: true,
+        updatedAt: new Date(),
+      })
+      .where(eq(emails.id, emailId));
+  }
+
+  /**
    * Update email analysis status
    * @param emailId - Email UUID
    * @param status - Analysis status

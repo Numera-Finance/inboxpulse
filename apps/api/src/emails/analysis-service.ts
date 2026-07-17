@@ -3,10 +3,11 @@ import { AnalysisClient, type ClassificationResult, type ExtractedPayload } from
 import type { Database, Transaction } from '@crm/database';
 import { EmailAnalysisRepository } from './analysis-repository';
 import { EmailRepository } from './repository';
+import { EmailSignalOverrideRepository } from './signal-override-repository';
 import { ThreadAnalysisService } from './thread-analysis-service';
 import { createEmailAnalysisRecord } from './analysis-utils';
-import type { Email, AnalysisType } from '@crm/shared';
-import { Signal, resolveCustomerKeyForEmail } from '@crm/shared';
+import type { Email, AnalysisType, RequestHeader } from '@crm/shared';
+import { Signal, resolveCustomerKeyForEmail, validateSignalSelection, NotFoundError, InvalidInputError } from '@crm/shared';
 import type { AnalysisType as EmailAnalysisType } from './analysis-schema';
 import { EmailAnalysisStatus, type NewEmailParticipant } from './schema';
 import { UserService } from '../users/service';
@@ -114,6 +115,7 @@ export class EmailAnalysisService {
     @inject(AnalysisClient) private analysisClient: AnalysisClient,
     private analysisRepo: EmailAnalysisRepository,
     private emailRepo: EmailRepository,
+    private signalOverrideRepo: EmailSignalOverrideRepository,
     private threadAnalysisService: ThreadAnalysisService,
     private userService: UserService,
     private contactService: ContactService,
@@ -882,6 +884,84 @@ export class EmailAnalysisService {
   }
 
   /**
+   * Apply a manual, user-supplied correction of an email's signals
+   * (sentiment / churn / tags), locking them against future re-analysis and
+   * recording the before/after in the override audit + learning log.
+   *
+   * The original `email_analyses` rows are intentionally left untouched so the
+   * model's verdict is preserved for prompt evaluation.
+   */
+  async applyManualSignalOverride(
+    requestHeader: RequestHeader,
+    emailId: string,
+    signals: number[],
+    reason?: string
+  ): Promise<{ emailId: string; signals: number[]; signalsOverridden: boolean }> {
+    const { tenantId, userId } = requestHeader;
+
+    // Tenant-scoped existence check
+    const email = await this.emailRepo.findById(emailId);
+    if (!email || email.tenantId !== tenantId) {
+      throw new NotFoundError('Email', emailId);
+    }
+
+    // De-duplicate and validate the requested signal set against the same
+    // invariants the analysis pipeline enforces.
+    const newSignals = [...new Set(signals)];
+    const validationError = validateSignalSelection(newSignals);
+    if (validationError) {
+      throw new InvalidInputError(validationError);
+    }
+
+    const previousSignals = email.signals ?? [];
+
+    // Snapshot what the model said, so a correction can be correlated to the
+    // exact analysis output that produced it.
+    const analyses = await this.analysisRepo.getAnalysesByEmail(emailId);
+    const analysisSnapshot: Record<string, unknown> = {
+      analyses: analyses.map((a) => ({
+        analysisType: a.analysisType,
+        result: a.result,
+        confidence: a.confidence,
+        riskLevel: a.riskLevel,
+        sentimentValue: a.sentimentValue,
+        modelUsed: a.modelUsed,
+        reasoning: a.reasoning,
+      })),
+    };
+
+    await this.db.transaction(async (tx) => {
+      await this.emailRepo.overrideSignals(emailId, newSignals, tx);
+      await this.signalOverrideRepo.insert(
+        {
+          tenantId,
+          emailId,
+          previousSignals,
+          newSignals,
+          reason: reason ?? null,
+          analysisSnapshot,
+          editedByUserId: userId,
+        },
+        tx
+      );
+    });
+
+    logger.info(
+      {
+        tenantId,
+        emailId,
+        userId,
+        previousSignals,
+        newSignals,
+        logType: 'EMAIL_SIGNALS_OVERRIDDEN',
+      },
+      'Applied manual signal override'
+    );
+
+    return { emailId, signals: newSignals, signalsOverridden: true };
+  }
+
+  /**
    * Update email signals from all analysis results (within transaction)
    * Converts analysis results to Signal integers and updates the signals array
    */
@@ -891,6 +971,17 @@ export class EmailAnalysisService {
     analysisResults: Record<string, any>,
     classificationResult?: ClassificationResult
   ): Promise<void> {
+    // Respect manual overrides: if a user has corrected this email's signals,
+    // never let a re-analysis (LLM or keyword) clobber them. This is the single
+    // choke point through which both paths update signals.
+    if (await this.emailRepo.isSignalsOverridden(emailId, tx)) {
+      logger.info(
+        { emailId, logType: 'EMAIL_SIGNALS_SKIPPED_OVERRIDDEN' },
+        'Skipping signal update — signals manually overridden'
+      );
+      return;
+    }
+
     const signals: number[] = [];
 
     // Classification

@@ -1,6 +1,6 @@
 import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
-import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker } from './types';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker, UpdateEmailSignalsRequest, UpdateEmailSignalsResponse } from './types';
 
 /**
  * Email input type for bulk insert API
@@ -372,6 +372,27 @@ export class EmailClient extends BaseClient {
     );
 
     return response?.data ?? null;
+  }
+
+  /**
+   * Manually override an email's signals (sentiment / churn / tags).
+   * Replaces the signal set, locks it against re-analysis, and logs the change.
+   */
+  async updateSignals(
+    emailId: string,
+    request: UpdateEmailSignalsRequest,
+    signal?: AbortSignal
+  ): Promise<UpdateEmailSignalsResponse> {
+    const response = await this.patch<ApiResponse<UpdateEmailSignalsResponse>>(
+      `/api/emails/${encodeURIComponent(emailId)}/signals`,
+      request,
+      signal
+    );
+
+    if (!response?.data) {
+      throw new Error(response?.error?.message ?? 'Failed to update email signals');
+    }
+    return response.data;
   }
 }
 

@@ -78,6 +78,10 @@ psql $DATABASE_URL -f apps/api/sql/migrations/011_analysis_cache.sql
 # Add GIN index on integrations.parameters for JSONB containment (@>) email lookups
 # (Gmail webhook resolves integration by email; was full-table-scanning per call)
 psql $DATABASE_URL -f apps/api/sql/migrations/012_integrations_parameters_gin_index.sql
+
+# Add emails.signals_overridden lock flag + email_signal_overrides audit/learning
+# log for manual sentiment/tag corrections
+psql $DATABASE_URL -f apps/api/sql/migrations/013_email_signal_overrides.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

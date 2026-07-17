@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { UpdateEmailSignalsRequest } from '@crm/clients';
 import * as api from '@/lib/api';
 
 // Query keys for cache management
@@ -40,6 +41,22 @@ export function useEmailsByCustomer(
     queryKey: emailKeys.byCustomer(tenantId, customerId, options),
     queryFn: () => api.getEmailsByCustomer(tenantId, customerId, options),
     enabled: !!tenantId && !!customerId,
+  });
+}
+
+/**
+ * Hook to manually override an email's signals (sentiment / churn / tags).
+ * Invalidates customer-scoped email lists so the churn/sentiment views refresh.
+ * The inbox list/detail are fetched imperatively and refreshed by the caller.
+ */
+export function useUpdateEmailSignals() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ emailId, request }: { emailId: string; request: UpdateEmailSignalsRequest }) =>
+      api.updateEmailSignals(emailId, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: emailKeys.all });
+    },
   });
 }
 

@@ -88,6 +88,30 @@ export const analyzedEmailExportItemSchema = z.object({
 export type AnalyzedEmailExportItem = z.infer<typeof analyzedEmailExportItemSchema>;
 
 /**
+ * Request body for PATCH /api/emails/:emailId/signals — a manual correction of
+ * an email's signals (sentiment / churn / tags). `signals` is the full desired
+ * set of Signal integers (see @crm/shared Signal constants); it replaces the
+ * existing set. `reason` is an optional note on why the correction was made.
+ */
+export const updateEmailSignalsRequestSchema = z.object({
+  signals: z.array(z.number().int()).max(20),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export type UpdateEmailSignalsRequest = z.infer<typeof updateEmailSignalsRequestSchema>;
+
+/**
+ * Response for a signal override — the persisted signals and the lock flag.
+ */
+export const updateEmailSignalsResponseSchema = z.object({
+  emailId: z.string().uuid(),
+  signals: z.array(z.number()).default([]),
+  signalsOverridden: z.boolean(),
+});
+
+export type UpdateEmailSignalsResponse = z.infer<typeof updateEmailSignalsResponseSchema>;
+
+/**
  * First-reply marker — a header-only signal that the company replied in a thread.
  *
  * Emitted by the Gmail sync for outbound/reply messages it drops at the

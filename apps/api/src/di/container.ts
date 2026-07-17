@@ -18,6 +18,7 @@ import { TenantService } from '../tenants/service';
 import { EmailRepository } from '../emails/repository';
 import { EmailThreadRepository } from '../emails/thread-repository';
 import { EmailAnalysisRepository } from '../emails/analysis-repository';
+import { EmailSignalOverrideRepository } from '../emails/signal-override-repository';
 import { ThreadAnalysisRepository } from '../emails/thread-analysis-repository';
 import { ThreadAnalysisService } from '../emails/thread-analysis-service';
 import { EmailAnalysisService } from '../emails/analysis-service';
@@ -86,6 +87,7 @@ export function setupContainer() {
   container.register(EmailRepository, { useClass: EmailRepository });
   container.register(EmailThreadRepository, { useClass: EmailThreadRepository });
   container.register(EmailAnalysisRepository, { useClass: EmailAnalysisRepository });
+  container.register(EmailSignalOverrideRepository, { useClass: EmailSignalOverrideRepository });
   container.register(ThreadAnalysisRepository, { useClass: ThreadAnalysisRepository });
   container.register(RunRepository, { useClass: RunRepository });
   container.register(CustomerRepository, { useClass: CustomerRepository });
