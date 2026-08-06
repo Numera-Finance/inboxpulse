@@ -2400,8 +2400,23 @@ export class EmailRepository extends ScopedRepository {
 
     const rowCount = affectedRows(result);
 
-    if (rowCount > 0) {
-      logger.info({ tenantId, ...logContext, updatedCount: rowCount }, message);
+    // Log both numbers, ALWAYS. `replyCount` is what we offered; `updatedCount` is
+    // what actually matched a customer email. The gap between them is the only
+    // visibility we have into the originator rule rejecting replies, because
+    // rejection happens inside the join — reply messages are never stored, so a
+    // reply that matches nothing leaves no trace anywhere else.
+    //
+    // Suppressing this when rowCount is 0 (as it used to) hid exactly the case
+    // worth seeing: a batch where every reply was rejected looked identical to a
+    // batch with no replies at all.
+    //
+    // Counts only — never the addresses. Recipient lists are customer PII and
+    // must not be shipped to Cloud Logging.
+    const context = { tenantId, ...logContext, updatedCount: rowCount };
+    if (rowCount === 0) {
+      logger.warn(context, `${message}: no customer email matched any submitted reply`);
+    } else {
+      logger.info(context, message);
     }
 
     return rowCount;
