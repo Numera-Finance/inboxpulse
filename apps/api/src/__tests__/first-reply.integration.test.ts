@@ -283,6 +283,63 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
     expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z'); // r2, not r1
   });
 
+  // The whole point of DISTINCT ON (rather than MIN + GROUP BY) is that the
+  // timestamp and the replier come from the SAME message. Both orderings below
+  // would pass with a MIN(reply_at) that picked its replier independently.
+  it('attributes to the sender of the EARLIEST qualifying reply, not a later one', async () => {
+    await insert([
+      mkCollection([
+        mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') }),
+        mkEmail({
+          messageId: 'r1',
+          from: { email: 'agent@tenant.com' }, // a known user, replies FIRST
+          tos: [{ email: 'customer@acme.com' }],
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T10:00:00Z'),
+        }),
+        mkEmail({
+          messageId: 'r2',
+          from: { email: 'shared-inbox@tenant.com' }, // not a user, replies later
+          tos: [{ email: 'customer@acme.com' }],
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T11:00:00Z'),
+        }),
+      ]),
+    ]);
+
+    const rows = await storedEmails();
+    expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T10:00:00.000Z');
+    expect(rows[0].firstReplyById).toBe(AGENT_ID);
+  });
+
+  it('keeps firstReplyById null when the EARLIEST reply is from a non-user, despite a later user reply', async () => {
+    await insert([
+      mkCollection([
+        mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') }),
+        mkEmail({
+          messageId: 'r1',
+          from: { email: 'shared-inbox@tenant.com' }, // not a user, replies FIRST
+          tos: [{ email: 'customer@acme.com' }],
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T10:00:00Z'),
+        }),
+        mkEmail({
+          messageId: 'r2',
+          from: { email: 'agent@tenant.com' }, // a known user, replies later
+          tos: [{ email: 'customer@acme.com' }],
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T11:00:00Z'),
+        }),
+      ]),
+    ]);
+
+    const rows = await storedEmails();
+    expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T10:00:00.000Z');
+    // NOT AGENT_ID — the NULLS LAST tiebreaker must not promote the later reply's
+    // sender onto the earlier reply's timestamp.
+    expect(rows[0].firstReplyById).toBeNull();
+  });
+
   it('records the reply but leaves firstReplyById null when the sender is not a user', async () => {
     await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
     await insert([

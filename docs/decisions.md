@@ -14,7 +14,7 @@ Format:
 
 ---
 
-### ADR-001: First-reply attribution uses the originator rule (2026-08-05)
+### ADR-001: First-reply attribution uses the originator rule (2026-08-06)
 
 **Status:** Accepted
 
@@ -64,7 +64,7 @@ shared-mailbox teams look permanently unresponsive).
 
 ---
 
-### ADR-002: Affected-row counts read `count` before `rowCount` (2026-08-05)
+### ADR-002: Affected-row counts read `count` before `rowCount` (2026-08-06)
 
 **Status:** Accepted
 
@@ -85,7 +85,7 @@ suspect and has the same latent bug.
 
 ---
 
-### ADR-003: Integration suites mock the logger (2026-08-05)
+### ADR-003: Integration suites mock the logger (2026-08-06)
 
 **Status:** Accepted
 

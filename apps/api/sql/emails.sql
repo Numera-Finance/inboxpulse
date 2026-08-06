@@ -59,14 +59,20 @@ CREATE TABLE IF NOT EXISTS emails (
     -- first_reply_by_id: The user who sent that first reply, resolved from its
     -- sender address. NULL when the address matches no user in the tenant
     -- (shared mailbox, alias) — the reply still counts for first_reply_at.
-    first_reply_by_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    -- The FK is named explicitly so it matches the name migration 013 creates on
+    -- an existing database; otherwise Postgres auto-names it here and 013's
+    -- existence check misses, adding a second, duplicate constraint.
+    first_reply_by_id UUID,
 
     -- Tracking
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 
     -- Unique constraint
-    CONSTRAINT uniq_emails_tenant_provider_message UNIQUE (tenant_id, provider, message_id)
+    CONSTRAINT uniq_emails_tenant_provider_message UNIQUE (tenant_id, provider, message_id),
+
+    CONSTRAINT fk_emails_first_reply_by
+        FOREIGN KEY (first_reply_by_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- Indexes
