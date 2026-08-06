@@ -310,6 +310,11 @@ Drizzle schemas live in `apps/api/src/{module}/schema.ts`. Key tables:
 3. Run `pnpm db:push` to apply schema to database
 4. Update `apps/api/sql/README.md` with execution order
 
+### Reading affected-row counts
+
+- To find out how many rows a `db.execute(sql\`...\`)` write touched, use `affectedRows(result)` from `@crm/database`. **Never read `result.rowCount` directly** — the postgres.js driver this project uses reports the count as `count`, so `rowCount` is always `undefined` and the usual `?? 0` fallback turns it into a silent, plausible-looking zero. See ADR-002.
+- This counts rows *written*, not rows *returned*. For statements with a `RETURNING` clause, use the length of the returned rows instead.
+
 ### Migration Rules
 
 - **All SQL must be idempotent.** Use `IF NOT EXISTS` / `IF EXISTS` for all DDL statements (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`, etc.) so migrations can be safely re-run without errors.

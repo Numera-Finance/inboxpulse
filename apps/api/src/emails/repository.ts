@@ -1,5 +1,5 @@
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository } from '@crm/database';
+import { ScopedRepository, affectedRows } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
 import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
@@ -2398,13 +2398,7 @@ export class EmailRepository extends ScopedRepository {
       WHERE e.id = sub.email_id
     `);
 
-    // postgres.js reports affected rows as `count` on the returned array;
-    // node-postgres uses `rowCount`. Reading only the latter silently reported 0
-    // for every update, which also suppressed the log line below.
-    const rowCount: number =
-      (result as { count?: number; rowCount?: number }).count ??
-      (result as { count?: number; rowCount?: number }).rowCount ??
-      0;
+    const rowCount = affectedRows(result);
 
     if (rowCount > 0) {
       logger.info({ tenantId, ...logContext, updatedCount: rowCount }, message);
@@ -2529,6 +2523,6 @@ export class EmailRepository extends ScopedRepository {
       SET customer_id = ${targetCustomerId}
       WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
     `);
-    return (result as any).rowCount ?? 0;
+    return affectedRows(result);
   }
 }

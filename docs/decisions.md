@@ -64,7 +64,7 @@ shared-mailbox teams look permanently unresponsive).
 
 ---
 
-### ADR-002: Affected-row counts read `count` before `rowCount` (2026-08-06)
+### ADR-002: Affected-row counts go through `affectedRows()` (2026-08-06)
 
 **Status:** Accepted
 
@@ -73,15 +73,33 @@ integration suite — which had never actually been runnable — showed
 `applyFirstReplyMarkers` returning `updatedCount: 0` even though rows were being
 updated correctly.
 
-**Decision:** Read the affected-row count as `result.count ?? result.rowCount ?? 0`.
-The postgres.js driver returns an array whose affected-row count is `count`;
-`rowCount` is the node-postgres spelling and is always `undefined` here.
+A codebase sweep found the same bug at five more `db.execute(...)` call sites, all
+of them the customer-merge reassign helpers: `emails.reassignParticipantCustomer`,
+`customers.reassignDomains`, `contacts.reassignCustomer`, `tasks.reassignCustomer`,
+and `users.reassignCustomer`. Every one returned 0 regardless of how many rows it
+moved, so `CustomerService.merge` reported `movedDomains: 0, movedContacts: 0,
+movedTasks: 0, movedEmailParticipants: 0, movedUserAssignments: 0` on every
+successful merge.
+
+**Decision:** Add `affectedRows(result)` to `@crm/database` — the package that
+already owns driver setup, and so the right place for driver-shape knowledge — and
+use it at all six call sites. It prefers `count` (postgres.js, taken from the
+command tag), falls back to `rowCount` (node-postgres), and returns 0 only when
+neither is a number. Reaching into the result directly is now the thing to flag in
+review.
+
+The type guard matters: `?? 0` on a non-numeric field would let a string `count`
+through and propagate nonsense. Verified against a real postgres.js connection —
+an UPDATE touching 17 rows returns 17, and a genuine no-op still returns 0.
 
 **Consequences:** `POST /api/internal/emails/first-reply-markers` now reports a
-truthful `updatedCount` to the Gmail sync, and the "Updated firstReplyAt" info log —
+truthful `updatedCount` to the Gmail sync, the "Updated firstReplyAt" info log —
 the operational signal that TAT capture is working at all — fires for the first
-time. Any other `db.execute(...)` call in the codebase reading `.rowCount` is
-suspect and has the same latent bug.
+time, and customer merges report real counts instead of zeros. Callers could not
+previously distinguish a successful merge from a no-op.
+
+Note this counts rows *written*, not rows *returned*: for statements with a
+RETURNING clause, use the length of the returned rows instead.
 
 ---
 

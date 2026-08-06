@@ -1,6 +1,6 @@
 import { eq, and, sql, isNull, inArray, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository } from '@crm/database';
+import { ScopedRepository, affectedRows } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
 import {
@@ -981,6 +981,6 @@ export class UserRepository extends ScopedRepository {
       WHERE customer_id = ${sourceCustomerId}
         AND customer_id IN (SELECT id FROM customers WHERE tenant_id = ${tenantId})
     `);
-    return (result as any).rowCount ?? 0;
+    return affectedRows(result);
   }
 }
