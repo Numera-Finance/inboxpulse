@@ -14,6 +14,47 @@ An employee has access to:
 
 This allows managers to see all data related to their team's customers.
 
+### Direct Assignment (escalations and tasks)
+
+Hierarchical access is not the only path. A user also has access to **any single
+task/escalation assigned directly to them**, even when the underlying customer is
+outside their accessible set.
+
+This exists because an escalation can be assigned to *anyone* in the tenant —
+whoever is best placed to resolve it — not only to a subordinate or to a member
+of that customer's team. Without this arm, an assignee off the customer's team
+would receive the "Escalation Assigned to You" email and then find nothing when
+they logged in.
+
+The grant is deliberately narrow:
+
+| Granted | Not granted |
+|---------|-------------|
+| The assigned escalation in the AI Analysis list and detail view | The customer's other emails or escalations |
+| The assigned task in task search and the dashboard escalations tile | The customer record, contacts, or dashboard metrics |
+| Resolving, reopening, and commenting on that task | Any widening of `user_accessible_customers` |
+
+Enforced in:
+- `TaskRepository.buildTaskFilters` — `(hierarchy AND customer) OR assigned_to_id = me`
+- `TaskRepository.getRecentEscalationsScoped` — `customer OR assigned_to_id = me`
+- `EmailRepository.analyzedEmailAccessFilter` — `customer OR t.assigned_to_id = me`,
+  shared by `searchAnalyzedEmails`, `exportAnalyzedEmails`, and `getAnalyzedEmailById`
+- `TaskRepository.hasTaskAccess` — the mutation gate (reassign, resolve, reopen,
+  comment), mirroring `buildTaskFilters` exactly
+
+**Act ⊆ see.** `hasTaskAccess` deliberately mirrors `buildTaskFilters` rather than
+applying its own rule, so a user can act on precisely what they can see. Before
+this, the gate was hierarchy-only, which left two dead ends once assignment went
+tenant-wide: an assignee off the customer's team could not hand an escalation
+back, and a user with customer access lost control of any task they assigned
+outside their own hierarchy. It also means an unassigned task now requires
+customer access to mutate — previously any user could, though no list ever
+surfaced it to them.
+
+Aggregate customer metrics (TAT, upsell counts, dashboard rollups) deliberately
+keep the customer-only filter: holding one escalation should not pull a
+customer's numbers into someone's dashboard.
+
 ### Data Flow
 
 ```

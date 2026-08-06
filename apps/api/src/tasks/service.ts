@@ -268,9 +268,10 @@ export class TaskService {
       createdBySystem: false,
     });
 
-    // Send notification if task is assigned
+    // Send notification if task is assigned. Unscoped read for the same reason
+    // as reassign(): the assignee may sit outside the creator's hierarchy.
     if (task.assignedToId) {
-      const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
+      const taskWithRelations = await this.taskRepository.findByIdWithRelations(header, task.id);
       if (taskWithRelations) {
         // Get assigner name (the user who created the task)
         const assigner = await this.userRepository.findById(header.userId);
@@ -394,8 +395,12 @@ export class TaskService {
     const task = await this.taskRepository.reassign(header, id, assignedToId);
     if (!task) return undefined;
 
-    // Fetch full task with relations (customerName, assignedToName, etc.)
-    const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
+    // Fetch full task with relations (customerName, assignedToName, etc.).
+    // Deliberately unscoped: reassign() already authorized the caller against
+    // the *pre-update* task, and handing an escalation to someone outside the
+    // caller's hierarchy would now fail a scoped re-read — silently dropping
+    // both the response and the assignment notification.
+    const taskWithRelations = await this.taskRepository.findByIdWithRelations(header, task.id);
     if (!taskWithRelations) return undefined;
 
     // Send notification if task is reassigned to someone

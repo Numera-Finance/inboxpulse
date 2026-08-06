@@ -19,7 +19,16 @@ import {
 } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
 import { useAssignableUsers, useReassignTask, useTask } from "@/lib/hooks"
+import { useAuth } from "@/src/contexts/AuthContext"
 import { TaskStatus } from "@crm/clients"
+
+interface AssignOption {
+  id: string
+  /** What the dropdown lists — "Me" for the current user. */
+  label: string
+  /** What the "Assigned To" line shows once picked — always the real name. */
+  assigneeName: string
+}
 
 interface TaskMetaInfoProps {
   taskId: string
@@ -47,6 +56,7 @@ export function TaskMetaInfo({
   const { data: assignableUsers = [] } = useAssignableUsers()
   const { data: taskData } = useTask(taskId)
   const reassign = useReassignTask()
+  const { user } = useAuth()
 
   // Determine if task is resolved
   const isResolved = taskData?.status === TaskStatus.DONE
@@ -76,22 +86,35 @@ export function TaskMetaInfo({
     name: assigneeName ?? "Unassigned",
   }
 
-  // Filter users by search term
-  const filteredUsers = React.useMemo(() => {
-    if (!assigneeSearch) return assignableUsers
-    const searchLower = assigneeSearch.toLowerCase()
-    return assignableUsers.filter((user) =>
-      user.name.toLowerCase().includes(searchLower)
-    )
-  }, [assignableUsers, assigneeSearch])
+  // "Me" leads the list so an assignee can take an escalation back — the API
+  // omits the caller from assignable users.
+  const assignOptions = React.useMemo<AssignOption[]>(() => {
+    const others = assignableUsers.map((u) => ({
+      id: u.id,
+      label: u.name,
+      assigneeName: u.name,
+    }))
+    if (!user?.id) return others
+    return [
+      { id: user.id, label: "Me", assigneeName: user.name || "Me" },
+      ...others,
+    ]
+  }, [assignableUsers, user?.id, user?.name])
 
-  const handleAssign = async (userId: string) => {
-    // Find the user name for optimistic update
-    const user = assignableUsers.find((u) => u.id === userId)
-    if (user) {
-      // Optimistically update local state
-      setLocalAssignee({ id: userId, name: user.name })
-    }
+  // Match on the real name too, so searching for your own name finds "Me"
+  const filteredOptions = React.useMemo(() => {
+    if (!assigneeSearch) return assignOptions
+    const searchLower = assigneeSearch.toLowerCase()
+    return assignOptions.filter(
+      (option) =>
+        option.label.toLowerCase().includes(searchLower) ||
+        option.assigneeName.toLowerCase().includes(searchLower)
+    )
+  }, [assignOptions, assigneeSearch])
+
+  const handleAssign = async (option: AssignOption) => {
+    // Optimistically update local state
+    setLocalAssignee({ id: option.id, name: option.assigneeName })
 
     setAssigneeOpen(false)
     setAssigneeSearch("")
@@ -99,7 +122,7 @@ export function TaskMetaInfo({
 
     try {
       // useReassignTask.onSuccess already updates the cache and invalidates lists
-      await reassign.mutateAsync({ id: taskId, assignedToId: userId })
+      await reassign.mutateAsync({ id: taskId, assignedToId: option.id })
     } catch (error) {
       console.error("Failed to assign:", error)
       // Revert optimistic update on error
@@ -158,13 +181,13 @@ export function TaskMetaInfo({
                   <CommandList>
                     <CommandEmpty>No users found.</CommandEmpty>
                     <CommandGroup>
-                      {filteredUsers.map((user) => {
-                        const isSelected = displayAssignee.id === user.id
+                      {filteredOptions.map((option) => {
+                        const isSelected = displayAssignee.id === option.id
                         return (
                           <CommandItem
-                            key={user.id}
-                            value={user.id}
-                            onSelect={() => handleAssign(user.id)}
+                            key={option.id}
+                            value={option.id}
+                            onSelect={() => handleAssign(option)}
                           >
                             <Check
                               className={cn(
@@ -172,7 +195,7 @@ export function TaskMetaInfo({
                                 isSelected ? "opacity-100" : "opacity-0"
                               )}
                             />
-                            {user.name}
+                            {option.label}
                           </CommandItem>
                         )
                       })}

@@ -1681,6 +1681,33 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Access predicate for the analyzed-email (escalations) queries.
+   *
+   * A user sees an analyzed email when the sender's customer is accessible to
+   * them, OR when the escalation's task is assigned to them directly. The
+   * second arm exists because an escalation can be assigned to anyone in the
+   * tenant — the assignee must be able to open the one escalation they own
+   * even when they are not on that customer's team. It grants no access to
+   * the customer's other emails.
+   *
+   * Assumes the query aliases the sender participant as `ep` and LEFT JOINs
+   * tasks as `t`. Returns null for admins, who bypass access filters.
+   */
+  private analyzedEmailAccessFilter(header: RequestHeader): SQL | null {
+    if (isAdmin(header.permissions)) {
+      return null;
+    }
+
+    return sql`(
+      ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )
+      OR t.assigned_to_id = ${header.userId}
+    )`;
+  }
+
+  /**
    * Search analyzed emails with optional task overlay
    * Returns emails that have been analyzed (analysis_status = 3)
    * with LEFT JOIN to tasks for task overlay information
@@ -1704,12 +1731,10 @@ export class EmailRepository extends ScopedRepository {
       sql`ep.customer_id IS NOT NULL`,
     ];
 
-    // Customer access filter — sender's customer must be accessible.
-    if (!isAdmin(header.permissions)) {
-      whereParts.push(sql`ep.customer_id IN (
-        SELECT uac.customer_id FROM user_accessible_customers uac
-        WHERE uac.user_id = ${header.userId}
-      )`);
+    // Access filter — sender's customer accessible, or assigned to the caller.
+    const accessFilter = this.analyzedEmailAccessFilter(header);
+    if (accessFilter) {
+      whereParts.push(accessFilter);
     }
 
     // Signal filter
@@ -1877,11 +1902,9 @@ export class EmailRepository extends ScopedRepository {
       sql`ep.customer_id IS NOT NULL`,
     ];
 
-    if (!isAdmin(header.permissions)) {
-      whereParts.push(sql`ep.customer_id IN (
-        SELECT uac.customer_id FROM user_accessible_customers uac
-        WHERE uac.user_id = ${header.userId}
-      )`);
+    const accessFilter = this.analyzedEmailAccessFilter(header);
+    if (accessFilter) {
+      whereParts.push(accessFilter);
     }
 
     if (request.signal && request.signal !== 'all') {
@@ -2065,11 +2088,9 @@ export class EmailRepository extends ScopedRepository {
       sql`ep.customer_id IS NOT NULL`,
     ];
 
-    if (!isAdmin(header.permissions)) {
-      whereParts.push(sql`ep.customer_id IN (
-        SELECT uac.customer_id FROM user_accessible_customers uac
-        WHERE uac.user_id = ${header.userId}
-      )`);
+    const accessFilter = this.analyzedEmailAccessFilter(header);
+    if (accessFilter) {
+      whereParts.push(accessFilter);
     }
 
     const whereClause = sql.join(whereParts, sql` AND `);

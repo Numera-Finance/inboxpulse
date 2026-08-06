@@ -1,7 +1,7 @@
 import { eq, and, sql, SQL, desc, asc, inArray } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository, type Database, type Transaction } from '@crm/database';
-import { Permission, Signal, type RequestHeader } from '@crm/shared';
+import { Signal, isAdmin, type RequestHeader } from '@crm/shared';
 import { tasks, taskComments, userSubordinates, type Task, type NewTask, type TaskComment, type NewTaskComment, TaskStatus } from './schema';
 import { users } from '../users/schema';
 import { customers } from '../customers/schema';
@@ -31,8 +31,15 @@ export class TaskRepository extends ScopedRepository {
   }
 
   /**
-   * Check if user can access a task (their own or subordinate's)
-   * Uses the inherited hasUserAccess but also verifies tenant
+   * Check if a user can act on a task (reassign, resolve, reopen, comment).
+   *
+   * Mirrors the visibility rule in `buildTaskFilters` exactly — hierarchy AND
+   * customer access, OR the task is assigned to the caller — so what a user can
+   * act on is precisely what they can see. Two cases depend on it:
+   * - The assignee of an escalation for a customer they have no access to can
+   *   still work it, including handing it back.
+   * - Someone with customer access can reassign a task they handed to a user
+   *   outside their reporting hierarchy, instead of losing control of it.
    */
   private async hasTaskAccess(header: RequestHeader, taskId: string): Promise<boolean> {
     // First get the task to check tenant and assignedToId
@@ -40,7 +47,19 @@ export class TaskRepository extends ScopedRepository {
     if (!task || task.tenantId !== header.tenantId) {
       return false;
     }
-    return this.hasUserAccess(header, task.assignedToId);
+
+    if (isAdmin(header.permissions)) {
+      return true;
+    }
+
+    if (task.assignedToId === header.userId) {
+      return true;
+    }
+
+    return (
+      (await this.hasUserAccess(header, task.assignedToId)) &&
+      (await this.hasCustomerAccess(header, task.customerId))
+    );
   }
 
   /**
@@ -83,8 +102,13 @@ export class TaskRepository extends ScopedRepository {
   ): SQL[] {
     const conditions: SQL[] = [
       this.tenantFilter(tasks.tenantId, header),
-      this.userAccessFilter(tasks.assignedToId, header),
-      this.customerAccessFilter(tasks.customerId, header),
+      // Normal scoping is hierarchy AND customer access, but a direct assignee
+      // always sees what is assigned to them — an escalation can be handed to
+      // anyone in the tenant, including someone off the customer's team.
+      sql`(
+        (${this.userAccessFilter(tasks.assignedToId, header)} AND ${this.customerAccessFilter(tasks.customerId, header)})
+        OR ${tasks.assignedToId} = ${header.userId}
+      )`,
     ];
 
     if (options.status !== undefined) {
@@ -170,6 +194,20 @@ export class TaskRepository extends ScopedRepository {
       return undefined;
     }
 
+    return this.findByIdWithRelations(header, id);
+  }
+
+  /**
+   * Load a task with its relations, tenant-scoped but without the per-user
+   * access check.
+   *
+   * Only for callers that have already authorized the operation and now need
+   * the resulting row — notably reassign(), where the caller legitimately
+   * loses access to the task the moment it is handed to someone outside their
+   * hierarchy, so re-checking access here would drop the response and the
+   * assignment notification.
+   */
+  async findByIdWithRelations(header: RequestHeader, id: string): Promise<TaskWithRelations | undefined> {
     const result = await this.db
       .select({
         id: tasks.id,
@@ -382,7 +420,11 @@ export class TaskRepository extends ScopedRepository {
   }>> {
     const conditions: SQL[] = [
       this.tenantFilter(tasks.tenantId, header),
-      this.customerAccessFilter(tasks.customerId, header),
+      // Customer access, or assigned directly to the caller (see buildTaskFilters).
+      sql`(
+        ${this.customerAccessFilter(tasks.customerId, header)}
+        OR ${tasks.assignedToId} = ${header.userId}
+      )`,
       eq(tasks.status, TaskStatus.OPEN),
     ];
 
@@ -576,43 +618,22 @@ export class TaskRepository extends ScopedRepository {
   }
 
   /**
-   * Get users that can be assigned tasks
-   * - Admins: can assign to any user in tenant (excluding self)
-   * - Others: can only assign to subordinates
-   * The current user is shown as "Me" in the frontend dropdown
+   * Get users that can be assigned tasks/escalations.
+   *
+   * Any active user in the tenant is assignable, regardless of reporting
+   * hierarchy or customer-team membership: escalations frequently need to go
+   * to whoever can actually resolve them, not only to a subordinate or to
+   * someone already on the customer's team. Being assigned grants the
+   * assignee visibility of that one escalation (see `buildTaskFilters` and
+   * `EmailRepository.searchAnalyzedEmails`) — it does not widen their access
+   * to the customer's other data.
+   *
+   * The caller is excluded; the frontend surfaces "Me" separately.
+   * The permission to actually assign is enforced on the route
+   * (`PUT /api/tasks/:id/assign` requires TASK_EDIT).
    */
   async getAssignableUsers(header: RequestHeader): Promise<Array<{ id: string; name: string }>> {
-    const isAdmin = header.permissions?.includes(Permission.ADMIN) ?? false;
-
-    if (isAdmin) {
-      // Admins can assign to any user in the tenant (excluding themselves)
-      const result = await this.db
-        .select({
-          id: users.id,
-          name: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('name'),
-        })
-        .from(users)
-        .where(
-          and(
-            this.tenantFilter(users.tenantId, header),
-            sql`${users.id} != ${header.userId}`,
-            sql`${users.rowStatus} = 0` // Active users only
-          )
-        )
-        .orderBy(sql`lower(${users.firstName})`, sql`lower(${users.lastName})`);
-
-      return result;
-    }
-
-    // Non-admins: get subordinates only (exclude self - frontend has "Me" option)
-    const subordinateIds = await this.getSubordinates(header.userId);
-
-    // If no subordinates, return empty array
-    if (subordinateIds.length === 0) {
-      return [];
-    }
-
-    const result = await this.db
+    return this.db
       .select({
         id: users.id,
         name: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`.as('name'),
@@ -621,12 +642,11 @@ export class TaskRepository extends ScopedRepository {
       .where(
         and(
           this.tenantFilter(users.tenantId, header),
-          inArray(users.id, subordinateIds)
+          sql`${users.id} != ${header.userId}`,
+          sql`${users.rowStatus} = 0` // Active users only
         )
       )
       .orderBy(sql`lower(${users.firstName})`, sql`lower(${users.lastName})`);
-
-    return result;
   }
 
   /**
