@@ -3,12 +3,14 @@
  *
  * These exercise the REAL EmailService + repositories against a REAL Postgres,
  * covering the behavior that unit tests can't: which emails get stored, how
- * firstReplyAt is populated, the lastMessageAt bump, the reply-only branch, and
- * the no-domains short-circuit.
+ * firstReplyAt / firstReplyById are populated (including the originator rule —
+ * a reply only counts for a customer email it is actually addressed to), the
+ * lastMessageAt bump, the reply-only branch, and the no-domains short-circuit.
  *
  * ── How to run ────────────────────────────────────────────────────────────
  *   1. Point at a DISPOSABLE Postgres (the setup DROPs/recreates the emails,
- *      email_threads, tenants and integrations tables — do NOT use a real DB):
+ *      email_threads, tenants, roles, customers, users and integrations tables —
+ *      do NOT use a real DB):
  *
  *        export TEST_DATABASE_URL=postgres://user:pass@localhost:5432/crm_test
  *
@@ -34,6 +36,13 @@ vi.mock('../inngest/client', () => ({
   inngest: { send: vi.fn().mockResolvedValue({ ids: [] }) },
 }));
 
+// Neutralize the logger. It lazily require()s '../env', which doesn't resolve
+// under vitest's transform — without this the whole suite errors out before any
+// assertion runs, regardless of the database.
+vi.mock('../utils/logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
 // Point the shared db factory at the test DB BEFORE it's imported/initialized.
@@ -46,6 +55,7 @@ import { createDatabase, getDatabaseClient, type Database } from '@crm/database'
 import { EmailService } from '../emails/service';
 import { EmailRepository } from '../emails/repository';
 import { EmailThreadRepository } from '../emails/thread-repository';
+import { UserRepository } from '../users/repository';
 import type { TenantRepository } from '../tenants/repository';
 import type { ContactRepository } from '../contacts/repository';
 import { emails, emailThreads } from '../emails/schema';
@@ -53,6 +63,7 @@ import { emails, emailThreads } from '../emails/schema';
 const SQL_DIR = resolve(__dirname, '../../sql');
 const TENANT_ID = '00000000-0000-0000-0000-0000000000a1';
 const INTEGRATION_ID = '00000000-0000-0000-0000-0000000000b1';
+const AGENT_ID = '00000000-0000-0000-0000-0000000000c1';
 const THREAD = 'gmail-thread-1';
 
 // ── builders ────────────────────────────────────────────────────────────────
@@ -110,8 +121,9 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
     db = createDatabase({}) as unknown as Database;
     client = getDatabaseClient();
 
-    // Build the minimal FK closure: tenants → integrations → email_threads → emails.
-    for (const f of ['tenants', 'integrations', 'email_threads', 'emails']) {
+    // Build the minimal FK closure. users must exist before emails, which now
+    // carries first_reply_by_id -> users(id); users in turn needs roles + customers.
+    for (const f of ['tenants', 'roles', 'customers', 'users', 'integrations', 'email_threads', 'emails']) {
       await client.unsafe(readFileSync(resolve(SQL_DIR, `${f}.sql`), 'utf-8'));
     }
     await client.unsafe(
@@ -121,12 +133,20 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
       `INSERT INTO integrations (id, tenant_id, source, auth_type, parameters)
        VALUES ('${INTEGRATION_ID}', '${TENANT_ID}', 'gmail', 'oauth', '{}') ON CONFLICT (id) DO NOTHING;`
     );
+    // agent@tenant.com is a known user; every other tenant-domain sender in these
+    // tests deliberately is not, so firstReplyById can be exercised both ways.
+    await client.unsafe(
+      `INSERT INTO users (id, tenant_id, first_name, last_name, email)
+       VALUES ('${AGENT_ID}', '${TENANT_ID}', 'Agent', 'Smith', 'Agent@Tenant.com')
+       ON CONFLICT (tenant_id, email) DO NOTHING;`
+    );
 
     service = new EmailService(
       new EmailRepository(db),
       new EmailThreadRepository(db),
       tenantRepo,
       contactRepo,
+      new UserRepository(db),
       db
     );
   });
@@ -169,6 +189,7 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
     expect(rows).toHaveLength(1); // reply not stored
     expect(rows.some((r) => (r.labels ?? []).includes('SENT'))).toBe(false);
     expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z');
+    expect(rows[0].firstReplyById).toBe(AGENT_ID); // resolved despite mixed-case stored address
     expect((await thread())!.lastMessageAt.toISOString()).toBe('2026-01-01T11:00:00.000Z');
   });
 
@@ -190,6 +211,95 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].messageId).toBe('c1');
     expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T10:00:00.000Z');
+    expect(rows[0].firstReplyById).toBe(AGENT_ID);
+  });
+
+  // ── the originator rule ────────────────────────────────────────────────────
+  // A reply only answers a customer email when it is addressed to THAT email's
+  // own sender. Everything else in the thread is ignored for TAT.
+  it('ignores a reply addressed to a different customer contact on the same thread', async () => {
+    await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+    await insert([
+      mkCollection([
+        mkEmail({
+          messageId: 'r1',
+          from: { email: 'agent@tenant.com' },
+          tos: [{ email: 'someone-else@acme.com' }], // external, but NOT the originator
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T10:00:00Z'),
+        }),
+      ]),
+    ]);
+
+    const rows = await storedEmails();
+    expect(rows[0].firstReplyAt).toBeNull();
+    expect(rows[0].firstReplyById).toBeNull();
+    expect((await thread())!.lastMessageAt.toISOString()).toBe('2026-01-01T10:00:00.000Z'); // still activity
+  });
+
+  it('counts a reply that carries the originator in Cc rather than To', async () => {
+    await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+    await insert([
+      mkCollection([
+        mkEmail({
+          messageId: 'r1',
+          from: { email: 'agent@tenant.com' },
+          tos: [{ email: 'someone-else@acme.com' }],
+          ccs: [{ email: 'CUSTOMER@acme.com' }], // originator, differently cased
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T10:00:00Z'),
+        }),
+      ]),
+    ]);
+
+    const rows = await storedEmails();
+    expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T10:00:00.000Z');
+    expect(rows[0].firstReplyById).toBe(AGENT_ID);
+  });
+
+  it('skips a non-originator reply and takes the later one that does answer the sender', async () => {
+    await insert([
+      mkCollection([
+        mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') }),
+        mkEmail({
+          messageId: 'r1',
+          from: { email: 'agent@tenant.com' },
+          tos: [{ email: 'someone-else@acme.com' }],
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T10:00:00Z'),
+        }),
+        mkEmail({
+          messageId: 'r2',
+          from: { email: 'agent@tenant.com' },
+          tos: [{ email: 'customer@acme.com' }],
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T11:00:00Z'),
+        }),
+      ]),
+    ]);
+
+    const rows = await storedEmails();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z'); // r2, not r1
+  });
+
+  it('records the reply but leaves firstReplyById null when the sender is not a user', async () => {
+    await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+    await insert([
+      mkCollection([
+        mkEmail({
+          messageId: 'r1',
+          from: { email: 'shared-inbox@tenant.com' }, // no matching users row
+          tos: [{ email: 'customer@acme.com' }],
+          labels: ['SENT'],
+          receivedAt: t('2026-01-01T10:00:00Z'),
+        }),
+      ]),
+    ]);
+
+    const rows = await storedEmails();
+    expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T10:00:00.000Z'); // a human did reply
+    expect(rows[0].firstReplyById).toBeNull(); // we just don't know who
   });
 
   it('a reply that arrives before its thread exists is not recorded and nothing is stored', async () => {
@@ -273,6 +383,8 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
     expect(rows).toHaveLength(2);
     expect(byId.c1.firstReplyAt?.toISOString()).toBe('2026-01-01T10:00:00.000Z'); // r1
     expect(byId.c2.firstReplyAt?.toISOString()).toBe('2026-01-01T12:00:00.000Z'); // r2, not r1
+    expect(byId.c1.firstReplyById).toBe(AGENT_ID);
+    expect(byId.c2.firstReplyById).toBe(AGENT_ID);
   });
 
   it('with no tenant domains, reply detection is disabled: everything is stored and first_reply_at stays null', async () => {
@@ -325,6 +437,31 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
       const rows = await storedEmails();
       expect(rows).toHaveLength(1); // marker never creates a row
       expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z');
+      expect(rows[0].firstReplyById).toBe(AGENT_ID);
+    });
+
+    it('ignores a marker addressed to a different customer contact', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+
+      const res = await applyMarkers([
+        mkMarker({ tos: [{ email: 'someone-else@acme.com' }], receivedAt: '2026-01-01T11:00:00Z' }),
+      ]);
+
+      expect(res.updatedCount).toBe(0);
+      expect((await storedEmails())[0].firstReplyAt).toBeNull();
+    });
+
+    it('leaves firstReplyById null for a marker from a non-user address', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+
+      const res = await applyMarkers([
+        mkMarker({ fromEmail: 'shared-inbox@tenant.com', receivedAt: '2026-01-01T11:00:00Z' }),
+      ]);
+
+      expect(res.updatedCount).toBe(1);
+      const rows = await storedEmails();
+      expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z');
+      expect(rows[0].firstReplyById).toBeNull();
     });
 
     it('ignores an internal-only marker (no external recipient)', async () => {

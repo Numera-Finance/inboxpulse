@@ -57,20 +57,23 @@ InboxPulse is a multi-tenant customer-communications intelligence platform for *
 
 ---
 
-## 4. First-reply capture (`first_reply_at`) → Implements: TAT-1..TAT-8
+## 4. First-reply capture (`first_reply_at`, `first_reply_by_id`) → Implements: TAT-1..TAT-8
 
-Shared rule in `runFirstReplyUpdate` (`repository.ts:2365`): set `first_reply_at = MIN(reply_at)` where `is_customer_email=true` **and** `first_reply_at IS NULL` (never overwritten) **and** `reply_at > received_at` (strictly after). Each customer email gets the earliest qualifying reply that followed it. (`first-reply.integration.test.ts:249-276`)
-- **Path A — bulk insert:** partition into `replyEmails`/`storableEmails`; only `isCountableReply` replies set `first_reply_at`; all reply timestamps still advance `lastMessageAt`; failure non-fatal. (`service.ts:208-230,538-550`)
-- **Path B — header-only markers:** blacklisted tenant-domain replies forwarded and run through the same rules, keyed by provider thread id; won't overwrite; ignores markers before the customer email; disabled without domains. (`service.ts:38-95`)
+Shared rule in `runFirstReplyUpdate`: pick, per customer email, the earliest reply satisfying `is_customer_email=true` **and** `first_reply_at IS NULL` (never overwritten) **and** `reply_at > received_at` (strictly after) **and** `LOWER(from_email) = ANY(reply recipients)` — the **originator rule**: the reply must be addressed (To or Cc) to that email's own sender. `DISTINCT ON (email_id) ORDER BY email_id, reply_at` (not `MIN`) so `first_reply_at` and `first_reply_by_id` come from the same message. (`first-reply.integration.test.ts`)
+- **Path A — bulk insert:** partition into `replyEmails`/`storableEmails`; only `isCountableReply` replies are candidates; all reply timestamps still advance `lastMessageAt`; failure non-fatal.
+- **Path B — header-only markers:** blacklisted tenant-domain replies forwarded and run through the same rules, keyed by provider thread id; won't overwrite; ignores markers before the customer email; disabled without domains.
+- **Attribution:** `first_reply_by_id` = the winning reply's sender resolved against `users(tenant_id, LOWER(email))` (`UserRepository.findIdsByEmails`). Nullable — an unmatched sender (shared mailbox, alias) still sets `first_reply_at`.
 
-| Situation | `first_reply_at`? | `last_message_at`? | PRD |
-|---|---|---|---|
-| Human SENT/tenant reply to external | ✅ | ✅ | TAT-1 |
-| Internal-only note | ❌ | ✅ | TAT-6, TAT-7 |
-| Auto-submitted / bulk / `noreply@` | ❌ | ✅ | TAT-5, TAT-7 |
-| `Auto-Submitted: no` | ✅ | ✅ | TAT-5 |
-| Reply before thread exists | ❌ | ❌ | THR-5 |
-| No tenant domains | ❌ (stored) | ✅ | DIR-6 |
+| Situation | `first_reply_at`? | `first_reply_by_id`? | `last_message_at`? | PRD |
+|---|---|---|---|---|
+| Human SENT/tenant reply to the originator | ✅ | ✅ if sender is a user | ✅ | TAT-1 |
+| Reply to a different contact on the thread | ❌ | ❌ | ✅ | TAT-1 |
+| Reply from a non-user address (shared/alias) | ✅ | ❌ (null) | ✅ | TAT-1 |
+| Internal-only note | ❌ | ❌ | ✅ | TAT-6, TAT-7 |
+| Auto-submitted / bulk / `noreply@` | ❌ | ❌ | ✅ | TAT-5, TAT-7 |
+| `Auto-Submitted: no` | ✅ | ✅ if sender is a user | ✅ | TAT-5 |
+| Reply before thread exists | ❌ | ❌ | ❌ | THR-5 |
+| No tenant domains | ❌ (stored) | ❌ | ✅ | DIR-6 |
 
 ---
 

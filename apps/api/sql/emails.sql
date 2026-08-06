@@ -50,10 +50,16 @@ CREATE TABLE IF NOT EXISTS emails (
     -- Set during email ingestion to avoid expensive domain matching in queries
     is_customer_email BOOLEAN,
 
-    -- first_reply_at: Timestamp of the first reply (tenant's outbound message) in
-    -- the thread that arrived after this customer email — the time-to-response
-    -- anchor. Reply emails are not stored as rows, so only the timestamp is kept.
+    -- first_reply_at: Timestamp of the first reply (tenant's outbound message)
+    -- that arrived after this customer email AND was addressed to its sender —
+    -- the time-to-response anchor. Reply emails are not stored as rows, so only
+    -- this trace of them is kept.
     first_reply_at TIMESTAMP,
+
+    -- first_reply_by_id: The user who sent that first reply, resolved from its
+    -- sender address. NULL when the address matches no user in the tenant
+    -- (shared mailbox, alias) — the reply still counts for first_reply_at.
+    first_reply_by_id UUID REFERENCES users(id) ON DELETE SET NULL,
 
     -- Tracking
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -79,3 +85,6 @@ CREATE INDEX idx_emails_signals ON emails USING GIN(signals);
 
 -- Index for TAT metrics queries (customer emails only)
 CREATE INDEX idx_emails_tenant_customer ON emails(tenant_id, is_customer_email);
+
+-- Index for "who responded first" reporting
+CREATE INDEX idx_emails_first_reply_by ON emails(tenant_id, first_reply_by_id);

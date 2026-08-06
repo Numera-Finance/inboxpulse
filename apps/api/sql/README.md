@@ -78,6 +78,11 @@ psql $DATABASE_URL -f apps/api/sql/migrations/011_analysis_cache.sql
 # Add GIN index on integrations.parameters for JSONB containment (@>) email lookups
 # (Gmail webhook resolves integration by email; was full-table-scanning per call)
 psql $DATABASE_URL -f apps/api/sql/migrations/012_integrations_parameters_gin_index.sql
+
+# Add emails.first_reply_by_id (who sent the first reply) + FK to users and index.
+# Ships with the originator matching rule: a reply only counts for a customer
+# email when it is addressed to that email's own sender. No backfill.
+psql $DATABASE_URL -f apps/api/sql/migrations/013_email_first_reply_by.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
