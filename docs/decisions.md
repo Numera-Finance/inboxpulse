@@ -86,6 +86,26 @@ that one item.
   Reassignment from A to B currently notifies only B. A loses access just as
   they would on removal, so notifying them too is defensible — left open
   deliberately rather than doubling email volume on the common path.
+
+  Neither notification fires when the actor is also the subject: taking an
+  escalation or dropping one you hold are both things you just did on screen.
+- The outgoing assignee is returned by the UPDATE itself (a CTE reading the
+  pre-write snapshot in `TaskRepository.reassign`) rather than by a preceding
+  SELECT. A separate read leaves a window in which a concurrent reassignment
+  changes the assignee in between, which would mail the unassignment notice to
+  someone who no longer held the task while the person who actually lost it
+  heard nothing — the exact failure the notification exists to prevent.
+- `create()` and `reassign()` now validate the assignment target
+  (`assertAssignableUser`): it must resolve to an active user in the caller's
+  tenant. The route only checked that the id parses as a UUID, and the
+  repository authorizes the *caller* against the task, never the *assignee* —
+  while `tasks.assigned_to_id` references `users.id`, which is not
+  tenant-scoped. Without the check the FK accepts a deactivated account,
+  stranding the escalation with an assignee who cannot log in, or an id from
+  another tenant, whose address would then receive an assignment email naming
+  this tenant's customer and email subject. `autoAssignTask` filters to active
+  members for the same reason, so an offboarded Controller falls through to the
+  Account Manager instead of blocking auto-assignment for that customer.
 - The `task.assigned` email is unchanged and now actually reaches off-team
   assignees. Its only remaining gate is the existing "is this escalation
   openable" check (the link must resolve) plus the user's own notification

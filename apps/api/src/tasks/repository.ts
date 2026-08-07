@@ -378,8 +378,45 @@ export class TaskRepository extends ScopedRepository {
     });
   }
 
-  async reassign(header: RequestHeader, id: string, assignedToId: string | null): Promise<Task | undefined> {
-    return this.updateScoped(header, id, { assignedToId });
+  /**
+   * Reassign a task, returning the assignee it had immediately before the write.
+   *
+   * The previous assignee is captured by a CTE in the same statement rather than
+   * by a preceding SELECT: a separate read leaves a window in which a concurrent
+   * reassignment changes the assignee in between, which would send the
+   * unassignment notification to someone who no longer held the task while the
+   * person who actually lost it hears nothing. The CTE is evaluated against the
+   * statement's snapshot, so it always yields the pre-UPDATE value.
+   *
+   * Returns undefined when the caller cannot access the task or it is gone.
+   */
+  async reassign(
+    header: RequestHeader,
+    id: string,
+    assignedToId: string | null
+  ): Promise<{ id: string; previousAssigneeId: string | null } | undefined> {
+    const hasAccess = await this.hasTaskAccess(header, id);
+    if (!hasAccess) {
+      return undefined;
+    }
+
+    const rows = await this.db.execute<{ id: string; previous_assigned_to_id: string | null }>(sql`
+      WITH previous AS (
+        SELECT assigned_to_id FROM tasks
+        WHERE id = ${id} AND tenant_id = ${header.tenantId}
+      )
+      UPDATE tasks
+      SET assigned_to_id = ${assignedToId}, updated_at = NOW()
+      WHERE id = ${id} AND tenant_id = ${header.tenantId}
+      RETURNING id, (SELECT assigned_to_id FROM previous) AS previous_assigned_to_id
+    `);
+
+    const row = rows[0];
+    if (!row) {
+      return undefined;
+    }
+
+    return { id: row.id, previousAssigneeId: row.previous_assigned_to_id ?? null };
   }
 
   /**
