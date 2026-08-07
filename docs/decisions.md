@@ -70,6 +70,22 @@ that one item.
   an assignment could be handed on and never undone. It is pinned rather than
   listed because the roster is tenant-sized — a last row would need scrolling to
   reach and would vanish whenever a search filtered the list.
+- A `task.unassigned` notification accompanies that action. Removal is not a
+  neutral event under the narrow-grant model: for an assignee outside the
+  customer's team, being assigned *was* their access, so clearing it makes the
+  escalation vanish from every list they can see. Without the email they would
+  never learn it happened. `reassign()` therefore captures the outgoing assignee
+  before the write, since the updated row no longer carries it.
+
+  The email deliberately has **no deep link** — the recipient may have just lost
+  the only path they had to that escalation, so a link would 404 for exactly the
+  people who most need telling. It names the customer and subject instead. It
+  also has no opt-out toggle in settings, unlike `task.assigned`: losing work
+  assigned to you is not notification noise.
+
+  Reassignment from A to B currently notifies only B. A loses access just as
+  they would on removal, so notifying them too is defensible — left open
+  deliberately rather than doubling email volume on the common path.
 - The `task.assigned` email is unchanged and now actually reaches off-team
   assignees. Its only remaining gate is the existing "is this escalation
   openable" check (the link must resolve) plus the user's own notification

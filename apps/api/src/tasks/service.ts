@@ -392,6 +392,10 @@ export class TaskService {
   async reassign(header: RequestHeader, id: string, assignedToId: string | null): Promise<TaskWithRelations | undefined> {
     logger.info({ taskId: id, assignedToId }, 'Reassigning task');
 
+    // Capture the outgoing assignee before the write — the updated row no
+    // longer carries it, and on removal they are the only person to notify.
+    const previousAssigneeId = (await this.taskRepository.findById(id))?.assignedToId ?? null;
+
     const task = await this.taskRepository.reassign(header, id, assignedToId);
     if (!task) return undefined;
 
@@ -403,13 +407,19 @@ export class TaskService {
     const taskWithRelations = await this.taskRepository.findByIdWithRelations(header, task.id);
     if (!taskWithRelations) return undefined;
 
-    // Send notification if task is reassigned to someone
+    // Name of whoever performed the change, for either notification.
+    const actor = await this.userRepository.findById(header.userId);
+    const actorName = actor ? `${actor.firstName} ${actor.lastName}` : undefined;
+
     if (assignedToId) {
-      // Get assigner name (the user who reassigned the task)
-      const assigner = await this.userRepository.findById(header.userId);
-      const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
       // Fire and forget - don't block on notification
-      this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => { });
+      this.sendTaskAssignedNotification(taskWithRelations, actorName).catch(() => { });
+    } else if (previousAssigneeId) {
+      // Removal: tell whoever was holding it. Being assigned is one of the two
+      // ways a user reaches an escalation, so for an assignee outside the
+      // customer's team this is the only signal they get — the escalation has
+      // just disappeared from every list they can see.
+      this.sendTaskUnassignedNotification(taskWithRelations, previousAssigneeId, actorName).catch(() => { });
     }
 
     return taskWithRelations;
@@ -940,6 +950,82 @@ export class TaskService {
       }
     } catch (error) {
       logger.error({ taskId: task.id, error }, 'Error sending task-assigned notification');
+      return false;
+    }
+  }
+
+  /**
+   * Send task-unassigned notification to the user an escalation was taken from.
+   *
+   * Called when reassign() clears the assignee. `task` is the row *after* the
+   * write, so its assignee fields are empty — the recipient is looked up from
+   * the id captured beforehand.
+   *
+   * Unlike the assigned notification there is no openable-escalation gate,
+   * because this email carries no deep link: the recipient may have just lost
+   * the only access path they had to that escalation, so a link would 404 for
+   * exactly the people who most need telling.
+   */
+  async sendTaskUnassignedNotification(
+    task: TaskWithRelations,
+    previousAssigneeId: string,
+    removedByName?: string
+  ): Promise<boolean> {
+    const recipient = await this.userRepository.findById(previousAssigneeId);
+    if (!recipient?.email) {
+      logger.warn(
+        { taskId: task.id, previousAssigneeId },
+        'No email for previous assignee, skipping unassignment notification'
+      );
+      return false;
+    }
+
+    const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
+
+    try {
+      const response = await fetch(
+        `${notificationsUrl}/api/notifications/send`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-id': task.tenantId,
+            'x-user-id': previousAssigneeId,
+            ...getServiceAuthHeaders(),
+          },
+          body: JSON.stringify({
+            templateName: 'task.unassigned',
+            recipientEmail: recipient.email,
+            data: {
+              task: {
+                id: task.id,
+                customer: task.customerName || 'Unknown Customer',
+                subject: task.title,
+                dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
+                removedBy: removedByName || null,
+              },
+              recipientName: recipient.firstName || 'there',
+            },
+          }),
+        }
+      );
+
+      if (response.ok) {
+        logger.info(
+          { taskId: task.id, previousAssigneeId },
+          'Sent task-unassigned notification'
+        );
+        return true;
+      }
+
+      const errorData = await response.json().catch(() => ({}));
+      logger.error(
+        { taskId: task.id, status: response.status, error: errorData },
+        'Failed to send task-unassigned notification'
+      );
+      return false;
+    } catch (error) {
+      logger.error({ taskId: task.id, error }, 'Error sending task-unassigned notification');
       return false;
     }
   }

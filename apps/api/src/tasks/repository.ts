@@ -635,9 +635,11 @@ export class TaskRepository extends ScopedRepository {
    * to the customer's other data.
    *
    * The caller is included — you can assign an escalation to yourself, and
-   * taking one back is the common case. The frontend labels that row "Me" but
-   * takes the name from it, so every assignee name in the UI comes from this
-   * one source rather than the auth session.
+   * taking one back is the common case. Do not try to single that row out
+   * client-side: the web app's session user id is the better-auth id, not
+   * `users.id` (the two tables have independent keys and are mapped by email
+   * in `user-context.ts`), so it never matches an id from this list. The
+   * caller is listed by name like everyone else.
    *
    * The permission to actually assign is enforced on the route
    * (`PUT /api/tasks/:id/assign` requires TASK_EDIT).
