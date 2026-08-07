@@ -28,6 +28,8 @@ export interface TaskUnassignedTask {
   subject: string;
   dateOpened: string;
   removedBy?: string | null;
+  /** Who holds it now; null when it was left unassigned. */
+  reassignedTo?: string | null;
 }
 
 export interface TaskUnassignedEmailProps {
@@ -39,7 +41,10 @@ export function TaskUnassignedEmail({
   task,
   recipientName,
 }: TaskUnassignedEmailProps) {
-  const previewText = `Escalation removed: ${task.customer} - ${task.subject}`;
+  const handedOver = Boolean(task.reassignedTo);
+  const previewText = handedOver
+    ? `Escalation reassigned: ${task.customer} - ${task.subject}`
+    : `Escalation removed: ${task.customer} - ${task.subject}`;
 
   return (
     <Html>
@@ -54,7 +59,7 @@ export function TaskUnassignedEmail({
             {/* Header */}
             <Section className="bg-zinc-900 px-8 py-7">
               <Text className="text-zinc-400 text-xs font-medium uppercase tracking-wider m-0 mb-2">
-                Assignment Removed
+                {handedOver ? "Reassigned" : "Assignment Removed"}
               </Text>
               <Text className="text-white text-[22px] font-semibold m-0">
                 No Longer Assigned to You
@@ -64,9 +69,14 @@ export function TaskUnassignedEmail({
             {/* Content */}
             <Section className="px-8 py-7">
               <Text className="text-sm text-zinc-600 m-0 mb-5">
-                Hi {recipientName}, {task.removedBy
-                  ? `${task.removedBy} removed this escalation from you.`
-                  : "this escalation is no longer assigned to you."}{" "}
+                Hi {recipientName},{" "}
+                {handedOver
+                  ? task.removedBy
+                    ? `${task.removedBy} reassigned this escalation to ${task.reassignedTo}.`
+                    : `this escalation has been reassigned to ${task.reassignedTo}.`
+                  : task.removedBy
+                    ? `${task.removedBy} removed this escalation from you.`
+                    : "this escalation is no longer assigned to you."}{" "}
                 No action is needed from you on it.
               </Text>
 
@@ -91,10 +101,10 @@ export function TaskUnassignedEmail({
                     </td>
                     <td width="50%" valign="top" style={{ paddingLeft: "12px" }}>
                       <Text className="text-[10px] text-zinc-400 uppercase tracking-wide m-0 mb-1">
-                        Removed By
+                        {handedOver ? "Now Assigned To" : "Removed By"}
                       </Text>
                       <Text className="text-sm text-zinc-700 font-medium m-0">
-                        {task.removedBy ?? (
+                        {(handedOver ? task.reassignedTo : task.removedBy) ?? (
                           <span className="text-zinc-400 italic">Unknown</span>
                         )}
                       </Text>
@@ -104,8 +114,9 @@ export function TaskUnassignedEmail({
               </div>
 
               <Text className="text-xs text-zinc-400 m-0 mt-5">
-                If you were working on this, contact the person above — it may
-                no longer appear in your escalations list.
+                If you were working on this, hand your notes to{" "}
+                {handedOver ? task.reassignedTo : task.removedBy ?? "your manager"} —
+                it may no longer appear in your escalations list.
               </Text>
             </Section>
           </Container>

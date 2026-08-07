@@ -83,12 +83,16 @@ that one item.
   also has no opt-out toggle in settings, unlike `task.assigned`: losing work
   assigned to you is not notification noise.
 
-  Reassignment from A to B currently notifies only B. A loses access just as
-  they would on removal, so notifying them too is defensible — left open
-  deliberately rather than doubling email volume on the common path.
+  Both ends of a move are notified independently: handing an escalation from A
+  to B tells B it arrived and tells A it left. A loses access on a hand-off
+  exactly as they would on removal, so the two cases are the same event from
+  A's side. The template covers both — on a hand-off it names who holds it now,
+  so A knows where to send their notes; on a removal it does not, because
+  nobody does.
 
-  Neither notification fires when the actor is also the subject: taking an
-  escalation or dropping one you hold are both things you just did on screen.
+  Neither notification fires when the actor is also the subject (taking an
+  escalation, or dropping one you hold, are things you just did on screen), nor
+  when the assignee did not actually change.
 - The outgoing assignee is returned by the UPDATE itself (a CTE reading the
   pre-write snapshot in `TaskRepository.reassign`) rather than by a preceding
   SELECT. A separate read leaves a window in which a concurrent reassignment

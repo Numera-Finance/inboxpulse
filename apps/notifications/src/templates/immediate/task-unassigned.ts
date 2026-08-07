@@ -1,7 +1,8 @@
 /**
  * Task Unassigned Immediate Template
  *
- * Sends immediate notification when an escalation is removed from a user.
+ * Sends immediate notification when an escalation leaves a user — cleared
+ * outright, or handed to someone else.
  */
 
 import { render } from '@react-email/components';
@@ -24,6 +25,8 @@ export interface TaskUnassignedData {
     subject: string;
     dateOpened: string;
     removedBy?: string | null;
+    /** Who holds it now; null when it was left unassigned. */
+    reassignedTo?: string | null;
   };
   recipientName?: string;
 }
@@ -58,7 +61,9 @@ export class TaskUnassignedTemplate extends BaseImmediateTemplate<TaskUnassigned
     return sender.send({
       channel: 'email',
       to: input.user.email,
-      subject: `Escalation Removed: ${data.task.customer} - ${data.task.subject}`,
+      subject: data.task.reassignedTo
+        ? `Escalation Reassigned: ${data.task.customer} - ${data.task.subject}`
+        : `Escalation Removed: ${data.task.customer} - ${data.task.subject}`,
       html,
     });
   }

@@ -30,7 +30,11 @@ const header: RequestHeader = { tenantId: TENANT_ID, userId: ACTOR_ID, permissio
 
 interface Sent {
   assigned: Array<{ actorName?: string }>;
-  unassigned: Array<{ previousAssigneeId: string; actorName?: string }>;
+  unassigned: Array<{
+    previousAssigneeId: string;
+    actorName?: string;
+    reassignedToName?: string | null;
+  }>;
 }
 
 function makeService(options: {
@@ -57,6 +61,8 @@ function makeService(options: {
       tenantId: TENANT_ID,
       title: 'Re: something urgent',
       customerName: 'Acme',
+      // Read after the write, so this is whoever holds it now.
+      assignedToName: 'Third Three',
       createdAt: new Date('2026-08-06T00:00:00Z'),
     }),
   };
@@ -80,8 +86,13 @@ function makeService(options: {
     sent.assigned.push({ actorName });
     return true;
   };
-  service.sendTaskUnassignedNotification = async (_task, previousAssigneeId, actorName) => {
-    sent.unassigned.push({ previousAssigneeId, actorName });
+  service.sendTaskUnassignedNotification = async (
+    _task,
+    previousAssigneeId,
+    actorName,
+    reassignedToName
+  ) => {
+    sent.unassigned.push({ previousAssigneeId, actorName, reassignedToName });
     return true;
   };
 
@@ -109,8 +120,53 @@ describe('TaskService.reassign notifications', () => {
     await service.reassign(header, TASK_ID, null);
     await flush();
 
-    expect(sent.unassigned).toEqual([{ previousAssigneeId: OTHER_ID, actorName: 'Actor One' }]);
+    expect(sent.unassigned).toEqual([
+      { previousAssigneeId: OTHER_ID, actorName: 'Actor One', reassignedToName: null },
+    ]);
     expect(sent.assigned).toHaveLength(0);
+  });
+
+  it('notifies both ends when an escalation is handed from one user to another', async () => {
+    // The outgoing holder loses access exactly as they would on removal.
+    const { service, sent } = makeService({ previousAssigneeId: OTHER_ID });
+
+    await service.reassign(header, TASK_ID, THIRD_ID);
+    await flush();
+
+    expect(sent.assigned).toHaveLength(1);
+    expect(sent.unassigned).toHaveLength(1);
+    expect(sent.unassigned[0].previousAssigneeId).toBe(OTHER_ID);
+    // Names who holds it now, so the outgoing holder knows where it went.
+    expect(sent.unassigned[0].reassignedToName).toBe('Third Three');
+  });
+
+  it('passes no new-holder name when the escalation is merely cleared', async () => {
+    const { service, sent } = makeService({ previousAssigneeId: OTHER_ID });
+
+    await service.reassign(header, TASK_ID, null);
+    await flush();
+
+    expect(sent.unassigned[0].reassignedToName).toBeNull();
+  });
+
+  it('does not tell the outgoing holder when they are the one reassigning', async () => {
+    const { service, sent } = makeService({ previousAssigneeId: ACTOR_ID });
+
+    await service.reassign(header, TASK_ID, THIRD_ID);
+    await flush();
+
+    expect(sent.assigned).toHaveLength(1);
+    expect(sent.unassigned).toHaveLength(0);
+  });
+
+  it('sends nothing when the assignee is unchanged', async () => {
+    const { service, sent } = makeService({ previousAssigneeId: OTHER_ID });
+
+    await service.reassign(header, TASK_ID, OTHER_ID);
+    await flush();
+
+    expect(sent.assigned).toHaveLength(0);
+    expect(sent.unassigned).toHaveLength(0);
   });
 
   it('takes the outgoing assignee from the write, not from a prior read', async () => {

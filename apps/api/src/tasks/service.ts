@@ -425,17 +425,32 @@ export class TaskService {
     const actor = await this.userRepository.findById(header.userId);
     const actorName = actor ? `${actor.firstName} ${actor.lastName}` : undefined;
 
-    // Never notify someone about their own action — taking an escalation or
-    // dropping one you hold are both things you just did on screen.
-    if (assignedToId && assignedToId !== header.userId) {
+    // Both ends of the move are notified independently, because both change
+    // hands. Neither fires when the actor is also the subject — taking an
+    // escalation or dropping one you hold are things you just did on screen —
+    // and neither fires when the assignee did not actually change.
+    const incomingChanged = assignedToId && assignedToId !== previousAssigneeId;
+    const outgoingChanged = previousAssigneeId && previousAssigneeId !== assignedToId;
+
+    if (incomingChanged && assignedToId !== header.userId) {
       // Fire and forget - don't block on notification
       this.sendTaskAssignedNotification(taskWithRelations, actorName).catch(() => { });
-    } else if (!assignedToId && previousAssigneeId && previousAssigneeId !== header.userId) {
-      // Removal: tell whoever was holding it. Being assigned is one of the two
-      // ways a user reaches an escalation, so for an assignee outside the
-      // customer's team this is the only signal they get — the escalation has
-      // just disappeared from every list they can see.
-      this.sendTaskUnassignedNotification(taskWithRelations, previousAssigneeId, actorName).catch(() => { });
+    }
+
+    if (outgoingChanged && previousAssigneeId !== header.userId) {
+      // Tell whoever was holding it, on removal *and* on hand-off to someone
+      // else — they lose the escalation either way. Being assigned is one of
+      // the two ways a user reaches an escalation, so for an assignee outside
+      // the customer's team this is the only signal they get: it has just
+      // disappeared from every list they can see.
+      this.sendTaskUnassignedNotification(
+        taskWithRelations,
+        previousAssigneeId,
+        actorName,
+        // Non-null only on a hand-off, and read after the write, so it names
+        // the person who holds it now.
+        assignedToId ? taskWithRelations.assignedToName : null
+      ).catch(() => { });
     }
 
     return taskWithRelations;
@@ -994,21 +1009,24 @@ export class TaskService {
   }
 
   /**
-   * Send task-unassigned notification to the user an escalation was taken from.
+   * Send task-unassigned notification to the user an escalation was taken from,
+   * whether it was cleared outright or handed to someone else.
    *
-   * Called when reassign() clears the assignee. `task` is the row *after* the
-   * write, so its assignee fields are empty — the recipient is looked up from
-   * the id captured beforehand.
+   * `task` is the row *after* the write, so the recipient is looked up from the
+   * id the update reported, not from the task's own assignee fields.
    *
    * Unlike the assigned notification there is no openable-escalation gate,
    * because this email carries no deep link: the recipient may have just lost
    * the only access path they had to that escalation, so a link would 404 for
    * exactly the people who most need telling.
+   *
+   * @param reassignedToName who holds it now, or null if it was left unassigned
    */
   async sendTaskUnassignedNotification(
     task: TaskWithRelations,
     previousAssigneeId: string,
-    removedByName?: string
+    removedByName?: string,
+    reassignedToName?: string | null
   ): Promise<boolean> {
     const recipient = await this.userRepository.findById(previousAssigneeId);
     if (!recipient?.email) {
@@ -1042,6 +1060,7 @@ export class TaskService {
                 subject: task.title,
                 dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
                 removedBy: removedByName || null,
+                reassignedTo: reassignedToName || null,
               },
               recipientName: recipient.firstName || 'there',
             },
