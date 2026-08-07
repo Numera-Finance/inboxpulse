@@ -1,11 +1,14 @@
 import { injectable, inject } from 'tsyringe';
 import { EmailRepository } from './repository';
+import type { FirstReplyCandidate } from './repository';
 import { EmailThreadRepository } from './thread-repository';
 import { TenantRepository } from '../tenants/repository';
 import { ContactRepository } from '../contacts/repository';
+import { UserRepository } from '../users/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
-import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply } from './converter';
+import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply, toReplyAttribution } from './converter';
+import type { ReplyAttribution } from './converter';
 import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
 import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker } from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
@@ -22,8 +25,32 @@ export class EmailService {
     @inject(EmailThreadRepository) private threadRepo: EmailThreadRepository,
     @inject(TenantRepository) private tenantRepo: TenantRepository,
     @inject(ContactRepository) private contactRepo: ContactRepository,
+    @inject(UserRepository) private userRepo: UserRepository,
     @inject('Database') private db: Database
   ) {}
+
+  /**
+   * Attach the sender's user id to each reply, so first_reply_by_id can record
+   * who responded. One bulk lookup per batch.
+   *
+   * A reply whose sender matches no user in the tenant (shared mailbox, alias,
+   * someone never onboarded) still counts for time-to-response — a human did
+   * reply — it just carries a null replier.
+   */
+  private async attributeRepliesToUsers<T extends ReplyAttribution>(
+    tenantId: string,
+    replies: T[]
+  ): Promise<Array<T & FirstReplyCandidate>> {
+    const userIdsByEmail = await this.userRepo.findIdsByEmails(
+      tenantId,
+      replies.map((r) => r.fromEmail)
+    );
+
+    return replies.map((reply) => ({
+      ...reply,
+      repliedById: userIdsByEmail.get(reply.fromEmail) ?? null,
+    }));
+  }
 
   /**
    * Apply header-only first-reply markers from the Gmail sync.
@@ -57,8 +84,7 @@ export class EmailService {
       return { updatedCount: 0 };
     }
 
-    const providerThreadIds: string[] = [];
-    const replyReceivedAts: Date[] = [];
+    const qualifying: Array<{ providerThreadId: string } & ReplyAttribution> = [];
     for (const marker of markers) {
       // Reuse the exact reply classification from the full-email path so the two
       // never diverge. Auto-submitted / internal-only replies are filtered out.
@@ -76,19 +102,20 @@ export class EmailService {
       if (Number.isNaN(receivedAt.getTime())) {
         continue;
       }
-      providerThreadIds.push(marker.providerThreadId);
-      replyReceivedAts.push(receivedAt);
+      qualifying.push({
+        providerThreadId: marker.providerThreadId,
+        ...toReplyAttribution(classifiable, receivedAt),
+      });
     }
 
-    if (!providerThreadIds.length) {
+    if (!qualifying.length) {
       return { updatedCount: 0 };
     }
 
     const updatedCount = await this.emailRepo.setFirstReplyForProviderThreads(
       tenantId,
       integrationId,
-      providerThreadIds,
-      replyReceivedAts
+      await this.attributeRepliesToUsers(tenantId, qualifying)
     );
 
     return { updatedCount };
@@ -162,9 +189,10 @@ export class EmailService {
     let threadsCreated = 0;
     const emailsToAnalyze: Array<{ emailId: string; threadId: string }> = [];
     // Reply markers for first-reply (TAT) tracking. Reply emails (SENT label or
-    // tenant-domain sender) are never stored — we only record their timestamp so
-    // we can set firstReplyAt on the customer email they answered.
-    const replyMarkers: Array<{ threadId: string; receivedAt: Date }> = [];
+    // tenant-domain sender) are never stored — we only record when they arrived,
+    // who they were addressed to, and who sent them, so we can set firstReplyAt /
+    // firstReplyById on the customer email they answered.
+    const replyMarkers: Array<{ threadId: string } & ReplyAttribution> = [];
 
     // Batch-level dedup sets — shared across all collections in this batch
     // Catches forwarded copies that land in different Gmail threads
@@ -197,24 +225,24 @@ export class EmailService {
 
       // Collect reply markers for first-reply (TAT) tracking. Reply emails are
       // detected and excluded from storage inside the transaction; here we only
-      // carry their timestamps so we can set firstReplyAt afterwards.
+      // carry their attribution so we can set firstReplyAt afterwards.
       if (result.threadId) {
-        for (const receivedAt of result.replyReceivedAts) {
-          replyMarkers.push({ threadId: result.threadId, receivedAt });
+        for (const reply of result.replies) {
+          replyMarkers.push({ threadId: result.threadId, ...reply });
         }
       }
     }
 
-    // Update firstReplyAt for customer emails in threads with replies (outside transaction).
-    // A single set-based UPDATE assigns each customer email the earliest reply that
-    // arrived after it (MIN(reply_at) WHERE reply_at > received_at), so no client-side
-    // ordering is needed and it's one round-trip for the whole batch.
+    // Update firstReplyAt / firstReplyById for customer emails in threads with
+    // replies (outside transaction). A single set-based UPDATE assigns each
+    // customer email the earliest reply that arrived after it AND was addressed to
+    // its sender, so no client-side ordering is needed and it's one round-trip for
+    // the whole batch.
     if (replyMarkers.length > 0) {
       try {
         await this.emailRepo.setFirstReplyForThreads(
           tenantId,
-          replyMarkers.map((r) => r.threadId),
-          replyMarkers.map((r) => r.receivedAt)
+          await this.attributeRepliesToUsers(tenantId, replyMarkers)
         );
       } catch (error) {
         // Log but don't fail - TAT data is not critical
@@ -490,7 +518,7 @@ export class EmailService {
     insertedCount: number;
     skippedCount: number;
     emailsToAnalyze: string[]; // Email IDs that need analysis
-    replyReceivedAts: Date[]; // Timestamps of reply (SENT/tenant-domain) emails — not stored
+    replies: ReplyAttribution[]; // Countable reply (SENT/tenant-domain) emails — not stored
   }> {
     return await this.db.transaction(async (tx) => {
       // Step 1: Dedup check — filter out emails that are forwarded copies
@@ -544,10 +572,12 @@ export class EmailService {
       // All replies count as thread activity (lastMessageAt), but only genuine
       // customer-facing replies (addressed to the customer, not automated) set
       // firstReplyAt — otherwise auto-acks / internal notes would understate TAT.
+      // Which customer email each one answers is decided later by the originator
+      // rule, which needs the recipient list carried here.
       const allReplyTimes = replyEmails.map((e) => new Date(e.receivedAt));
-      const replyReceivedAts = replyEmails
+      const replies = replyEmails
         .filter((e) => isCountableReply(e, tenantDomains))
-        .map((e) => new Date(e.receivedAt));
+        .map((e) => toReplyAttribution(e, new Date(e.receivedAt)));
 
       // Build the consistent "nothing stored" result. insertedCount is 0, so every
       // email in the collection (deduped, replies, or unmatched) counts as skipped.
@@ -557,7 +587,7 @@ export class EmailService {
         insertedCount: 0,
         skippedCount: collection.emails.length,
         emailsToAnalyze: [] as string[],
-        replyReceivedAts: [] as Date[],
+        replies: [] as ReplyAttribution[],
       };
 
       // Nothing to store and no reply timestamps to record → no-op
@@ -615,7 +645,7 @@ export class EmailService {
         return {
           ...noopResult,
           threadId: updatedThread[0].id,
-          replyReceivedAts,
+          replies,
         };
       }
 
@@ -767,7 +797,7 @@ export class EmailService {
         insertedCount,
         skippedCount,
         emailsToAnalyze,
-        replyReceivedAts,
+        replies,
       };
     });
   }

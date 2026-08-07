@@ -1,6 +1,6 @@
 import { eq, and, sql, SQL, desc, asc, inArray } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository, type Database, type Transaction } from '@crm/database';
+import { ScopedRepository, affectedRows, type Database, type Transaction } from '@crm/database';
 import { Signal, isAdmin, type RequestHeader } from '@crm/shared';
 import { tasks, taskComments, userSubordinates, type Task, type NewTask, type TaskComment, type NewTaskComment, TaskStatus } from './schema';
 import { users } from '../users/schema';
@@ -707,6 +707,6 @@ export class TaskRepository extends ScopedRepository {
       SET customer_id = ${targetCustomerId}, updated_at = NOW()
       WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
     `);
-    return (result as any).rowCount ?? 0;
+    return affectedRows(result);
   }
 }
