@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { formatDistanceToNow, formatDistance, format } from "date-fns"
-import { Building2, User, Clock, Pencil, Loader2, Check, CheckCircle2 } from "lucide-react"
+import { Building2, User, Clock, Pencil, Loader2, Check, CheckCircle2, UserMinus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -19,15 +19,12 @@ import {
 } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
 import { useAssignableUsers, useReassignTask, useTask } from "@/lib/hooks"
-import { useAuth } from "@/src/contexts/AuthContext"
 import { TaskStatus } from "@crm/clients"
 
+/** A dropdown choice — `id: null` is the "Unassigned" entry. */
 interface AssignOption {
-  id: string
-  /** What the dropdown lists — "Me" for the current user. */
-  label: string
-  /** What the "Assigned To" line shows once picked — always the real name. */
-  assigneeName: string
+  id: string | null
+  name: string
 }
 
 interface TaskMetaInfoProps {
@@ -56,7 +53,6 @@ export function TaskMetaInfo({
   const { data: assignableUsers = [] } = useAssignableUsers()
   const { data: taskData } = useTask(taskId)
   const reassign = useReassignTask()
-  const { user } = useAuth()
 
   // Determine if task is resolved
   const isResolved = taskData?.status === TaskStatus.DONE
@@ -86,34 +82,20 @@ export function TaskMetaInfo({
     name: assigneeName ?? "Unassigned",
   }
 
-  // Label the caller's own row "Me" and hoist it, so taking an escalation back
-  // is the first thing in the list. The name still comes from the row itself,
-  // keeping it identical to how this user is named everywhere else in the app.
-  const assignOptions = React.useMemo<AssignOption[]>(() => {
-    const options = assignableUsers.map((u) => ({
-      id: u.id,
-      label: u.id === user?.id ? "Me" : u.name,
-      assigneeName: u.name,
-    }))
-    const meIndex = options.findIndex((option) => option.id === user?.id)
-    if (meIndex <= 0) return options
-    return [options[meIndex], ...options.filter((_, i) => i !== meIndex)]
-  }, [assignableUsers, user?.id])
-
-  // Match on the real name too, so searching for your own name finds "Me"
-  const filteredOptions = React.useMemo(() => {
-    if (!assigneeSearch) return assignOptions
+  // Filter users by search term. The list includes the current user, so
+  // taking an escalation back is just picking your own name. Removing the
+  // assignment is a pinned action below the list, not a row in it.
+  const filteredUsers = React.useMemo(() => {
+    if (!assigneeSearch) return assignableUsers
     const searchLower = assigneeSearch.toLowerCase()
-    return assignOptions.filter(
-      (option) =>
-        option.label.toLowerCase().includes(searchLower) ||
-        option.assigneeName.toLowerCase().includes(searchLower)
+    return assignableUsers.filter((u) =>
+      u.name.toLowerCase().includes(searchLower)
     )
-  }, [assignOptions, assigneeSearch])
+  }, [assignableUsers, assigneeSearch])
 
   const handleAssign = async (option: AssignOption) => {
     // Optimistically update local state
-    setLocalAssignee({ id: option.id, name: option.assigneeName })
+    setLocalAssignee({ id: option.id, name: option.name })
 
     setAssigneeOpen(false)
     setAssigneeSearch("")
@@ -180,7 +162,7 @@ export function TaskMetaInfo({
                   <CommandList>
                     <CommandEmpty>No users found.</CommandEmpty>
                     <CommandGroup>
-                      {filteredOptions.map((option) => {
+                      {filteredUsers.map((option) => {
                         const isSelected = displayAssignee.id === option.id
                         return (
                           <CommandItem
@@ -194,13 +176,31 @@ export function TaskMetaInfo({
                                 isSelected ? "opacity-100" : "opacity-0"
                               )}
                             />
-                            {option.label}
+                            {option.name}
                           </CommandItem>
                         )
                       })}
                     </CommandGroup>
                   </CommandList>
                 </Command>
+                {/* Pinned below the list rather than placed in it: with a
+                    tenant-sized user list, a row at the bottom would need
+                    scrolling to reach and a row at the top reads as just
+                    another name. Removing an assignment is an action, so it
+                    is worded and styled as one. */}
+                {displayAssignee.id && (
+                  <div className="border-t p-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start font-normal text-muted-foreground hover:text-destructive"
+                      onClick={() => handleAssign({ id: null, name: "Unassigned" })}
+                    >
+                      <UserMinus className="mr-2 h-4 w-4" />
+                      Remove assignment
+                    </Button>
+                  </div>
+                )}
               </PopoverContent>
             </Popover>
           )}

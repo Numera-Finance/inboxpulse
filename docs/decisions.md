@@ -59,10 +59,17 @@ that one item.
   assigned outside their own hierarchy while still seeing it listed. Reporting
   hierarchy is not an arm here — neither surface grants visibility on hierarchy
   alone, so admitting it would allow writes to invisible tasks.
-- `getAssignableUsers` includes the caller, and `TaskMetaInfo` labels that row
-  "Me" and hoists it, so taking an escalation back is reachable and every
-  assignee name in the UI comes from one source (the `users` table) rather than
-  the auth session, which carries a different name field.
+- `getAssignableUsers` includes the caller, so taking an escalation back is just
+  picking your own name. A "Me" label was tried and dropped: the web app's
+  `useAuth().user.id` is the better-auth session id, not `users.id` (the two
+  tables have independent keys; the server maps between them by email in
+  `user-context.ts`), so nothing could reliably identify the caller's own row
+  client-side. Listing everyone by name needs no such mapping.
+- `TaskMetaInfo` gained a pinned "Remove assignment" footer below the user list.
+  The API already accepted `assignedToId: null`, but no control ever sent it, so
+  an assignment could be handed on and never undone. It is pinned rather than
+  listed because the roster is tenant-sized — a last row would need scrolling to
+  reach and would vanish whenever a search filtered the list.
 - The `task.assigned` email is unchanged and now actually reaches off-team
   assignees. Its only remaining gate is the existing "is this escalation
   openable" check (the link must resolve) plus the user's own notification
