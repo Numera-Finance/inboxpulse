@@ -52,12 +52,17 @@ that one item.
   `EmailRepository.analyzedEmailAccessFilter` (shared by the analyzed-email
   search, export, and single-item queries).
 - `TaskRepository.hasTaskAccess` — the gate on reassign/resolve/reopen/comment —
-  now mirrors `buildTaskFilters` instead of applying a hierarchy-only rule, so a
-  user can act on exactly what they can see. Without this, widening assignment
-  created two dead ends: an off-team assignee could not hand an escalation back,
-  and a user with customer access lost control of any task they assigned outside
-  their own hierarchy. The escalation dropdown gained a "Me" entry
-  (`TaskMetaInfo`) to make taking one back reachable in the UI.
+  is now `customer access OR assigned to me`, the union of what the two list
+  surfaces show, instead of a hierarchy-only rule. Without this, widening
+  assignment created two dead ends: an off-team assignee could not hand an
+  escalation back, and a user with customer access lost control of any task they
+  assigned outside their own hierarchy while still seeing it listed. Reporting
+  hierarchy is not an arm here — neither surface grants visibility on hierarchy
+  alone, so admitting it would allow writes to invisible tasks.
+- `getAssignableUsers` includes the caller, and `TaskMetaInfo` labels that row
+  "Me" and hoists it, so taking an escalation back is reachable and every
+  assignee name in the UI comes from one source (the `users` table) rather than
+  the auth session, which carries a different name field.
 - The `task.assigned` email is unchanged and now actually reaches off-team
   assignees. Its only remaining gate is the existing "is this escalation
   openable" check (the link must resolve) plus the user's own notification

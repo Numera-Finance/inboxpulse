@@ -1583,8 +1583,9 @@ export class EmailRepository extends ScopedRepository {
    *
    * Mirrors the AI Analysis drilldown query (`searchAnalyzedEmails` with
    * `signal=upsell&status=open`) so the tile and the drilldown list always
-   * agree: distinct analyzed emails with the UPSELL signal whose sender is a
-   * customer the caller can access AND that have an open task (t.status = 0).
+   * agree: distinct analyzed emails with the UPSELL signal that the caller can
+   * reach (`analyzedEmailAccessFilter` — accessible customer, or the escalation
+   * is assigned to them) AND that have an open task (t.status = 0).
    * Upsell emails without a task (e.g. pure-upsell with no negative sentiment)
    * are not auto-created today, so they are not "open" and don't count here.
    */
@@ -1604,11 +1605,9 @@ export class EmailRepository extends ScopedRepository {
       sql`t.status = 0`,
     ];
 
-    if (!isAdmin(header.permissions)) {
-      whereParts.push(sql`ep.customer_id IN (
-        SELECT uac.customer_id FROM user_accessible_customers uac
-        WHERE uac.user_id = ${header.userId}
-      )`);
+    const accessFilter = this.analyzedEmailAccessFilter(header);
+    if (accessFilter) {
+      whereParts.push(accessFilter);
     }
 
     if (filters?.customerId) {

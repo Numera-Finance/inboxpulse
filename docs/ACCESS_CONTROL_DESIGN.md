@@ -40,16 +40,25 @@ Enforced in:
 - `EmailRepository.analyzedEmailAccessFilter` — `customer OR t.assigned_to_id = me`,
   shared by `searchAnalyzedEmails`, `exportAnalyzedEmails`, and `getAnalyzedEmailById`
 - `TaskRepository.hasTaskAccess` — the mutation gate (reassign, resolve, reopen,
-  comment), mirroring `buildTaskFilters` exactly
+  comment) — `customer access OR assigned_to_id = me`
+- `EmailRepository.getUpsellCountScoped` — shares `analyzedEmailAccessFilter` so
+  the dashboard tile and its AI Analysis drilldown keep agreeing
 
-**Act ⊆ see.** `hasTaskAccess` deliberately mirrors `buildTaskFilters` rather than
-applying its own rule, so a user can act on precisely what they can see. Before
-this, the gate was hierarchy-only, which left two dead ends once assignment went
-tenant-wide: an assignee off the customer's team could not hand an escalation
-back, and a user with customer access lost control of any task they assigned
-outside their own hierarchy. It also means an unassigned task now requires
-customer access to mutate — previously any user could, though no list ever
-surfaced it to them.
+**Act ⊆ see.** `hasTaskAccess` admits the *union* of what the two list surfaces
+show, and nothing more. The escalations page grants on `customer OR assigned`;
+the task list grants on `(hierarchy AND customer) OR assigned`. Their union is
+`customer OR assigned` — reporting hierarchy is deliberately **not** a third arm,
+because neither surface grants visibility on hierarchy alone, so admitting it
+would allow writes to tasks the caller cannot see.
+
+Before this, the gate was hierarchy-only, which left two dead ends once
+assignment went tenant-wide: an assignee off the customer's team could not hand
+an escalation back, and a user with customer access lost control of any task they
+assigned outside their own hierarchy — the escalations page still listed it for
+them, so every write 404'd on an escalation visible on screen.
+
+It also means an unassigned task now requires customer access to mutate —
+previously any user could, though no list ever surfaced it to them.
 
 Aggregate customer metrics (TAT, upsell counts, dashboard rollups) deliberately
 keep the customer-only filter: holding one escalation should not pull a

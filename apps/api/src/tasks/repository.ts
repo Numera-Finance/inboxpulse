@@ -33,13 +33,22 @@ export class TaskRepository extends ScopedRepository {
   /**
    * Check if a user can act on a task (reassign, resolve, reopen, comment).
    *
-   * Mirrors the visibility rule in `buildTaskFilters` exactly — hierarchy AND
-   * customer access, OR the task is assigned to the caller — so what a user can
-   * act on is precisely what they can see. Two cases depend on it:
+   * A user may act on a task assigned to them, or on any task for a customer
+   * they can access. This is the union of what the two surfaces show — the
+   * escalations page (`EmailRepository.analyzedEmailAccessFilter`: customer OR
+   * assigned) and the task list (`buildTaskFilters`: (hierarchy AND customer)
+   * OR assigned) — so a user can act on precisely what they can see, and never
+   * on anything they cannot. Two cases depend on it:
    * - The assignee of an escalation for a customer they have no access to can
    *   still work it, including handing it back.
    * - Someone with customer access can reassign a task they handed to a user
-   *   outside their reporting hierarchy, instead of losing control of it.
+   *   outside their reporting hierarchy, instead of losing control of it. The
+   *   escalations page still lists that task for them, so refusing the write
+   *   would 404 on an escalation visible on screen.
+   *
+   * Reporting hierarchy is deliberately not a third arm: neither surface grants
+   * visibility on hierarchy alone (the task list ANDs it with customer access),
+   * so admitting it here would allow writes to tasks the caller cannot see.
    */
   private async hasTaskAccess(header: RequestHeader, taskId: string): Promise<boolean> {
     // First get the task to check tenant and assignedToId
@@ -56,10 +65,7 @@ export class TaskRepository extends ScopedRepository {
       return true;
     }
 
-    return (
-      (await this.hasUserAccess(header, task.assignedToId)) &&
-      (await this.hasCustomerAccess(header, task.customerId))
-    );
+    return this.hasCustomerAccess(header, task.customerId);
   }
 
   /**
@@ -628,7 +634,11 @@ export class TaskRepository extends ScopedRepository {
    * `EmailRepository.searchAnalyzedEmails`) — it does not widen their access
    * to the customer's other data.
    *
-   * The caller is excluded; the frontend surfaces "Me" separately.
+   * The caller is included — you can assign an escalation to yourself, and
+   * taking one back is the common case. The frontend labels that row "Me" but
+   * takes the name from it, so every assignee name in the UI comes from this
+   * one source rather than the auth session.
+   *
    * The permission to actually assign is enforced on the route
    * (`PUT /api/tasks/:id/assign` requires TASK_EDIT).
    */
@@ -642,7 +652,6 @@ export class TaskRepository extends ScopedRepository {
       .where(
         and(
           this.tenantFilter(users.tenantId, header),
-          sql`${users.id} != ${header.userId}`,
           sql`${users.rowStatus} = 0` // Active users only
         )
       )

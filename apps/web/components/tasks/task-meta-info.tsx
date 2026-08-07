@@ -86,20 +86,19 @@ export function TaskMetaInfo({
     name: assigneeName ?? "Unassigned",
   }
 
-  // "Me" leads the list so an assignee can take an escalation back — the API
-  // omits the caller from assignable users.
+  // Label the caller's own row "Me" and hoist it, so taking an escalation back
+  // is the first thing in the list. The name still comes from the row itself,
+  // keeping it identical to how this user is named everywhere else in the app.
   const assignOptions = React.useMemo<AssignOption[]>(() => {
-    const others = assignableUsers.map((u) => ({
+    const options = assignableUsers.map((u) => ({
       id: u.id,
-      label: u.name,
+      label: u.id === user?.id ? "Me" : u.name,
       assigneeName: u.name,
     }))
-    if (!user?.id) return others
-    return [
-      { id: user.id, label: "Me", assigneeName: user.name || "Me" },
-      ...others,
-    ]
-  }, [assignableUsers, user?.id, user?.name])
+    const meIndex = options.findIndex((option) => option.id === user?.id)
+    if (meIndex <= 0) return options
+    return [options[meIndex], ...options.filter((_, i) => i !== meIndex)]
+  }, [assignableUsers, user?.id])
 
   // Match on the real name too, so searching for your own name finds "Me"
   const filteredOptions = React.useMemo(() => {
