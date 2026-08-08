@@ -16,12 +16,14 @@ import { IntegrationService } from '../integrations/service';
 import { TenantRepository } from '../tenants/repository';
 import { TenantService } from '../tenants/service';
 import { EmailRepository } from '../emails/repository';
+import { ManagerRepository } from '../manager/repository';
 import { EmailThreadRepository } from '../emails/thread-repository';
 import { EmailAnalysisRepository } from '../emails/analysis-repository';
 import { ThreadAnalysisRepository } from '../emails/thread-analysis-repository';
 import { ThreadAnalysisService } from '../emails/thread-analysis-service';
 import { EmailAnalysisService } from '../emails/analysis-service';
 import { EmailService } from '../emails/service';
+import { ManagerService } from '../manager/service';
 import { AnalysisClient } from '@crm/clients';
 import { RunRepository } from '../runs/repository';
 import { RunService } from '../runs/service';
@@ -84,6 +86,7 @@ export function setupContainer() {
   container.register(IntegrationRepository, { useClass: IntegrationRepository });
   container.register(TenantRepository, { useClass: TenantRepository });
   container.register(EmailRepository, { useClass: EmailRepository });
+  container.register(ManagerRepository, { useClass: ManagerRepository });
   container.register(EmailThreadRepository, { useClass: EmailThreadRepository });
   container.register(EmailAnalysisRepository, { useClass: EmailAnalysisRepository });
   container.register(ThreadAnalysisRepository, { useClass: ThreadAnalysisRepository });
@@ -113,6 +116,7 @@ export function setupContainer() {
   container.register(ThreadAnalysisService, { useClass: ThreadAnalysisService });
   container.register(EmailAnalysisService, { useClass: EmailAnalysisService });
   container.register(EmailService, { useClass: EmailService });
+  container.register(ManagerService, { useClass: ManagerService });
 
   // Register better-auth services
   container.register(BetterAuthUserService, { useClass: BetterAuthUserService });

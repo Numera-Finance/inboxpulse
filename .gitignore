@@ -83,3 +83,9 @@ tmp/
 # Local integration scripts with credentials
 scripts/insert-gmail-integration.sql
 scripts/insert-gmail-integration.sh
+.env*
+!.env.example
+
+# Local screenshots
+.shots/
+.shots*.png

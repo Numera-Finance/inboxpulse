@@ -1,8 +1,6 @@
 # Architecture Decision Records
 
-Append-only. Never delete an entry — mark superseded ones as such.
-
-Format:
+Lightweight, append-only. Never delete an entry — mark superseded ones as such.
 
 ```markdown
 ### ADR-NNN: Title (YYYY-MM-DD)
@@ -14,239 +12,583 @@ Format:
 
 ---
 
-### ADR-001: First-reply attribution uses the originator rule (2026-08-06)
+### ADR-001: Gmail add-on sidebar shows the message, not its id (2026-07-28)
 
 **Status:** Accepted
 
-**Context:** `emails.first_reply_at` counted any countable outbound reply that
-arrived after a customer email in the same thread, as long as it had at least one
-external recipient. On threads carrying several contacts that overstated
-responsiveness: a reply to contact B stopped the clock on contact A's email, and a
-reply that merely cc'd some outsider counted as an answer to everyone. We also had
-no record of *who* responded, which TAT reporting needs.
+**Context:** The contextual card's first section, "Open message", showed the raw
+Gmail message id — an internal identifier with no value to the person reading the
+sidebar. Meanwhile the same card repeated subject/sender in a trailing "Message"
+section, and never showed recipients at all.
+
+**Decision:** "Open message" now shows title, From, To, Cc, Bcc and Received, and
+the redundant trailing "Message" section is gone. Values are read from the open
+message's own Gmail headers via a single `format=metadata` call
+(`fetchMessageHeaders`), which also returns the RFC `Message-ID` the thread
+resolution path already needed — so this costs no extra Gmail request. When the
+headers can't be read, the card falls back to the InboxPulse-side subject/sender.
+
+**Consequences:** No new OAuth scope (`gmail.addons.current.message.readonly`
+already covers metadata). `fetchRfcMessageId` is replaced by `fetchMessageHeaders`.
+A received message carries no `Bcc` header (the sender's MTA strips it), so Bcc
+only appears on the sender's own copy in Sent; absent fields are omitted rather
+than rendered blank. Section headers accept simple HTML, so the header is bolded
+with `<b>`.
+
+---
+
+### ADR-002: Sentiment trend is a line chart whose y axis is the sentiment class (2026-07-28)
+
+**Status:** Superseded by ADR-004
+
+**Context:** The trend chart was a bar chart of 0–100 sentiment scores. Those
+scores are synthetic — the DB stores a sentiment *class*, and the API maps it
+positive→75 / neutral→50 / negative→25 — so the bar heights implied a precision
+we don't have. What the reader actually wants is the shape of the conversation
+over time.
+
+**Decision:** Render a line chart over time with exactly three y positions:
+positive = +1 (top), neutral = 0 (middle), negative = -1 (bottom), plotted oldest
+→ newest. Dots are coloured by class and a legend (🟩 Positive · 🟧 Neutral ·
+🟥 Negative) accompanies the chart. The chart endpoint takes `?v=1,0,-1` instead
+of `?s=<scores>`; the param was renamed because the old URLs are served
+`immutable`.
+
+**Consequences:** `renderTrendPng(scores)` → `renderSentimentTrendPng(sentiments)`
+in `apps/addon/src/chart/png.ts`. Colour now keys off the sentiment class rather
+than score thresholds, so the legend is exact rather than approximate. Chart
+height is fixed (three levels), width scales with message count. The emoji-square
+fallback used when `ADDON_BASE_URL` is unset follows the same colour key.
+
+---
+
+### ADR-003: Flagged messages read chronologically and deep-link into Gmail (2026-07-28)
+
+**Status:** Accepted (ADR-009 briefly replaced the deep-link with an in-panel
+detail view; ADR-010 reverted that, so this stands as written)
+
+**Context:** The flagged list was severity-ordered and inert — you could see that
+a message was flagged but not get to it.
+
+**Decision:** Rows render oldest → newest so the list reads as the thread's
+timeline, and each row is clickable (`decoratedText.onClick.openLink`) to
+`https://mail.google.com/mail/u/<viewer-email>/#all/<messageId>`. The API still
+returns severity-sorted, and the display cap still keeps the most severe N — only
+the rendering order changed, so capping never drops a severe message in favour of
+a recent one.
+
+**Consequences:** `buildFlaggedSection(messages, viewerEmail?, max?)` — the viewer
+email comes from the verified add-on event and targets the right account for
+multi-login users (falling back to `u/0`). Known limitation: `messageId` is the
+provider id of the mailbox that *ingested* the thread, so a thread ingested from a
+teammate's mailbox produces a link that won't resolve in the viewer's Gmail. The
+cross-mailbox-stable RFC `Message-ID` would fix it, but the flagged endpoint
+doesn't return it today.
+
+---
+
+### ADR-004: Sentiment trend uses native card widgets, not a rendered image (2026-07-29)
+
+**Status:** Accepted — supersedes ADR-002
+
+**Context:** ADR-002's line chart was served as a PNG the add-on rasterized itself
+(`apps/addon/src/chart/png.ts` — a hand-written RGBA buffer, CRC-32 and
+`deflateSync` PNG encoder) because CardService can't draw charts and its card
+images must be hosted raster URLs. It rendered at 334×100px for ten messages with
+11px dots and no antialiasing, so it upscaled to a blur on HiDPI screens.
+
+Reworking it meant choosing between: supersampling the rasterizer; server-rendering
+a real chart library (Recharts + `@resvg/resvg-js` — React plus a native binary in
+a service whose deps are hono/zod/pino); or a hosted chart service (QuickChart —
+which would send per-customer sentiment sequences to a third party over an
+unauthenticated URL).
+
+None were warranted. Ten points on a three-level ordinal axis in a ~300px panel
+fails the "is this even a chart" test: the line only ever visits three heights,
+and the panel has no room to label the y axis, so the reader had to learn
+"top = positive" from the legend anyway.
+
+**Decision:** Drop the image entirely. The Trend section is a row of equal-width
+coloured blocks (🟩 positive, 🟧 neutral, 🟥 negative), one per message, oldest →
+newest — the same colour key, rendered by CardService's own `textParagraph`. The
+legend and the `Latest / ↑ improving · last N of M messages` summary row are
+unchanged; the summary is what carries most of the signal.
+
+**Consequences:**
+- `apps/addon/src/chart/` deleted (rasterizer + tests), along with the public,
+  unauthenticated `GET /chart/trend.png` route in `apps/addon/src/index.ts`.
+- `buildTrendSection(points, windowSize?)` — the `chartBaseUrl` parameter is gone.
+  `ThreadCardInput.baseUrl` is still needed, but now only for flagged-row action
+  callbacks.
+- `Sentiment` and `SENTIMENT_LEVEL` moved from `chart/png.ts` to `cards/trend.ts`.
+  `SENTIMENT_RGB` is gone; `SENTIMENT_LEVEL` survives only to compute the
+  improving/declining direction.
+- Renders at device resolution in any Gmail theme, with no image proxy in the
+  path. Sentiment is no longer encoded by colour alone (the legend names each
+  colour and the summary states the latest class in words), which matters because
+  green/red is the worst colour-vision-deficiency pair.
+- Known trade-off: run length is now read by counting blocks rather than seen as a
+  slope. Acceptable at ten points; if the window ever grows past ~15, revisit.
+
+### ADR-005: Add-on card typography is bold + whitespace, because Cards v2 has no font sizing (2026-07-29)
+
+**Status:** Accepted
+
+**Context:** A review of the Gmail add-on sidebar asked for a stronger visual
+hierarchy: drop the duplicated "InboxPulse" title, make "Open message", "Trend,
+this thread" and "Flagged messages" larger, make the section rules bolder and
+wider, and open up the spacing inside the trend block.
+
+Cards v2 is a fixed schema rendered by Google, not HTML we control. Its text
+fields accept only `<b> <i> <u> <s> <font color> <a href> <time> <br>` — there is
+**no** font-size tag (`<h1>`, `<big>`, `<font size>` are all ignored), no
+divider styling (weight, colour and inset are fixed), and no padding, margin or
+spacing property on any widget or section.
+
+**Decision:** Express hierarchy with the three levers the schema does give us:
+
+1. **Bold every section heading** (`heading()` in `cards/widgets.ts`) so headings
+   share one weight and read heavier than body text. This is the ceiling on
+   emphasis — headings cannot be made larger.
+2. **Drop the card `header`** from the thread, flagged-detail and homepage cards.
+   Gmail's add-on toolbar already prints "InboxPulse" directly above the card, so
+   a header title only repeated the product name (the homepage repeated it a
+   third time in a section header).
+3. **Separate with whitespace.** `spacer()` emits a `textParagraph` holding a
+   non-breaking space — an empty string is collapsed by the renderer. `spaced()` /
+   `separated()` put a blank line above the hairline Gmail draws between sections,
+   and `buildTrendSection` puts one between its heading, blocks, legend and
+   summary.
+
+**Consequences:**
+- "Larger text" is not deliverable on this surface. The only escape hatch would be
+  rendering headings as hosted PNGs, which we rejected for the trend chart in
+  ADR-004 (image proxy, HiDPI blur, no accessible text) and reject again here.
+- Layout tests must not index widgets positionally — spacers shift the indices.
+  `cards.test.ts` and `trend.test.ts` filter blank-line widgets out first.
+- Any new section should use `heading()` for its header and be added to the array
+  passed through `separated()`, not push a raw string header.
+
+### ADR-006: User tag suggestions go to parallel columns, never over the AI's verdict (2026-07-29)
+
+**Status:** Accepted
+
+**Context:** Readers in Gmail are often better judges of a message's churn risk
+and sentiment than the model is, but there was no way to say so — the analysis
+tags were write-only output of the pipeline. We wanted an in-Gmail correction
+path without the correction silently becoming "the truth" everywhere the tags
+are consumed (chips, dashboards, digests, exports, escalation rules).
+
+**Decision:** Add two nullable columns to `email_analyses` —
+`user_submitted_risk_level` and `user_submitted_sentiment_value` — written only
+by `POST /api/emails/tag-suggestion`, and never by the analysis pipeline. They
+sit alongside the extracted model columns using the same layout: risk level on
+the row whose `analysis_type = 'churn'`, sentiment on the `'sentiment'` row.
+
+Rejected alternatives:
+- *Overwrite `risk_level` / `sentiment_value` directly.* Loses the model's call,
+  so agreement rate and correction volume become unmeasurable, and one user's
+  opinion silently changes what everyone else sees.
+- *A separate `analysis_feedback` table.* Cleaner in the abstract, but every
+  consumer that wants "what did the human say" would need a join, and the whole
+  value here is comparing the two verdicts side by side on one row.
+
+Supporting choices:
+- Each column holds a single scalar, so the Gmail drop-down renders checkboxes
+  but allows one checked value per group; checking a second clears the first.
+  Across the two groups both can be submitted at once.
+- When no analysis row exists for the type being suggested, a suggestion-only
+  row is inserted with `result = '{}'`, `model_used = 'user-suggestion'` and
+  every extracted column NULL. All existing readers key off
+  `detected` / `risk_level` / `sentiment_value`, so such a row is inert.
+- `EmailAnalysisRepository.upsertAnalysis`'s conflict-update set deliberately
+  omits both new columns, so a later re-analysis refreshes the AI verdict
+  without discarding a human suggestion.
+- Writes resolve the message through `findByMessageIdsScoped`, the same
+  access-controlled lookup the chip read uses, so a user can only re-tag
+  messages for customers they can already see. An unresolvable id is a 404.
+
+**Consequences:**
+- Nothing downstream changes behaviour until a consumer explicitly reads the new
+  columns — the feature is additive and reversible.
+- Migration `apps/api/sql/migrations/012_email_analyses_user_submitted.sql` adds
+  the columns plus partial indexes (`WHERE ... IS NOT NULL`), since only a small
+  minority of the ~100k analysis rows will ever carry a suggestion.
+- The extension posts through the internal-key path in the service worker, which
+  bundles a secret — the same DEMO-only caveat that already applies to the chip
+  read. The blast radius is bounded (the endpoint can only write the
+  `user_submitted_*` columns), but the route is mounted on the session path too
+  and production should switch to it before any public distribution.
+- Open follow-up: the columns record *what* was suggested, not *who* suggested
+  it or when (beyond `updated_at`). Add `user_submitted_by` / `_at` if the
+  suggestions are ever used for per-reviewer scoring.
+
+---
+
+### ADR-007: The sidebar is grouped by scope, and the envelope comes from the CRM (2026-08-04)
+
+**Status:** Accepted
+
+**Context:** The extension's Thread tab rendered eight sections in one flat
+column with one rhythm — customer, trend, flagged, message analysis, stats,
+contacts, activity, details. Nothing marked where message-scoped content ended
+and thread-scoped content began, and the panel read as cramped. The requested
+layout also asked for something the panel had never shown: the open message's
+own envelope (from / to / cc / date / subject).
 
 **Decision:**
-
-1. A reply counts for a customer email only when it is addressed — To or Cc — to
-   that email's own sender (the originator). Comparison is lowercased on both sides.
-   Because this is a per-row relationship rather than a property of the reply, it is
-   enforced as a join predicate in the first-reply UPDATE, not in the TypeScript
-   classifiers. `isCountableReply` remains the message-level prefilter.
-2. New nullable column `emails.first_reply_by_id` (FK → `users`, `ON DELETE SET NULL`)
-   records who sent the winning reply, resolved case-insensitively against
-   `users(tenant_id, email)`. A reply from an address with no matching user still
-   sets `first_reply_at` — a human did respond — with a null replier.
-3. The UPDATE switched from `MIN(reply_at)` + `GROUP BY` to
-   `DISTINCT ON (email_id) ORDER BY email_id, reply_at`, so the timestamp and the
-   replier are guaranteed to come from the same message.
-4. No backfill. Reply messages are never stored as rows, so historical values cannot
-   be recomputed under the new rule and no user can be resolved for them. Existing
-   `first_reply_at` values keep their old semantics; `first_reply_by_id` stays null.
-
-Considered and rejected: matching against any customer participant on the email
-(looser, tolerates reply-to-alias but reintroduces the cross-contact overstatement);
-matching only the thread's first sender (wrong granularity — `first_reply_at` is
-stored per email row); skipping replies whose sender isn't a user (would make
-shared-mailbox teams look permanently unresponsive).
+- Sections are grouped into four named groups, ordered narrowest scope first:
+  **SELECTED** (the open message's envelope) → **ANALYSIS** (its churn risk and
+  sentiment) → **USER** (the external contact, then the stats, activity and
+  contacts for their account) → **THREAD** (customer, trend, flagged messages,
+  details). `components/Section.tsx` owns the two-level heading and divider
+  rhythm; individual sections no longer style their own headings.
+- The envelope is served by the CRM, not read off Gmail. `resolve-by-messages`
+  (already called once per thread) now also returns `fromEmail`, `fromName`,
+  `tos` and `ccs` per row.
+- InboxSDK's per-message envelope is kept as a fallback and published through
+  `lib/active-message-store`, which now carries an object rather than a bare id.
+- `getThreadFlaggedMessages` additionally returns `level` on churn flags.
 
 **Consequences:**
-
-- TAT coverage will fall. Teams that answer from an address the customer is not on,
-  or that reply to a thread's To list rather than its sender, now leave those emails
-  permanently unanswered — they move from the TAT average into the pending bucket
-  and never come back, since the replies are gone. This is the first thing to check
-  if coverage drops after this ships.
-- Metrics are inconsistent across the cutover date by design (no backfill).
-- `first_reply_by_id` is written but not yet read: no API, export, or UI surface.
-  Reporting on first responders is follow-up work.
-- Alias and plus-addressed senders resolve to a null replier; normalizing them was
-  explicitly left out of scope.
-
----
-
-### ADR-002: Affected-row counts go through `affectedRows()` (2026-08-06)
-
-**Status:** Accepted
-
-**Context:** While rewriting `runFirstReplyUpdate` (ADR-001), the first-reply
-integration suite — which had never actually been runnable — showed
-`applyFirstReplyMarkers` returning `updatedCount: 0` even though rows were being
-updated correctly.
-
-A codebase sweep found the same bug at five more `db.execute(...)` call sites, all
-of them the customer-merge reassign helpers: `emails.reassignParticipantCustomer`,
-`customers.reassignDomains`, `contacts.reassignCustomer`, `tasks.reassignCustomer`,
-and `users.reassignCustomer`. Every one returned 0 regardless of how many rows it
-moved, so `CustomerService.merge` reported `movedDomains: 0, movedContacts: 0,
-movedTasks: 0, movedEmailParticipants: 0, movedUserAssignments: 0` on every
-successful merge.
-
-**Decision:** Add `affectedRows(result)` to `@crm/database` — the package that
-already owns driver setup, and so the right place for driver-shape knowledge — and
-use it at all six call sites. It prefers `count` (postgres.js, taken from the
-command tag), falls back to `rowCount` (node-postgres), and returns 0 only when
-neither is a number. Reaching into the result directly is now the thing to flag in
-review.
-
-The type guard matters: `?? 0` on a non-numeric field would let a string `count`
-through and propagate nonsense. Verified against a real postgres.js connection —
-an UPDATE touching 17 rows returns 17, and a genuine no-op still returns 0.
-
-**Consequences:** `POST /api/internal/emails/first-reply-markers` now reports a
-truthful `updatedCount` to the Gmail sync, the "Updated firstReplyAt" info log —
-the operational signal that TAT capture is working at all — fires for the first
-time, and customer merges report real counts instead of zeros. Callers could not
-previously distinguish a successful merge from a no-op.
-
-Note this counts rows *written*, not rows *returned*: for statements with a
-RETURNING clause, use the length of the returned rows instead.
+- The to/cc split is only expressible server-side: InboxSDK's `MessageView`
+  offers a single flat `getRecipientEmailAddresses()`. The DOM fallback
+  therefore populates `to` only when there is no stored row at all, and never
+  merges with one — presenting cc'd people as direct recipients would be worse
+  than showing nothing.
+- The fallback exists because messages the CRM never ingested (most often the
+  reader's own sent replies) are real messages in the thread. Without it the
+  SELECTED block goes blank exactly when the reader clicks their own email.
+- Sentiment for the open message is read from the **trend** endpoint, not the
+  flagged set: the flagged set carries sentiment only when it is negative, so
+  reading it there would report every neutral and positive message as
+  unanalysed.
+- `level` is carried alongside the existing `label` so consumers can style by
+  risk without parsing `"Churn risk · Low"` back apart.
+- Both API changes are purely additive; every existing consumer (the add-on's
+  `api-client.ts`, the extension's background worker) reads these responses
+  field-by-field and is unaffected. No schema change, so no migration.
 
 ---
 
-### ADR-003: Integration suites mock the logger (2026-08-06)
+### ADR-008: The USER group shows the sender's own contact record, not their employer's roster (2026-08-06)
 
 **Status:** Accepted
 
-**Context:** `first-reply.integration.test.ts` failed at import time with
-`Cannot find module '../env'` — `utils/logger.ts` lazily `require()`s `../env`,
-which doesn't resolve under vitest's transform. The suite is `describe.skipIf`'d
-without `TEST_DATABASE_URL`, so this was invisible in CI and the tests had never
-run anywhere.
+**Context:** The USER group carried a "Contacts" block listing everyone at the
+customer the thread resolved to, with the thread's sender sorted first. Read as
+"contacts for the person who sent this email", which it wasn't — the sender's
+colleagues answer a question nobody reading a single message is asking, and the
+sender's own phone, title and profiles were nowhere in the panel despite being
+stored on the contact record.
 
-**Decision:** Mock `../utils/logger` in the suite, alongside the existing
-`../inngest/client` mock. Running it also needs the env vars `getEnv()` validates:
-
-```bash
-TEST_DATABASE_URL=postgres://... GOOGLE_CLIENT_ID=x GOOGLE_CLIENT_SECRET=x \
-  SERVICE_GMAIL_URL=http://localhost:4002 SERVICE_ANALYSIS_URL=http://localhost:4003 \
-  pnpm --filter @crm/api exec vitest run first-reply.integration
-```
-
-**Consequences:** The suite runs. A skipped integration suite is not evidence of
-anything — new DB-backed tests should be executed against a real Postgres before
-being trusted, and any future integration suite needs the same two mocks.
-
----
-
-### ADR-004: Escalations are assignable to any user in the tenant (2026-08-06)
-
-**Status:** Accepted
-
-**Context:** Escalation assignment was bounded by the reporting hierarchy. The
-assignable-users dropdown returned every active user for admins but only the
-caller's subordinates for everyone else — a non-admin with no reports saw an
-empty list and could not hand off an escalation at all. Auto-assignment
-(`TaskService.autoAssignTask`) drew from a different source again: the
-customer's team (`user_customers`, Controller then Account Manager).
-
-In practice the person who can resolve an escalation is often neither a
-subordinate nor on that customer's team. Three things blocked assigning to them:
-
-1. The dropdown did not offer them.
-2. `TaskService.reassign` re-read the task through a scoped query *after* the
-   update, so handing a task outside the caller's hierarchy made the caller lose
-   access to it and the re-read return nothing — dropping both the API response
-   and the assignment email. `create()` had the same flaw.
-3. Even if assigned, the escalation list and detail queries were scoped by
-   `user_accessible_customers`, so the assignee saw nothing on login.
-
-**Decision:** Assignment is tenant-wide, and being assigned grants visibility of
-that one item.
-
-- `TaskRepository.getAssignableUsers` returns all active users in the tenant
-  (excluding self) for every caller. Authority to assign stays where it belongs:
-  the `TASK_EDIT` permission on `PUT /api/tasks/:id/assign`.
-- Post-write reads in `TaskService.create`/`reassign` use the new
-  `findByIdWithRelations` (tenant-scoped, no per-user access check) rather than
-  `findByIdScoped`. The caller was already authorized against the pre-update row;
-  re-checking after the write is what broke the hand-off.
-- Direct assignment became a second access path alongside customer access, in
-  `TaskRepository.buildTaskFilters`, `getRecentEscalationsScoped`, and the new
-  `EmailRepository.analyzedEmailAccessFilter` (shared by the analyzed-email
-  search, export, and single-item queries).
-- `TaskRepository.hasTaskAccess` — the gate on reassign/resolve/reopen/comment —
-  is now `customer access OR assigned to me`, the union of what the two list
-  surfaces show, instead of a hierarchy-only rule. Without this, widening
-  assignment created two dead ends: an off-team assignee could not hand an
-  escalation back, and a user with customer access lost control of any task they
-  assigned outside their own hierarchy while still seeing it listed. Reporting
-  hierarchy is not an arm here — neither surface grants visibility on hierarchy
-  alone, so admitting it would allow writes to invisible tasks.
-- `getAssignableUsers` includes the caller, so taking an escalation back is just
-  picking your own name. A "Me" label was tried and dropped: the web app's
-  `useAuth().user.id` is the better-auth session id, not `users.id` (the two
-  tables have independent keys; the server maps between them by email in
-  `user-context.ts`), so nothing could reliably identify the caller's own row
-  client-side. Listing everyone by name needs no such mapping.
-- `TaskMetaInfo` gained a pinned "Remove assignment" footer below the user list.
-  The API already accepted `assignedToId: null`, but no control ever sent it, so
-  an assignment could be handed on and never undone. It is pinned rather than
-  listed because the roster is tenant-sized — a last row would need scrolling to
-  reach and would vanish whenever a search filtered the list.
-- A `task.unassigned` notification accompanies that action. Removal is not a
-  neutral event under the narrow-grant model: for an assignee outside the
-  customer's team, being assigned *was* their access, so clearing it makes the
-  escalation vanish from every list they can see. Without the email they would
-  never learn it happened. `reassign()` therefore captures the outgoing assignee
-  before the write, since the updated row no longer carries it.
-
-  The email deliberately has **no deep link** — the recipient may have just lost
-  the only path they had to that escalation, so a link would 404 for exactly the
-  people who most need telling. It names the customer and subject instead. It
-  also has no opt-out toggle in settings, unlike `task.assigned`: losing work
-  assigned to you is not notification noise.
-
-  Both ends of a move are notified independently: handing an escalation from A
-  to B tells B it arrived and tells A it left. A loses access on a hand-off
-  exactly as they would on removal, so the two cases are the same event from
-  A's side. The template covers both — on a hand-off it names who holds it now,
-  so A knows where to send their notes; on a removal it does not, because
-  nobody does.
-
-  Neither notification fires when the actor is also the subject (taking an
-  escalation, or dropping one you hold, are things you just did on screen), nor
-  when the assignee did not actually change.
-- The outgoing assignee is returned by the UPDATE itself (a CTE reading the
-  pre-write snapshot in `TaskRepository.reassign`) rather than by a preceding
-  SELECT. A separate read leaves a window in which a concurrent reassignment
-  changes the assignee in between, which would mail the unassignment notice to
-  someone who no longer held the task while the person who actually lost it
-  heard nothing — the exact failure the notification exists to prevent.
-- `create()` and `reassign()` now validate the assignment target
-  (`assertAssignableUser`): it must resolve to an active user in the caller's
-  tenant. The route only checked that the id parses as a UUID, and the
-  repository authorizes the *caller* against the task, never the *assignee* —
-  while `tasks.assigned_to_id` references `users.id`, which is not
-  tenant-scoped. Without the check the FK accepts a deactivated account,
-  stranding the escalation with an assignee who cannot log in, or an id from
-  another tenant, whose address would then receive an assignment email naming
-  this tenant's customer and email subject. `autoAssignTask` filters to active
-  members for the same reason, so an offboarded Controller falls through to the
-  Account Manager instead of blocking auto-assignment for that customer.
-- The `task.assigned` email is unchanged and now actually reaches off-team
-  assignees. Its only remaining gate is the existing "is this escalation
-  openable" check (the link must resolve) plus the user's own notification
-  preference — neither is about team membership.
-
-Rejected alternative: filtering the dropdown to the customer's team (which would
-have made manual and auto assignment consistent). It fails the actual
-requirement — escalations frequently need someone outside that team.
+**Decision:** Drop the roster. `ThreadContact` — already the block identifying
+the sender, and already fetching the customer's contacts to get the CRM's
+spelling of their name — now renders the matched record's own fields: title
+under the name, then `phone`, `mobile`, `address`, `website`, `linkedin`, `x`
+and `linktree` as label/value rows, present ones only. Phones link `tel:`; web
+fields link when the value is a location and stay plain text when it's a handle
+like `@jane`, since guessing which site a handle belongs to is not safe.
 
 **Consequences:**
-- Any user can be handed any escalation. The grant is narrow: the assigned item
-  only. `user_accessible_customers` is untouched, so the customer's other emails,
-  contacts, and records stay invisible to them.
-- Aggregate customer metrics (TAT, upsell counts, dashboard rollups) keep the
-  customer-only filter deliberately — holding one escalation must not pull a
-  customer's numbers into someone's dashboard.
-- Manual and automatic assignment now use different sources by design:
-  auto-assign still prefers the customer's Controller/Account Manager, manual
-  assignment is unrestricted.
-- `TaskRepository.getSubordinates` is no longer used by assignment; it remains a
-  general-purpose hierarchy accessor.
-- Mutating an *unassigned* task now requires customer access, where previously
-  any user in the tenant could. No list ever surfaced those tasks to users
-  without customer access, so this closes a gap rather than removing a path.
-- Documented in [ACCESS_CONTROL_DESIGN.md](./ACCESS_CONTROL_DESIGN.md) under
-  "Direct Assignment"; covered by `apps/api/src/tasks/repository.test.ts` and
-  `apps/api/src/emails/__tests__/analyzed-email-access.test.ts`.
+- `components/ContactList.tsx` is unreferenced. Left on disk (this working copy
+  is not under version control) rather than deleted.
+- No API change: the query and its cache key are the ones `ThreadContact` was
+  already issuing, so the block costs nothing extra.
+- When the thread resolves to a customer but the sender matches no contact, the
+  block says so. Without that line the block looks identical whether or not the
+  person is in the CRM, which is the confusion that prompted this.
+- With no customer resolved there is nothing to look the record up against, so
+  the block still shows name and address alone.
+
+---
+
+### ADR-009: A flagged message opens in the panel; jumping Gmail becomes a choice (2026-08-06)
+
+**Status:** Superseded by ADR-010 (same day). It was built on a mistaken premise
+— that the extension could not move Gmail's thread pane, which is the add-on's
+limitation, not this one's. The `?includeBody` API work below survives and is
+what ADR-010's search is built on; the detail view does not.
+
+**Context:** ADR-003 made flagged rows deep-link into Gmail, which was the only
+drill-down the extension had. A row shows the first flag's label, its reason
+truncated to one line, and provenance; a message with three flags shows one.
+Getting the rest meant clicking, which navigated the thread pane away from the
+panel that had just said the message mattered. The Gmail add-on had solved this
+differently — it pushed a detail card onto its own stack, because a Workspace
+Add-on cannot move Gmail's thread pane at all — and that view is the one the
+reader wanted back.
+
+**Decision:** Port the add-on's `flagged-detail` card to the extension as
+`components/FlaggedMessageDetail.tsx`. Clicking a row replaces the panel with
+every flag in full, the message's envelope, and its text; "Open in Gmail" is
+still there as an explicit action, doing the same `#all/<messageId>` hash jump
+the row used to do implicitly. Gmail draws the back arrow for a pushed add-on
+card and nothing does that for us, so the view renders its own, and the open
+message is held as state in `SidebarApp`.
+
+`GET /api/emails/thread/:threadId/flagged` gains `?includeBody=true|1`, which
+adds `bodyPreview` and `bodyTruncated` per message. The extension's
+`useThreadFlagged` sets it, so one query serves both the list and the detail
+view and navigating between them costs no request.
+
+**Consequences:**
+- The preview is plain text produced server-side by the existing
+  `extraction/extractor.ts` (`extractLatestReply`, falling back to
+  `htmlToText`): the stored `emails.body` is the message's raw HTML source, and
+  rendering that in the panel would mean injecting a sender's markup into
+  Gmail's page. Reusing the analysis pipeline's extractor also strips quoted
+  history and signatures rather than growing a second, differently-wrong parser.
+- Two caps: 20k characters of stored body are parsed, 4k of text are returned
+  (`bodyTruncated` says when that bit). The parse cap is safe because the reply
+  Gmail-style clients put at the top comes first.
+- Opt-in because the add-on fetches this same endpoint on every contextual
+  trigger and needs only the flags. Both fields are additive, so the add-on is
+  unaffected. No schema change, no migration.
+- Until an API carrying `includeBody` is deployed, the Content block degrades to
+  "No stored content for this message. Open it in Gmail…" — the same fallback
+  the add-on used when Gmail wouldn't return a body.
+- `FlaggedMessages` now requires an `onOpen` prop; it no longer navigates.
+- ADR-003's chronological ordering and its severity-capping rationale stand
+  unchanged, as does its known limitation: `messageId` is the ingesting
+  mailbox's provider id, so the Gmail jump can fail for a thread ingested from a
+  teammate's mailbox.
+
+---
+
+### ADR-010: In-thread search at the top of the panel; every row jumps Gmail (2026-08-06)
+
+**Status:** Accepted — supersedes ADR-009, restores ADR-003's deep-link
+
+**Context:** Two things landed together. The panel had no way to find a specific
+message inside a long conversation. And ADR-009 had just replaced the flagged
+rows' Gmail jump with an in-panel detail view, on the belief that jumping wasn't
+available — a belief carried over from the Gmail add-on, which genuinely cannot
+move Gmail's thread pane. The extension is a content script running *in* the
+Gmail page, so `location.hash` navigates the conversation in place; the original
+ADR-003 behaviour had been right all along.
+
+**Decision:**
+- Flagged rows jump to their message again. `FlaggedMessageDetail` is deleted
+  rather than left reachable from somewhere else: it existed only to work around
+  a constraint that does not apply here.
+- The jump itself moves to `lib/gmail-nav.ts`, since two callers now share it,
+  and its one real caveat (the ingesting mailbox's provider id may not resolve in
+  this reader's Gmail) is documented once there instead of in each row component.
+- A search box sits at the top of the Thread tab — above every group, because it
+  navigates the thread rather than reporting on it. Results jump the same way.
+- New `GET /api/emails/thread/:threadId/messages?includeBody=true`, returning the
+  thread's stored messages oldest-first with their text. Capped at 200 messages,
+  with `truncated` in the response.
+
+**Consequences:**
+- Search matches sender, subject **and message text**. Within one conversation
+  every message shares a subject, so text is the only field that distinguishes
+  them; matching without it would just filter by sender.
+- The whole thread is fetched once and filtered in the browser, rather than
+  querying per keystroke. A thread is tens of messages, so this makes typing
+  instant and costs one request — but it is why the endpoint returns messages
+  rather than taking a search term, and why the 200 cap exists.
+- The fetch is lazy: nothing loads until the reader focuses the box. The thread's
+  full text is the largest payload the sidebar can ask for and most readers never
+  search.
+- The corpus is what the CRM **ingested**, not what Gmail displays — the sync
+  drops most outbound mail, so a reader's own replies generally cannot be found.
+  The panel says so when a thread has no stored messages, and says when the 200
+  cap bit; neither is silently absent.
+- `previewBody` (ADR-009) is now shared by both thread endpoints. The flagged
+  endpoint keeps its `includeBody` parameter — deployed, harmless, and nothing
+  requests it today.
+- Highlighting splits on a regex built from the reader's own terms and renders
+  the parts as elements; no HTML is assembled from input, which matters when the
+  output goes into Gmail's page.
+
+---
+
+### ADR-011: Jumping to a message expands it in the page, not through a URL (2026-08-06)
+
+**Status:** Accepted — supersedes the jump mechanism in ADR-003 and ADR-010
+
+**Context:** Every panel row that names a message — flagged rows since ADR-003,
+search results since ADR-010 — jumped by setting `location.hash` to
+`#all/<messageId>`. Reported from real use: clicking a result for an older
+message in the open thread put Gmail back on the *newest* message in that same
+thread. Gmail resolves the id as a conversation, re-opens it in its default
+state, and the reader loses their place. The behaviour was inherited from the
+add-on, where a URL is the only lever available, and was never right here.
+
+**Decision:** Reveal the message in the page. `lib/message-registry.ts` keeps the
+open thread's `MessageView`s by message id — fed by the same
+`registerMessageViewHandler` that already feeds the thread's id set — and
+`revealMessage(id)` expands the view and scrolls it into place.
+`lib/gmail-nav.ts` tries that first and keeps the hash as a fallback for a
+message that isn't on screen to act on.
+
+**Consequences:**
+- Expanding goes through a synthetic click on the message row. `MessageView` has
+  `getElement()`, `getViewState()` and no `expand()`, so Gmail's own click
+  handler is the only way in.
+- The scroll is deferred past the expand: expanding changes the height of
+  everything below it, so a scroll computed first lands in the wrong place.
+- The revealed message is briefly outlined. When it was already expanded nothing
+  else on screen changes, and after a smooth scroll several messages are in view
+  — without the outline the reader can't tell which one was meant.
+- The registry is cleared when the reader changes conversation and per message on
+  `destroy`, so it never holds views belonging to a thread that has gone.
+- The fallback still carries the per-mailbox id caveat from ADR-003: an id from
+  the mailbox that ingested the thread may not resolve in this reader's Gmail.
+  The registry path sidesteps it whenever the message is actually on screen,
+  because it matches the id InboxSDK reports for the reader's own mailbox.
+
+**Amendment (2026-08-06, same day, after testing in real Gmail):** the first
+implementation of this ADR did not work, in three ways worth recording because
+each looked like the others from the outside.
+
+1. `element.click()` fires a lone click event. Gmail's row handlers are on
+   mousedown/mouseup, so it was ignored outright. A full pointer sequence
+   (`pointerdown → mousedown → pointerup → mouseup → click`) is dispatched now.
+2. `getElement()` returns the message container, not the region Gmail treats as
+   "open this". Candidate targets are tried in order — `td.gF` first, the sender
+   cell InboxSDK's own source confirms — checking `getViewState()` after each.
+3. Gmail has a third state, `kQ`/`kx` = HIDDEN: messages inside a super-collapsed
+   "N more messages" run, for which InboxSDK never builds a view. Those were
+   never in the registry, the lookup failed, and **the URL fallback fired** — so
+   the thread opened and then snapped back to the newest message, which read as
+   the whole feature failing.
+
+The URL fallback is therefore deleted, not fixed. It is not a degraded version
+of revealing a message; it does something else (opens the *conversation*), and
+as a fallback it actively undid the thing that had just worked. Every caller
+names a message in the conversation already on screen, so failing loudly in the
+console is the correct outcome.
+
+Two waits also had to become real: after opening a super-collapsed run the
+registry is polled for up to 6s, because Gmail *fetches* those messages before
+InboxSDK can build and register views (300ms was not close), and the scroll is
+re-asserted twice after landing, because Gmail scrolls the thread to the newest
+message as it finishes loading and would otherwise undo it.
+
+---
+
+### ADR-012: The panel finds a message by sender, text and time — not by id (2026-08-06)
+
+**Status:** Accepted
+
+**Context:** Opening a flagged message from the panel failed with `could not find
+message 19f7efbb0d6aedec in the open conversation`, on a thread whose messages
+were plainly on screen. The clicking worked; the identity did not.
+
+This is the per-mailbox Message-ID problem from the 2026-07 add-on work, showing
+up on a new surface. Gmail message ids are per-mailbox: the same email carries a
+different id in every participant's mailbox, and the CRM stores one row per
+message bearing the id of whichever mailbox ingested it first. A thread that
+reached the CRM through several colleagues' mailboxes therefore has rows this
+reader's Gmail has never heard of — the panel lists them correctly and then
+cannot point at them. Thread resolution survives this because
+`findByMessageIdsScoped` also matches the stable RFC `Message-ID`; nothing
+downstream did.
+
+The add-on's fix — read each message's RFC `Message-ID` from the Gmail API — is
+not available here. A content script has no Gmail API access, and InboxSDK does
+not expose the header.
+
+**Decision:** Identify the message by what both sides can see without the Gmail
+API. `MessageDescriptor` carries the id plus sender, received time and how the
+text begins; callers pass what they have. The id is tried first and is right
+whenever the row came from this mailbox. Otherwise `matchDescriptor` narrows by
+sender (exact), then by opening text, then by time within five minutes.
+
+**Consequences:**
+- Sender alone is not enough — people send several messages to one thread. The
+  reported case had two from the same person, and text separates them cleanly
+  (1.00 against 0.04 on the real rows).
+- Text compares like with like: Gmail's row preview and our stored preview are
+  both the start of the same body. They are not identical — ours has quoted
+  history and signatures stripped — so containment is tried first and a shared
+  prefix is the fallback, rather than requiring equality.
+- Time is last and bounded, because Gmail renders localized dates of varying
+  precision. It settles a tie; it never decides one.
+- Everything is read from the row's DOM, not through InboxSDK: a collapsed
+  message may not be "loaded" and `getSender()` throws on those, while the
+  sender address and preview are in the markup either way.
+- `useThreadFlagged` requests `includeBody=1` again. The text isn't rendered
+  anywhere — it exists so a click can find its message. This is what ADR-009's
+  API work turned out to be for.
+- No API or schema change: the descriptor is built from fields these endpoints
+  already return.
+- Not a full fix for the underlying problem. Returning the RFC `Message-ID` from
+  these endpoints, and matching on it, would identify messages exactly rather
+  than by resemblance — but reading it off an open message still needs Gmail API
+  access the extension doesn't have.
+
+---
+
+### ADR-013: Thread-scoped sections resolve from the conversation, not the open message (2026-08-06)
+
+**Status:** Accepted
+
+**Context:** Trend and flagged messages appeared only when one of the few
+AI-analyzed, ingested messages was the one selected, and vanished on clicking a
+neighbouring email in the same conversation — a thread the panel had just
+described correctly.
+
+The cause is upstream of the panel. The thread was resolved by sending the open
+thread's Gmail message ids to `resolve-by-messages`, and those ids come from
+InboxSDK's message views. InboxSDK builds a view only for messages Gmail has
+actually loaded — in a real thread, two of them — and the loaded one is often the
+reader's own reply, which the sync deliberately drops. So the id list was both
+partial and biased towards messages that are not in the CRM, and everything
+thread-scoped inherited that.
+
+**Decision:** Publish Gmail's own conversation id (`getThreadIDAsync()`) through
+`lib/thread-store`, and resolve the CRM thread from it via the existing
+`GET /api/emails/thread/by-provider/:providerThreadId` — the endpoint the add-on
+already had for this exact reason. The message-id resolution stays as a fallback
+and still supplies the customer, envelopes and sender.
+
+**Consequences:**
+- `ThreadTab` keys `SidebarApp` on the conversation id rather than the message-id
+  list. That list grows as Gmail builds views, so it was remounting the panel
+  mid-read — discarding UI state and re-running every query.
+- `publishThread` no longer requires message ids before publishing; the
+  conversation id alone is enough for the thread-scoped sections.
+- Provider *thread* ids are per-mailbox exactly as message ids are (ADR-012), so
+  a conversation ingested from a colleague's mailbox still won't resolve by this
+  reader's id. This resolves strictly more cases than before, not all of them.
+- No API or schema change: the endpoint and its repository method already
+  existed and are in production use by the add-on.
+
+---
+
+### ADR-014: The sidebar no longer names a customer for a conversation (2026-08-06)
+
+**Status:** Accepted
+
+**Context:** The THREAD group led with a "Customer" block naming a company, and
+that name moved with whoever was on the email. The question behind it: does
+anything in the database assign a customer to a *thread*?
+
+It does not. `email_threads` has `tenant_id`, `integration_id`,
+`provider_thread_id`, `subject` and timestamps — no customer column. The link is
+per-message, through `email_participants`, and the customers it points at are
+largely domain-derived auto-created records (the "(Auto)" names). The panel then
+picked whichever customer owned the most messages in the thread. So the block
+asserted something the data does not hold: that a conversation belongs to an
+account.
+
+**Decision:** Remove the "Customer" block, and with it the "No customer linked"
+block and its resolution diagnostics. Nothing replaces them — an inferred answer
+presented as a fact is worse than no answer.
+
+**Consequences:**
+- `CustomerHeader.tsx` and `NoCustomer.tsx` are unreferenced, as is
+  `ContactList.tsx` from ADR-008. Left on disk (this working copy is not under
+  version control) rather than deleted.
+- Customer resolution itself is unchanged and still drives the stats, activity
+  and details blocks. Those show what they show rather than claiming whose
+  account the conversation is — but they rest on the same inference, and if that
+  inference isn't trusted they should go too.
+- The resolution diagnostics ("N sent · N matched · N with a customer") went with
+  the block that hosted them. They were a debugging aid for a customer lookup
+  that is no longer displayed; ADR-013 removed the failure mode that made them
+  necessary day to day.

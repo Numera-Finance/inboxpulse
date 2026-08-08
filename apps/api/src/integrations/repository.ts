@@ -2,7 +2,7 @@ import { injectable, inject } from 'tsyringe';
 import type { Database } from '@crm/database';
 import { integrations, type IntegrationSource, type IntegrationParameters } from './schema';
 import { users } from '../users/schema';
-import { eq, and, or, isNull, lt, sql, type SQL } from 'drizzle-orm';
+import { eq, and, or, isNull, lt, sql } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
 export interface IntegrationKeys {
@@ -307,26 +307,10 @@ export class IntegrationRepository {
       updateData.token = data.refreshToken; // legacy field
     }
 
-    // Concurrent Gmail webhooks can each refresh the OAuth token near expiry and
-    // race to write this same row. When only the access token changed, skip the
-    // write if another refresher already stored a token that expires at or after
-    // ours — this avoids redundant row-lock contention on the hot integration
-    // row. Always write unconditionally when a refresh token is present so a
-    // rotated refresh token is never dropped by the guard.
-    const where = data.refreshToken
-      ? eq(integrations.id, integrationId)
-      : and(
-          eq(integrations.id, integrationId),
-          or(
-            isNull(integrations.accessTokenExpiresAt),
-            lt(integrations.accessTokenExpiresAt, data.accessTokenExpiresAt)
-          )
-        );
-
     await this.db
       .update(integrations)
       .set(updateData)
-      .where(where);
+      .where(eq(integrations.id, integrationId));
   }
 
   /**
@@ -383,34 +367,6 @@ export class IntegrationRepository {
   }
 
   /**
-   * SQL predicate matching integrations whose `parameters` JSONB array contains
-   * the given email under any of the provided email-bearing keys.
-   *
-   * Uses JSONB containment (`@>`) so Postgres performs the match — index-backed by
-   * idx_integrations_parameters_gin — instead of loading every row to filter in JS.
-   * The email is bound as a query parameter (never string-interpolated), so a value
-   * arriving from an external Gmail webhook cannot be used to inject SQL.
-   */
-  private emailMatchesParameters(
-    email: string,
-    keys: readonly string[] = ['email', 'impersonatedUserEmail', 'userEmail']
-  ): SQL {
-    // A falsy email (or empty keys) must match nothing. Without this guard,
-    // JSON.stringify drops an undefined value so the predicate degrades to
-    // `parameters @> '[{"key":"email"}]'`, which matches ANY row that merely has
-    // an email key — returning a wrong (possibly cross-tenant) integration.
-    if (!email || keys.length === 0) {
-      return sql`false`;
-    }
-
-    return or(
-      ...keys.map(
-        (key) => sql`${integrations.parameters} @> ${JSON.stringify([{ key, value: email }])}::jsonb`
-      )
-    )!;
-  }
-
-  /**
    * Find integration ID by email address (for internal use)
    */
   async findIdByEmail(tenantId: string, source: IntegrationSource, email: string): Promise<string | null> {
@@ -422,11 +378,12 @@ export class IntegrationRepository {
           eq(integrations.tenantId, tenantId),
           eq(integrations.source, source),
           eq(integrations.isActive, true),
-          this.emailMatchesParameters(email, ['email', 'impersonatedUserEmail'])
+          or(
+            sql`${integrations.parameters}::jsonb @> ${sql.raw(`'[{"key": "email", "value": "${email}"}]'::jsonb`)}`,
+            sql`${integrations.parameters}::jsonb @> ${sql.raw(`'[{"key": "impersonatedUserEmail", "value": "${email}"}]'::jsonb`)}`
+          )
         )
       )
-      // Deterministic pick when more than one row matches.
-      .orderBy(integrations.createdAt, integrations.id)
       .limit(1);
 
     return result.length > 0 ? result[0].id : null;
@@ -552,11 +509,7 @@ export class IntegrationRepository {
    * Returns the full integration so we have the ID for subsequent updates
    */
   async findByEmail(email: string, source: IntegrationSource = 'gmail', tenantId?: string) {
-    const conditions: SQL[] = [
-      eq(integrations.source, source),
-      eq(integrations.isActive, true),
-      this.emailMatchesParameters(email),
-    ];
+    const conditions = [eq(integrations.source, source), eq(integrations.isActive, true)];
     if (tenantId) {
       conditions.push(eq(integrations.tenantId, tenantId));
     }
@@ -564,42 +517,27 @@ export class IntegrationRepository {
     const result = await this.db
       .select()
       .from(integrations)
-      .where(and(...conditions))
-      // No tenantId is passed on the webhook path, so multiple tenants could in
-      // principle share a mailbox; order deterministically instead of letting the
-      // planner pick an arbitrary row.
-      .orderBy(integrations.createdAt, integrations.id)
-      .limit(1);
+      .where(and(...conditions));
 
-    return result.length > 0 ? this.mapToIntegration(result[0]) : null;
+    for (const row of result) {
+      const params = parametersToObject(row.parameters as IntegrationParameters);
+      if (
+        params.impersonatedUserEmail === email ||
+        params.email === email ||
+        params.userEmail === email
+      ) {
+        return this.mapToIntegration(row);
+      }
+    }
+
+    return null;
   }
 
   private async updateLastUsed(integrationId: string) {
-    // Debounce: only bump the timestamp if it's stale (>10 min). This runs on
-    // every getCredentials call across all Gmail webhooks, and they all target
-    // the same integration row — an unconditional UPDATE serializes them on a
-    // single row lock and was a primary source of lock-wait contention.
-    // last_used_at is telemetry only (nothing reads it for logic), so ~10 min
-    // staleness is fine and this guard skips virtually all of those writes.
-    //
-    // Compare against a JS-computed cutoff rather than SQL now(): last_used_at
-    // is `timestamp` WITHOUT time zone and is written as a JS Date, so a
-    // server-side now() comparison would be reinterpreted through the session
-    // TimeZone and could shift the 10-min window (or defeat the debounce
-    // entirely). A Date cutoff uses the same serialization path as the write.
-    const staleCutoff = new Date(Date.now() - 10 * 60 * 1000);
     await this.db
       .update(integrations)
       .set({ lastUsedAt: new Date() })
-      .where(
-        and(
-          eq(integrations.id, integrationId),
-          or(
-            isNull(integrations.lastUsedAt),
-            lt(integrations.lastUsedAt, staleCutoff)
-          )
-        )
-      );
+      .where(eq(integrations.id, integrationId));
   }
 
   /**

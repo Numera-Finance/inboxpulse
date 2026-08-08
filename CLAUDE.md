@@ -30,6 +30,12 @@ interface ApiResponse<T> {
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.
 
+## Ported Manager Endpoints (`/api/manager/*`)
+
+- **A `/api/manager/*` handler must return the exact field names its sidebar section reads, and run the same SQL crm-manager ran.** `apps/manager/src/server.js` is the reference implementation; `apps/chrome-extension/manager/*.js` is the UI, ported verbatim from it and never adapted to crm-api.
+- Nothing validates the shape at that seam — a section reads bare JSON, so a renamed or missing field renders as `0`, `—` or `Unassigned` instead of failing. A section showing zeros while the KPI row above it shows real numbers is a **shape mismatch**, not empty data. Diff the crm-api method against its `server.js` twin before looking at the database.
+- The rewrite is also a chance to silently change meaning. Keep the crm-manager SQL close to verbatim; the only things that should differ are tenant scoping, `user_accessible_customers` scoping, and tenant domains.
+
 ## Project Overview
 
 Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer management, email sync (Gmail), AI-powered email analysis, task management, dashboards, and notifications.
@@ -71,6 +77,12 @@ crm/
 ├── pnpm-workspace.yaml  # pnpm workspaces (apps/*, packages/*, packages/cloud/*)
 └── tsconfig.json        # Base TS config with path aliases
 ```
+
+## Chrome Extension Builds
+
+- **Build the extension with `pnpm --filter @crm/chrome-extension build:clone`, never plain `build`.** `wxt.config.ts` sets `outDir: 'output'`, so every mode writes to the same `output/chrome-mv3` directory Chrome loads unpacked — a plain `wxt build` silently replaces a working build.
+- Only `.env.clone` carries `WXT_SERVICE_API_KEY`, `WXT_TENANT_ID` and `WXT_FLAGS_API_URL`. `.env.production` does not, and `.env` has no `WXT_*` vars at all.
+- Without those, `SERVICE_API_KEY`/`TENANT_ID` are empty strings and **every** `INTERNAL_FETCH` in `entrypoints/background.ts` returns `internal auth not configured`. The sidebar still renders and still looks signed in; it just reports `N messages sent · 0 matched · 0 with a customer` and drops the trend, flagged messages, stats, activity and contacts at once. Treat "everything thread-scoped vanished together" as a build/env symptom, not a data one.
 
 ## Development Commands
 
@@ -309,11 +321,6 @@ Drizzle schemas live in `apps/api/src/{module}/schema.ts`. Key tables:
 2. Create SQL migration file in `apps/api/sql/` (or `apps/api/sql/migrations/` for incremental)
 3. Run `pnpm db:push` to apply schema to database
 4. Update `apps/api/sql/README.md` with execution order
-
-### Reading affected-row counts
-
-- To find out how many rows a `db.execute(sql\`...\`)` write touched, use `affectedRows(result)` from `@crm/database`. **Never read `result.rowCount` directly** — the postgres.js driver this project uses reports the count as `count`, so `rowCount` is always `undefined` and the usual `?? 0` fallback turns it into a silent, plausible-looking zero. See ADR-002.
-- This counts rows *written*, not rows *returned*. For statements with a `RETURNING` clause, use the length of the returned rows instead.
 
 ### Migration Rules
 

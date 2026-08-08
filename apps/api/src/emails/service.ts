@@ -1,56 +1,93 @@
 import { injectable, inject } from 'tsyringe';
 import { EmailRepository } from './repository';
-import type { FirstReplyCandidate } from './repository';
+import { EmailAnalysisRepository } from './analysis-repository';
 import { EmailThreadRepository } from './thread-repository';
 import { TenantRepository } from '../tenants/repository';
 import { ContactRepository } from '../contacts/repository';
-import { UserRepository } from '../users/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
-import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply, toReplyAttribution } from './converter';
-import type { ReplyAttribution } from './converter';
-import { emailCollectionSchema, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
-import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker } from '@crm/clients';
+import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply } from './converter';
+import { emailCollectionSchema, getSentimentFromSignals, NotFoundError, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
+import type {
+  AnalyzedEmailSearchRequest,
+  AnalyzedEmailSearchResponse,
+  AnalyzedEmail,
+  AnalyzedEmailExportItem,
+  FirstReplyMarker,
+  SubmitTagSuggestionRequest,
+  SubmitTagSuggestionResponse,
+  UserSubmittedRiskLevel,
+  UserSubmittedSentiment,
+} from '@crm/clients';
 import type { Database, Transaction } from '@crm/database';
 import { emails, emailThreads } from './schema';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
+import { htmlToText, extractLatestReply } from './extraction/extractor';
+
+/** How much of a flagged message's text the drill-down view gets. */
+const BODY_PREVIEW_LIMIT = 4000;
+
+/**
+ * How much stored HTML is worth parsing to produce that preview. Reply and
+ * signature extraction walk the whole string, and a body is the full source of
+ * a message that may quote a year of thread history — none of which can reach
+ * a 4k preview, since the reply Gmail-style clients put at the top comes first.
+ */
+const BODY_PARSE_LIMIT = 20_000;
+
+/**
+ * How many of a thread's messages `getThreadMessages` will return. Well above
+ * any real conversation; it exists so a pathological thread can't hand the
+ * sidebar an unbounded payload. The response says when it bit.
+ */
+const THREAD_MESSAGE_LIMIT = 200;
+
+/**
+ * Stored email body → readable plain text for a sidebar preview.
+ *
+ * Three things stand between the column and something worth showing: the body is
+ * usually the message's full HTML source, it repeats the entire quoted thread
+ * below the actual reply, and it can run to hundreds of kilobytes. The
+ * extraction pipeline already solves the first two for the analysis path, so
+ * this reuses it rather than growing a second, differently-wrong parser; the
+ * plain htmlToText result is the fallback for the cases where reply extraction
+ * finds nothing (a body that is one quoted block, say).
+ */
+function previewBody(body: string | null): { text: string; truncated: boolean } | null {
+  const stored = body?.trim();
+  if (!stored) return null;
+  const raw = stored.slice(0, BODY_PARSE_LIMIT);
+
+  const isHtml = /<[a-z][\s\S]*>/i.test(raw);
+  let text = '';
+  try {
+    text = extractLatestReply(raw, isHtml).messageBody.trim();
+  } catch {
+    /* fall through to the straight conversion below */
+  }
+  if (!text) text = (isHtml ? htmlToText(raw) : raw).trim();
+  // Collapse the runs of blank lines HTML mail leaves behind.
+  text = text.replace(/\n{3,}/g, '\n\n');
+  if (!text) return null;
+
+  return text.length > BODY_PREVIEW_LIMIT
+    ? { text: `${text.slice(0, BODY_PREVIEW_LIMIT).trimEnd()}…`, truncated: true }
+    : { text, truncated: false };
+}
 
 @injectable()
 export class EmailService {
   constructor(
     @inject(EmailRepository) private emailRepo: EmailRepository,
+    @inject(EmailAnalysisRepository) private analysisRepo: EmailAnalysisRepository,
     @inject(EmailThreadRepository) private threadRepo: EmailThreadRepository,
     @inject(TenantRepository) private tenantRepo: TenantRepository,
     @inject(ContactRepository) private contactRepo: ContactRepository,
-    @inject(UserRepository) private userRepo: UserRepository,
     @inject('Database') private db: Database
   ) {}
-
-  /**
-   * Attach the sender's user id to each reply, so first_reply_by_id can record
-   * who responded. One bulk lookup per batch.
-   *
-   * A reply whose sender matches no user in the tenant (shared mailbox, alias,
-   * someone never onboarded) still counts for time-to-response — a human did
-   * reply — it just carries a null replier.
-   */
-  private async attributeRepliesToUsers<T extends ReplyAttribution>(
-    tenantId: string,
-    replies: T[]
-  ): Promise<Array<T & FirstReplyCandidate>> {
-    const userIdsByEmail = await this.userRepo.findIdsByEmails(
-      tenantId,
-      replies.map((r) => r.fromEmail)
-    );
-
-    return replies.map((reply) => ({
-      ...reply,
-      repliedById: userIdsByEmail.get(reply.fromEmail) ?? null,
-    }));
-  }
 
   /**
    * Apply header-only first-reply markers from the Gmail sync.
@@ -84,7 +121,8 @@ export class EmailService {
       return { updatedCount: 0 };
     }
 
-    const qualifying: Array<{ providerThreadId: string } & ReplyAttribution> = [];
+    const providerThreadIds: string[] = [];
+    const replyReceivedAts: Date[] = [];
     for (const marker of markers) {
       // Reuse the exact reply classification from the full-email path so the two
       // never diverge. Auto-submitted / internal-only replies are filtered out.
@@ -102,20 +140,19 @@ export class EmailService {
       if (Number.isNaN(receivedAt.getTime())) {
         continue;
       }
-      qualifying.push({
-        providerThreadId: marker.providerThreadId,
-        ...toReplyAttribution(classifiable, receivedAt),
-      });
+      providerThreadIds.push(marker.providerThreadId);
+      replyReceivedAts.push(receivedAt);
     }
 
-    if (!qualifying.length) {
+    if (!providerThreadIds.length) {
       return { updatedCount: 0 };
     }
 
     const updatedCount = await this.emailRepo.setFirstReplyForProviderThreads(
       tenantId,
       integrationId,
-      await this.attributeRepliesToUsers(tenantId, qualifying)
+      providerThreadIds,
+      replyReceivedAts
     );
 
     return { updatedCount };
@@ -189,10 +226,9 @@ export class EmailService {
     let threadsCreated = 0;
     const emailsToAnalyze: Array<{ emailId: string; threadId: string }> = [];
     // Reply markers for first-reply (TAT) tracking. Reply emails (SENT label or
-    // tenant-domain sender) are never stored — we only record when they arrived,
-    // who they were addressed to, and who sent them, so we can set firstReplyAt /
-    // firstReplyById on the customer email they answered.
-    const replyMarkers: Array<{ threadId: string } & ReplyAttribution> = [];
+    // tenant-domain sender) are never stored — we only record their timestamp so
+    // we can set firstReplyAt on the customer email they answered.
+    const replyMarkers: Array<{ threadId: string; receivedAt: Date }> = [];
 
     // Batch-level dedup sets — shared across all collections in this batch
     // Catches forwarded copies that land in different Gmail threads
@@ -225,24 +261,24 @@ export class EmailService {
 
       // Collect reply markers for first-reply (TAT) tracking. Reply emails are
       // detected and excluded from storage inside the transaction; here we only
-      // carry their attribution so we can set firstReplyAt afterwards.
+      // carry their timestamps so we can set firstReplyAt afterwards.
       if (result.threadId) {
-        for (const reply of result.replies) {
-          replyMarkers.push({ threadId: result.threadId, ...reply });
+        for (const receivedAt of result.replyReceivedAts) {
+          replyMarkers.push({ threadId: result.threadId, receivedAt });
         }
       }
     }
 
-    // Update firstReplyAt / firstReplyById for customer emails in threads with
-    // replies (outside transaction). A single set-based UPDATE assigns each
-    // customer email the earliest reply that arrived after it AND was addressed to
-    // its sender, so no client-side ordering is needed and it's one round-trip for
-    // the whole batch.
+    // Update firstReplyAt for customer emails in threads with replies (outside transaction).
+    // A single set-based UPDATE assigns each customer email the earliest reply that
+    // arrived after it (MIN(reply_at) WHERE reply_at > received_at), so no client-side
+    // ordering is needed and it's one round-trip for the whole batch.
     if (replyMarkers.length > 0) {
       try {
         await this.emailRepo.setFirstReplyForThreads(
           tenantId,
-          await this.attributeRepliesToUsers(tenantId, replyMarkers)
+          replyMarkers.map((r) => r.threadId),
+          replyMarkers.map((r) => r.receivedAt)
         );
       } catch (error) {
         // Log but don't fail - TAT data is not critical
@@ -358,15 +394,410 @@ export class EmailService {
   }
 
   /**
+   * Resolve a DB thread id from a provider (Gmail) thread id + tenant. Lets the
+   * add-on show thread-level trend/flagged even when the open message isn't a
+   * tracked customer email (it still has the thread's Gmail id from the event).
+   */
+  async resolveThreadIdByProvider(
+    requestHeader: RequestHeader,
+    providerThreadId: string
+  ): Promise<{ threadId: string | null }> {
+    const row = await this.threadRepo.findIdByProviderThreadId(requestHeader.tenantId, providerThreadId);
+    return { threadId: row?.id ?? null };
+  }
+
+  /**
+   * Per-message sentiment trend for a thread — powers the add-on sidebar's
+   * "Trend, this thread" bar chart (design §5). Returns analyzed messages in
+   * chronological (oldest→newest) order, each with a 0–100 sentiment score
+   * derived from the stored signal, so the card can colour by the design's
+   * severity thresholds (red <40, orange <60, green ≥60).
+   *
+   * Score has no finer granularity than the stored sentiment class (we don't
+   * persist a numeric confidence on the email row): positive→75, neutral→50,
+   * negative→25. Unanalyzed messages (no sentiment signal) are omitted so the
+   * bars reflect actual scored messages, not gaps.
+   */
+  async getThreadSentimentTrend(
+    requestHeader: RequestHeader,
+    threadId: string
+  ): Promise<{
+    threadId: string;
+    points: Array<{
+      messageId: string;
+      receivedAt: string;
+      sentiment: 'positive' | 'negative' | 'neutral';
+      score: number;
+      isCustomer: boolean;
+      fromEmail: string;
+    }>;
+  }> {
+    const rows = await this.emailRepo.findByThread(requestHeader.tenantId, threadId);
+
+    const scoreFor = (s: 'positive' | 'negative' | 'neutral'): number =>
+      s === 'positive' ? 75 : s === 'negative' ? 25 : 50;
+
+    const points = rows
+      .map((r) => {
+        const sentiment = getSentimentFromSignals(r.signals);
+        if (!sentiment) return null;
+        return {
+          messageId: r.messageId,
+          receivedAt: new Date(r.receivedAt).toISOString(),
+          sentiment,
+          score: scoreFor(sentiment),
+          isCustomer: r.isCustomerEmail ?? false,
+          fromEmail: r.fromEmail,
+        };
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+      // findByThread returns newest-first; the trend reads left→right oldest→newest.
+      .reverse();
+
+    return { threadId, points };
+  }
+
+  /**
+   * Every stored message in a thread — powers the Gmail extension's in-thread
+   * search box, which filters this list as the reader types and jumps Gmail to
+   * whichever message they pick.
+   *
+   * Returned whole rather than searched here on purpose. A thread is a bounded,
+   * small set (tens of messages), so one fetch when the reader opens the search
+   * box makes every keystroke instant and offline to the API; a query parameter
+   * would put a round trip between each character for no benefit at this size.
+   *
+   * `includeBody` adds each message's text, which is what makes the search
+   * useful: within one conversation every message shares a subject, so
+   * searching anything else mostly means filtering by sender.
+   *
+   * Caveat worth knowing at the call site: this is what the CRM *ingested*, not
+   * what Gmail shows. Messages excluded by the sync (most often the reader's own
+   * sent replies) are absent, so a search here cannot find them.
+   */
+  async getThreadMessages(
+    requestHeader: RequestHeader,
+    threadId: string,
+    options?: { includeBody?: boolean }
+  ): Promise<{
+    threadId: string;
+    messages: Array<{
+      messageId: string;
+      fromEmail: string;
+      fromName: string | null;
+      receivedAt: string;
+      subject: string;
+      bodyPreview?: string;
+      bodyTruncated?: boolean;
+    }>;
+    /** True when the thread has more stored messages than THREAD_MESSAGE_LIMIT. */
+    truncated: boolean;
+  }> {
+    const includeBody = options?.includeBody === true;
+
+    const rows = (await this.db.execute(sql`
+      SELECT e.message_id, e.from_email, e.from_name, e.received_at, e.subject
+             ${includeBody ? sql`, e.body` : sql``}
+      FROM emails e
+      WHERE e.tenant_id = ${requestHeader.tenantId} AND e.thread_id = ${threadId}
+      ORDER BY e.received_at ASC
+      LIMIT ${THREAD_MESSAGE_LIMIT + 1}
+    `)) as unknown as Array<{
+      message_id: string;
+      from_email: string;
+      from_name: string | null;
+      received_at: string | Date;
+      subject: string;
+      body?: string | null;
+    }>;
+
+    const truncated = rows.length > THREAD_MESSAGE_LIMIT;
+    const messages = rows.slice(0, THREAD_MESSAGE_LIMIT).map((r) => {
+      const preview = includeBody ? previewBody(r.body ?? null) : null;
+      return {
+        messageId: r.message_id,
+        fromEmail: r.from_email,
+        fromName: r.from_name,
+        receivedAt: new Date(r.received_at).toISOString(),
+        subject: r.subject,
+        ...(preview
+          ? { bodyPreview: preview.text, bodyTruncated: preview.truncated }
+          : {}),
+      };
+    });
+
+    return { threadId, messages, truncated };
+  }
+
+  /**
+   * Flagged messages for a thread — powers the add-on sidebar's "Flagged
+   * messages" section (design §6). One item per message that carries an
+   * actionable flag (escalation / churn / upsell / competitor / kudos, or
+   * negative sentiment), sorted most-severe first, each with the flag's
+   * "why" reason and provenance ("Keyword rule match" vs "AI · N%").
+   *
+   * Reads the per-type rows from email_analyses (which persist result JSON,
+   * confidence and model_used) joined to the thread's messages.
+   *
+   * `includeBody` adds a plain-text preview of each flagged message. It's opt-in
+   * because the stored body is the full HTML source and this list is fetched on
+   * every contextual trigger: the Gmail extension's drill-down view wants the
+   * text, the summary cards above it do not. The conversion runs here rather
+   * than in the client so no consumer has to deal with raw email HTML.
+   */
+  async getThreadFlaggedMessages(
+    requestHeader: RequestHeader,
+    threadId: string,
+    options?: { includeBody?: boolean }
+  ): Promise<{
+    threadId: string;
+    messages: Array<{
+      messageId: string;
+      fromEmail: string;
+      fromName: string | null;
+      receivedAt: string;
+      subject: string;
+      severity: number;
+      /** Plain-text preview of the message, only when `includeBody` was set. */
+      bodyPreview?: string;
+      /** True when the preview was cut short at BODY_PREVIEW_LIMIT. */
+      bodyTruncated?: boolean;
+      flags: Array<{
+        type: string;
+        label: string;
+        detail?: string;
+        provenance: string;
+        /** Raw risk level on churn flags (low | medium | high | critical). */
+        level?: string;
+      }>;
+    }>;
+  }> {
+    const includeBody = options?.includeBody === true;
+
+    const rows = (await this.db.execute(sql`
+      SELECT e.message_id, e.from_email, e.from_name, e.received_at, e.subject,
+             ${includeBody ? sql`e.body,` : sql``}
+             a.analysis_type, a.result, a.confidence, a.model_used,
+             a.risk_level, a.urgency, a.detected, a.sentiment_value
+      FROM emails e
+      JOIN email_analyses a ON a.email_id = e.id
+      WHERE e.tenant_id = ${requestHeader.tenantId} AND e.thread_id = ${threadId}
+      ORDER BY e.received_at ASC
+    `)) as unknown as Array<{
+      message_id: string;
+      from_email: string;
+      from_name: string | null;
+      received_at: string | Date;
+      subject: string;
+      body?: string | null;
+      analysis_type: string;
+      result: Record<string, unknown> | null;
+      confidence: string | null;
+      model_used: string | null;
+      risk_level: string | null;
+      urgency: string | null;
+      detected: boolean | null;
+      sentiment_value: string | null;
+    }>;
+
+    const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+    const provenanceOf = (modelUsed: string | null, confidence: string | null): string => {
+      if (modelUsed === 'keyword-match') return 'Keyword rule match';
+      const pct = confidence != null ? Math.round(parseFloat(confidence) * 100) : null;
+      return pct != null ? `AI · ${pct}%` : 'AI classification';
+    };
+    // Design order: at-risk > needs-response > upsell. Mapped to our signal set.
+    const CHURN_SEV: Record<string, number> = { critical: 92, high: 84, medium: 62, low: 44 };
+
+    // `level` is carried separately from `label` so a consumer can style by risk
+    // without parsing "Churn risk · Low" back apart.
+    interface Flag { type: string; label: string; detail?: string; provenance: string; severity: number; level?: string }
+
+    const flagFrom = (r: (typeof rows)[number]): Flag | null => {
+      const prov = provenanceOf(r.model_used, r.confidence);
+      const res = (r.result ?? {}) as Record<string, unknown>;
+      const str = (v: unknown): string | undefined =>
+        typeof v === 'string' && v.trim() ? v.trim() : Array.isArray(v) && v.length ? v.join(', ') : undefined;
+      switch (r.analysis_type) {
+        case 'escalation':
+          return r.detected
+            ? { type: 'escalation', label: 'At risk', detail: str(res.reason), provenance: prov, severity: 100 }
+            : null;
+        case 'churn':
+          return r.risk_level
+            ? {
+                type: 'churn',
+                label: `Churn risk · ${cap(r.risk_level)}`,
+                detail: str(res.reason) ?? str(res.indicators),
+                provenance: prov,
+                severity: CHURN_SEV[r.risk_level] ?? 50,
+                level: r.risk_level,
+              }
+            : null;
+        case 'competitor':
+          return r.detected
+            ? { type: 'competitor', label: 'Competitor', detail: str(res.context) ?? str(res.competitors), provenance: prov, severity: 70 }
+            : null;
+        case 'upsell':
+          return r.detected
+            ? { type: 'upsell', label: 'Upsell signal', detail: str(res.opportunity) ?? str(res.product), provenance: prov, severity: 40 }
+            : null;
+        case 'kudos':
+          return r.detected
+            ? { type: 'kudos', label: 'Kudos', detail: str(res.message), provenance: prov, severity: 20 }
+            : null;
+        case 'sentiment':
+          return r.sentiment_value === 'negative'
+            ? { type: 'negative', label: 'Negative', detail: str(res.reason), provenance: prov, severity: 55 }
+            : null;
+        default:
+          return null;
+      }
+    };
+
+    // Group flags by message.
+    const byMessage = new Map<
+      string,
+      {
+        fromEmail: string;
+        fromName: string | null;
+        receivedAt: string;
+        subject: string;
+        body: string | null;
+        flags: Flag[];
+      }
+    >();
+    for (const r of rows) {
+      const flag = flagFrom(r);
+      if (!flag) continue;
+      const key = r.message_id;
+      if (!byMessage.has(key)) {
+        byMessage.set(key, {
+          fromEmail: r.from_email,
+          fromName: r.from_name,
+          receivedAt: new Date(r.received_at).toISOString(),
+          subject: r.subject,
+          body: r.body ?? null,
+          flags: [],
+        });
+      }
+      byMessage.get(key)!.flags.push(flag);
+    }
+
+    const messages = [...byMessage.entries()]
+      .map(([messageId, m]) => {
+        const flags = m.flags.sort((a, b) => b.severity - a.severity);
+        const preview = includeBody ? previewBody(m.body) : null;
+        return {
+          messageId,
+          fromEmail: m.fromEmail,
+          fromName: m.fromName,
+          receivedAt: m.receivedAt,
+          subject: m.subject,
+          severity: flags[0]?.severity ?? 0,
+          ...(preview
+            ? { bodyPreview: preview.text, bodyTruncated: preview.truncated }
+            : {}),
+          flags: flags.map(({ severity: _s, ...rest }) => rest),
+        };
+      })
+      .sort((a, b) => b.severity - a.severity || (a.receivedAt < b.receivedAt ? 1 : -1));
+
+    return { threadId, messages };
+  }
+
+  /**
    * Resolve emails by provider message IDs → linked customer + sentiment signals.
    * Powers the Gmail extension's authoritative thread→customer mapping.
    */
   async resolveByMessageIds(
     requestHeader: RequestHeader,
     provider: string,
-    messageIds: string[]
+    messageIds: string[],
+    rfcMessageIds: string[] = []
   ) {
-    return this.emailRepo.findByMessageIdsScoped(requestHeader, provider, messageIds);
+    return this.emailRepo.findByMessageIdsScoped(requestHeader, provider, messageIds, rfcMessageIds);
+  }
+
+  /**
+   * Record a user's suggested alternative tags for one message.
+   *
+   * Non-destructive by design: the AI's verdict (result JSON, risk_level,
+   * sentiment_value, confidence) is left exactly as-is. The suggestion lands in
+   * email_analyses.user_submitted_risk_level / user_submitted_sentiment_value on
+   * the churn / sentiment row respectively, so the model's call and the human's
+   * call can be compared later.
+   *
+   * The caller identifies the message by its provider (Gmail) id — the only id
+   * the Gmail surfaces have. Resolution goes through the same access-controlled
+   * path as the chip read (findByMessageIdsScoped), so a user can only re-tag
+   * messages belonging to customers they can already see. An unresolvable id is
+   * a 404, not a silent no-op.
+   *
+   * `null` for a field clears a previous suggestion; omitting it leaves the
+   * stored value untouched.
+   */
+  async submitTagSuggestion(
+    requestHeader: RequestHeader,
+    request: SubmitTagSuggestionRequest
+  ): Promise<SubmitTagSuggestionResponse> {
+    const provider = request.provider ?? 'gmail';
+    const [match] = await this.emailRepo.findByMessageIdsScoped(
+      requestHeader,
+      provider,
+      [request.messageId],
+      []
+    );
+
+    if (!match) {
+      throw new NotFoundError('Email', request.messageId);
+    }
+
+    if (request.riskLevel !== undefined) {
+      await this.analysisRepo.upsertUserSubmission(
+        match.id,
+        requestHeader.tenantId,
+        'churn',
+        request.riskLevel
+      );
+    }
+    if (request.sentimentValue !== undefined) {
+      await this.analysisRepo.upsertUserSubmission(
+        match.id,
+        requestHeader.tenantId,
+        'sentiment',
+        request.sentimentValue
+      );
+    }
+
+    // Read back the persisted state rather than echoing the request, so the UI
+    // renders what the DB actually holds (including untouched prior values).
+    const [churn, sentiment] = await Promise.all([
+      this.analysisRepo.getAnalysis(match.id, 'churn'),
+      this.analysisRepo.getAnalysis(match.id, 'sentiment'),
+    ]);
+
+    logger.info(
+      {
+        tenantId: requestHeader.tenantId,
+        userId: requestHeader.userId,
+        emailId: match.id,
+        messageId: request.messageId,
+        riskLevel: request.riskLevel,
+        sentimentValue: request.sentimentValue,
+      },
+      'User-submitted tag suggestion recorded'
+    );
+
+    return {
+      emailId: match.id,
+      messageId: request.messageId,
+      userSubmittedRiskLevel:
+        (churn?.userSubmittedRiskLevel as UserSubmittedRiskLevel | null | undefined) ?? null,
+      userSubmittedSentimentValue:
+        (sentiment?.userSubmittedSentimentValue as UserSubmittedSentiment | null | undefined) ??
+        null,
+    };
   }
 
   /**
@@ -518,7 +949,7 @@ export class EmailService {
     insertedCount: number;
     skippedCount: number;
     emailsToAnalyze: string[]; // Email IDs that need analysis
-    replies: ReplyAttribution[]; // Countable reply (SENT/tenant-domain) emails — not stored
+    replyReceivedAts: Date[]; // Timestamps of reply (SENT/tenant-domain) emails — not stored
   }> {
     return await this.db.transaction(async (tx) => {
       // Step 1: Dedup check — filter out emails that are forwarded copies
@@ -572,12 +1003,10 @@ export class EmailService {
       // All replies count as thread activity (lastMessageAt), but only genuine
       // customer-facing replies (addressed to the customer, not automated) set
       // firstReplyAt — otherwise auto-acks / internal notes would understate TAT.
-      // Which customer email each one answers is decided later by the originator
-      // rule, which needs the recipient list carried here.
       const allReplyTimes = replyEmails.map((e) => new Date(e.receivedAt));
-      const replies = replyEmails
+      const replyReceivedAts = replyEmails
         .filter((e) => isCountableReply(e, tenantDomains))
-        .map((e) => toReplyAttribution(e, new Date(e.receivedAt)));
+        .map((e) => new Date(e.receivedAt));
 
       // Build the consistent "nothing stored" result. insertedCount is 0, so every
       // email in the collection (deduped, replies, or unmatched) counts as skipped.
@@ -587,7 +1016,7 @@ export class EmailService {
         insertedCount: 0,
         skippedCount: collection.emails.length,
         emailsToAnalyze: [] as string[],
-        replies: [] as ReplyAttribution[],
+        replyReceivedAts: [] as Date[],
       };
 
       // Nothing to store and no reply timestamps to record → no-op
@@ -645,7 +1074,7 @@ export class EmailService {
         return {
           ...noopResult,
           threadId: updatedThread[0].id,
-          replies,
+          replyReceivedAts,
         };
       }
 
@@ -797,7 +1226,7 @@ export class EmailService {
         insertedCount,
         skippedCount,
         emailsToAnalyze,
-        replies,
+        replyReceivedAts,
       };
     });
   }
@@ -1085,6 +1514,19 @@ export class EmailService {
     }
   ) {
     return this.emailRepo.getDashboardStatsScoped(requestHeader, filters);
+  }
+
+  /**
+   * Per-customer signal counts over a date range, for the Gmail sidebar's Stats
+   * block. See EmailRepository.getCustomerSignalStatsScoped for why these are
+   * recomputed rather than read off the customers table's all-time rollups.
+   */
+  async getCustomerSignalStats(
+    requestHeader: RequestHeader,
+    customerId: string,
+    filters?: { dateFrom?: string; dateTo?: string }
+  ) {
+    return this.emailRepo.getCustomerSignalStatsScoped(requestHeader, customerId, filters);
   }
 
   /**

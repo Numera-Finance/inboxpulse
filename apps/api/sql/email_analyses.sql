@@ -23,7 +23,13 @@ CREATE TABLE IF NOT EXISTS email_analyses (
     risk_level VARCHAR(20),                -- For churn: 'low' | 'medium' | 'high' | 'critical' (NULL for others)
     urgency VARCHAR(20),                   -- For escalation: 'low' | 'medium' | 'high' | 'critical' (NULL for others)
     sentiment_value VARCHAR(20),           -- For sentiment: 'positive' | 'negative' | 'neutral' (NULL for others)
-    
+
+    -- User-submitted corrections (see migrations/012). Written only by a human
+    -- suggesting an alternative tag from Gmail; the analysis pipeline never
+    -- touches these, and they never overwrite the model's columns above.
+    user_submitted_risk_level VARCHAR(20),       -- For churn: user's suggested 'low' | 'medium' | 'high' | 'critical'
+    user_submitted_sentiment_value VARCHAR(20),  -- For sentiment: user's suggested 'positive' | 'negative' | 'neutral'
+
     -- Metadata
     model_used VARCHAR(100),             -- Which model was used (primary or fallback)
     reasoning TEXT,                       -- LLM reasoning/thinking steps if available
@@ -54,6 +60,9 @@ CREATE INDEX idx_email_analyses_tenant_type ON email_analyses(tenant_id, analysi
 CREATE INDEX idx_email_analyses_tenant_type_detected ON email_analyses(tenant_id, analysis_type, detected); -- For querying detected escalations/upsells/etc.
 CREATE INDEX idx_email_analyses_tenant_type_risk ON email_analyses(tenant_id, analysis_type, risk_level); -- For querying churn risk
 CREATE INDEX idx_email_analyses_created_at ON email_analyses(created_at);
+-- Partial: only a small minority of rows ever carry a user suggestion.
+CREATE INDEX idx_email_analyses_user_submitted_risk_level ON email_analyses(user_submitted_risk_level) WHERE user_submitted_risk_level IS NOT NULL;
+CREATE INDEX idx_email_analyses_user_submitted_sentiment_value ON email_analyses(user_submitted_sentiment_value) WHERE user_submitted_sentiment_value IS NOT NULL;
 
 -- Comments for documentation
 COMMENT ON TABLE email_analyses IS 'Stores analysis results for individual emails. Each email can have multiple analysis results (one per analysis type).';
@@ -64,5 +73,7 @@ COMMENT ON COLUMN email_analyses.detected IS 'Boolean flag extracted from result
 COMMENT ON COLUMN email_analyses.risk_level IS 'Risk level extracted from result. Applies to: churn. NULL for other analysis types.';
 COMMENT ON COLUMN email_analyses.urgency IS 'Urgency level extracted from result. Applies to: escalation. NULL for other analysis types.';
 COMMENT ON COLUMN email_analyses.sentiment_value IS 'Sentiment value extracted from result. Applies to: sentiment. NULL for other analysis types.';
+COMMENT ON COLUMN email_analyses.user_submitted_risk_level IS 'User-suggested churn risk level (low | medium | high | critical), submitted from the Gmail extension. Applies to analysis_type = churn. NULL when no user has suggested an alternative. Never written by the analysis pipeline.';
+COMMENT ON COLUMN email_analyses.user_submitted_sentiment_value IS 'User-suggested sentiment (positive | negative | neutral), submitted from the Gmail extension. Applies to analysis_type = sentiment. NULL when no user has suggested an alternative. Never written by the analysis pipeline.';
 COMMENT ON COLUMN email_analyses.model_used IS 'Which LLM model was used (primary or fallback)';
 COMMENT ON COLUMN email_analyses.reasoning IS 'LLM reasoning/thinking steps if available from the model';

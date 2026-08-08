@@ -16,17 +16,6 @@ import type { Customer as ClientCustomer, CreateCustomerRequest, MergeCustomerRe
 import type { CustomerImportResult, CustomerExportData } from './import-export';
 
 /**
- * True when `err` is a PostgreSQL unique-constraint violation (SQLSTATE 23505).
- * postgres.js surfaces the code on the error; check `cause` too in case a
- * wrapper re-threw it.
- */
-function isUniqueViolation(err: unknown): boolean {
-  const code = (err as { code?: string })?.code
-    ?? (err as { cause?: { code?: string } })?.cause?.code;
-  return code === '23505';
-}
-
-/**
  * Convert internal Customer (from database) to client-facing Customer
  * Serializes customer_domains table to domains array
  * Uses pre-fetched domains map to avoid N+1 queries
@@ -786,14 +775,10 @@ export class CustomerService {
    *   - Exists & auto-created & name matches → no-op
    *   - Exists & manually created    → leave alone, just return
    *
-   * Race safety: relies on the `uniq_customer_domains_tenant_domain` unique
-   * index rather than an advisory lock. Concurrent calls for the same domain
-   * race to insert; the loser catches the unique violation (23505) and
-   * re-reads the winner's row. The insert is wrapped in a SAVEPOINT so the
-   * violation rolls back only the failed insert, not the caller's transaction.
-   * This avoids serializing the whole enclosing transaction (customers +
-   * contacts + analysis writes) on a per-domain lock, which was a source of
-   * lock-wait contention on high-volume mailboxes.
+   * Race safety: requires a transaction (`tx`) and acquires an advisory
+   * transaction lock keyed on (tenantId, domain). Concurrent calls for the
+   * same domain serialize on the lock, so no two concurrent transactions can
+   * both insert and conflict on the unique constraint.
    *
    * The "(Auto)" suffix is always applied via `withAutoSuffix` — never built inline.
    */
@@ -809,6 +794,11 @@ export class CustomerService {
       throw new ValidationError('ensureCustomerForEmail requires at least one of defaultName or signatureCompany');
     }
     const proposedName = withAutoSuffix(proposedRaw);
+
+    // Serialize concurrent calls for the same (tenant, domain) within their
+    // transactions. The lock auto-releases at end of transaction.
+    const lockKey = `customer:${tenantId}:${normalizedDomain}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
 
     const existing = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
 
@@ -839,41 +829,27 @@ export class CustomerService {
       return existing;
     }
 
-    // No advisory lock: race on the unique index instead. Wrap the insert in a
-    // SAVEPOINT (nested tx) so a duplicate-key violation rolls back only this
-    // insert, leaving the caller's transaction usable to re-read the winner.
-    try {
-      const created = await tx.transaction((sp) =>
-        this.customerRepository.create(
-          {
-            tenantId,
-            name: proposedName,
-            isAutoCreated: true,
-            domain: normalizedDomain,
-          } as NewCustomer & { domain: string },
-          sp
-        )
-      );
-      logger.info(
-        {
-          tenantId,
-          customerId: created.id,
-          domain: normalizedDomain,
-          name: proposedName,
-          source: options.signatureCompany ? 'signature' : 'domain',
-          logType: 'CUSTOMER_AUTO_CREATED',
-        },
-        'Auto-created customer from email'
-      );
-      return created;
-    } catch (err) {
-      // A concurrent call inserted this (tenant, domain) first. Re-read its row.
-      if (isUniqueViolation(err)) {
-        const winner = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
-        if (winner) return winner;
-      }
-      throw err;
-    }
+    const created = await this.customerRepository.create(
+      {
+        tenantId,
+        name: proposedName,
+        isAutoCreated: true,
+        domain: normalizedDomain,
+      } as NewCustomer & { domain: string },
+      tx
+    );
+    logger.info(
+      {
+        tenantId,
+        customerId: created.id,
+        domain: normalizedDomain,
+        name: proposedName,
+        source: options.signatureCompany ? 'signature' : 'domain',
+        logType: 'CUSTOMER_AUTO_CREATED',
+      },
+      'Auto-created customer from email'
+    );
+    return created;
   }
 
   async replaceDomains(customerId: string, tenantId: string, domains: string[]): Promise<void> {

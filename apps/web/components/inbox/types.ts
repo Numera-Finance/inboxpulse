@@ -117,6 +117,14 @@ export interface InboxItem<TOriginal = unknown> {
   /** Whether email is flagged as an escalation */
   isEscalation?: boolean;
 
+  /**
+   * Raw analysis signal codes (see @crm/shared Signal). Drives the per-row
+   * flag chips (escalation / churn / upsell / kudos / competitor) via
+   * <SignalFlags>. Sentiment/classification are surfaced through their own
+   * fields above.
+   */
+  signals?: number[];
+
   /** Original data for type-specific operations */
   originalData: TOriginal;
 }

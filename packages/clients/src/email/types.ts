@@ -126,3 +126,52 @@ export const firstReplyMarkersRequestSchema = z.object({
 });
 
 export type FirstReplyMarkersRequest = z.infer<typeof firstReplyMarkersRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// User-submitted tag suggestions (Gmail extension → email_analyses)
+// ---------------------------------------------------------------------------
+
+/** Churn risk levels a user can suggest — mirrors the churn analysis result. */
+export const userSubmittedRiskLevelSchema = z.enum(['low', 'medium', 'high', 'critical']);
+export type UserSubmittedRiskLevel = z.infer<typeof userSubmittedRiskLevelSchema>;
+
+/** Sentiment values a user can suggest — mirrors the sentiment analysis result. */
+export const userSubmittedSentimentSchema = z.enum(['positive', 'negative', 'neutral']);
+export type UserSubmittedSentiment = z.infer<typeof userSubmittedSentimentSchema>;
+
+/**
+ * Request body for POST /api/emails/tag-suggestion (and the internal mount).
+ *
+ * Identifies the message the way the Gmail surfaces already do — by provider
+ * message id, since neither the extension nor the add-on knows our email UUID.
+ * At least one of `riskLevel` / `sentimentValue` must be present; `null` clears
+ * a previously submitted suggestion, `undefined` (omitted) leaves it untouched.
+ */
+export const submitTagSuggestionRequestSchema = z
+  .object({
+    /** Provider (Gmail) message id of the message being re-tagged. */
+    messageId: z.string().min(1).max(500),
+    /** Defaults to 'gmail' server-side when omitted. */
+    provider: z.string().min(1).max(50).optional(),
+    /** Suggested churn risk → email_analyses.user_submitted_risk_level. */
+    riskLevel: userSubmittedRiskLevelSchema.nullish(),
+    /** Suggested sentiment → email_analyses.user_submitted_sentiment_value. */
+    sentimentValue: userSubmittedSentimentSchema.nullish(),
+  })
+  .refine((v) => v.riskLevel !== undefined || v.sentimentValue !== undefined, {
+    message: 'At least one of riskLevel or sentimentValue must be provided',
+  });
+
+export type SubmitTagSuggestionRequest = z.infer<typeof submitTagSuggestionRequestSchema>;
+
+/** What was persisted, echoed back so the UI can render the saved state. */
+export const submitTagSuggestionResponseSchema = z.object({
+  emailId: z.string().uuid(),
+  messageId: z.string(),
+  /** Suggestion now stored on the churn row (null = none). */
+  userSubmittedRiskLevel: userSubmittedRiskLevelSchema.nullable(),
+  /** Suggestion now stored on the sentiment row (null = none). */
+  userSubmittedSentimentValue: userSubmittedSentimentSchema.nullable(),
+});
+
+export type SubmitTagSuggestionResponse = z.infer<typeof submitTagSuggestionResponseSchema>;

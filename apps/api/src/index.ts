@@ -47,6 +47,7 @@ import { contactRoutes } from './contacts/routes';
 import { roleRoutes } from './roles/routes';
 import { taskRoutes } from './tasks/routes';
 import { dashboardRoutes } from './dashboards/routes';
+import { managerRoutes } from './manager/routes';
 import { holidayRoutes } from './holidays/routes';
 import { keywordRoutes } from './keywords/routes';
 import { authRoutes } from './auth/routes';
@@ -283,6 +284,7 @@ app.use('/api/contacts/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/roles/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/tasks/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/dashboards/*', betterAuthRequestHeaderMiddleware);
+app.use('/api/manager/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/holidays/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/keywords/*', betterAuthRequestHeaderMiddleware);
 app.use('/api/login-history/*', betterAuthRequestHeaderMiddleware);
@@ -298,6 +300,9 @@ app.route('/api/contacts', contactRoutes);
 app.route('/api/roles', roleRoutes);
 app.route('/api/tasks', taskRoutes);
 app.route('/api/dashboards', dashboardRoutes);
+// Manager dashboard analytics, ported off the standalone crm-manager service
+// so the sidebar no longer needs a local gcloud proxy. See manager/routes.ts.
+app.route('/api/manager', managerRoutes);
 app.route('/api/holidays', holidayRoutes);
 app.route('/api/keywords', keywordRoutes);
 
@@ -343,13 +348,35 @@ const shutdown = (signal: string) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// A dropped DB socket surfaces as an uncaught error from the postgres driver
+// (e.g. "CONNECTION_CLOSED" or a null-socket "socket.write" TypeError). The
+// connection pool transparently reconnects for the next query, so these are
+// transient — do NOT tear the whole service down for them.
+const isTransientDbError = (err: unknown): boolean => {
+  const e = err as { message?: string; code?: string; stack?: string } | undefined;
+  const text = `${e?.message ?? ''} ${e?.stack ?? ''}`;
+  return (
+    e?.code === 'CONNECTION_CLOSED' ||
+    /CONNECTION_CLOSED|CONNECTION_ENDED|ECONNRESET|EPIPE/i.test(text) ||
+    (/socket\.write/i.test(text) && /postgres[\\/].*connection\.js/i.test(text))
+  );
+};
+
 // Handle uncaught errors
 process.on('uncaughtException', (error: Error) => {
+  if (isTransientDbError(error)) {
+    logger.error({ error: error.message }, 'Transient DB connection error — ignored (pool will reconnect)');
+    return;
+  }
   logger.error({ error: error.message, stack: error.stack }, 'Uncaught exception');
   shutdown('uncaughtException');
 });
 
 process.on('unhandledRejection', (reason: any) => {
+  if (isTransientDbError(reason)) {
+    logger.error({ reason: (reason as Error)?.message ?? reason }, 'Transient DB connection rejection — ignored');
+    return;
+  }
   logger.error({ reason }, 'Unhandled rejection');
   shutdown('unhandledRejection');
 });

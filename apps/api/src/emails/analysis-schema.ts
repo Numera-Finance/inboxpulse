@@ -107,6 +107,13 @@ export const emailAnalyses = pgTable(
     urgency: varchar('urgency', { length: 20 }), // For escalation: 'low' | 'medium' | 'high' | 'critical' (NULL for others)
     sentimentValue: varchar('sentiment_value', { length: 20 }), // For sentiment: 'positive' | 'negative' | 'neutral' (NULL for others)
 
+    // User-submitted corrections. A human reviewing the message in Gmail can
+    // suggest an alternative tag; it lands here instead of overwriting the
+    // model's verdict above, so the two stay comparable. The analysis pipeline
+    // never writes these (see analysis-repository.upsertAnalysis's update set).
+    userSubmittedRiskLevel: varchar('user_submitted_risk_level', { length: 20 }), // For churn
+    userSubmittedSentimentValue: varchar('user_submitted_sentiment_value', { length: 20 }), // For sentiment
+
     // Metadata
     modelUsed: varchar('model_used', { length: 100 }), // Which model was used (primary or fallback)
     reasoning: text('reasoning'), // LLM reasoning/thinking steps if available
@@ -148,6 +155,9 @@ export const emailAnalyses = pgTable(
       table.riskLevel
     ), // For querying churn risk
     index('idx_email_analyses_created_at').on(table.createdAt),
+    // Partial in SQL (WHERE ... IS NOT NULL) — Drizzle records the column only.
+    index('idx_email_analyses_user_submitted_risk_level').on(table.userSubmittedRiskLevel),
+    index('idx_email_analyses_user_submitted_sentiment_value').on(table.userSubmittedSentimentValue),
   ]
 );
 

@@ -7,7 +7,6 @@ import {
   isAutoSubmitted,
   hasExternalRecipient,
   isCountableReply,
-  toReplyAttribution,
 } from '../converter';
 
 // isReplyEmail decides which messages are treated as outbound "replies".
@@ -165,52 +164,5 @@ describe('isCountableReply (TAT first-reply qualification)', () => {
       ccs: [{ email: 'colleague@tenant.com' }],
     });
     expect(isCountableReply(mixed, tenantDomains)).toBe(true);
-  });
-
-  it('is message-level only — it does not check WHICH customer the reply answers', () => {
-    // The originator rule (reply must address the customer email's own sender)
-    // is enforced per row in the first-reply UPDATE, not here. A reply to any
-    // external address still qualifies as a countable reply at this stage.
-    const otherContact = reply({ tos: [{ email: 'somebody-else@acme-customer.com' }] });
-    expect(isCountableReply(otherContact, tenantDomains)).toBe(true);
-  });
-});
-
-// toReplyAttribution reduces a reply to what the first-reply UPDATE joins on.
-// Address normalization matters: emails.from_email casing is not ours to control.
-describe('toReplyAttribution', () => {
-  const at = new Date('2026-01-01T10:00:00Z');
-
-  it('lowercases the sender and merges To + Cc into recipients', () => {
-    const result = toReplyAttribution(
-      {
-        from: { email: 'Agent@Tenant.com' },
-        tos: [{ email: 'Customer@Acme.com' }],
-        ccs: [{ email: 'BOSS@tenant.com' }],
-      },
-      at
-    );
-
-    expect(result.fromEmail).toBe('agent@tenant.com');
-    expect(result.recipients).toEqual(['customer@acme.com', 'boss@tenant.com']);
-    expect(result.receivedAt).toBe(at);
-  });
-
-  it('de-duplicates recipients and drops empty addresses', () => {
-    const result = toReplyAttribution(
-      {
-        from: { email: 'agent@tenant.com' },
-        tos: [{ email: 'customer@acme.com' }, { email: '' }],
-        ccs: [{ email: 'CUSTOMER@acme.com' }],
-      },
-      at
-    );
-
-    expect(result.recipients).toEqual(['customer@acme.com']);
-  });
-
-  it('yields no recipients when the reply has none', () => {
-    const result = toReplyAttribution({ from: { email: 'agent@tenant.com' } }, at);
-    expect(result.recipients).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { eq, and, sql, isNull, inArray, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository, affectedRows } from '@crm/database';
+import { ScopedRepository } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
 import {
@@ -155,38 +155,6 @@ export class UserRepository extends ScopedRepository {
       emailMap.set(user.email.toLowerCase(), user);
     }
     return emailMap;
-  }
-
-  /**
-   * Batch resolve email addresses to user IDs, case-insensitively.
-   *
-   * Unlike {@link findByEmails} (exact-match `IN`), this lowercases both sides,
-   * so addresses harvested from mail headers — whose casing we don't control —
-   * still resolve. Returns a map of lowercased email -> user id; addresses with
-   * no matching user are simply absent.
-   */
-  async findIdsByEmails(tenantId: string, emails: string[]): Promise<Map<string, string>> {
-    const lowered = [...new Set(emails.map((e) => e.toLowerCase().trim()).filter(Boolean))];
-    if (lowered.length === 0) {
-      return new Map();
-    }
-
-    const result = await this.db
-      .select({ id: users.id, email: users.email })
-      .from(users)
-      .where(
-        and(
-          eq(users.tenantId, tenantId),
-          // Built element-by-element: drizzle flattens a bound JS array into one
-          // parameter per item, so `= ANY($n::text[])` would receive a bare string.
-          sql`LOWER(${users.email}) IN (${sql.join(
-            lowered.map((e) => sql`${e}`),
-            sql`, `
-          )})`
-        )
-      );
-
-    return new Map(result.map((u) => [u.email.toLowerCase(), u.id]));
   }
 
   /**
@@ -981,6 +949,6 @@ export class UserRepository extends ScopedRepository {
       WHERE customer_id = ${sourceCustomerId}
         AND customer_id IN (SELECT id FROM customers WHERE tenant_id = ${tenantId})
     `);
-    return affectedRows(result);
+    return (result as any).rowCount ?? 0;
   }
 }

@@ -32,9 +32,6 @@ export const integrations = pgTable('integrations', {
   authType: integrationAuthTypeEnum('auth_type').notNull(),
 
   // Static configuration (email, client_id, client_secret, etc.)
-  // GIN index for JSONB containment lookups (WHERE parameters @> '[{"key":"email",...}]'),
-  // used by IntegrationRepository.findByEmail / findIdByEmail.
-  // Note: Drizzle doesn't support GIN indexes directly, add via SQL migration (012).
   parameters: jsonb('parameters').$type<IntegrationParameters>().notNull(),
 
   // OAuth tokens (if auth_type = 'oauth')

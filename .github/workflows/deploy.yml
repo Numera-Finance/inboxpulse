@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       services:
-        description: 'Services to deploy (comma-separated: api,gmail,web,analysis,notifications or "all")'
+        description: 'Services to deploy (comma-separated: api,gmail,web,analysis,notifications,manager or "all")'
         required: false
         default: "all"
 
@@ -33,6 +33,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       analysis: ${{ steps.filter.outputs.analysis }}
       notifications: ${{ steps.filter.outputs.notifications }}
+      manager: ${{ steps.filter.outputs.manager }}
       deploy-all: ${{ steps.check.outputs.deploy-all }}
     steps:
       - name: Checkout code
@@ -55,6 +56,8 @@ jobs:
               - 'apps/analysis/**'
             notifications:
               - 'apps/notifications/**'
+            manager:
+              - 'apps/manager/**'
 
       - name: Determine deployment strategy
         id: check
@@ -134,7 +137,7 @@ jobs:
           CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
-            --memory 1Gi \
+            --memory 512Mi \
             --cpu 1 \
             --timeout 300 \
             --concurrency 100
@@ -427,3 +430,89 @@ jobs:
           URL=$(gcloud run services describe crm-notifications --region ${{ env.REGION }} --format 'value(status.url)')
           echo "### crm-notifications Deployed" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** crm-notifications:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+  # ─── Deploy: crm-manager ─────────────────────────────────────────────────
+  #
+  # The manager dashboard API behind the extension's Dashboard / AI Analysis /
+  # Customers / Users tabs.
+  #
+  # Two things differ from the services above:
+  #   * --no-allow-unauthenticated. Access is IAM, not application-layer: this
+  #     service has no login of its own, so anyone who can reach it can read the
+  #     whole CRM. Callers reach it through `gcloud run services proxy`, which
+  #     attaches the operator's identity token. Grant access per person with
+  #     roles/run.invoker (see apps/manager/README.md).
+  #   * Not triggered by deploy-all. That flag is set whenever packages/**
+  #     changes, and this service depends on nothing in packages/ — it is plain
+  #     CommonJS with two npm deps.
+  #
+  # Note the `^@^` prefix on --update-env-vars: TEAM_EMAIL_DOMAINS contains a
+  # comma, which is gcloud's default ArgDict separator. Backslash-escaping it
+  # does NOT work — gcloud rejects it with "Bad syntax for dict arg" — so the
+  # separator is switched to @ for that flag. See `gcloud topic escaping`.
+  deploy-manager:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.manager == 'true' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.services == 'all' || contains(github.event.inputs.services, 'manager')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-manager"
+          docker build -f apps/manager/Dockerfile -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
+          gcloud run deploy crm-manager \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-manager:${{ github.sha }}" \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --service-account "crm-manager-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress all-traffic \
+            --ingress all \
+            --no-allow-unauthenticated \
+            --update-env-vars "^@^NODE_ENV=production@TEAM_EMAIL_DOMAINS=mytaxfiler.com,mystartupcfo.com" \
+            --update-secrets "\
+          DATABASE_URL=DATABASE_URL:latest,\
+          CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
+          CLOUDSQL_CLIENT_CERT=CLOUDSQL_CLIENT_CERT:latest,\
+          CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
+            --min-instances 0 \
+            --max-instances 5 \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 300 \
+            --concurrency 40
+
+      - name: Get Cloud Run URL
+        run: |
+          URL=$(gcloud run services describe crm-manager --region ${{ env.REGION }} --format 'value(status.url)')
+          echo "### crm-manager Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** crm-manager:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Access:** IAM-gated — reach it with \`gcloud run services proxy crm-manager --region ${{ env.REGION }} --port 8080\`" >> $GITHUB_STEP_SUMMARY

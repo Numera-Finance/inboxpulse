@@ -299,6 +299,7 @@ export const apiEmailToInboxItem: InboxItemAdapter<ApiEmailResponse> = (
     sentiment: parseSentiment(email.sentiment, email.sentimentScore),
     classification: parseClassification(email.signals),
     isEscalation: email.isEscalation ?? false,
+    signals: email.signals ?? undefined,
     originalData: email,
   }
 }
@@ -574,6 +575,7 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
       ? (email.taskStatus === 1 ? "resolved" : "open")
       : undefined,
     classification: classification?.value === 'transactional' ? classification : undefined,
+    signals: email.signals ?? undefined,
     customerId: email.customerId,
     customerName: email.customerName || undefined,
     originalData: email,
