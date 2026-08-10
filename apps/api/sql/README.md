@@ -84,6 +84,10 @@ psql $DATABASE_URL -f apps/api/sql/migrations/012_email_analyses_user_submitted.
 # an unanchored ILIKE that no B-tree can serve. Reads the whole emails table and
 # holds a table lock while building; see the file for the CONCURRENTLY variant.
 psql $DATABASE_URL -f apps/api/sql/migrations/013_emails_search_trgm_index.sql
+
+# Register the context-search-string analysis type. Comment-only: analysis_type
+# has no CHECK constraint, so the new type needs no DDL to start writing rows.
+psql $DATABASE_URL -f apps/api/sql/migrations/014_email_analyses_context_search_string.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

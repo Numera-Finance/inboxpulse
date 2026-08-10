@@ -9,6 +9,7 @@ import {
   kudosModule,
   competitorModule,
   signatureModule,
+  contextSearchStringModule,
 } from './modules';
 
 /**
@@ -117,6 +118,21 @@ export const signatureExtractionAnalysisDefinition: AnalysisDefinition = {
 };
 
 /**
+ * Context Search String Definition
+ */
+export const contextSearchStringAnalysisDefinition: AnalysisDefinition = {
+  type: 'context-search-string',
+  name: 'Context Search String',
+  module: contextSearchStringModule,
+  models: DEFAULT_ANALYSIS_CONFIG.modelConfigs['context-search-string'],
+  settings: {
+    timeout: DEFAULT_ANALYSIS_CONFIG.analysisSettings['context-search-string'].timeout,
+    maxRetries: DEFAULT_ANALYSIS_CONFIG.analysisSettings['context-search-string'].maxRetries,
+    priority: DEFAULT_ANALYSIS_CONFIG.analysisSettings['context-search-string'].priority,
+  },
+};
+
+/**
  * All analysis definitions (LLM analyses only — domain and contact extraction
  * are pure regex on the analyze handler and not part of this list).
  */
@@ -128,6 +144,7 @@ export const allAnalysisDefinitions: AnalysisDefinition[] = [
   kudosAnalysisDefinition,
   competitorAnalysisDefinition,
   signatureExtractionAnalysisDefinition,
+  contextSearchStringAnalysisDefinition,
 ];
 
 /**
@@ -141,6 +158,7 @@ export const definitionsByType: Record<AnalysisType, AnalysisDefinition | undefi
   'kudos': kudosAnalysisDefinition,
   'competitor': competitorAnalysisDefinition,
   'signature-extraction': signatureExtractionAnalysisDefinition,
+  'context-search-string': contextSearchStringAnalysisDefinition,
 };
 
 /**

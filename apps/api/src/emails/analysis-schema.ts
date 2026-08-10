@@ -13,7 +13,8 @@ export type AnalysisType =
   | 'churn'
   | 'kudos'
   | 'competitor'
-  | 'signature-extraction';
+  | 'signature-extraction'
+  | 'context-search-string';
 
 /**
  * Union type for all analysis result structures
@@ -72,6 +73,12 @@ export type AnalysisResult =
       website?: string;
       linkedin?: string;
       twitter?: string;
+    }
+  | {
+      // Context search string
+      intent: string;
+      query: string;
+      confidence: number;
     };
 
 /**

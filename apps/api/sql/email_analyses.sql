@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS email_analyses (
     tenant_id UUID NOT NULL REFERENCES tenants(id),
     
     -- Analysis type and result
-    analysis_type VARCHAR(50) NOT NULL,  -- 'sentiment', 'escalation', 'upsell', 'churn', 'kudos', 'competitor', 'signature-extraction'
+    analysis_type VARCHAR(50) NOT NULL,  -- 'sentiment', 'escalation', 'upsell', 'churn', 'kudos', 'competitor', 'signature-extraction', 'context-search-string'
     result JSONB NOT NULL,                -- The analysis result (validated by schema)
     
     -- Extracted fields for indexing and querying
@@ -66,7 +66,7 @@ CREATE INDEX idx_email_analyses_user_submitted_sentiment_value ON email_analyses
 
 -- Comments for documentation
 COMMENT ON TABLE email_analyses IS 'Stores analysis results for individual emails. Each email can have multiple analysis results (one per analysis type).';
-COMMENT ON COLUMN email_analyses.analysis_type IS 'Type of analysis: sentiment, escalation, upsell, churn, kudos, competitor, signature-extraction';
+COMMENT ON COLUMN email_analyses.analysis_type IS 'Type of analysis: sentiment, escalation, upsell, churn, kudos, competitor, signature-extraction, context-search-string';
 COMMENT ON COLUMN email_analyses.result IS 'The analysis result as JSONB. Structure varies by analysis_type. Full result preserved for flexibility.';
 COMMENT ON COLUMN email_analyses.confidence IS 'Confidence score extracted from result for easy querying (0.00-1.00). Applies to all analysis types.';
 COMMENT ON COLUMN email_analyses.detected IS 'Boolean flag extracted from result. Applies to: escalation, upsell, kudos, competitor. NULL for sentiment and churn.';

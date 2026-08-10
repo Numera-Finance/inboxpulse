@@ -1,5 +1,8 @@
 import { z } from 'zod';
+import type { Email } from '@crm/shared';
 import type { AnalysisModule } from '../framework/types';
+import { logger } from '../utils/logger';
+import { sanitizeGmailQuery, participantAddresses } from './query-sanitizer';
 import {
   sentimentSchema,
   escalationSchema,
@@ -8,6 +11,7 @@ import {
   kudosSchema,
   competitorSchema,
   signatureSchema,
+  contextSearchStringSchema,
 } from './schemas';
 
 /**
@@ -316,6 +320,74 @@ Other rules:
 };
 
 /**
+ * Context Search String Module
+ *
+ * Unlike every other module here, the output is not a verdict about the email —
+ * it is an instruction for retrieving other emails. The reader never sees the
+ * string itself; it is run against the mailbox and only the results surface.
+ */
+export const contextSearchStringModule: AnalysisModule = {
+  name: 'context-search-string',
+  description: 'Generate a Gmail search string that finds context for this email',
+  instructions: `## Context Search String
+Given this email's sender, receiver, CCs, subject, and body, generate a search
+string (such as with "ands" and "ors") that can be entered into a Gmail-like
+search bar to find context that could aid with understanding the email.
+
+Return:
+- intent: one sentence (max ~160 characters) naming what would count as useful
+  context for this email — the specific decision, obligation, request or thread
+  of work a reader would be trying to catch up on. Retrieved candidates are
+  later scored against this sentence, so name the thing at stake rather than
+  restating the subject line.
+- query: the search string
+- confidence: 0-1 (how likely this string is to surface genuinely related email)
+
+Rules:
+- If the email only includes acknowledgements or similar gestures such as "ok,
+  thanks" or "will do", center the string primarily around the participants and
+  the subject. State the intent in terms of what the acknowledgement is
+  answering — the underlying request or proposal, not the acknowledgement.
+- Keep the elements in the string at a maximum of three terms.`,
+  schema: contextSearchStringSchema,
+  version: 'v1.1',
+
+  /**
+   * Make the generated query runnable before it is stored.
+   *
+   * Two corrections, both for failures Gmail reports as silence rather than as
+   * an error: addresses the model invented (`sandeep@mystartupcfo.com` on a
+   * thread whose participant is `sshroff@mystartupcfo.com`), and conjunctions
+   * pinning both ends of the conversation, which describe the email being read
+   * instead of searching around it. Either one makes the panel read as "no
+   * context exists". Correcting here means the stored query is the one that
+   * will actually be run.
+   */
+  postProcess: (result: unknown, email: Email): unknown => {
+    const parsed = contextSearchStringSchema.safeParse(result);
+    if (!parsed.success) return result;
+
+    const { query, removed } = sanitizeGmailQuery(
+      parsed.data.query,
+      participantAddresses(email)
+    );
+    if (removed.length === 0) return result;
+
+    logger.warn(
+      {
+        emailId: email.messageId,
+        removed,
+        before: parsed.data.query,
+        after: query,
+      },
+      'context-search-string: repaired an unrunnable query'
+    );
+
+    return { ...parsed.data, query };
+  },
+};
+
+/**
  * All analysis modules (LLM analyses only — domain and contact extraction are
  * pure regex on the analyze handler, not analyses).
  */
@@ -327,6 +399,7 @@ export const allModules: AnalysisModule[] = [
   kudosModule,
   competitorModule,
   signatureModule,
+  contextSearchStringModule,
 ];
 
 /**
@@ -340,4 +413,5 @@ export const modulesByName: Record<string, AnalysisModule> = {
   'kudos': kudosModule,
   'competitor': competitorModule,
   'signature-extraction': signatureModule,
+  'context-search-string': contextSearchStringModule,
 };

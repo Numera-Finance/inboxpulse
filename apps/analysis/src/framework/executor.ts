@@ -9,6 +9,29 @@ import type { AnalysisDefinition, AnalysisResult, BatchAnalysisResult, ThreadCon
 import { logger } from '../utils/logger';
 
 /**
+ * Render a recipient list as one prompt line: `Nina Patel <nina@acme.com>, ops@acme.com`.
+ *
+ * Bcc is deliberately never rendered by the caller. A blind recipient is
+ * invisible to everyone on the thread, and a search string built from one would
+ * leak that they were copied the moment a reader saw the results.
+ */
+function formatAddressList(
+  addresses: Array<{ name?: string; email: string }> | undefined
+): string {
+  if (!addresses?.length) return '';
+
+  return addresses
+    .map((a) => {
+      const email = a.email?.trim();
+      if (!email) return '';
+      const name = a.name?.trim();
+      return name ? `${name} <${email}>` : email;
+    })
+    .filter(Boolean)
+    .join(', ');
+}
+
+/**
  * Analysis Executor
  * Handles execution of single and batch analyses with fallback support
  */
@@ -68,7 +91,7 @@ export class AnalysisExecutor {
 
       return {
         type,
-        result: result.object,
+        result: this.applyPostProcess(definition, result.object, email, tenantId),
         modelUsed: modelConfig.primary.model,
         reasoning: result.reasoning,
         usage: result.usage && result.usage.totalTokens !== undefined
@@ -187,7 +210,7 @@ export class AnalysisExecutor {
         if (moduleResult !== undefined) {
           batchResult.set(definition.type, {
             type: definition.type,
-            result: moduleResult,
+            result: this.applyPostProcess(definition, moduleResult, email, tenantId),
             modelUsed: modelConfig.primary.model,
             reasoning: result.reasoning,
             usage: result.usage && result.usage.totalTokens !== undefined
@@ -350,8 +373,44 @@ export class AnalysisExecutor {
   }
 
   /**
+   * Run a module's optional correction pass over its own output.
+   *
+   * Never allowed to fail the analysis: a postProcess that throws leaves an
+   * otherwise-valid result unusable, so the raw model output is kept and the
+   * fault is logged. The hook is a safety net, not a gate.
+   */
+  private applyPostProcess(
+    definition: AnalysisDefinition,
+    result: unknown,
+    email: Email,
+    tenantId: string
+  ): unknown {
+    const postProcess = definition.module.postProcess;
+    if (!postProcess) return result;
+
+    try {
+      return postProcess(result, email);
+    } catch (error: any) {
+      logger.error(
+        {
+          error: error.message,
+          tenantId,
+          emailId: email.messageId,
+          analysisType: definition.type,
+        },
+        'postProcess threw — keeping the raw model output'
+      );
+      return result;
+    }
+  }
+
+  /**
    * Helper: Build email context string
    * - From: sender identity (used by signature-extraction's ownership rule, harmless to others)
+   * - To / Cc: recipients. context-search-string builds queries around the
+   *            participants, and upsell's "is this service already in flight"
+   *            rule reads the To and Cc lines for our own staff — it had been
+   *            asked to judge from addresses the prompt never carried.
    * - Body: dequoted reply content
    * - Signature: dequoted reply with signature attached, for signature-extraction to find
    *             the signature within
@@ -368,6 +427,13 @@ export class AnalysisExecutor {
 
     let context = '';
     if (fromLine) context += `${fromLine}\n`;
+
+    const toLine = formatAddressList(email.tos);
+    if (toLine) context += `To: ${toLine}\n`;
+
+    const ccLine = formatAddressList(email.ccs);
+    if (ccLine) context += `Cc: ${ccLine}\n`;
+
     context += `Email Subject: ${email.subject}\n\n`;
     context += `Email Body:\n${email.body || ''}\n\n`;
 
