@@ -3,6 +3,7 @@ import { container } from 'tsyringe';
 import { z } from 'zod';
 import { EmailService } from './service';
 import { EmailAnalysisService } from './analysis-service';
+import { ContextSearchService } from './context-search-service';
 import { RunService } from '../runs/service';
 import { dbEmailToEmail } from './converter';
 import { buildThreadContext } from './thread-context';
@@ -475,6 +476,32 @@ app.get('/thread/:threadId/flagged', async (c) => {
       return await service.getThreadFlaggedMessages(requestHeader, params.threadId, {
         includeBody,
       });
+    }
+  );
+});
+
+/**
+ * GET /api/emails/thread/:threadId/context - Related conversations for the
+ * sidebar's context drop bar.
+ *
+ * Runs the query stored by the `context-search-string` analysis against the
+ * reader's live Gmail and returns up to five OTHER threads worth reading
+ * alongside this one. The open conversation is excluded server-side — a query
+ * built from this email's own participants and subject matches its own thread
+ * first, so most of a raw result set is the thread already on screen.
+ *
+ * `?viewer=` names the mailbox to search. A tenant can have several active
+ * Gmail integrations, and searching the wrong one returns a stranger's mail
+ * rather than nothing. Registered before /:emailId, like the flagged route.
+ */
+app.get('/thread/:threadId/context', async (c) => {
+  const viewer = c.req.query('viewer') ?? undefined;
+  return handleGetRequestWithParams(
+    c,
+    z.object({ threadId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(ContextSearchService);
+      return await service.getThreadContext(requestHeader, params.threadId, viewer);
     }
   );
 });

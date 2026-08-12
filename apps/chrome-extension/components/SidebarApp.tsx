@@ -14,6 +14,7 @@ import { SelectedMessage } from './SelectedMessage';
 import { ThreadContact } from './ThreadContact';
 import { FieldsSection } from './FieldsSection';
 import { NegativeEmailResolution } from './NegativeEmailResolution';
+import { ContextDropBar } from './ContextDropBar';
 import { SectionGroup } from './Section';
 import { sendRuntimeMessage, RUNTIME_GONE_MESSAGE } from '../lib/runtime-guard';
 import { RefreshCw, Loader2 } from 'lucide-react';
@@ -131,6 +132,7 @@ export function SidebarApp({
         <SectionGroup title="Thread">
           <ThreadTrend threadId={threadId} />
           <FlaggedMessages threadId={threadId} />
+          <ContextDropBar threadId={threadId} viewerEmail={user?.email} />
         </SectionGroup>
       </div>
     );
@@ -175,6 +177,7 @@ export function SidebarApp({
       <SectionGroup title="Thread">
         <ThreadTrend threadId={threadId} />
         <FlaggedMessages threadId={threadId} />
+        <ContextDropBar threadId={threadId} viewerEmail={user?.email} />
         <FieldsSection customer={customer} />
       </SectionGroup>
     </div>

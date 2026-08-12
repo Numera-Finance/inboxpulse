@@ -26,3 +26,24 @@ export function jumpToMessage(target: MessageDescriptor): void {
   // at as well as what it wanted — the only useful form of that message.
   void revealMessage(target);
 }
+
+/**
+ * Opening a DIFFERENT conversation, for the context drop bar.
+ *
+ * This is the one case where `location.hash` is right, and it is worth being
+ * explicit about why, given the note above says the opposite. `revealMessage`
+ * finds a message's row inside the thread pane Gmail has already rendered — it
+ * structurally cannot reach a conversation that is not on screen. The objection
+ * to the hash was never that it fails; it is that Gmail resolves `#all/<id>` as
+ * a *conversation* and reopens it in its default state, which undid an in-thread
+ * reveal that had just worked.
+ *
+ * Reopening a conversation in its default state is precisely what is wanted
+ * here: the target is another thread entirely, and the reader is asking to go
+ * to it. Takes Gmail's own thread id, which the API returns verbatim from the
+ * search — not the CRM's uuid.
+ */
+export function jumpToThread(providerThreadId: string): void {
+  if (!providerThreadId) return;
+  window.location.hash = `#all/${providerThreadId}`;
+}

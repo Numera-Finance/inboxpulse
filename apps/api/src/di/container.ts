@@ -23,6 +23,7 @@ import { ThreadAnalysisRepository } from '../emails/thread-analysis-repository';
 import { ThreadAnalysisService } from '../emails/thread-analysis-service';
 import { EmailAnalysisService } from '../emails/analysis-service';
 import { EmailService } from '../emails/service';
+import { ContextSearchService } from '../emails/context-search-service';
 import { ManagerService } from '../manager/service';
 import { AnalysisClient } from '@crm/clients';
 import { RunRepository } from '../runs/repository';
@@ -116,6 +117,7 @@ export function setupContainer() {
   container.register(ThreadAnalysisService, { useClass: ThreadAnalysisService });
   container.register(EmailAnalysisService, { useClass: EmailAnalysisService });
   container.register(EmailService, { useClass: EmailService });
+  container.register(ContextSearchService, { useClass: ContextSearchService });
   container.register(ManagerService, { useClass: ManagerService });
 
   // Register better-auth services
