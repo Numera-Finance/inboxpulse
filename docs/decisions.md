@@ -570,14 +570,18 @@ summary instead shares the sender's line and costs no vertical space:
 
 **Consequences:**
 - `AnalyzedEmail` is additive-only, so existing consumers keep compiling. The
-  escalation export is unchanged: it maps an explicit column list in
-  `apps/web/app/escalations/page.tsx`, so the new fields ride along in the
-  payload without appearing as columns. Adding To/Cc export columns is a
-  separate, deliberate change.
+  export deliberately opts out: `analyzedEmailExportItemSchema` omits `tos`/`ccs`
+  and `exportAnalyzedEmails` does not select them, because the XLSX builder in
+  `apps/web/app/escalations/page.tsx` maps a fixed column list with no To/Cc
+  columns and that query is unpaginated — carrying them would be dead payload on
+  every exported row. Adding To/Cc export columns is a separate, deliberate
+  change that would also add them back to the query.
 - The clients package is not runtime-validated on read (`getAnalyzedById` casts
-  rather than `parse`s), so the `.default([])` protects the *server*'s response
-  shape, not the client's. Both ends now always send arrays; a consumer reading
-  an older cached response would still see `undefined`.
+  rather than `parse`s), so `.default([])` protects the *server*'s response
+  shape, not the client's: a web build reaching production ahead of the API
+  would see `undefined`. `analyzedEmailToInboxContent` therefore guards with
+  `(email.tos ?? [])` rather than trusting the declared type — `deploy-api` and
+  `deploy-web` are parallel jobs with no ordering guarantee.
 - The inbox page needed no change to *reach* the recipients —
   `apiEmailToInboxContent` already mapped `tos`/`ccs`/`bccs`. Only the
   escalations path was wrong. It did share the invented-name fallback, which is

@@ -1915,7 +1915,10 @@ export class EmailRepository extends ScopedRepository {
   async exportAnalyzedEmails(
     header: RequestHeader,
     request: AnalyzedEmailSearchRequest
-  ): Promise<Array<AnalyzedEmail & { taskComments: Array<{ userName: string; content: string; createdAt: Date }> }>> {
+    // Recipients are omitted: the XLSX column list has no To/Cc columns, and
+    // this query is unpaginated, so fetching them would be dead payload on
+    // every exported row.
+  ): Promise<Array<Omit<AnalyzedEmail, 'tos' | 'ccs'> & { taskComments: Array<{ userName: string; content: string; createdAt: Date }> }>> {
     // Build raw SQL WHERE conditions (same as searchAnalyzedEmails)
     const whereParts: SQL[] = [
       sql`e.tenant_id = ${header.tenantId}`,
@@ -1979,8 +1982,6 @@ export class EmailRepository extends ScopedRepository {
       body: string | null;
       from_email: string;
       from_name: string | null;
-      tos: Array<{ email: string; name?: string }> | null;
-      ccs: Array<{ email: string; name?: string }> | null;
       received_at: Date;
       signals: number[];
       customer_id: string;
@@ -2003,8 +2004,6 @@ export class EmailRepository extends ScopedRepository {
         e.body,
         e.from_email,
         e.from_name,
-        e.tos,
-        e.ccs,
         e.received_at,
         e.created_at,
         e.signals,
@@ -2072,8 +2071,6 @@ export class EmailRepository extends ScopedRepository {
       body: row.body,
       fromEmail: row.from_email,
       fromName: row.from_name,
-      tos: row.tos ?? [],
-      ccs: row.ccs ?? [],
       receivedAt: new Date(row.received_at),
       signals: row.signals ?? [],
       customerId: row.customer_id,

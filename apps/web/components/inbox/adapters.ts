@@ -612,11 +612,14 @@ export const analyzedEmailToInboxContent = (
     // is already shown in the meta grid above the message. Names fall back to
     // the address rather than a name derived from it: "Pjain" invented from
     // pjain@… reads as a real person's name while being made up.
-    to: email.tos.map((recipient) => ({
+    // Guarded despite the schema declaring these required: responses are cast,
+    // not parsed, so a web build that reaches production ahead of the API would
+    // otherwise dereference undefined here.
+    to: (email.tos ?? []).map((recipient) => ({
       name: recipient.name || recipient.email,
       email: recipient.email,
     })),
-    cc: email.ccs.map((recipient) => ({
+    cc: (email.ccs ?? []).map((recipient) => ({
       name: recipient.name || recipient.email,
       email: recipient.email,
     })),

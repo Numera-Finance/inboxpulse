@@ -162,6 +162,16 @@ function MessageContent({ message }: { message: InboxItemContent }) {
   // fixed rows push the body itself below the fold.
   const [showRecipients, setShowRecipients] = React.useState(false)
 
+  // Selecting another item swaps `message` without remounting this component,
+  // so the expanded state has to be dropped explicitly. Left alone, a message
+  // with three or fewer recipients renders the expanded block while drawing no
+  // chevron to close it — the toggle only exists when something is hidden.
+  const [shownFor, setShownFor] = React.useState(message.id)
+  if (shownFor !== message.id) {
+    setShownFor(message.id)
+    setShowRecipients(false)
+  }
+
   const to = message.to ?? []
   const cc = message.cc ?? []
   const recipientCount = to.length + cc.length
@@ -177,7 +187,7 @@ function MessageContent({ message }: { message: InboxItemContent }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-2">
             <div className="flex items-baseline gap-2 min-w-0">
-              <p className="font-medium text-sm shrink-0">{message.from.name}</p>
+              <p className="font-medium text-sm truncate">{message.from.name}</p>
               <span className="text-xs text-muted-foreground truncate">
                 {message.from.email}
               </span>

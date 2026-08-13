@@ -87,7 +87,10 @@ export interface AnalyzedEmailSearchResponse {
  * Export item for analyzed emails - includes comments and contact roles
  */
 export const analyzedEmailExportItemSchema = z.object({
-  ...analyzedEmailSchema.shape,
+  // Recipients are deliberately absent: the XLSX builder maps a fixed column
+  // list with no To/Cc columns, so carrying them would be dead weight on an
+  // unpaginated export.
+  ...analyzedEmailSchema.omit({ tos: true, ccs: true }).shape,
   comments: z.array(z.object({
     userName: z.string(),
     content: z.string(),
