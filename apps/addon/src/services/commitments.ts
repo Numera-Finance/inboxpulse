@@ -19,6 +19,25 @@
  * "We should", "let's", "it would be good to" propose that somebody act. "I'll",
  * "I will", "we'll send" undertake it. When a sentence proposes without
  * undertaking, it is a suggestion regardless of how actionable it sounds.
+ *
+ * IT FAILS CLOSED. The first version only rejected sentences that matched a
+ * suggestion pattern and accepted everything else, which let a whole third
+ * category through: pleasantries. On a thank-you thread the panel rendered
+ *
+ *   Vignesh Mohan  — carry this trend forward across everything we do together
+ *   Seema Bhattacharjee — look forward to carrying this momentum forward
+ *
+ * under the heading "Who owes what". Nobody owed anything; it was a thank-you
+ * note. "We look forward to X" is neither a suggestion nor an undertaking, so
+ * absence-of-suggestion accepted it.
+ *
+ * Requiring a positive undertaking is the only rule that holds, because the
+ * space of things that are not commitments is unbounded and cannot be
+ * enumerated. This will miss real commitments phrased unusually. That is the
+ * right trade: this section names a person and asserts they owe something, and
+ * it feeds a calendar reminder and a tracked task. A missed commitment costs a
+ * user one glance at a thread they already have open; an invented one sends
+ * them to chase a colleague over a sentence that was a pleasantry.
  */
 
 /** Proposing that something be done. */
@@ -35,6 +54,21 @@ const SUGGESTION = [
   /\bworth (?:a|considering|exploring|doing)\b/i,
 ];
 
+/**
+ * Warm noise. Not consulted for the accept/reject decision -- the fail-closed
+ * rule already handles these -- but kept as executable documentation of the
+ * category that broke the first version, and asserted in the tests.
+ */
+export const PLEASANTRY = [
+  /\blook(?:ing)? forward to\b/i,
+  /\bcan(?:'|’)?t wait to\b/i,
+  /\b(?:excited|thrilled|delighted|pleased|proud) (?:about|to|of)\b/i,
+  /\bthank(?:s| you)\b/i,
+  /\bappreciate\b/i,
+  /\bhere(?:'|’)?s to\b/i,
+  /\bthis is just the beginning\b/i,
+];
+
 /** Actually undertaking it. */
 const UNDERTAKING = [
   /\b(?:i|we)\s*(?:'|’)ll\b/i,
@@ -43,7 +77,8 @@ const UNDERTAKING = [
   /\b(?:i|we)\s+(?:am|'m|’m|are|'re|’re)\s+going to\b/i,
   /\b(?:i|we)\s+(?:plan|intend|commit|promise|aim)\b/i,
   /\b(?:i|we)\s+(?:am|'m|’m|are|'re|’re)\s+\w+ing\b/i,
-  /\bby (?:end of|eod|cob|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|next week)\b/i,
+  // Bare gerund opening a sentence: "Sending the deck across by end of day."
+  /^(?:sending|shipping|getting|putting|drafting|writing|scheduling|sharing|booking|raising|filing)\b/i,
 ];
 
 /**
@@ -61,10 +96,10 @@ export function isRealCommitment(c: { what?: string; quote?: string }): boolean 
   const quote = (c.quote ?? '').trim();
   if (!quote) return false;
 
-  const undertakes = UNDERTAKING.some((re) => re.test(quote));
-  if (undertakes) return true;
-
-  return !SUGGESTION.some((re) => re.test(quote));
+  // Positive evidence required. See the note above on failing closed -- an
+  // earlier version returned true whenever no SUGGESTION pattern matched, and
+  // "we look forward to carrying this momentum forward" matches neither list.
+  return UNDERTAKING.some((re) => re.test(quote));
 }
 
 export function filterCommitments<T extends { what?: string; quote?: string }>(list: T[]): T[] {
