@@ -139,6 +139,20 @@ app.post('/gmail/contextual', async (c) => {
     return c.json(pushCard(buildThreadCard({ messageId, status: 'unverified' })));
   }
 
+  // Which credentials Google actually sent. A 403 "insufficient scopes" is
+  // indistinguishable from a missing token in the failure message, so record
+  // presence (never the values) before the call rather than guessing after it.
+  logger.info(
+    {
+      hasMessageId: Boolean(messageId),
+      hasAccessToken: Boolean(accessToken),
+      hasOauthToken: Boolean(oauthToken),
+      eventKeys: Object.keys(event ?? {}),
+      gmailKeys: Object.keys((event as Record<string, unknown>)?.gmail ?? {}),
+    },
+    'contextual: inbound credentials',
+  );
+
   // The open message's own envelope headers (title / from / to / cc / bcc) plus
   // its cross-mailbox-stable RFC Message-ID, in one Gmail metadata call.
   const headers = await fetchMessageHeaders(messageId, oauthToken, accessToken);
