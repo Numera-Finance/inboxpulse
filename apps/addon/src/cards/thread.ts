@@ -2,7 +2,7 @@ import { type Card, type CardSection, type Widget, text, deco, heading, separate
 import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
-import type { LiveAnalysis } from '../services/live-analysis';
+import type { LiveAnalysis, ThreadDigest } from '../services/live-analysis';
 import type { Participant } from '../services/participants';
 
 export type ThreadStatus =
@@ -59,6 +59,10 @@ export interface ThreadCardInput {
   chatShareEnabled?: boolean;
   /** Everyone on the thread, most-involved first. */
   participants?: Participant[];
+  /** Commitments and unanswered questions extracted from the thread. */
+  digest?: ThreadDigest | null;
+  /** A generated reply, carried into Gmail's compose window by URL. */
+  draft?: string | null;
 }
 
 /**
@@ -209,6 +213,21 @@ function deriveSearch(headers: MessageHeaders | undefined): { query: string; ter
   return { query: parts.join(' '), terms };
 }
 
+/**
+ * Gmail's compose window, pre-filled. This is the no-scope route to a draft —
+ * see draftReplyLive() for why the compose-action API was not used. The trade is
+ * that it opens a NEW message: a URL cannot set References headers, so the reply
+ * will not thread into the conversation.
+ */
+function gmailComposeUrl(input: ThreadCardInput, body: string): string {
+  const to = input.headers?.from ?? '';
+  const subject = input.headers?.subject ?? '';
+  const re = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
+  const params = new URLSearchParams({ view: 'cm', fs: '1', to, su: re, body });
+  const auth = input.viewerEmail ? `?authuser=${encodeURIComponent(input.viewerEmail)}` : '';
+  return `https://mail.google.com/mail/u/0/${auth}${auth ? '&' : '?'}${params.toString()}`;
+}
+
 function gmailSearchUrl(query: string, viewerEmail?: string): string {
   const target = viewerEmail ? `?authuser=${encodeURIComponent(viewerEmail)}` : '';
   return `https://mail.google.com/mail/u/0/${target}#search/${encodeURIComponent(query)}`;
@@ -280,10 +299,32 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       if (trendSection) sections.push(trendSection);
       if (flaggedSection) sections.push(flaggedSection);
 
+      // 2. What the thread actually commits people to. This is the part that is
+      // invisible at a glance and does not depend on anything being WRONG —
+      // which is why it earns space on a benign thread where sentiment does not.
+      const digest = input.digest;
+      if (digest?.commitments.length) {
+        sections.push({
+          header: heading('Who owes what'),
+          widgets: digest.commitments.map((c) =>
+            deco({ text: c.who, bottomLabel: [c.what, c.when].filter(Boolean).join(' · '), wrapText: true }),
+          ),
+        });
+      }
+      if (digest?.openQuestions.length) {
+        sections.push({
+          header: heading('Unanswered'),
+          widgets: digest.openQuestions.map((q) => deco({ text: q, wrapText: true })),
+        });
+      }
+
       // 3. Do next — real actions, all derived from the message alone.
       const search = deriveSearch(input.headers);
       const doNext: Widget[] = [];
       const btns = [];
+      if (input.draft) {
+        btns.push(linkButton('Draft a reply', gmailComposeUrl(input, input.draft)));
+      }
       if (search) btns.push(linkButton('Find related emails', gmailSearchUrl(search.query, input.viewerEmail)));
       if (input.chatShareEnabled && input.baseUrl) {
         btns.push(

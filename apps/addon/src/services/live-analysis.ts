@@ -290,3 +290,130 @@ export async function draftReplyLive(input: {
     clearTimeout(timer);
   }
 }
+
+/** Something someone said they would do, and who owes it. */
+export interface Commitment {
+  who: string;
+  what: string;
+  when?: string;
+}
+
+export interface ThreadDigest {
+  commitments: Commitment[];
+  openQuestions: string[];
+}
+
+/**
+ * Extract commitments and unanswered questions from the whole thread.
+ *
+ * This exists because sentiment is a non-answer on most mail. On an internal
+ * scheduling thread "nothing concerning" tells the reader what they already
+ * knew, and a panel that says only that is scaffolding. What is genuinely
+ * invisible at a glance — especially on a long chain — is who owes what, and
+ * which asks never got answered.
+ *
+ * One call over the whole thread rather than per message: commitments are a
+ * property of the conversation, not of any single email, and one call is faster
+ * than the per-message loop it partly replaces.
+ */
+export async function digestThreadLive(input: {
+  subject?: string;
+  thread: string;
+}): Promise<ThreadDigest | null> {
+  const env = getEnv();
+  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  const prompt = [
+    'Read this email thread and extract two things.',
+    '',
+    '1. Commitments: anything someone said they WOULD DO. Use the name as written.',
+    '   Include a due date only if the thread states one.',
+    '2. Open questions: questions asked that nobody answered later in the thread.',
+    '',
+    'Do not invent commitments. If someone only expressed an opinion, that is not',
+    'a commitment. If there are none, return empty arrays.',
+    '',
+    `Subject: ${input.subject ?? '(none)'}`,
+    '',
+    input.thread.slice(0, 6000),
+    '',
+    'Return ONLY this JSON:',
+    '{"commitments":[{"who":"name","what":"short phrase","when":"or omit"}],"openQuestions":["..."]}',
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), env.LIVE_ANALYSIS_TIMEOUT_MS);
+  const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
+
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+
+    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(
+        ollama
+          ? {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              think: env.LIVE_ANALYSIS_THINK,
+              stream: false,
+              options: { temperature: 0 },
+            }
+          : {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0,
+              max_tokens: MAX_TOKENS,
+            },
+      ),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => '');
+      logger.warn({ status: res.status, detail }, 'thread digest: non-OK');
+      return null;
+    }
+
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      message?: { content?: string };
+    };
+    const content = (ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '';
+    return parseDigest(content);
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'thread digest: failed');
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Tolerant of fences and prose, strict about shape. */
+export function parseDigest(raw: string): ThreadDigest | null {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const obj = JSON.parse(match[0]) as { commitments?: unknown; openQuestions?: unknown };
+    const commitments = Array.isArray(obj.commitments)
+      ? obj.commitments
+          .map((c) => c as Record<string, unknown>)
+          .filter((c) => typeof c?.who === 'string' && typeof c?.what === 'string')
+          .map((c) => ({
+            who: String(c.who).trim(),
+            what: String(c.what).trim(),
+            when: typeof c.when === 'string' && c.when.trim() ? String(c.when).trim() : undefined,
+          }))
+          .filter((c) => c.who && c.what)
+      : [];
+    const openQuestions = Array.isArray(obj.openQuestions)
+      ? obj.openQuestions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0).map((q) => q.trim())
+      : [];
+    return { commitments, openQuestions };
+  } catch {
+    return null;
+  }
+}

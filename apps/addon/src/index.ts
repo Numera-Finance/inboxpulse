@@ -16,7 +16,6 @@ import { logger } from './utils/logger';
 import { pushCard } from './cards/widgets';
 import { buildHomepageCard } from './cards/homepage';
 import { buildThreadCard } from './cards/thread';
-import type { TrendPoint } from './cards/trend';
 import { buildFlaggedDetailCard } from './cards/flagged-detail';
 import { signalNames } from './cards/signals';
 import { getGmail, getActionParameters, type AddonEvent } from './gmail/event';
@@ -31,7 +30,7 @@ import {
   getThreadFlagged,
   resolveThreadIdByProvider,
 } from './services/api-client';
-import { analyseMessageLive, analyseThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
+import { analyseMessageLive, digestThreadLive, draftReplyLive, isLiveAnalysisEnabled } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
 import { deriveParticipants, type Participant } from './services/participants';
 
@@ -248,22 +247,34 @@ app.post('/gmail/contextual', async (c) => {
     // Falls back to the open message alone when the thread read is refused —
     // the per-message token may not reach beyond the message being viewed.
     let live = null;
-    let liveTrend: TrendPoint[] = [];
+    let digest = null;
+    let draft: string | null = null;
     let participants: Participant[] = [];
     if (!trend.length && !flagged.length && isLiveAnalysisEnabled()) {
       const threadMessages = await fetchThreadMessages(providerThreadId, oauthToken, accessToken);
       if (threadMessages?.length) {
         // Who is involved comes from the WHOLE chain — see services/participants.
         participants = deriveParticipants(threadMessages, viewerEmail);
-        const series = await analyseThreadLive(threadMessages);
-        liveTrend = series.map((a, i) => ({
-          score: a.sentiment === 'positive' ? 85 : a.sentiment === 'negative' ? 20 : 55,
-          sentiment: a.sentiment,
-          receivedAt: threadMessages[threadMessages.length - series.length + i]?.date ?? '',
-          isCustomer: true,
-        }));
-        live = series.length ? series[series.length - 1] : null;
-        logger.info({ messages: threadMessages.length, analysed: series.length }, 'live thread analysis');
+
+        // The per-message sentiment loop was dropped here. It was the slowest
+        // part of the render and the least useful output: a row of identical
+        // squares on an internal thread tells the reader nothing. Commitments
+        // and unanswered questions are invisible at a glance and matter even
+        // when nothing is wrong, which is most mail.
+        const threadText = threadMessages
+          .map((m) => `From: ${m.from ?? 'unknown'}\n${m.body}`)
+          .join('\n\n')
+          .slice(0, 8000);
+
+        [live, digest, draft] = await Promise.all([
+          liveForOpenMessage(),
+          digestThreadLive({ subject: headers?.subject, thread: threadText }),
+          draftReplyLive({ subject: headers?.subject, from: headers?.from, thread: threadText }),
+        ]);
+        logger.info(
+          { messages: threadMessages.length, commitments: digest?.commitments.length ?? 0 },
+          'live thread digest',
+        );
       } else {
         live = await liveForOpenMessage();
       }
@@ -281,13 +292,15 @@ app.post('/gmail/contextual', async (c) => {
           status,
           headers,
           viewerEmail,
-          trend: liveTrend.length ? liveTrend : trend,
+          trend,
           flagged,
           threadId: dbThreadId ?? undefined,
           baseUrl,
           live,
           chatShareEnabled: isChatShareEnabled(),
           participants,
+          digest,
+          draft,
         }),
       ),
     );
