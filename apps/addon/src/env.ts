@@ -34,6 +34,27 @@ const envSchema = z.object({
   // The add-on's OAuth client id — the audience of event.userIdToken (which
   // carries the signed-in user's email). Reuses the CRM Google client by default.
   GOOGLE_CLIENT_ID: z.string().default(''),
+
+  // ---------------------------------------------------------------------------
+  // Live analysis (demo / dogfooding path)
+  //
+  // When set, a thread that InboxPulse has NOT ingested is analysed in-request
+  // against an OpenAI-compatible endpoint and the result is rendered and thrown
+  // away. Nothing is written to the database and nothing enters the shared
+  // tenant. This exists so an inbox that is deliberately excluded from ingestion
+  // -- any internal/leadership mailbox -- can still show a real panel.
+  //
+  // Blank (the default) disables it entirely, so production behaviour is
+  // unchanged unless someone opts in.
+  //
+  // NOTE: if the endpoint is on a private network (e.g. a Tailscale address),
+  // this add-on must run on a host that can reach it. Cloud Run cannot.
+  // ---------------------------------------------------------------------------
+  LIVE_ANALYSIS_URL: z.string().default(''),
+  LIVE_ANALYSIS_MODEL: z.string().default('gpt-4o-mini'),
+  LIVE_ANALYSIS_KEY: z.string().default(''),
+  /** Hard ceiling on the in-request LLM call; the card renders without it on timeout. */
+  LIVE_ANALYSIS_TIMEOUT_MS: z.coerce.number().default(8000),
 });
 
 export type Env = z.infer<typeof envSchema>;
