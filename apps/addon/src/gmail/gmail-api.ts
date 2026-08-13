@@ -229,6 +229,8 @@ export async function fetchMessageHeaders(
 export interface ThreadMessage {
   id: string;
   from?: string;
+  to?: string;
+  cc?: string;
   date?: string;
   body: string;
 }
@@ -261,10 +263,12 @@ export async function fetchThreadMessages(
     const body = extractBodyText(m.payload);
     if (!body) continue;
     const headers = m.payload?.headers ?? [];
-    const from = headers.find((h) => h.name?.toLowerCase() === 'from')?.value;
+    const header = (n: string) => headers.find((h) => h.name?.toLowerCase() === n)?.value;
     out.push({
       id: m.id ?? '',
-      from,
+      from: header('from'),
+      to: header('to'),
+      cc: header('cc'),
       date: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : undefined,
       body,
     });

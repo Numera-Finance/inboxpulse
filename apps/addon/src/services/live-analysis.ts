@@ -185,3 +185,89 @@ export async function analyseThreadLive(
   );
   return results.filter((r): r is LiveAnalysis => r !== null);
 }
+
+/**
+ * Draft a short reply to the open thread.
+ *
+ * Returns plain text, deliberately: it is carried in a Gmail compose URL, which
+ * is the only way to pre-populate a draft WITHOUT the compose OAuth scope. The
+ * scope route (setComposeAction) is documented for Apps Script but Google does
+ * not publish the equivalent response shape for HTTP add-ons, and guessing it
+ * costs a full consent cycle to test. The URL works today and costs nothing.
+ *
+ * The trade-off is real and worth stating: a compose URL opens a NEW message,
+ * not a threaded reply. Gmail threads on References headers, which a URL cannot
+ * set, so the draft will not join the original conversation.
+ */
+export async function draftReplyLive(input: {
+  subject?: string;
+  from?: string;
+  thread: string;
+  senderFirstName?: string;
+}): Promise<string | null> {
+  const env = getEnv();
+  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  const prompt = [
+    'Write a short reply to the email thread below, as the recipient.',
+    'Rules: 3 sentences maximum. Acknowledge the substance specifically.',
+    'Commit only to what the thread already supports — never invent a date,',
+    'a price, or a promise that is not already there. No greeting line, no',
+    'sign-off, no subject line. Plain text only.',
+    '',
+    `Subject: ${input.subject ?? '(none)'}`,
+    '',
+    input.thread.slice(0, MAX_BODY_CHARS),
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), env.LIVE_ANALYSIS_TIMEOUT_MS);
+  const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
+
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+
+    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(
+        ollama
+          ? {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              think: env.LIVE_ANALYSIS_THINK,
+              stream: false,
+              options: { temperature: 0.2 },
+            }
+          : {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0.2,
+              max_tokens: MAX_TOKENS,
+            },
+      ),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => '');
+      logger.warn({ status: res.status, detail }, 'draft reply: non-OK');
+      return null;
+    }
+
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      message?: { content?: string };
+    };
+    const text = (ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '';
+    const clean = text.replace(/^```[a-z]*\n?|```$/g, '').trim();
+    return clean || null;
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'draft reply: failed');
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

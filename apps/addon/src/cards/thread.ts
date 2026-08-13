@@ -3,6 +3,7 @@ import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
 import type { LiveAnalysis } from '../services/live-analysis';
+import type { Participant } from '../services/participants';
 
 export type ThreadStatus =
   | 'preview'
@@ -56,6 +57,8 @@ export interface ThreadCardInput {
   live?: LiveAnalysis | null;
   /** Renders the "Share to Chat" button when a webhook is configured. */
   chatShareEnabled?: boolean;
+  /** Everyone on the thread, most-involved first. */
+  participants?: Participant[];
 }
 
 /**
@@ -303,6 +306,31 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         );
       }
       if (doNext.length) sections.push({ header: heading('Do next'), widgets: doNext });
+
+      // 4. Loop in — answered from the whole chain, not the open message.
+      // Anyone who was on the conversation but is off the latest reply leads,
+      // because that is the name the open message cannot show you.
+      const people = input.participants ?? [];
+      if (people.length) {
+        const dropped = people.filter((p) => !p.onLatest);
+        const shown = [...dropped, ...people.filter((p) => p.onLatest)].slice(0, 4);
+        sections.push({
+          header: heading('Loop in'),
+          widgets: shown.map((p) =>
+            deco({
+              text: p.name ?? p.address,
+              bottomLabel: [
+                p.sent ? `wrote ${p.sent}` : `copied on ${p.messages}`,
+                p.external ? 'external' : 'internal',
+                p.onLatest ? null : 'not on latest reply',
+              ]
+                .filter(Boolean)
+                .join(' · '),
+              wrapText: true,
+            }),
+          ),
+        });
+      }
 
       // Provenance sits at the bottom: it matters for trust, but nobody opens
       // the panel to read it. Quiet, and unambiguous that nothing was written.

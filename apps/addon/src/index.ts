@@ -33,6 +33,7 @@ import {
 } from './services/api-client';
 import { analyseMessageLive, analyseThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
+import { deriveParticipants, type Participant } from './services/participants';
 
 const app = new Hono();
 
@@ -248,9 +249,12 @@ app.post('/gmail/contextual', async (c) => {
     // the per-message token may not reach beyond the message being viewed.
     let live = null;
     let liveTrend: TrendPoint[] = [];
+    let participants: Participant[] = [];
     if (!trend.length && !flagged.length && isLiveAnalysisEnabled()) {
       const threadMessages = await fetchThreadMessages(providerThreadId, oauthToken, accessToken);
       if (threadMessages?.length) {
+        // Who is involved comes from the WHOLE chain — see services/participants.
+        participants = deriveParticipants(threadMessages, viewerEmail);
         const series = await analyseThreadLive(threadMessages);
         liveTrend = series.map((a, i) => ({
           score: a.sentiment === 'positive' ? 85 : a.sentiment === 'negative' ? 20 : 55,
@@ -283,6 +287,7 @@ app.post('/gmail/contextual', async (c) => {
           baseUrl,
           live,
           chatShareEnabled: isChatShareEnabled(),
+          participants,
         }),
       ),
     );
