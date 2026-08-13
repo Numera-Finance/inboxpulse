@@ -103,7 +103,14 @@ export async function analyseMessageLive(input: {
     });
 
     if (!res.ok) {
-      logger.warn({ status: res.status, provider: env.LIVE_ANALYSIS_PROVIDER }, 'live analysis: non-OK response');
+      // Log the endpoint's own error text. A bare status cannot distinguish an
+      // unknown model from a rejected parameter from a wrong path, and all three
+      // return 400.
+      const detail = await res.text().then((t) => t.slice(0, 300)).catch(() => '');
+      logger.warn(
+        { status: res.status, provider: env.LIVE_ANALYSIS_PROVIDER, url, model: env.LIVE_ANALYSIS_MODEL, detail },
+        'live analysis: non-OK response',
+      );
       return null;
     }
 

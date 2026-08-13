@@ -70,8 +70,20 @@ const envSchema = z.object({
   // 6.4s in the card render path. 'openai' is the portable default for LiteLLM
   // or any hosted provider.
   LIVE_ANALYSIS_PROVIDER: z.enum(['openai', 'ollama']).default('openai'),
-  /** Only honoured when provider is 'ollama'. Off by default: 7.6x faster here. */
-  LIVE_ANALYSIS_THINK: z.coerce.boolean().default(false),
+  /**
+   * Only honoured when provider is 'ollama'. Off by default: 7.6x faster on a
+   * reasoning model, and Ollama REJECTS the field outright for models that
+   * cannot think ("gemma3:12b does not support thinking", HTTP 400).
+   *
+   * Parsed as a string compared to 'true', NOT z.coerce.boolean(). Coercion
+   * would make this permanently true: Boolean('false') === true, so every
+   * non-empty value — including the literal string "false" — coerces to true.
+   * This is why the rest of this file uses the string-compare pattern.
+   */
+  LIVE_ANALYSIS_THINK: z
+    .string()
+    .default('false')
+    .transform((v) => v.toLowerCase() === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
