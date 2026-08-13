@@ -63,6 +63,13 @@ export interface ThreadCardInput {
   digest?: ThreadDigest | null;
   /** A generated reply, carried into Gmail's compose window by URL. */
   draft?: string | null;
+  /**
+   * Nothing has been analysed yet — render instantly with what is free and
+   * offer analysis as an action. See buildThreadCard.
+   */
+  analysisPending?: boolean;
+  /** Echoed back into the analyse action so the callback can re-fetch. */
+  providerThreadId?: string;
 }
 
 /**
@@ -257,6 +264,42 @@ const SENTIMENT_RANK: Record<TrendPoint['sentiment'], number> = {
   negative: -1,
 };
 
+/**
+ * "Loop in", shared by the instant first paint and the analysed card — it needs
+ * no model call, only headers we already hold.
+ */
+function loopInSections(input: ThreadCardInput): CardSection[] {
+  const people = input.participants ?? [];
+  if (!people.length) return [];
+
+  const dropped = people.filter((p) => !p.onLatest);
+  const stillOn = people.filter((p) => p.onLatest);
+
+  const widgets: Widget[] = dropped.map((p) =>
+    deco({
+      text: p.name ?? p.address,
+      bottomLabel: [
+        p.sent ? `wrote ${p.sent}` : `copied on ${p.messages}`,
+        p.external ? 'external' : 'internal',
+        'not on latest reply',
+      ].join(' · '),
+      wrapText: true,
+    }),
+  );
+
+  if (stillOn.length) {
+    widgets.push(
+      deco({
+        topLabel: dropped.length ? 'Already on the latest reply' : 'On this thread',
+        text: stillOn.map((p) => p.name ?? p.address).join(', '),
+        wrapText: true,
+      }),
+    );
+  }
+
+  return [{ header: heading('Loop in'), widgets }];
+}
+
 export function buildThreadCard(input: ThreadCardInput): Card {
   const { status } = input;
 
@@ -284,6 +327,38 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     // "nothing here" copy, because it answers the same question with real
     // content. Labelled as not-stored so nobody mistakes it for the analysed
     // record a tracked thread would have.
+    // Reading the thread costs a model call — 6s on local hardware — and Gmail
+    // renders nothing until the response arrives. So the first paint uses only
+    // what is FREE (participants and a derived search, both from headers already
+    // in hand) and offers the analysis as a button. The panel appears instantly
+    // and the expensive work happens when asked for.
+    if (input.analysisPending) {
+      sections.push({
+        widgets: [
+          buttons(
+            actionButton('Read this thread', `${input.baseUrl}/gmail/analyse`, {
+              threadId: input.providerThreadId ?? '',
+              messageId: input.messageId ?? '',
+            }),
+          ),
+          deco({
+            text: 'Sentiment, commitments and a draft reply — read on your machine, not stored.',
+            wrapText: true,
+          }),
+        ],
+      });
+
+      const search = deriveSearch(input.headers);
+      if (search) {
+        sections.push({
+          header: heading('Do next'),
+          widgets: [buttons(linkButton('Find related emails', gmailSearchUrl(search.query, input.viewerEmail)))],
+        });
+      }
+      sections.push(...loopInSections(input));
+      return { sections: separated(sections) };
+    }
+
     if (input.live) {
       // 1. State — the answer, first, with the evidence under it.
       sections.push({
@@ -351,39 +426,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // 4. Loop in — answered from the whole chain, not the open message.
       // Anyone who was on the conversation but is off the latest reply leads,
       // because that is the name the open message cannot show you.
-      const people = input.participants ?? [];
-      if (people.length) {
-        const dropped = people.filter((p) => !p.onLatest);
-        const stillOn = people.filter((p) => p.onLatest);
-
-        // Only the dropped-off names are actionable — everyone on the latest
-        // reply is already looped in. Listing all of them and truncating hid
-        // real participants behind an arbitrary cap; the rest are summarised
-        // instead, so nobody disappears silently.
-        const widgets: Widget[] = dropped.map((p) =>
-          deco({
-            text: p.name ?? p.address,
-            bottomLabel: [
-              p.sent ? `wrote ${p.sent}` : `copied on ${p.messages}`,
-              p.external ? 'external' : 'internal',
-              'not on latest reply',
-            ].join(' · '),
-            wrapText: true,
-          }),
-        );
-
-        if (stillOn.length) {
-          widgets.push(
-            deco({
-              topLabel: dropped.length ? 'Already on the latest reply' : 'On this thread',
-              text: stillOn.map((p) => p.name ?? p.address).join(', '),
-              wrapText: true,
-            }),
-          );
-        }
-
-        sections.push({ header: heading('Loop in'), widgets });
-      }
+      sections.push(...loopInSections(input));
 
       // Provenance sits at the bottom: it matters for trust, but nobody opens
       // the panel to read it. Quiet, and unambiguous that nothing was written.

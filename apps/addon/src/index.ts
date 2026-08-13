@@ -136,6 +136,84 @@ function notify(text: string) {
   return { action: { notification: { text } } };
 }
 
+// Action callback: "Read this thread". This is where the model call lives — off
+// the first-paint path, so opening the panel is instant and the ~6s of analysis
+// happens only when asked for. Answers with a full card via pushCard.
+app.post('/gmail/analyse', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) {
+    return c.json(pushCard(buildThreadCard({ status: 'unverified' })));
+  }
+
+  const { accessToken, oauthToken } = getGmail(event);
+  const p = getActionParameters(event);
+  const messageId = normalizeGmailMessageId(p.messageId);
+  const threadId = normalizeGmailMessageId(p.threadId);
+  const viewerEmail = verified.email;
+  const baseUrl = getEnv().ADDON_BASE_URL;
+
+  const headers = await fetchMessageHeaders(messageId, oauthToken, accessToken);
+  const threadMessages = await fetchThreadMessages(threadId, oauthToken, accessToken);
+  const participants = threadMessages?.length ? deriveParticipants(threadMessages, viewerEmail) : [];
+
+  const threadText = (threadMessages ?? [])
+    .map((m) => `From: ${m.from ?? 'unknown'}\n${m.body}`)
+    .join('\n\n')
+    .slice(0, 8000);
+
+  const reading = threadText
+    ? await readThreadLive({ subject: headers?.subject, thread: threadText })
+    : null;
+
+  if (!reading) {
+    // Analysis failed or timed out. Re-render the pending card rather than an
+    // empty one, so the button is still there to try again.
+    return c.json(
+      pushCard(
+        buildThreadCard({
+          messageId,
+          status: 'untracked',
+          headers,
+          viewerEmail,
+          participants,
+          baseUrl,
+          providerThreadId: threadId,
+          analysisPending: true,
+        }),
+      ),
+    );
+  }
+
+  logger.info(
+    { commitments: reading.commitments.length, hasDraft: Boolean(reading.draft) },
+    'thread analysed on demand',
+  );
+
+  return c.json(
+    pushCard(
+      buildThreadCard({
+        messageId,
+        status: 'untracked',
+        headers,
+        viewerEmail,
+        participants,
+        baseUrl,
+        providerThreadId: threadId,
+        live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
+        digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
+        draft: reading.draft || null,
+      }),
+    ),
+  );
+});
+
 // Homepage trigger — opened without a message context.
 app.post('/homepage', async (c) => {
   const env = getEnv();
@@ -247,9 +325,10 @@ app.post('/gmail/contextual', async (c) => {
     // Falls back to the open message alone when the thread read is refused —
     // the per-message token may not reach beyond the message being viewed.
     let live = null;
-    let digest = null;
-    let draft: string | null = null;
+    const digest = null;
+    const draft: string | null = null;
     let participants: Participant[] = [];
+    let analysisPending = false;
     if (!trend.length && !flagged.length && isLiveAnalysisEnabled()) {
       const threadMessages = await fetchThreadMessages(providerThreadId, oauthToken, accessToken);
       if (threadMessages?.length) {
@@ -266,23 +345,12 @@ app.post('/gmail/contextual', async (c) => {
           .join('\n\n')
           .slice(0, 8000);
 
-        // ONE call for all of it — see readThreadLive. Three concurrent calls
-        // queued behind each other on a serialising Ollama and blew the deadline
-        // together, leaving the card empty.
-        const reading = await readThreadLive({ subject: headers?.subject, thread: threadText });
-        if (reading) {
-          live = { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true as const };
-          digest = { commitments: reading.commitments, openQuestions: reading.openQuestions };
-          draft = reading.draft || null;
-        }
-        logger.info(
-          {
-            messages: threadMessages.length,
-            commitments: reading?.commitments.length ?? 0,
-            hasDraft: Boolean(reading?.draft),
-          },
-          'live thread reading',
-        );
+        // NOTHING is analysed on first paint. Reading the thread costs ~6s on
+        // local hardware and Gmail shows an empty panel until the response
+        // lands, so the model call moved behind a button — see the
+        // analysisPending branch in buildThreadCard and /gmail/analyse below.
+        analysisPending = true;
+        logger.info({ messages: threadMessages.length }, 'first paint: analysis deferred');
       } else {
         live = await liveForOpenMessage();
       }
@@ -309,6 +377,8 @@ app.post('/gmail/contextual', async (c) => {
           participants,
           digest,
           draft,
+          analysisPending,
+          providerThreadId,
         }),
       ),
     );
