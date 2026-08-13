@@ -73,6 +73,13 @@ function parametersToObject(params: IntegrationParameters | Record<string, any>)
 const EMAIL_PARAMETER_KEYS = ['email', 'impersonatedUserEmail', 'userEmail'] as const;
 
 /**
+ * A key from that fixed list. The predicates below splice key names straight
+ * into a jsonpath literal, so this type — not a comment — is what keeps an
+ * arbitrary string from reaching it and producing an unparseable path.
+ */
+type EmailParameterKey = (typeof EMAIL_PARAMETER_KEYS)[number];
+
+/**
  * Lowercase the address under every mailbox-bearing key.
  *
  * Email addresses are case-insensitive, and the unique index from migration 015
@@ -445,7 +452,7 @@ export class IntegrationRepository {
    */
   private emailMatchesParameters(
     email: string,
-    keys: readonly string[] = EMAIL_PARAMETER_KEYS
+    keys: readonly EmailParameterKey[] = EMAIL_PARAMETER_KEYS
   ): SQL {
     // A falsy email (or empty keys) must match nothing. Without this guard,
     // JSON.stringify drops an undefined value so the predicate degrades to
@@ -484,7 +491,7 @@ export class IntegrationRepository {
    */
   private emailMatchesParametersIgnoringCase(
     email: string,
-    keys: readonly string[] = EMAIL_PARAMETER_KEYS
+    keys: readonly EmailParameterKey[] = EMAIL_PARAMETER_KEYS
   ): SQL {
     // Same guard as above: a falsy email must match nothing rather than degrade
     // into a predicate that matches any row carrying an email key at all.

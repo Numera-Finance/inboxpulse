@@ -54,6 +54,32 @@ function createService(existing: IntegrationLookupResult | null): {
   return { service, repo };
 }
 
+/**
+ * A service whose insert loses a race: the first lookup finds nothing, create
+ * fails on the unique index, and the re-read returns `winner`.
+ */
+function createRacingService(
+  winner: IntegrationLookupResult | null = { id: INTEGRATION_ID, isActive: true },
+  createError: unknown = Object.assign(new Error('duplicate key'), { code: '23505' })
+): { service: IntegrationService; repo: RepoStub } {
+  const integration = { id: INTEGRATION_ID } as unknown as IntegrationWithKeys;
+  let lookups = 0;
+  const repo: RepoStub = {
+    findByTenantAndEmail: vi.fn(async () => (lookups++ === 0 ? null : winner)),
+    updateKeysById: vi.fn(async () => integration),
+    create: vi.fn(async () => {
+      throw createError;
+    }),
+  };
+
+  const service = new IntegrationService(
+    repo as unknown as IntegrationRepository,
+    {} as unknown as TenantRepository
+  );
+
+  return { service, repo };
+}
+
 function connectGmail(service: IntegrationService) {
   return service.createOrUpdate({
     tenantId: TENANT_ID,
@@ -133,6 +159,52 @@ describe('IntegrationService.createOrUpdate', () => {
     });
 
     expect(repo.findByTenantAndEmail).toHaveBeenCalledWith(TENANT_ID, 'gmail', EMAIL);
+  });
+
+  it('recovers when a concurrent connect wins the race to insert (23505)', async () => {
+    // Both requests miss the lookup and both insert; the unique index from
+    // migration 015 rejects the loser. Without this recovery the OAuth callback
+    // would redirect with a raw Postgres constraint message.
+    const { service, repo } = createRacingService();
+
+    const result = await connectGmail(service);
+
+    expect(repo.updateKeysById).toHaveBeenCalledWith(
+      INTEGRATION_ID,
+      expect.objectContaining({ keys: expect.objectContaining({ email: EMAIL }) }),
+      { reactivate: false, authType: 'oauth' }
+    );
+    expect(result).toMatchObject({ updated: true, reactivated: false });
+  });
+
+  it('revives the winner if the race was lost to a disconnected row', async () => {
+    const { service, repo } = createRacingService({ id: INTEGRATION_ID, isActive: false });
+
+    const result = await connectGmail(service);
+
+    expect(repo.updateKeysById).toHaveBeenCalledWith(
+      INTEGRATION_ID,
+      expect.anything(),
+      { reactivate: true, authType: 'oauth' }
+    );
+    expect(result).toMatchObject({ updated: true, reactivated: true });
+  });
+
+  it('rethrows a unique violation it cannot attribute to a winner', async () => {
+    // No row turns up on the re-read, so this was some other constraint —
+    // swallowing it would hide a real failure behind a misleading success.
+    const { service, repo } = createRacingService(null);
+
+    await expect(connectGmail(service)).rejects.toThrow('duplicate key');
+    expect(repo.updateKeysById).not.toHaveBeenCalled();
+  });
+
+  it('never retries an error that is not a unique violation', async () => {
+    const { service, repo } = createRacingService(undefined, new Error('connection reset'));
+
+    await expect(connectGmail(service)).rejects.toThrow('connection reset');
+    expect(repo.findByTenantAndEmail).toHaveBeenCalledTimes(1);
+    expect(repo.updateKeysById).not.toHaveBeenCalled();
   });
 
   it('refuses to write an integration with no mailbox to key on', async () => {

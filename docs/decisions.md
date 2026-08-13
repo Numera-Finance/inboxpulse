@@ -494,6 +494,15 @@ as a numbered migration, so that `sql/migrations/` stays safe to replay in bulk.
   expiry. A settings-only update still leaves it alone — the trigger is a
   caller-supplied refresh token, not the merged value, which always carries the
   row's existing token forward.
+- Two connects racing for the same never-before-seen mailbox both miss the lookup
+  and both insert; the index rejects the loser. `createOrUpdate` catches that
+  23505, re-reads the winner and applies to it, so the loser still returns a
+  connected integration. Without it the OAuth callback's catch-all would forward
+  the raw Postgres message — constraint name and all — into its error redirect,
+  which the error-handling rules in CLAUDE.md forbid. This mirrors the
+  insert-race recovery `CustomerService.ensureCustomerForEmail` already uses.
+  Violations that cannot be attributed to a winner are rethrown rather than
+  swallowed.
 - `deactivate(tenantId, source)` still deactivates *every* mailbox for the
   tenant+source, and `updateKeys`/`updateTokenExpiration`/`updateRefreshToken`
   still write to every row for a tenant+source. Those are the same
