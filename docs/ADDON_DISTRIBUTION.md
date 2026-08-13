@@ -96,6 +96,23 @@ stops working when the tunnel dies.
    consented under the old scope list keeps it until they revoke at
    myaccount.google.com/permissions. This cost a full debugging cycle.
 
+## Why the tunnel goes away
+
+The current deployment points at a cloudflared tunnel because the add-on had to
+run on a machine that could reach **Ollama on localhost**. Cloud Run cannot, so
+the service had to live on a laptop, and Google needed some public URL to call
+it — hence the tunnel, which changes on every restart and takes the add-on down
+with it.
+
+Gemini is a public API. Nothing in the request path is local any more, so the
+add-on can run on Cloud Run with a stable HTTPS URL and the tunnel is not
+replaced, it is deleted. Every failure that came from it goes too: the URL
+rotating, `ADDON_BASE_URL` going stale so action buttons silently did nothing,
+and the add-on dying when the laptop slept.
+
+That is a consequence of moving off the local model, not of flash-lite
+specifically — but it is what makes `deploy-addon` worth having.
+
 ## Rolling back
 
 The deployment points at a URL, so a rollback is a Cloud Run revision

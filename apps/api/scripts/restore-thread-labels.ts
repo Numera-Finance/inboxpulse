@@ -55,7 +55,13 @@ function specsForSignals(signals: number[]): LabelSpec[] {
   const s = new Set(signals);
   const out: LabelSpec[] = [];
   if (s.has(10)) out.push(SPEC.atRisk);
-  if (s.has(30) || s.has(31) || s.has(32) || s.has(33)) out.push(SPEC.churn);
+  // CHURN_LOW (30) is deliberately excluded. It is not a flag: 28,226 emails
+  // carry it against 4,015 at medium or above, and a sample of low rows have
+  // reasoning that says in terms "no signs of churn". The panel stopped
+  // treating low as a flag for that reason; a LABEL is worse than a panel
+  // section, because it writes a red marker into someone's actual mailbox and
+  // 87% of them would be wrong.
+  if (s.has(31) || s.has(32) || s.has(33)) out.push(SPEC.churn);
   if (s.has(50)) out.push(SPEC.competitor);
   if (s.has(20)) out.push(SPEC.upsell);
   if (s.has(40)) out.push(SPEC.kudos);
