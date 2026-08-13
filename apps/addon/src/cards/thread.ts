@@ -313,23 +313,35 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       const people = input.participants ?? [];
       if (people.length) {
         const dropped = people.filter((p) => !p.onLatest);
-        const shown = [...dropped, ...people.filter((p) => p.onLatest)].slice(0, 4);
-        sections.push({
-          header: heading('Loop in'),
-          widgets: shown.map((p) =>
+        const stillOn = people.filter((p) => p.onLatest);
+
+        // Only the dropped-off names are actionable — everyone on the latest
+        // reply is already looped in. Listing all of them and truncating hid
+        // real participants behind an arbitrary cap; the rest are summarised
+        // instead, so nobody disappears silently.
+        const widgets: Widget[] = dropped.map((p) =>
+          deco({
+            text: p.name ?? p.address,
+            bottomLabel: [
+              p.sent ? `wrote ${p.sent}` : `copied on ${p.messages}`,
+              p.external ? 'external' : 'internal',
+              'not on latest reply',
+            ].join(' · '),
+            wrapText: true,
+          }),
+        );
+
+        if (stillOn.length) {
+          widgets.push(
             deco({
-              text: p.name ?? p.address,
-              bottomLabel: [
-                p.sent ? `wrote ${p.sent}` : `copied on ${p.messages}`,
-                p.external ? 'external' : 'internal',
-                p.onLatest ? null : 'not on latest reply',
-              ]
-                .filter(Boolean)
-                .join(' · '),
+              topLabel: dropped.length ? 'Already on the latest reply' : 'On this thread',
+              text: stillOn.map((p) => p.name ?? p.address).join(', '),
               wrapText: true,
             }),
-          ),
-        });
+          );
+        }
+
+        sections.push({ header: heading('Loop in'), widgets });
       }
 
       // Provenance sits at the bottom: it matters for trust, but nobody opens
