@@ -417,3 +417,124 @@ export function parseDigest(raw: string): ThreadDigest | null {
     return null;
   }
 }
+
+export interface ThreadReading {
+  sentiment: LiveSentiment;
+  reason: string;
+  commitments: Commitment[];
+  openQuestions: string[];
+  draft: string;
+}
+
+/**
+ * Everything the card needs, in ONE model call.
+ *
+ * This replaces three separate calls (sentiment, digest, draft). They were
+ * issued concurrently on the assumption that concurrency buys parallelism — it
+ * does not against a local Ollama, which serves one model at a time, so the
+ * three requests queued and the wall clock was their SUM. All three then blew
+ * the deadline together and the card rendered empty: worse than any one of them
+ * alone.
+ *
+ * One prompt, one response, roughly one call's latency. The model is already
+ * reading the whole thread for each of these questions, so asking all three at
+ * once costs barely more than asking one.
+ */
+export async function readThreadLive(input: {
+  subject?: string;
+  thread: string;
+}): Promise<ThreadReading | null> {
+  const env = getEnv();
+  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  const prompt = [
+    'Read this email thread and answer all four questions in one JSON object.',
+    '',
+    '1. sentiment: positive, neutral or negative, from the recipient\'s point of',
+    '   view. Negative ONLY when someone asserts we failed them; urgency alone is',
+    '   not negative.',
+    '2. reason: one short sentence supporting that sentiment.',
+    '3. commitments: anything someone said they WOULD DO, with who said it. Use',
+    '   names as written. Include "when" only if the thread states one. Do not',
+    '   invent commitments — an opinion is not a commitment.',
+    '4. openQuestions: questions asked that nobody answered later in the thread.',
+    '5. draft: a reply the recipient could send. Three sentences maximum, no',
+    '   greeting, no sign-off. Commit only to what the thread already supports.',
+    '',
+    `Subject: ${input.subject ?? '(none)'}`,
+    '',
+    input.thread.slice(0, 6000),
+    '',
+    'Return ONLY this JSON:',
+    '{"sentiment":"positive|neutral|negative","reason":"...","commitments":[{"who":"...","what":"...","when":"optional"}],"openQuestions":["..."],"draft":"..."}',
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), env.LIVE_ANALYSIS_TIMEOUT_MS);
+  const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
+
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+
+    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(
+        ollama
+          ? {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              think: env.LIVE_ANALYSIS_THINK,
+              stream: false,
+              options: { temperature: 0 },
+            }
+          : {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0,
+              max_tokens: MAX_TOKENS,
+            },
+      ),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => '');
+      logger.warn({ status: res.status, detail }, 'thread reading: non-OK');
+      return null;
+    }
+
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      message?: { content?: string };
+    };
+    return parseReading((ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '');
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'thread reading: failed');
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Partial output is still useful — a missing draft must not discard commitments. */
+export function parseReading(raw: string): ThreadReading | null {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const o = JSON.parse(match[0]) as Record<string, unknown>;
+    const sentiment = String(o.sentiment ?? '').toLowerCase() as LiveSentiment;
+    const digest = parseDigest(match[0]);
+    return {
+      sentiment: SENTIMENTS.has(sentiment) ? sentiment : 'neutral',
+      reason: typeof o.reason === 'string' ? o.reason.trim() : '',
+      commitments: digest?.commitments ?? [],
+      openQuestions: digest?.openQuestions ?? [],
+      draft: typeof o.draft === 'string' ? o.draft.trim() : '',
+    };
+  } catch {
+    return null;
+  }
+}

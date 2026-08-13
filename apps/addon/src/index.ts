@@ -30,7 +30,7 @@ import {
   getThreadFlagged,
   resolveThreadIdByProvider,
 } from './services/api-client';
-import { analyseMessageLive, digestThreadLive, draftReplyLive, isLiveAnalysisEnabled } from './services/live-analysis';
+import { analyseMessageLive, readThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
 import { deriveParticipants, type Participant } from './services/participants';
 
@@ -266,14 +266,22 @@ app.post('/gmail/contextual', async (c) => {
           .join('\n\n')
           .slice(0, 8000);
 
-        [live, digest, draft] = await Promise.all([
-          liveForOpenMessage(),
-          digestThreadLive({ subject: headers?.subject, thread: threadText }),
-          draftReplyLive({ subject: headers?.subject, from: headers?.from, thread: threadText }),
-        ]);
+        // ONE call for all of it — see readThreadLive. Three concurrent calls
+        // queued behind each other on a serialising Ollama and blew the deadline
+        // together, leaving the card empty.
+        const reading = await readThreadLive({ subject: headers?.subject, thread: threadText });
+        if (reading) {
+          live = { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true as const };
+          digest = { commitments: reading.commitments, openQuestions: reading.openQuestions };
+          draft = reading.draft || null;
+        }
         logger.info(
-          { messages: threadMessages.length, commitments: digest?.commitments.length ?? 0 },
-          'live thread digest',
+          {
+            messages: threadMessages.length,
+            commitments: reading?.commitments.length ?? 0,
+            hasDraft: Boolean(reading?.draft),
+          },
+          'live thread reading',
         );
       } else {
         live = await liveForOpenMessage();
