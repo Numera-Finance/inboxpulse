@@ -60,8 +60,18 @@ const envSchema = z.object({
   LIVE_ANALYSIS_URL: z.string().default(''),
   LIVE_ANALYSIS_MODEL: z.string().default('gpt-4o-mini'),
   LIVE_ANALYSIS_KEY: z.string().default(''),
-  /** Hard ceiling on the in-request LLM call; the card renders without it on timeout. */
-  LIVE_ANALYSIS_TIMEOUT_MS: z.coerce.number().default(8000),
+  /**
+   * Hard ceiling on the in-request LLM call; the card renders without it on
+   * timeout.
+   *
+   * 20s, not 8s. The deep read measures 8.4-8.8s against gemma3:12b with history
+   * and reply options, and a 12s ceiling aborted it outright on a long thread —
+   * which costs the user the entire reading, not a slower one. The first paint
+   * is 0.26s and this only runs behind an explicit "Read this thread", so the
+   * user is already waiting deliberately; failing them at 12s to save 8s of
+   * patience is the wrong trade.
+   */
+  LIVE_ANALYSIS_TIMEOUT_MS: z.coerce.number().default(20000),
 
   // 'ollama' uses the NATIVE /api/chat endpoint, which is the only way to turn a
   // reasoning model's thinking off. Ollama's OpenAI-compatible route silently

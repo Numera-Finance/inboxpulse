@@ -646,20 +646,29 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // one, and it has to be the right one.
       const options = spec.showDraft ? input.replyOptions ?? [] : [];
       if (options.length) {
-        sections.push({
-          header: heading('How to answer'),
-          widgets: options.map((o, i) =>
-            deco({
-              text: `<b>${escapeText(o.stance)}</b>${o.rationale ? ` — ${escapeText(o.rationale)}` : ''}`,
-              bottomLabel: o.text.length > 150 ? `${o.text.slice(0, 147)}…` : o.text,
-              wrapText: true,
-              button: {
-                text: i === 0 ? 'Use this' : 'Use',
-                onClick: { openLink: { url: gmailComposeUrl(input, o.text) } },
-              },
-            }),
-          ),
-        });
+        // The recommended stance arrives written; the alternatives arrive as a
+        // choice. Writing all three costs ~7s more and two of them were always
+        // going to be discarded — see ReplyOption.text.
+        const widgets: Widget[] = options.map((o, i) =>
+          deco({
+            text: `<b>${escapeText(o.stance)}</b>${
+              i === 0 ? ' <font color="#1a73e8">·  recommended</font>' : ''
+            }${o.rationale ? ` — ${escapeText(o.rationale)}` : ''}`,
+            bottomLabel: o.text ? (o.text.length > 150 ? `${o.text.slice(0, 147)}…` : o.text) : undefined,
+            wrapText: true,
+            button: o.text
+              ? {
+                  text: 'Use this',
+                  onClick: { openLink: { url: gmailComposeUrl(input, o.text) } },
+                }
+              : actionButton('Write this', `${input.baseUrl}/gmail/stance`, {
+                  stance: o.stance,
+                  threadId: input.providerThreadId ?? '',
+                  messageId: input.messageId ?? '',
+                }),
+          }),
+        );
+        sections.push({ header: heading('How to answer'), widgets });
       } else if (spec.showDraft && input.draft) {
         btns.push(linkButton('Draft a reply', gmailComposeUrl(input, input.draft)));
       }

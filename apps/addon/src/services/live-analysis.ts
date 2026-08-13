@@ -452,7 +452,19 @@ export interface ReplyOption {
   stance: string;
   /** Why this stance, in one short clause. */
   rationale: string;
-  /** The reply itself. */
+  /**
+   * The reply itself — present on the RECOMMENDED option only.
+   *
+   * Writing all three costs 15.5-16.2s against 8.4-8.6s for one, measured on
+   * gemma3:12b: two extra drafts nearly double the wait. But the user sends
+   * exactly one, so the other two were always going to be thrown away.
+   *
+   * The choice is the valuable part and it is nearly free — a stance label and
+   * a clause is a handful of tokens. So all the stances come back immediately
+   * and only the recommended one arrives written. Picking a different stance
+   * writes that one on demand, and only the user who disagrees with the
+   * recommendation pays for it.
+   */
   text: string;
 }
 
@@ -544,16 +556,22 @@ export async function readThreadLive(input: {
     '4. openQuestions: questions asked that nobody answered later in the thread,',
     '   quoted VERBATIM as they were written. Not your rephrasing of them.',
     '5. replyOptions: TWO OR THREE genuinely different ways to answer, best',
-    '   first. Each has a stance (2-3 words naming the move), a rationale (one',
-    '   short clause for why), and text (the reply, three sentences maximum, no',
-    '   greeting, no sign-off).',
-    '   They must differ in APPROACH, not wording — e.g. taking ownership with a',
-    '   date, versus asking the one question that unblocks it, versus bringing in',
-    '   someone senior. Two options that say the same thing differently are',
+    '   first. Each has a stance (2-3 words naming the move, e.g. "Own it",',
+    '   "Ask first", "Escalate") and a rationale (one short clause for why that',
+    '   move). They must differ in APPROACH, not wording — taking ownership with',
+    '   a date, versus asking the one question that unblocks it, versus bringing',
+    '   in someone senior. Two options that say the same thing differently are',
     '   worthless.',
+    '   Write the full reply text for the FIRST one ONLY. Leave text empty for',
+    '   the rest — the user picks a stance before anyone needs the prose.',
+    '   That text is three sentences maximum, no greeting, no sign-off.',
+    '   NEVER write a placeholder. No [Name], no [date], no [team], no blank to',
+    '   fill in. A reply the user has to edit before sending has not saved them',
+    '   anything, and a bracket is the tell that a machine wrote it. If you would',
+    '   need a name you do not have, choose a different stance instead.',
     '   Commit only to what the thread already supports; never invent a date, a',
     '   price, or a promise.',
-    '   If the HISTORY section shows this was raised before, EVERY option must',
+    '   If the HISTORY section shows this was raised before, the reply MUST',
     '   acknowledge that — a reply that ignores a repeat complaint is the single',
     '   worst thing this product could produce.',
     '6. messageSentiments: one sentiment per message IN ORDER, oldest first.',
@@ -564,7 +582,7 @@ export async function readThreadLive(input: {
     input.thread.slice(0, 6000),
     '',
     'Return ONLY this JSON:',
-    '{"sentiment":"positive|neutral|negative","reason":"\\"exact quote\\"","commitments":[{"who":"...","what":"...","when":"optional","quote":"exact sentence"}],"openQuestions":["exact question"],"replyOptions":[{"stance":"Own it","rationale":"third time raised","text":"..."},{"stance":"Ask first","rationale":"scope is unclear","text":"..."}],"messageSentiments":["neutral","positive"]}',
+    '{"sentiment":"positive|neutral|negative","reason":"\\"exact quote\\"","commitments":[{"who":"...","what":"...","when":"optional","quote":"exact sentence"}],"openQuestions":["exact question"],"replyOptions":[{"stance":"Own it","rationale":"third time raised","text":"full reply here"},{"stance":"Ask first","rationale":"scope is unclear","text":""}],"messageSentiments":["neutral","positive"]}',
   ].join('\n');
 
   const controller = new AbortController();
@@ -643,13 +661,13 @@ export function parseReading(raw: string): ThreadReading | null {
       openQuestions: digest?.openQuestions ?? [],
       replyOptions: Array.isArray(o.replyOptions)
         ? (o.replyOptions as Array<Record<string, unknown>>)
-            .filter((r) => typeof r?.stance === 'string' && typeof r?.text === 'string')
+            .filter((r) => typeof r?.stance === 'string')
             .map((r) => ({
               stance: String(r.stance).trim(),
               rationale: typeof r.rationale === 'string' ? String(r.rationale).trim() : '',
-              text: String(r.text).trim(),
+              text: typeof r.text === 'string' ? String(r.text).trim() : '',
             }))
-            .filter((r) => r.stance && r.text)
+            .filter((r) => r.stance)
             .slice(0, 3)
         : [],
       draft: typeof o.draft === 'string' ? o.draft.trim() : '',
@@ -735,6 +753,86 @@ export async function classifyThreadMode(input: {
     return (THREAD_MODES as string[]).includes(raw) ? (raw as ThreadMode) : null;
   } catch (err) {
     logger.warn({ err: String(err) }, 'mode classify: failed');
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Write the reply for a stance the user picked over the recommendation.
+ *
+ * Focused on one job, which is why it is fast: a model given six instructions
+ * does the sixth badly — that is how historyPoints came back empty and how mode
+ * came back as the fallback on every thread.
+ */
+export async function draftForStance(input: {
+  subject?: string;
+  thread: string;
+  stance: string;
+  history?: string[];
+}): Promise<string | null> {
+  const env = getEnv();
+  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  const prompt = [
+    `Write a reply to this email thread taking this approach: "${input.stance}".`,
+    '',
+    'Three sentences maximum. No greeting, no sign-off.',
+    'Commit only to what the thread already supports — never invent a date, a',
+    'price, or a promise.',
+    'NEVER write a placeholder. No [Name], no [date], no blank to fill in. A',
+    'reply the user has to edit before sending has not saved them anything.',
+    ...(input.history?.length
+      ? ['', 'This was raised before, and the reply must acknowledge it:',
+         ...input.history.map((h) => `- ${h}`)]
+      : []),
+    '',
+    `Subject: ${input.subject ?? '(none)'}`,
+    '',
+    input.thread.slice(0, 6000),
+    '',
+    'Return ONLY the reply text, nothing else.',
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), env.LIVE_ANALYSIS_TIMEOUT_MS);
+  const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
+
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(
+        ollama
+          ? {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              think: env.LIVE_ANALYSIS_THINK,
+              stream: false,
+              options: { temperature: 0.3 },
+            }
+          : {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0.3,
+            },
+      ),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      message?: { content?: string };
+    };
+    const raw = (ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '';
+    const out = raw.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+    return out || null;
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'stance draft: failed');
     return null;
   } finally {
     clearTimeout(timer);

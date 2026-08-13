@@ -32,7 +32,7 @@ import {
   getAccountContext,
   createTask,
 } from './services/api-client';
-import { analyseMessageLive, readThreadLive, classifyThreadMode, isLiveAnalysisEnabled } from './services/live-analysis';
+import { analyseMessageLive, readThreadLive, draftForStance, classifyThreadMode, isLiveAnalysisEnabled } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
 import { deriveParticipants, type Participant } from './services/participants';
 
@@ -382,6 +382,61 @@ app.post('/gmail/task', async (c) => {
   // A refusal here is an ENTITLEMENT refusal, not a failure — the viewer is not
   // assigned to that customer. Say so, rather than reporting a generic error.
   return c.json(notify(ok ? 'Task created' : 'You do not have access to this account'));
+});
+
+/**
+ * Write the reply for a stance the user chose over the recommendation.
+ *
+ * The reading returns every stance but writes only the recommended one, because
+ * writing all three costs 15.5-16.2s against 8.4-8.6s for one and the user sends
+ * exactly one. This is where the other two get written — paid only by the user
+ * who disagrees with the recommendation.
+ *
+ * Re-reads the thread rather than carrying it in an action parameter: the thread
+ * does not fit in one, and Gmail hands us the token to read it again anyway.
+ */
+app.post('/gmail/stance', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const { accessToken, oauthToken } = getGmail(event);
+  const p = getActionParameters(event);
+  if (!p.stance) return c.json(notify('No approach was selected.'));
+
+  const threadId = normalizeGmailMessageId(p.threadId);
+  const messageId = normalizeGmailMessageId(p.messageId);
+  const headers = await fetchMessageHeaders(messageId, oauthToken, accessToken);
+  const threadMessages = await fetchThreadMessages(threadId, oauthToken, accessToken);
+  const threadText = (threadMessages ?? [])
+    .map((m) => `From: ${m.from ?? 'unknown'}\n${m.body}`)
+    .join('\n\n')
+    .slice(0, 8000);
+  if (!threadText) return c.json(notify('Could not read this thread.'));
+
+  const text = await draftForStance({ subject: headers?.subject, thread: threadText, stance: p.stance });
+  if (!text) return c.json(notify('Could not write that reply.'));
+
+  return c.json(
+    pushCard(
+      buildThreadCard({
+        status: 'untracked',
+        subject: headers?.subject ?? undefined,
+        messageId: messageId ?? undefined,
+        providerThreadId: threadId ?? undefined,
+        viewerEmail: verified.email ?? undefined,
+        baseUrl: getEnv().ADDON_BASE_URL,
+        mode: 'working',
+        replyOptions: [{ stance: p.stance, rationale: 'you chose this approach', text }],
+      }),
+    ),
+  );
 });
 
 // Homepage trigger — opened without a message context.
