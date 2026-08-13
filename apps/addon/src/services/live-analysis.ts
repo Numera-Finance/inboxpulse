@@ -32,7 +32,18 @@ const SENTIMENTS = new Set<LiveSentiment>(['positive', 'neutral', 'negative']);
 const MAX_BODY_CHARS = 4000;
 
 export function isLiveAnalysisEnabled(): boolean {
-  return getEnv().LIVE_ANALYSIS_URL.trim().length > 0;
+  const env = getEnv();
+  // Gemini carries its own base URL with a default, so LIVE_ANALYSIS_URL is
+  // blank on that path -- the credential is what decides whether it can run.
+  //
+  // This checked LIVE_ANALYSIS_URL for every provider, which meant switching to
+  // gemini silently DISABLED live analysis: every thread rendered "Not a tracked
+  // client thread", including threads with an external customer on them. No
+  // error, no log, just a panel that quietly stopped working. Exactly the shape
+  // of failure this codebase keeps producing -- a config change that reads as
+  // empty data.
+  if (env.LIVE_ANALYSIS_PROVIDER === 'gemini') return env.LIVE_ANALYSIS_KEY.trim().length > 0;
+  return env.LIVE_ANALYSIS_URL.trim().length > 0;
 }
 
 /**
