@@ -510,3 +510,94 @@ as a numbered migration, so that `sql/migrations/` stays safe to replay in bulk.
   found; they are now the only remaining instances.
 - Covered by `apps/api/src/integrations/repository.test.ts` and
   `apps/api/src/integrations/service.test.ts`.
+
+### ADR-007: Escalation detail shows the message's own To/Cc (2026-08-13)
+
+**Status:** Accepted
+
+**Context:** The escalation detail panel rendered a `To:` line with nothing after
+it, and never rendered `Cc:` at all. The cause was in the frontend adapter, not
+the data: `analyzedEmailToInboxContent` set `to` to the *escalation assignee*
+(`[{ name: assignedToName, id: assignedToId }]`) — a participant with a name but
+no `email`, so the panel's `to.map(r => r.email).join(", ")` produced an empty
+string. `cc` was never populated.
+
+The underlying recipients were never missing. Gmail sync parses the `To`/`Cc`/
+`Bcc` headers (`apps/gmail/src/services/email-parser.ts`) and the API persists
+them to `emails.tos` / `emails.ccs` / `emails.bccs`. A production count confirms
+full coverage: all 132,205 emails have a non-empty `tos`, and 37,351 carry a
+`ccs`. No capture work or backfill was required.
+
+**Decision:** Expose the stored recipients on the analyzed-email API contract and
+render them from there.
+
+- `analyzedEmailSchema` (`packages/clients/src/email/types.ts`) gains `tos` and
+  `ccs`, both `z.array(emailAddressSchema).default([])` — empty arrays rather
+  than optional, so the UI can map unconditionally. `emailAddressSchema` is
+  extracted and shared with `firstReplyMarkerSchema`, which already declared the
+  same shape inline. `bccs` is deliberately left out: it is stored, but showing
+  blind-copy recipients in a customer-facing escalation view is a disclosure
+  decision, not a display one.
+- All three analyzed-email queries in `apps/api/src/emails/repository.ts`
+  (`searchAnalyzedEmails`, `exportAnalyzedEmails`, `getAnalyzedEmailById`) select
+  `e.tos` / `e.ccs` and map them with `?? []`.
+- The adapter maps `to`/`cc` from the message's own recipients. The assignee is
+  unaffected — it was already shown in the meta grid above the message, so the
+  old `to` was both wrong and redundant.
+
+Recipients are **disclosed on demand rather than given permanent rows**. Two
+fixed rows (`To:` and `Cc:`) pushed the message body down on every escalation,
+and on a reply chain the addresses are the least-read part of the header. The
+summary instead shares the sender's line and costs no vertical space:
+
+- The sender's address moved up beside their name, freeing that row for a
+  recipient summary of up to `SUMMARY_RECIPIENT_LIMIT` (3) addresses, To first.
+  Three or more To addresses fill it and Cc stays hidden; a shorter To list
+  spills into Cc. See `summarizeRecipients` in
+  `apps/web/components/inbox/recipients.ts`.
+- The toggle appears only when something is actually hidden. At three or fewer
+  recipients everything is already visible, so there is nothing to expand into
+  and no chevron is drawn. Expanding shows the full `To`/`Cc` lists as
+  `Name <address>`, keeping the addresses verifiable — seeing the ids is the
+  point of expanding.
+- A display name is shown **only when the message actually carried one**
+  (87,288 of 156,971 stored To entries, ~56%); otherwise the address itself is
+  shown. Both adapters previously derived a name from the address via
+  `extractNameFromEmail`, rendering `pjain@example.com` as "Pjain" — something
+  that reads like a real person's name while being invented. That fallback is
+  removed for recipients in both `analyzedEmailToInboxContent` and
+  `apiEmailToInboxContent`, since both feed this same panel.
+
+**Consequences:**
+- Only the **detail** endpoint carries recipients. `getAnalyzedEmailById` selects
+  them; the list and export paths deliberately do not, because neither renders
+  them and both would pay for the JSONB on every row:
+  - `AnalyzedEmailListItem` (`Omit<AnalyzedEmail, 'tos' | 'ccs'>`) is the row type
+    for `AnalyzedEmailSearchResponse`. The list shows sender/subject/status via
+    `analyzedEmailToInboxItem`, and the detail view fetches its own row.
+  - `analyzedEmailExportItemSchema` omits the same two fields, and
+    `exportAnalyzedEmails` does not select them: the XLSX builder in
+    `apps/web/app/escalations/page.tsx` maps a fixed column list with no To/Cc
+    columns, and that query is unpaginated.
+
+  Adding To/Cc export columns is a separate, deliberate change that must restore
+  the fields in the schema, the query, and the repository return type.
+- The clients package is not runtime-validated on read (`getAnalyzedById` casts
+  rather than `parse`s), so `.default([])` protects the *server*'s response
+  shape, not the client's: a web build reaching production ahead of the API
+  would see `undefined`. `analyzedEmailToInboxContent` therefore guards with
+  `(email.tos ?? [])` rather than trusting the declared type — `deploy-api` and
+  `deploy-web` are parallel jobs with no ordering guarantee.
+- The inbox page needed no change to *reach* the recipients —
+  `apiEmailToInboxContent` already mapped `tos`/`ccs`/`bccs`. Only the
+  escalations path was wrong. It did share the invented-name fallback, which is
+  why that fix touches both adapters.
+- Display names are passed through verbatim, including odd ones. This tenant's
+  per-customer Workspace aliases are registered as
+  `"ThatsTheOne Team @ myStartUpCFO" <thatstheone@mystartupcfo.com>`, so the
+  summary renders a spaced `@` inside the name. That is the header's content,
+  not a formatting defect; changing it means renaming the Workspace groups.
+- `summarizeRecipients`, `participantLabel`, and `participantDetail` live in
+  `recipients.ts` rather than inside the panel so the rules are unit-tested
+  (`recipients.test.ts`), following the `format-timestamp.ts` precedent in the
+  same folder.
