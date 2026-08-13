@@ -34,6 +34,20 @@ import {
 } from './services/api-client';
 import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled } from './services/live-analysis';
 import type { ReplyOption } from './services/live-analysis';
+import { AnalysisCache } from './services/analysis-cache';
+
+/**
+ * Analysed threads, in memory, for as long as the thread has not changed.
+ *
+ * Process-local and never persisted -- the card promises "Analysed live. Not
+ * stored", and that has to stay literally true for a personal mailbox. See
+ * services/analysis-cache.ts.
+ */
+const analysisCache = new AnalysisCache<{
+  mode: Awaited<ReturnType<typeof classifyThreadMode>>;
+  reading: Awaited<ReturnType<typeof readThreadLive>>;
+  replyOptions: ReplyOption[];
+}>();
 import { shareToChat, isChatShareEnabled } from './services/chat';
 import { deriveParticipants, type Participant } from './services/participants';
 
@@ -245,7 +259,25 @@ app.post('/gmail/analyse', async (c) => {
   // means never paying 5s to find out — the panel answers an FYI thread in under
   // a second instead of analysing it at length to conclude there was nothing to
   // analyse.
-  const mode = threadText ? await classifyThreadMode({ subject: headers?.subject, thread: threadText }) : null;
+  // A thread that has not changed does not need analysing twice. The panel is
+  // opened far more often than mail arrives -- read, switch away, come back --
+  // and each of those was paying the full ~4.2s to produce a byte-identical
+  // answer. Keyed on the message count and latest message id, so any new reply
+  // misses and re-analyses rather than serving a stale claim like "3 questions
+  // unanswered" about a conversation that has moved on.
+  const cacheKey = AnalysisCache.key({
+    threadId,
+    viewerEmail,
+    count: threadMessages?.length ?? 0,
+    latestMessageId: threadMessages?.[threadMessages.length - 1]?.id ?? messageId,
+  });
+  const cached = p.force === 'true' ? null : analysisCache.get(cacheKey);
+
+  const mode = cached
+    ? cached.mode
+    : threadText
+      ? await classifyThreadMode({ subject: headers?.subject, thread: threadText })
+      : null;
 
   // Extraction and prose run CONCURRENTLY, on different models.
   //
@@ -257,15 +289,20 @@ app.post('/gmail/analyse', async (c) => {
   // So the wait is now max(extraction, prose) rather than one call doing both.
   // It also puts each job on the model suited to it: gemma3:12b is reliable at
   // shape, nemotron is 2.5x faster at prose and has no schema to get wrong.
-  const [reading, replyOptions] =
-    threadText && mode !== 'fyi'
+  const [reading, replyOptions] = cached
+    ? [cached.reading, cached.replyOptions]
+    : threadText && mode !== 'fyi'
       ? await Promise.all([
           readThreadLive({ subject: headers?.subject, thread: threadText, history }),
           writeReplyOptions({ subject: headers?.subject, thread: threadText, history }),
         ])
       : [null, [] as ReplyOption[]];
 
-  logger.info({ mode, deepRead: Boolean(reading) }, 'thread mode');
+  // Store even the fyi result: knowing a thread needs nothing is worth keeping,
+  // and it is the most common answer.
+  if (!cached && threadText) analysisCache.set(cacheKey, { mode, reading, replyOptions });
+
+  logger.info({ mode, deepRead: Boolean(reading), cached: Boolean(cached), ...analysisCache.stats() }, 'thread mode');
 
   // An FYI thread gets a one-line answer and stops. Saying "nothing needed" fast
   // is more useful, and more honest, than four manufactured sections.

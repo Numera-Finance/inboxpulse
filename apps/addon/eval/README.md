@@ -66,5 +66,36 @@ Re-run on cleaned + redacted text: **78%**, unchanged. Redaction is free.
 short threads and those skew fyi — so the headline is comparable but that run's
 per-mode fyi figures are thin.)
 
-Still weak: `complaint` precision ~0.53, and `opportunity` never fires — Haiku
-found 0 opportunity threads in 169, so this corpus cannot measure it.
+## Adjudication — the reference was wrong, not the classifier
+
+Reading the 26 disagreements showed the local model was right on most of them.
+Re-judging with the SAME definitions plus one clarification — *dissatisfaction
+expressed politely is still a complaint, and a billing dispute counts* — the
+reference flipped on 14 of 26, held on 9, and moved to a third answer on 3.
+
+The disagreement was about the DEFINITION, not model capability. So the same
+clarification went into the production prompt, where it fixed both directions:
+the classifier had also been MISSING complaints like "I thought we had resolved
+this?" and "URGENT: Potential Overpayment".
+
+| prompt | reference | agreement | complaint prec. | complaint recall |
+|---|---|---|---|---|
+| v1 flat | first-pass | 64% | 0.41 | 1.00 |
+| v2 default-working | first-pass | 75% | 0.75 | — |
+| v3 ordered | first-pass | 78% | 0.53 | 0.94 |
+| **v4 + billing-dispute rule** | **adjudicated** | **89%** | **0.90** | **0.84** |
+
+**The v3→v4 jump is confounded**: both the prompt AND the reference changed. It
+is not a clean 78→89 on a fixed target. What is clean is the adjudication
+itself — 14 of 26 disputed threads resolved in the classifier's favour under an
+unchanged rubric.
+
+Still unmeasured: `opportunity` never fires and the reference found 0 in 169
+threads, so this corpus cannot evaluate that mode at all.
+
+## A leak this exercise demonstrated
+
+The adjudicator quoted "Timber Mesa Fire and Medical District" back — a customer
+name that survived redaction because "Timber" and "Mesa" are dictionary words,
+exactly the residual class documented above. Treat that as confirmation the
+limitation is real and material, not theoretical.
