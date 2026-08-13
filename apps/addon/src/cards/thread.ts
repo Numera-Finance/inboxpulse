@@ -38,12 +38,31 @@ export interface ThreadCardInput {
   viewerEmail?: string;
 }
 
+/**
+ * Copy for every state where we have no analysis to show.
+ *
+ * These are not edge cases. For anyone whose mailbox is not the one that
+ * ingested a thread — which includes every leadership inbox, since internal mail
+ * is excluded from ingestion by design — `untracked` is the state they will see
+ * on nearly every message they open. A single flat sentence there reads as a
+ * broken panel.
+ *
+ * So each state says what is true, why, and what would change it. The panel
+ * stays honest without going blank.
+ */
 const NON_RESOLVED_COPY: Record<Exclude<ThreadStatus, 'resolved'>, string> = {
   preview: 'Preview mode — InboxPulse API not configured, so no live flags are shown.',
   unverified: 'Could not verify this request came from Google, so no data is shown.',
-  unidentified: "Couldn't match your Google account to an InboxPulse workspace.",
+  unidentified:
+    "Your Google account isn't linked to an InboxPulse workspace yet, so account context can't be loaded. Linking happens when a mailbox is connected to InboxPulse.",
   untracked:
-    "This message isn't a tracked client thread in InboxPulse (internal mail, or not from a known customer).",
+    "Not a tracked client thread — so there's nothing analysed to show. InboxPulse only analyses mail with an external customer participant; internal and automated mail is skipped on purpose.",
+};
+
+/** Extra guidance per state, shown under the headline. */
+const NON_RESOLVED_HINT: Partial<Record<Exclude<ThreadStatus, 'resolved'>, string>> = {
+  untracked: 'Open a thread with a customer to see sentiment, flags and account context.',
+  unidentified: 'Workspace-wide figures are still available from the add-on homepage.',
 };
 
 function toDay(iso?: string): string | undefined {
@@ -148,7 +167,13 @@ export function buildThreadCard(input: ThreadCardInput): Card {
   });
 
   if (status !== 'resolved') {
-    sections.push({ widgets: [text(NON_RESOLVED_COPY[status])] });
+    const hint = NON_RESOLVED_HINT[status];
+    sections.push({
+      widgets: [deco({ text: NON_RESOLVED_COPY[status], bottomLabel: hint, wrapText: true })],
+    });
+    // Trend and flags are THREAD-level, so show them if we have them even when
+    // the open message itself isn't tracked — an internal reply inside a tracked
+    // client thread still has thread context worth seeing.
     if (trendSection) sections.push(trendSection);
     if (flaggedSection) sections.push(flaggedSection);
     return { sections: separated(sections) };

@@ -132,9 +132,12 @@ describe('thread card', () => {
   });
 
   it('shows the untracked-message state', () => {
-    expect(JSON.stringify(buildThreadCard({ messageId: 'x', status: 'untracked' }))).toContain(
-      "isn't a tracked",
-    );
+    const flat = JSON.stringify(buildThreadCard({ messageId: 'x', status: 'untracked' }));
+    // Assert the state is explained, not the exact sentence — the copy is
+    // deliberately editable, but an untracked message must always say why it is
+    // untracked and what would change that.
+    expect(flat).toContain('Not a tracked client thread');
+    expect(flat).toContain('Open a thread with a customer');
   });
 
   it('shows the open message even when the thread is untracked', () => {
@@ -142,13 +145,13 @@ describe('thread card', () => {
       buildThreadCard({ messageId: 'x', status: 'untracked', headers: { subject: 'Internal note' } }),
     );
     expect(flat).toContain('Internal note');
-    expect(flat).toContain("isn't a tracked");
+    expect(flat).toContain('Not a tracked client thread');
   });
 
   it('shows the unidentified-workspace state', () => {
-    expect(JSON.stringify(buildThreadCard({ status: 'unidentified' }))).toContain(
-      "Couldn't match your Google account",
-    );
+    const flat = JSON.stringify(buildThreadCard({ status: 'unidentified' }));
+    expect(flat).toContain("isn't linked to an InboxPulse workspace");
+    expect(flat).toContain('add-on homepage');
   });
 });
 
