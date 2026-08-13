@@ -125,7 +125,11 @@ app.post('/gmail/contextual', async (c) => {
   const messageId = normalizeGmailMessageId(rawMessageId);
   const providerThreadId = normalizeGmailMessageId(rawThreadId);
 
-  if (!env.SERVICE_API_KEY) {
+  // Preview mode means "no InboxPulse API", which is a reason to skip STORED
+  // analysis — not a reason to skip live analysis, which never calls crm-api.
+  // Short-circuiting here made the whole live path unreachable without a shared
+  // service secret, which is exactly the friction the live path exists to avoid.
+  if (!env.SERVICE_API_KEY && !isLiveAnalysisEnabled()) {
     return c.json(pushCard(buildThreadCard({ messageId, status: 'preview' })));
   }
 
@@ -140,9 +144,27 @@ app.post('/gmail/contextual', async (c) => {
   const headers = await fetchMessageHeaders(messageId, oauthToken, accessToken);
   const viewerEmail = verified.email;
 
+  /**
+   * Analyse the open message in-request. Depends on nothing but Gmail and the
+   * configured model — no tenant, no service key, no stored record — so it is
+   * available on every branch where we would otherwise render an empty state.
+   */
+  const liveForOpenMessage = async () => {
+    if (!isLiveAnalysisEnabled()) return null;
+    const body = await fetchMessageBody(messageId, oauthToken, accessToken);
+    if (!body) return null;
+    return analyseMessageLive({ subject: headers?.subject, from: headers?.from, body });
+  };
+
   const tenantId = await resolveTenant(viewerEmail);
-  if (!tenantId)
-    return c.json(pushCard(buildThreadCard({ messageId, status: 'unidentified', headers, viewerEmail })));
+  if (!tenantId) {
+    // No workspace link. Stored context is unavailable, but the message itself
+    // can still be read — which is the whole point of the live path.
+    const live = await liveForOpenMessage();
+    return c.json(
+      pushCard(buildThreadCard({ messageId, status: 'unidentified', headers, viewerEmail, live })),
+    );
+  }
 
   // Thread-level trend + flagged for a DB thread id (best-effort; [] on failure).
   const threadExtras = async (
@@ -163,13 +185,7 @@ app.post('/gmail/contextual', async (c) => {
     // throw the result away. Opt-in, and only on this branch: a tracked thread
     // always uses its stored analysis. Every failure returns null, so the card
     // renders exactly as before.
-    let live = null;
-    if (isLiveAnalysisEnabled() && !trend.length && !flagged.length) {
-      const body = await fetchMessageBody(messageId, oauthToken, accessToken);
-      if (body) {
-        live = await analyseMessageLive({ subject: headers?.subject, from: headers?.from, body });
-      }
-    }
+    const live = !trend.length && !flagged.length ? await liveForOpenMessage() : null;
 
     return c.json(
       pushCard(
