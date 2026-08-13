@@ -228,11 +228,22 @@ export class AccountContextService {
     };
   }
 
-  /** tasks.status is a smallint enum; anything not the terminal state is open. */
+  /**
+   * Open tasks.
+   *
+   * tasks.status is TaskStatus in apps/api/src/tasks/schema.ts: OPEN=0, DONE=1.
+   * There is no status 2. This filtered `status <> 2`, which matches both values
+   * and counted every task ever created as open -- 1004 rows against 185 truly
+   * open on the clone, a 5.4x overstatement rendered as a flat number with no
+   * hint it was wrong.
+   *
+   * Cross-checked against the data rather than the enum name alone: all 819
+   * status=1 rows carry completed_at and a resolution, and no status=0 row does.
+   */
   private async openTasks(tenantId: string, customerId: string): Promise<number> {
     const rows = await this.db.execute(sql`
       SELECT COUNT(*)::int AS n FROM tasks
-      WHERE tenant_id = ${tenantId} AND customer_id = ${customerId} AND status <> 2
+      WHERE tenant_id = ${tenantId} AND customer_id = ${customerId} AND status = 0
     `);
     return Number((rows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
   }

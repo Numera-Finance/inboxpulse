@@ -3,6 +3,7 @@ import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
 import { resolveWhen, calendarUrl } from '../services/when';
+import { suggestConnector } from '../services/connectors';
 import type { LiveAnalysis, ThreadDigest, ThreadMode, ReplyOption } from '../services/live-analysis';
 import type { Participant } from '../services/participants';
 import type { AccountContext } from '../services/api-client';
@@ -69,6 +70,8 @@ export interface ThreadCardInput {
   replyOptions?: ReplyOption[];
   /** Reference date for resolving commitment deadlines; injected so it's testable. */
   now?: Date;
+  /** integrations.source values with rows — never suggest connecting what is on. */
+  connectedSources?: string[];
   /**
    * Nothing has been analysed yet — render instantly with what is free and
    * offer analysis as an action. See buildThreadCard.
@@ -721,6 +724,33 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // Anyone who was on the conversation but is off the latest reply leads,
       // because that is the name the open message cannot show you.
       sections.push(...loopInSections(input));
+
+      // What we could triangulate against but cannot yet. Shown as the QUESTION
+      // it would answer, never as a value: a sample figure here would be
+      // indistinguishable from a real one three seconds later, and a panel that
+      // has shown one invented number has spent the credibility of every real
+      // number on it. See services/connectors.ts.
+      //
+      // One line, only on a thread where the fact would change the reply, and
+      // only when we know the customer to key it on. A standing list of things
+      // you have not connected is a nag bar.
+      const suggestion = suggestConnector({
+        mode: input.mode,
+        connected: input.connectedSources ?? [],
+        hasCustomer: Boolean(input.account?.customerId),
+      });
+      if (suggestion) {
+        sections.push({
+          header: heading('Could also show'),
+          widgets: [
+            deco({
+              topLabel: `${suggestion.name} · not connected`,
+              text: escapeText(suggestion.changesTheReply),
+              wrapText: true,
+            }),
+          ],
+        });
+      }
 
       // Provenance sits at the bottom: it matters for trust, but nobody opens
       // the panel to read it. Quiet, and unambiguous that nothing was written.

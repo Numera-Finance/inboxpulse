@@ -592,3 +592,77 @@ presented as a fact is worse than no answer.
   the block that hosted them. They were a debugging aid for a customer lookup
   that is no longer displayed; ADR-013 removed the failure mode that made them
   necessary day to day.
+
+### ADR-007: Triangulating against other systems — one fact per connector (2026-08-13)
+
+**Status:** Accepted
+
+**Context:** The panel reads one email thread. Gemini sits three inches to the
+left reading the same thread, so anything derived from the open messages is a
+point it already makes for free. The differentiated signal has to come from
+systems Gemini cannot reach.
+
+None of those systems are connected. `integrations.source` is an enum of exactly
+four values — gmail, outlook, slack, other — and only gmail has rows (15, of
+which 2 active). HubSpot, Stripe, Jira and the rest are not modelled at all.
+
+**Decision:** Specify the connectors before building them, in code
+(`apps/addon/src/services/connectors.ts`) rather than prose, so the shape of what
+we ask for is reviewable.
+
+Each connector pulls exactly ONE fact, and the bar for that fact is *would
+knowing this change the reply* — not "is it interesting", not "is it available".
+
+| System | The one fact | Why it changes the reply |
+|---|---|---|
+| Jira | status of issues this customer raised | whether "we're working on it" is true, and since when |
+| Google Calendar | next meeting already booked with anyone on the thread | whether to write a long reply at all, or just say "Thursday" |
+| Stripe | unpaid invoice count and oldest due date | how much goodwill to extend, whether to raise billing |
+| HubSpot | open deal stage, amount, close date | what the thread is worth and how fast it must be handled |
+| Slack | whether this customer was discussed internally in 7 days | whether to reply at all, or check with whoever is on it |
+
+Suggestions are mode-gated (payments on a scheduling thread is noise), require a
+resolved customer, and render ONE at a time.
+
+Until a connector exists, the card shows the QUESTION it would answer and the
+words "not connected" — never a sample value.
+
+**Consequences:**
+- A connector that grows past one fact should be challenged, not extended. The
+  panel is a decision, not a dashboard; a panel you scroll has already lost to
+  the reply box six inches away.
+- A sample figure on the card would be indistinguishable from a real one three
+  seconds later. A panel that has shown one invented number has spent the
+  credibility of every real number on it — so the rule is absolute.
+- Every connector inherits the entitlement rule in `account-context.ts`.
+  Cross-system data makes leakage worse, not better: an unpaid invoice total is
+  more sensitive than an email subject, and pulling it through a panel keyed on
+  a sender domain is exactly how someone reads a company's finances because they
+  received one email from them.
+- Calendar is the highest-value and most expensive: `calendar.readonly` is
+  RESTRICTED tier and needs security review. Slack is the least speculative —
+  it is already in the enum.
+
+### ADR-008: tasks.status has no value 2 (2026-08-13)
+
+**Status:** Accepted
+
+**Context:** `AccountContextService.openTasks` counted open tasks with
+`status <> 2`. `TaskStatus` in `apps/api/src/tasks/schema.ts` is `OPEN: 0,
+DONE: 1`. There is no 2, so the filter matched both states and counted every
+task ever created as open.
+
+On the clone that is 1004 rows against 185 genuinely open. Across the 348
+customers with any completed task, the card would have shown 964 open tasks
+where 145 are open — a 6.6x overstatement, rendered as a flat number with
+nothing to indicate it was wrong.
+
+**Decision:** Filter `status = 0`. Verified against the data rather than the
+enum name alone: all 819 `status = 1` rows carry `completed_at` and a
+`resolution`; no `status = 0` row does.
+
+**Consequences:** This is the failure mode CLAUDE.md already warns about for
+ported endpoints — a number that renders plausibly instead of failing. A count
+with no upper bound in the UI cannot be sanity-checked by eye, so filters
+against enum values should be written from the enum definition, and confirmed
+against a column that independently records the same state.

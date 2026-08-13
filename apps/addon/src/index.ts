@@ -343,6 +343,11 @@ app.post('/gmail/analyse', async (c) => {
         // Deterministic, instant, and it cannot hallucinate a date.
         historyPoints: buildHistoryPoints(account),
         mode: mode ?? reading.mode,
+        // Only gmail has rows in `integrations` (15, of which 2 active); the
+        // enum allows outlook/slack/other and none are configured. Hardcoded
+        // rather than queried -- a per-render round trip for a fact that
+        // changes about once a quarter is not worth it.
+        connectedSources: ['gmail'],
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,
