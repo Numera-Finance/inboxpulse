@@ -567,7 +567,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         sections.push({
           widgets: [
             buttons(
-              actionButton('Read it anyway', `${input.baseUrl}/gmail/read`, {
+              actionButton('Read it anyway', `${input.baseUrl}/gmail/analyse`, {
                 threadId: input.providerThreadId ?? '',
                 messageId: input.messageId ?? '',
                 force: 'true',
@@ -813,7 +813,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
           widgets: [
             buttons(
               ...others.map((m) =>
-                actionButton(MODE_LABEL[m], `${input.baseUrl}/gmail/read`, {
+                actionButton(MODE_LABEL[m], `${input.baseUrl}/gmail/analyse`, {
                   threadId: input.providerThreadId ?? '',
                   messageId: input.messageId ?? '',
                   forceMode: m,
