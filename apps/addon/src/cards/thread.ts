@@ -92,6 +92,47 @@ function buildOpenMessageSection(input: ThreadCardInput): CardSection {
  * are follow-ups — they need new internal API endpoints (analyses + task
  * mutations aren't exposed on /api/internal yet).
  */
+/**
+ * "Is this person angry?" — answered above the fold, in one line, before any
+ * detail. Derived from the thread's own trend and flags rather than a new
+ * field, so it needs no API change.
+ *
+ * Severity is carried by the words, never by colour alone: CardService cannot
+ * set a background on text, and a colour-only signal fails anyone who cannot
+ * distinguish it.
+ */
+function deriveState(
+  trend: TrendPoint[],
+  flagged: FlaggedMessage[],
+): { headline: string; detail: string } {
+  const negatives = trend.filter((p) => p.sentiment === 'negative').length;
+  const latest = trend.length ? trend[trend.length - 1] : undefined;
+
+  if (negatives > 0 || flagged.length > 0) {
+    const falling =
+      trend.length > 1 && SENTIMENT_RANK[trend[trend.length - 1].sentiment] < SENTIMENT_RANK[trend[0].sentiment];
+    const detail = negatives
+      ? `${negatives} of the last ${trend.length} messages ${negatives === 1 ? 'was' : 'were'} negative.`
+      : `${flagged.length} message${flagged.length === 1 ? '' : 's'} flagged on this thread.`;
+    return {
+      headline: falling ? '<b>Needs attention — getting worse</b>' : '<b>Needs attention</b>',
+      detail,
+    };
+  }
+
+  if (!trend.length) return { headline: '<b>No signal yet</b>', detail: 'This thread has not been analysed.' };
+  return {
+    headline: '<b>Looks fine</b>',
+    detail: latest?.sentiment === 'positive' ? 'Most recent message was positive.' : 'Nothing negative recently.',
+  };
+}
+
+const SENTIMENT_RANK: Record<TrendPoint['sentiment'], number> = {
+  positive: 1,
+  neutral: 0,
+  negative: -1,
+};
+
 export function buildThreadCard(input: ThreadCardInput): Card {
   const { status } = input;
   const sections: CardSection[] = [buildOpenMessageSection(input)];
@@ -113,27 +154,31 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     return { sections: separated(sections) };
   }
 
-  sections.push({
-    header: heading('Account'),
-    widgets: [deco({ topLabel: 'Customer', text: input.accountName || 'Unknown customer' })],
-  });
+  // Section order follows the questions a CSM actually asks, in order:
+  //   state → what's wrong → background → who to loop in.
+  // The previous order (Account, trend, flagged, flags) was organised by data
+  // type, which buries the one thing that decides whether to act at all.
+  const state = deriveState(input.trend ?? [], input.flagged ?? []);
+  sections.push({ widgets: [deco({ text: state.headline, bottomLabel: state.detail, wrapText: true })] });
 
-  if (trendSection) sections.push(trendSection);
   if (flaggedSection) sections.push(flaggedSection);
 
   const flags = input.flags ?? [];
-  sections.push({
-    header: heading('Flags on this message'),
-    widgets: [
-      flags.length
-        ? deco({
-            topLabel: `${flags.length} signal${flags.length > 1 ? 's' : ''}`,
-            text: flags.join(', '),
-            wrapText: true,
-          })
-        : text('No signals flagged on this message.'),
-    ],
-  });
+  const backgroundWidgets: Widget[] = [
+    deco({ topLabel: 'Customer', text: input.accountName || 'Unknown customer' }),
+  ];
+  if (flags.length) {
+    backgroundWidgets.push(
+      deco({
+        topLabel: `${flags.length} signal${flags.length > 1 ? 's' : ''} on this message`,
+        text: flags.join(', '),
+        wrapText: true,
+      }),
+    );
+  }
+  sections.push({ header: heading('Background'), widgets: backgroundWidgets });
+
+  if (trendSection) sections.push(trendSection);
 
   if (input.task) {
     const t = input.task;

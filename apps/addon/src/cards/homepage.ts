@@ -13,7 +13,14 @@ export function buildHomepageCard(stats: EmailStats | null): Card {
     {
       widgets: [
         text('Client-email sentiment, escalations, and account context — right inside Gmail.'),
-        deco({ topLabel: 'Compute', text: 'Gemini 2.5 Flash', bottomLabel: 'Classification provenance' }),
+        // The compute-provenance row used to read "Gemini 2.5 Flash". It was
+        // removed because we cannot evidence it: across 139,642 rows in
+        // email_analyses, exactly 6 record a model_used, and NONE of the 34,600
+        // sentiment rows do. Naming a model there asserted provenance for
+        // classifications whose provenance was never written.
+        //
+        // Restore this only once model + prompt version are stamped at analysis
+        // write time, and read it from the data rather than hard-coding it.
       ],
     },
   ];
