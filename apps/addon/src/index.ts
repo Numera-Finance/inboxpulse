@@ -32,7 +32,7 @@ import {
   getAccountContext,
   createTask,
 } from './services/api-client';
-import { analyseMessageLive, readThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
+import { analyseMessageLive, readThreadLive, classifyThreadMode, isLiveAnalysisEnabled } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
 import { deriveParticipants, type Participant } from './services/participants';
 
@@ -240,9 +240,41 @@ app.post('/gmail/analyse', async (c) => {
         .join('\n')
     : undefined;
 
-  const reading = threadText
-    ? await readThreadLive({ subject: headers?.subject, thread: threadText, history })
-    : null;
+  // Classify FIRST, in 0.6s. Most mail needs nothing, and knowing that cheaply
+  // means never paying 5s to find out — the panel answers an FYI thread in under
+  // a second instead of analysing it at length to conclude there was nothing to
+  // analyse.
+  const mode = threadText ? await classifyThreadMode({ subject: headers?.subject, thread: threadText }) : null;
+
+  const reading =
+    threadText && mode !== 'fyi'
+      ? await readThreadLive({ subject: headers?.subject, thread: threadText, history })
+      : null;
+
+  logger.info({ mode, deepRead: Boolean(reading) }, 'thread mode');
+
+  // An FYI thread gets a one-line answer and stops. Saying "nothing needed" fast
+  // is more useful, and more honest, than four manufactured sections.
+  if (mode === 'fyi') {
+    return c.json(
+      pushCard(
+        buildThreadCard({
+          messageId,
+          status: 'untracked',
+          headers,
+          viewerEmail,
+          participants,
+          baseUrl,
+          providerThreadId: threadId,
+          account,
+          historyPoints: buildHistoryPoints(account),
+          mode: 'fyi',
+          analysedMessages: threadMessages?.length ?? 0,
+          live: { sentiment: 'neutral', reason: '', ephemeral: true },
+        }),
+      ),
+    );
+  }
 
   logger.info(
     { externalDomain, account: account?.name ?? null, negatives: account?.negativeCount ?? 0 },
@@ -310,6 +342,7 @@ app.post('/gmail/analyse', async (c) => {
         // model restating a database is the least efficient thing on this card.
         // Deterministic, instant, and it cannot hallucinate a date.
         historyPoints: buildHistoryPoints(account),
+        mode: mode ?? reading.mode,
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,

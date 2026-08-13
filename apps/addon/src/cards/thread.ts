@@ -2,7 +2,7 @@ import { type Card, type CardSection, type Widget, text, deco, heading, separate
 import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
-import type { LiveAnalysis, ThreadDigest } from '../services/live-analysis';
+import type { LiveAnalysis, ThreadDigest, ThreadMode } from '../services/live-analysis';
 import type { Participant } from '../services/participants';
 import type { AccountContext } from '../services/api-client';
 
@@ -80,6 +80,8 @@ export interface ThreadCardInput {
    * differentiated thing on the card, so it leads.
    */
   historyPoints?: string[];
+  /** What kind of thread this is. Drives which sections render at all. */
+  mode?: ThreadMode;
 }
 
 /**
@@ -272,6 +274,85 @@ const LIVE_COLOR: Record<LiveAnalysis['sentiment'], string> = {
   positive: '#137333',
 };
 
+/**
+ * What each mode actually shows.
+ *
+ * One card for every email is why ordinary mail read as flat: a calendar invite
+ * got a sentiment verdict, an account history and a churn trend, none of which
+ * it deserved. The panel now spends its space on what the thread is FOR.
+ *
+ * `fyi` is the important one. Most mail needs nothing, and a panel that admits
+ * that in one line is more useful — and more trustworthy — than one that
+ * manufactures four sections of analysis to look busy.
+ */
+interface ModeSpec {
+  /** Replaces the sentiment headline. Sentiment is only the answer for complaints. */
+  headline: (r: { sentiment: LiveAnalysis['sentiment']; commitments: number; unanswered: number }) => string;
+  showHistory: boolean;
+  showAccount: boolean;
+  showCommitments: boolean;
+  showUnanswered: boolean;
+  showDraft: boolean;
+  showLoopIn: boolean;
+}
+
+const MODE_SPEC: Record<ThreadMode, ModeSpec> = {
+  // Someone is unhappy. History is the differentiated signal and leads; the
+  // draft matters most here because getting the wording wrong is expensive.
+  complaint: {
+    headline: () => 'Needs a careful reply',
+    showHistory: true,
+    showAccount: true,
+    showCommitments: true,
+    showUnanswered: true,
+    showDraft: true,
+    showLoopIn: true,
+  },
+  // Arranging a time. Nobody needs a sentiment verdict on a calendar invite —
+  // they need to know who owes the next move.
+  scheduling: {
+    headline: (r) => (r.commitments ? 'Who owes the next move' : 'Times being arranged'),
+    showHistory: false,
+    showAccount: false,
+    showCommitments: true,
+    showUnanswered: true,
+    showDraft: true,
+    showLoopIn: false,
+  },
+  // Interest in more work. Account history is what tells you whether to lean in.
+  opportunity: {
+    headline: () => 'Possible opening',
+    showHistory: true,
+    showAccount: true,
+    showCommitments: true,
+    showUnanswered: true,
+    showDraft: true,
+    showLoopIn: true,
+  },
+  // Live work. Commitments and unanswered questions are the whole point.
+  working: {
+    headline: (r) =>
+      r.unanswered ? `${r.unanswered} question${r.unanswered === 1 ? '' : 's'} unanswered` : 'Work in progress',
+    showHistory: true,
+    showAccount: false,
+    showCommitments: true,
+    showUnanswered: true,
+    showDraft: true,
+    showLoopIn: false,
+  },
+  // Nothing is owed. Say so and stop. The panel earns trust by being short when
+  // short is the truth.
+  fyi: {
+    headline: () => 'Nothing needed from you',
+    showHistory: true,
+    showAccount: false,
+    showCommitments: false,
+    showUnanswered: false,
+    showDraft: false,
+    showLoopIn: false,
+  },
+};
+
 /** Plain-language headline per live sentiment. Words, never colour alone. */
 const LIVE_LABEL: Record<LiveAnalysis['sentiment'], string> = {
   negative: 'Needs attention',
@@ -392,7 +473,9 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // three inches away — so thread-derived content is content the user can
       // already get. These points cannot be got anywhere else, and a design that
       // buries or collapses them is a design that competes on Gemini's terms.
-      if (input.historyPoints?.length) {
+      const spec = MODE_SPEC[input.mode ?? 'working'];
+
+      if (spec.showHistory && input.historyPoints?.length) {
         sections.push({
           header: heading('You should know'),
           widgets: input.historyPoints.map((p) =>
@@ -411,7 +494,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // they have complained about before, what is still open. That is the
       // reason to look here rather than there, so it leads.
       const acct = input.account;
-      if (acct?.found) {
+      if (spec.showAccount && acct?.found) {
         const widgets: Widget[] = [
           deco({
             text: `<b>${escapeText(acct.name ?? 'Customer')}</b>`,
@@ -452,11 +535,19 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         sections.push({ header: heading('This account'), widgets });
       }
 
-      // 1. State — the answer, first, with the evidence under it.
+      // 1. State — but the headline is the MODE's question, not a sentiment
+      // verdict. "Nothing concerning" on a calendar invite answers a question
+      // nobody asked; "Who owes the next move" answers the one they have.
       sections.push({
         widgets: [
           deco({
-            text: `<b><font color="${LIVE_COLOR[input.live.sentiment]}">${LIVE_LABEL[input.live.sentiment]}</font></b>`,
+            text: `<b><font color="${LIVE_COLOR[input.live.sentiment]}">${escapeText(
+              spec.headline({
+                sentiment: input.live.sentiment,
+                commitments: input.digest?.commitments.length ?? 0,
+                unanswered: input.digest?.openQuestions.length ?? 0,
+              }),
+            )}</font></b>`,
             bottomLabel: input.live.reason,
             wrapText: true,
           }),
@@ -470,7 +561,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // invisible at a glance and does not depend on anything being WRONG —
       // which is why it earns space on a benign thread where sentiment does not.
       const digest = input.digest;
-      if (digest?.commitments.length) {
+      if (spec.showCommitments && digest?.commitments.length) {
         // Each commitment gets a Track button — the one control on this card
         // that changes state rather than opening Gmail. Only when we know which
         // customer to file it against; a task with no account is not trackable.
@@ -479,8 +570,12 @@ export function buildThreadCard(input: ThreadCardInput): Card {
           header: heading('Who owes what'),
           widgets: digest.commitments.map((c) =>
             deco({
-              text: `<b>${escapeText(c.who)}</b>`,
-              bottomLabel: [c.what, c.when].filter(Boolean).join(' · '),
+              // The quote is the point: a paraphrase is a claim to trust, a
+              // quote is one the reader can check against the thread on screen.
+              text: `<b>${escapeText(c.who)}</b> — ${escapeText(c.what)}${
+                c.quote ? `<br><i>&ldquo;${escapeText(c.quote)}&rdquo;</i>` : ''
+              }`,
+              bottomLabel: c.when,
               wrapText: true,
               ...(canTrack
                 ? {
@@ -494,7 +589,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
           ),
         });
       }
-      if (digest?.openQuestions.length) {
+      if (spec.showUnanswered && digest?.openQuestions.length) {
         sections.push({
           header: heading('Unanswered'),
           widgets: digest.openQuestions.map((q) => deco({ text: q, wrapText: true })),
@@ -505,7 +600,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       const search = deriveSearch(input.headers);
       const doNext: Widget[] = [];
       const btns = [];
-      if (input.draft) {
+      if (spec.showDraft && input.draft) {
         btns.push(linkButton('Draft a reply', gmailComposeUrl(input, input.draft)));
       }
       if (search) btns.push(linkButton('Find related emails', gmailSearchUrl(search.query, input.viewerEmail)));

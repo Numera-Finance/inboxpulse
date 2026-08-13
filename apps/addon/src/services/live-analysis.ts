@@ -67,7 +67,7 @@ export async function analyseMessageLive(input: {
     body,
     '',
     'Return ONLY this JSON, no prose:',
-    '{"sentiment":"positive|neutral|negative","reason":"one short sentence"}',
+    '{"mode":"complaint|scheduling|opportunity|working|fyi","sentiment":"positive|neutral|negative","reason":"one short sentence"}',
   ].join('\n');
 
   const controller = new AbortController();
@@ -296,6 +296,15 @@ export interface Commitment {
   who: string;
   what: string;
   when?: string;
+  /**
+   * The verbatim sentence this was taken from.
+   *
+   * A paraphrase is a claim the reader has to trust; a quote is one they can
+   * check in two seconds against the thread on screen. It is also the only
+   * defence against a confident extraction of something nobody said — which is
+   * exactly how "Noah built Closewise in a month" became a commitment.
+   */
+  quote?: string;
 }
 
 export interface ThreadDigest {
@@ -406,6 +415,7 @@ export function parseDigest(raw: string): ThreadDigest | null {
             who: String(c.who).trim(),
             what: String(c.what).trim(),
             when: typeof c.when === 'string' && c.when.trim() ? String(c.when).trim() : undefined,
+            quote: typeof c.quote === 'string' && c.quote.trim() ? String(c.quote).trim() : undefined,
           }))
           .filter((c) => c.who && c.what)
       : [];
@@ -418,7 +428,18 @@ export function parseDigest(raw: string): ThreadDigest | null {
   }
 }
 
+/**
+ * What KIND of thread this is. The card renders differently for each, because a
+ * scheduling note and a billing complaint do not deserve the same panel — and
+ * showing sentiment on a calendar invite is most of why the card read as flat
+ * on ordinary mail.
+ */
+export type ThreadMode = 'complaint' | 'scheduling' | 'opportunity' | 'working' | 'fyi';
+
+export const THREAD_MODES: ThreadMode[] = ['complaint', 'scheduling', 'opportunity', 'working', 'fyi'];
+
 export interface ThreadReading {
+  mode: ThreadMode;
   sentiment: LiveSentiment;
   reason: string;
   commitments: Commitment[];
@@ -474,19 +495,34 @@ export async function readThreadLive(input: {
   if (!base) return null;
 
   const prompt = [
-    'Read this email thread and answer all four questions in one JSON object.',
+    'Read this email thread and answer every question in one JSON object.',
+    '',
+    '0. mode: what KIND of thread this is. Exactly one of:',
+    '   complaint   — someone is dissatisfied, chasing, or escalating',
+    '   scheduling  — arranging a time, invites, availability, rescheduling',
+    '   opportunity — interest in more work, a new service, a referral, a demo',
+    '   working     — substantive back-and-forth on live work: questions,',
+    '                 decisions, deliverables, review',
+    '   fyi         — announcement, notification, or courtesy note needing no',
+    '                 action from the recipient',
+    '   Pick fyi only when the recipient genuinely owes nothing.',
     '',
     '1. sentiment: positive, neutral or negative, from the recipient\'s point of',
     '   view. Negative ONLY when someone asserts we failed them; urgency alone is',
     '   not negative.',
-    '2. reason: one short sentence supporting that sentiment.',
-    '3. commitments: things someone will do IN THE FUTURE, with who said it.',
+    '2. reason: QUOTE the single sentence from the thread that most drives that',
+    '   reading, verbatim, in double quotes. Do not summarise and do not',
+    '   editorialise. If no single sentence carries it, return "".',
+    '3. commitments: things someone will do IN THE FUTURE, with who said it, and',
+    '   the VERBATIM sentence they said it in as "quote". If you cannot quote it',
+    '   word-for-word from the text below, it is not a commitment — leave it out.',
     '   Use names as written. Include "when" only if the thread states one.',
     '   STRICT: a commitment is a future action the person themselves undertook.',
     '   NOT a commitment: something already done ("Noah built X in a month"),',
     '   a fact, an opinion, a suggestion someone else should act on, or a',
     '   description of how something works. If in doubt, leave it out.',
-    '4. openQuestions: questions asked that nobody answered later in the thread.',
+    '4. openQuestions: questions asked that nobody answered later in the thread,',
+    '   quoted VERBATIM as they were written. Not your rephrasing of them.',
     '5. draft: a reply the recipient could send. Three sentences maximum, no',
     '   greeting, no sign-off. Commit only to what the thread already supports.',
     '   If the HISTORY section below shows this was raised before, the draft must',
@@ -500,7 +536,7 @@ export async function readThreadLive(input: {
     input.thread.slice(0, 6000),
     '',
     'Return ONLY this JSON:',
-    '{"sentiment":"positive|neutral|negative","reason":"...","commitments":[{"who":"...","what":"...","when":"optional"}],"openQuestions":["..."],"draft":"...","messageSentiments":["neutral","positive"]}',
+    '{"sentiment":"positive|neutral|negative","reason":"\\"exact quote\\"","commitments":[{"who":"...","what":"...","when":"optional","quote":"exact sentence"}],"openQuestions":["exact question"],"draft":"...","messageSentiments":["neutral","positive"]}',
   ].join('\n');
 
   const controller = new AbortController();
@@ -569,7 +605,10 @@ export function parseReading(raw: string): ThreadReading | null {
           .filter((v) => SENTIMENTS.has(v))
       : [];
 
+    const rawMode = String(o.mode ?? '').toLowerCase() as ThreadMode;
+
     return {
+      mode: THREAD_MODES.includes(rawMode) ? rawMode : 'working',
       sentiment: SENTIMENTS.has(sentiment) ? sentiment : 'neutral',
       reason: typeof o.reason === 'string' ? o.reason.trim() : '',
       commitments: digest?.commitments ?? [],
@@ -585,5 +624,80 @@ export function parseReading(raw: string): ThreadReading | null {
     };
   } catch {
     return null;
+  }
+}
+
+
+/**
+ * Classify the thread in ONE focused question.
+ *
+ * Measured, and it overturns the "one big call" decision made earlier today:
+ * asking for the mode as instruction 0 of 7 returned the fallback on every
+ * thread tested, while asking it alone returns the right answer in 0.6s. A model
+ * given seven jobs does the last few badly, and the cost of a second call is
+ * less than the cost of a wrong card.
+ *
+ * It also enables the real saving below — most mail needs nothing, and knowing
+ * that for 0.6s means never paying 5s to find out.
+ */
+export async function classifyThreadMode(input: {
+  subject?: string;
+  thread: string;
+}): Promise<ThreadMode | null> {
+  const env = getEnv();
+  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  const prompt = [
+    'Classify this email thread. Reply with ONE word only, no punctuation, from this list:',
+    'complaint scheduling opportunity working fyi',
+    '',
+    'complaint = someone is dissatisfied, chasing, or escalating',
+    'scheduling = arranging a time, invites, availability, rescheduling',
+    'opportunity = interest in more work, a new service, a referral, a demo',
+    'working = substantive back-and-forth on live work',
+    'fyi = announcement or notification needing no action from the recipient',
+    '',
+    `Subject: ${input.subject ?? '(none)'}`,
+    input.thread.slice(0, 3000),
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
+
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(
+        ollama
+          ? {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              think: env.LIVE_ANALYSIS_THINK,
+              stream: false,
+              options: { temperature: 0 },
+            }
+          : { model: env.LIVE_ANALYSIS_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 12 },
+      ),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      message?: { content?: string };
+    };
+    const raw = ((ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '')
+      .toLowerCase()
+      .replace(/[^a-z]/g, '');
+    return (THREAD_MODES as string[]).includes(raw) ? (raw as ThreadMode) : null;
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'mode classify: failed');
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
