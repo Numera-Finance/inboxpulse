@@ -764,9 +764,29 @@ stopword — mostly `"and"` — while the remainder includes `"&"`, `"Accounting
 and `"Global"`. A parser fix landed later but the historical rows remain, and a
 label sweep reads history.
 
+**Observed live.** The old rules were run against a colleague's mailbox and the
+result was demoed: three labels in the Gmail sidebar — `InboxPulse/Automated`,
+`InboxPulse/Churn risk`, `InboxPulse/Spam` — being the three worst by volume
+(51.7%, 25.7%, 4.9%), and a message reading *"Good morning Tom, Works for me as
+well. Thank you"* carrying a **Churn risk · Low** chip. That is the 87% noise,
+on real mail, in front of an audience.
+
+A prior claim in this repo that the sweep "had never run" was wrong. It was
+inferred from `emails.labels` containing no `InboxPulse` entries — but that
+column is our ingested copy of Gmail's labels, written at sync time and holding
+only system values (`INBOX`, `UNREAD`, `CATEGORY_*`). The script writes to Gmail
+through `users.messages.modify` and never updates it. Absence there is not
+evidence of absence in the mailbox.
+
 **Consequences:**
 - Dry run against the real corpus: **8,118 labels instead of 129,607** — 3.19%
   churn, 3.18% upsell, 0.09% negative.
+- Teardown now exists (`apps/api/scripts/remove-gmail-labels.ts`). It did not:
+  both existing scripts only ever called `addLabelIds`, so ~103,000 labels were
+  applied with nothing in the repository able to take them off. Deleting the
+  LABEL detaches it from every message, so teardown is one call per label — the
+  actual payoff of namespacing, and what makes experimenting with labels
+  survivable.
 - A refused label is not an error. The run logs why and continues.
 - All names are namespaced under `InboxPulse/` so the entire set is removable in
   one operation. A labeller that cannot be fully undone should not run.
