@@ -187,11 +187,16 @@ app.post('/gmail/contextual', async (c) => {
     // renders exactly as before.
     const live = !trend.length && !flagged.length ? await liveForOpenMessage() : null;
 
+    // Gmail refused the read, so we know nothing about the open message. Saying
+    // "not a tracked client thread" here would be a confident answer to a
+    // question we never got to ask.
+    const status = !headers && !live ? ('unreadable' as const) : ('untracked' as const);
+
     return c.json(
       pushCard(
         buildThreadCard({
           messageId,
-          status: 'untracked',
+          status,
           headers,
           viewerEmail,
           trend,

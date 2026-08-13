@@ -4,7 +4,19 @@ import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
 import type { LiveAnalysis } from '../services/live-analysis';
 
-export type ThreadStatus = 'preview' | 'unverified' | 'unidentified' | 'untracked' | 'resolved';
+export type ThreadStatus =
+  | 'preview'
+  | 'unverified'
+  | 'unidentified'
+  | 'untracked'
+  /**
+   * Gmail refused the read of the open message — the token carried no Gmail
+   * scope. Distinct from `untracked`, which means we DID read the message and
+   * found nothing tracked. Conflating them made the panel confidently explain
+   * the wrong problem.
+   */
+  | 'unreadable'
+  | 'resolved';
 
 export interface ThreadTask {
   done: boolean;
@@ -63,12 +75,15 @@ const NON_RESOLVED_COPY: Record<Exclude<ThreadStatus, 'resolved'>, string> = {
     "Your Google account isn't linked to an InboxPulse workspace yet, so account context can't be loaded. Linking happens when a mailbox is connected to InboxPulse.",
   untracked:
     "Not a tracked client thread — so there's nothing analysed to show. InboxPulse only analyses mail with an external customer participant; internal and automated mail is skipped on purpose.",
+  unreadable:
+    "InboxPulse couldn't read this message. Gmail declined the request because the add-on hasn't been granted access to your mail yet.",
 };
 
 /** Extra guidance per state, shown under the headline. */
 const NON_RESOLVED_HINT: Partial<Record<Exclude<ThreadStatus, 'resolved'>, string>> = {
   untracked: 'Open a thread with a customer to see sentiment, flags and account context.',
   unidentified: 'Workspace-wide figures are still available from the add-on homepage.',
+  unreadable: 'Remove and re-add the add-on, then accept the access prompt.',
 };
 
 function toDay(iso?: string): string | undefined {
