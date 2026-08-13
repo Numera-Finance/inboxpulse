@@ -1033,11 +1033,47 @@ const OPTIONS_SCHEMA = {
   required: ['replyOptions'],
 } as const;
 
+/**
+ * The moves that are actually available, per kind of thread.
+ *
+ * Without this the reply was generated mode-blind: the card changed which
+ * sections it rendered, but the draft underneath was the same paragraph in
+ * every shape. That makes the modal design cosmetic — a complaint and a
+ * scheduling thread do not want differently-arranged sections around identical
+ * prose, they want different prose.
+ *
+ * These are the stances a competent person would actually choose between on
+ * that kind of thread. Naming them is most of the value: the choice is where
+ * the expertise lives, and "Own it / Ask first / Escalate" is a different
+ * decision from "Accept the time / Propose another / Hand off".
+ */
+const MODE_STANCES: Record<ThreadMode, string> = {
+  complaint:
+    'Own it (take responsibility, commit to a next step) / Ask first (get the ' +
+    'one fact that unblocks it) / Escalate (bring in someone who can decide)',
+  scheduling:
+    'Accept (take the proposed time) / Propose another (offer specific ' +
+    'alternatives) / Hand off (someone else should take this meeting)',
+  opportunity:
+    'Lean in (express interest, propose the next step) / Qualify (ask what ' +
+    'decides whether this is real) / Defer (interested, wrong moment, say when)',
+  working:
+    'Answer (give them what they asked for) / Commit (say what you will do and ' +
+    'by when) / Unblock (name what YOU need before this can move)',
+  fyi: 'Acknowledge briefly / No reply needed',
+};
+
 export async function writeReplyOptions(input: {
   subject?: string;
   thread: string;
   /** Joined account history — what the thread does NOT contain. */
   history?: string;
+  /**
+   * Shapes the stances offered. Without it every mode got the same draft, which
+   * is what made the modal card look like a rearrangement rather than a
+   * different answer.
+   */
+  mode?: ThreadMode;
 }): Promise<ReplyOption[]> {
   const env = getEnv();
   const base = baseFor(env);
@@ -1047,10 +1083,18 @@ export async function writeReplyOptions(input: {
   const prompt = [
     'Give TWO genuinely different ways to answer this email thread, best first.',
     '',
-    'Each has a stance (2-3 words naming the move, e.g. "Own it", "Ask first",',
-    '"Escalate") and a rationale (one short clause for why that move). They must',
-    'differ in APPROACH, not wording -- taking ownership with a date, versus',
-    'asking the one question that unblocks it, versus bringing in someone senior.',
+    ...(input.mode
+      ? [
+          `This is a ${input.mode} thread. Choose from these moves:`,
+          `  ${MODE_STANCES[input.mode]}`,
+          'Use the move names as the stance. Write for THAT move -- a reply that',
+          'accepts a meeting time reads nothing like one that takes ownership of',
+          'a complaint.',
+          '',
+        ]
+      : []),
+    'Each has a stance (2-3 words naming the move) and a rationale (one short',
+    'clause for why that move). They must differ in APPROACH, not wording.',
     'Two options that say the same thing differently are worthless.',
     '',
     'Write the full reply text for the FIRST one ONLY. Leave text empty for the',

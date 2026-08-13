@@ -265,20 +265,17 @@ app.post('/gmail/analyse', async (c) => {
   // answer. Keyed on the message count and latest message id, so any new reply
   // misses and re-analyses rather than serving a stale claim like "3 questions
   // unanswered" about a conversation that has moved on.
-  const cacheKey = AnalysisCache.key({
-    threadId,
-    viewerEmail,
-    count: threadMessages?.length ?? 0,
-    latestMessageId: threadMessages?.[threadMessages.length - 1]?.id ?? messageId,
-  });
-  const cached = p.force === 'true' ? null : analysisCache.get(cacheKey);
-
-  const classified = cached
-    ? cached.mode
-    : threadText
-      ? await classifyThreadMode({ subject: headers?.subject, thread: threadText })
-      : null;
-
+  // The mode is part of the key. Reply stances are written FOR a mode, so a
+  // forced mode that reused the cached entry would render new sections around
+  // the previous mode's draft -- which is exactly the "same draft everywhere"
+  // the demo showed.
+  const cacheKeyFor = (m: ThreadMode | null): string =>
+    `${AnalysisCache.key({
+      threadId,
+      viewerEmail,
+      count: threadMessages?.length ?? 0,
+      latestMessageId: threadMessages?.[threadMessages.length - 1]?.id ?? messageId,
+    })}|${m ?? 'auto'}`;
   // Demo override: re-render this thread's real analysis in another mode.
   // Only honoured when ADDON_DEMO_MODE is on, so a stray parameter cannot
   // reshape a real user's card.
@@ -286,7 +283,21 @@ app.post('/gmail/analyse', async (c) => {
     getEnv().ADDON_DEMO_MODE && p.forceMode && THREAD_MODES.includes(p.forceMode as ThreadMode)
       ? (p.forceMode as ThreadMode)
       : null;
+
+  // Classification is mode-independent, so it is cached under the auto key and
+  // reused even when a mode is forced -- no need to re-ask what the thread is.
+  const autoCached = analysisCache.get(cacheKeyFor(null));
+  const classified = forced
+    ? (autoCached?.mode ?? null)
+    : autoCached
+      ? autoCached.mode
+      : threadText
+        ? await classifyThreadMode({ subject: headers?.subject, thread: threadText })
+        : null;
+
   const mode = forced ?? classified;
+  const cacheKey = cacheKeyFor(forced);
+  const cached = p.force === 'true' ? null : analysisCache.get(cacheKey);
 
   // Extraction and prose run CONCURRENTLY, on different models.
   //
@@ -303,7 +314,12 @@ app.post('/gmail/analyse', async (c) => {
     : threadText && mode !== 'fyi'
       ? await Promise.all([
           readThreadLive({ subject: headers?.subject, thread: threadText, history }),
-          writeReplyOptions({ subject: headers?.subject, thread: threadText, history }),
+          writeReplyOptions({
+            subject: headers?.subject,
+            thread: threadText,
+            history,
+            mode: mode ?? undefined,
+          }),
         ])
       : [null, [] as ReplyOption[]];
 
