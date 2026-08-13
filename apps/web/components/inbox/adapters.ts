@@ -320,16 +320,18 @@ export const apiEmailToInboxContent: InboxContentAdapter<ApiEmailResponse> = (
       name: email.fromName || extractNameFromEmail(email.fromEmail),
       email: email.fromEmail,
     },
+    // Same rule as the analyzed-email adapter: fall back to the address rather
+    // than inventing a name from it — both feed the same detail panel.
     to: email.tos?.map((to) => ({
-      name: to.name || extractNameFromEmail(to.email),
+      name: to.name || to.email,
       email: to.email,
     })),
     cc: email.ccs?.map((cc) => ({
-      name: cc.name || extractNameFromEmail(cc.email),
+      name: cc.name || cc.email,
       email: cc.email,
     })),
     bcc: email.bccs?.map((bcc) => ({
-      name: bcc.name || extractNameFromEmail(bcc.email),
+      name: bcc.name || bcc.email,
       email: bcc.email,
     })),
     timestamp,
@@ -607,13 +609,15 @@ export const analyzedEmailToInboxContent = (
       email: email.fromEmail,
     },
     // The message's own recipients, not the escalation assignee — the assignee
-    // is already shown in the meta grid above the message.
+    // is already shown in the meta grid above the message. Names fall back to
+    // the address rather than a name derived from it: "Pjain" invented from
+    // pjain@… reads as a real person's name while being made up.
     to: email.tos.map((recipient) => ({
-      name: recipient.name || extractNameFromEmail(recipient.email),
+      name: recipient.name || recipient.email,
       email: recipient.email,
     })),
     cc: email.ccs.map((recipient) => ({
-      name: recipient.name || extractNameFromEmail(recipient.email),
+      name: recipient.name || recipient.email,
       email: recipient.email,
     })),
     timestamp,

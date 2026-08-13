@@ -545,6 +545,29 @@ render them from there.
   unaffected — it was already shown in the meta grid above the message, so the
   old `to` was both wrong and redundant.
 
+Recipients are **disclosed on demand rather than given permanent rows**. Two
+fixed rows (`To:` and `Cc:`) pushed the message body down on every escalation,
+and on a reply chain the addresses are the least-read part of the header. The
+summary instead shares the sender's line and costs no vertical space:
+
+- The sender's address moved up beside their name, freeing that row for a
+  recipient summary of up to `SUMMARY_RECIPIENT_LIMIT` (3) addresses, To first.
+  Three or more To addresses fill it and Cc stays hidden; a shorter To list
+  spills into Cc. See `summarizeRecipients` in
+  `apps/web/components/inbox/recipients.ts`.
+- The toggle appears only when something is actually hidden. At three or fewer
+  recipients everything is already visible, so there is nothing to expand into
+  and no chevron is drawn. Expanding shows the full `To`/`Cc` lists as
+  `Name <address>`, keeping the addresses verifiable — seeing the ids is the
+  point of expanding.
+- A display name is shown **only when the message actually carried one**
+  (87,288 of 156,971 stored To entries, ~56%); otherwise the address itself is
+  shown. Both adapters previously derived a name from the address via
+  `extractNameFromEmail`, rendering `pjain@example.com` as "Pjain" — something
+  that reads like a real person's name while being invented. That fallback is
+  removed for recipients in both `analyzedEmailToInboxContent` and
+  `apiEmailToInboxContent`, since both feed this same panel.
+
 **Consequences:**
 - `AnalyzedEmail` is additive-only, so existing consumers keep compiling. The
   escalation export is unchanged: it maps an explicit column list in
@@ -555,5 +578,16 @@ render them from there.
   rather than `parse`s), so the `.default([])` protects the *server*'s response
   shape, not the client's. Both ends now always send arrays; a consumer reading
   an older cached response would still see `undefined`.
-- The inbox page needed no change — `apiEmailToInboxContent` already mapped
-  `tos`/`ccs`/`bccs` correctly. Only the escalations path was wrong.
+- The inbox page needed no change to *reach* the recipients —
+  `apiEmailToInboxContent` already mapped `tos`/`ccs`/`bccs`. Only the
+  escalations path was wrong. It did share the invented-name fallback, which is
+  why that fix touches both adapters.
+- Display names are passed through verbatim, including odd ones. This tenant's
+  per-customer Workspace aliases are registered as
+  `"ThatsTheOne Team @ myStartUpCFO" <thatstheone@mystartupcfo.com>`, so the
+  summary renders a spaced `@` inside the name. That is the header's content,
+  not a formatting defect; changing it means renaming the Workspace groups.
+- `summarizeRecipients`, `participantLabel`, and `participantDetail` live in
+  `recipients.ts` rather than inside the panel so the rules are unit-tested
+  (`recipients.test.ts`), following the `format-timestamp.ts` precedent in the
+  same folder.

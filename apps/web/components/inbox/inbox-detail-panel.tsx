@@ -9,6 +9,7 @@ import {
   Paperclip,
   Download,
   Loader2,
+  ChevronDown,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -16,7 +17,16 @@ import { Separator } from "@/components/ui/separator"
 import { SentimentIndicator } from "@/components/ui/sentiment-indicator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import type { InboxDetailPanelProps, InboxItemContent } from "./types"
+import type {
+  InboxDetailPanelProps,
+  InboxItemContent,
+  InboxParticipant,
+} from "./types"
+import {
+  participantDetail,
+  participantLabel,
+  summarizeRecipients,
+} from "./recipients"
 
 /**
  * Format an absolute, full timestamp (weekday, date, year, time) for the detail
@@ -124,9 +134,39 @@ function sanitizeEmailHtml(html: string): string {
 }
 
 /**
+ * The one-line "to a, b, cc c" summary shown under the sender. Labels each
+ * group so a mixed summary can't be misread as all-To.
+ */
+function RecipientSummary({
+  to,
+  cc,
+}: {
+  to: InboxParticipant[]
+  cc: InboxParticipant[]
+}) {
+  return (
+    <>
+      {to.length > 0 && <>to {to.map(participantLabel).join(", ")}</>}
+      {to.length > 0 && cc.length > 0 && ", "}
+      {cc.length > 0 && <>cc {cc.map(participantLabel).join(", ")}</>}
+    </>
+  )
+}
+
+/**
  * Email message component for thread display
  */
 function MessageContent({ message }: { message: InboxItemContent }) {
+  // Recipients are disclosed on demand rather than given permanent rows: on a
+  // reply chain the addresses are the least-read part of the header, and two
+  // fixed rows push the body itself below the fold.
+  const [showRecipients, setShowRecipients] = React.useState(false)
+
+  const to = message.to ?? []
+  const cc = message.cc ?? []
+  const recipientCount = to.length + cc.length
+  const { shownTo, shownCc, hiddenCount } = summarizeRecipients(to, cc)
+
   return (
     <div className="mb-4">
       {/* Message header */}
@@ -135,28 +175,65 @@ function MessageContent({ message }: { message: InboxItemContent }) {
           {getInitials(message.from.name)}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between">
-            <p className="font-medium text-sm truncate">{message.from.name}</p>
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <p className="font-medium text-sm shrink-0">{message.from.name}</p>
+              <span className="text-xs text-muted-foreground truncate">
+                {message.from.email}
+              </span>
+            </div>
             <span className="text-xs text-muted-foreground shrink-0">
               {formatFullTimestamp(message.timestamp)}
             </span>
           </div>
-          <p className="text-xs text-muted-foreground truncate">
-            {message.from.email}
-          </p>
+          <div className="flex items-center gap-x-1.5 flex-wrap min-w-0 text-xs text-muted-foreground">
+            {recipientCount > 0 &&
+              (hiddenCount > 0 ? (
+                // More recipients than fit the summary — the whole line becomes
+                // the affordance for revealing the rest.
+                <button
+                  type="button"
+                  onClick={() => setShowRecipients((shown) => !shown)}
+                  aria-expanded={showRecipients}
+                  className="flex items-center gap-1 min-w-0 text-left rounded px-1 -mx-1 hover:text-foreground hover:bg-muted/60 transition-colors"
+                >
+                  <span className="break-words [overflow-wrap:anywhere]">
+                    <RecipientSummary to={shownTo} cc={shownCc} />
+                  </span>
+                  <span className="shrink-0">+{hiddenCount}</span>
+                  <ChevronDown
+                    className={cn(
+                      "h-3 w-3 shrink-0 transition-transform",
+                      showRecipients && "rotate-180"
+                    )}
+                  />
+                </button>
+              ) : (
+                // Everyone already fits, so there is nothing to expand into.
+                <span className="break-words [overflow-wrap:anywhere]">
+                  <RecipientSummary to={shownTo} cc={shownCc} />
+                </span>
+              ))}
+          </div>
         </div>
       </div>
 
       {/* Recipients */}
       <div className="pl-[52px]">
-        {message.to && message.to.length > 0 && (
-          <div className="text-sm text-muted-foreground mb-2 break-words [overflow-wrap:anywhere]">
-            <span>To: {message.to.map((r) => r.email).join(", ")}</span>
-          </div>
-        )}
-        {message.cc && message.cc.length > 0 && (
-          <div className="text-sm text-muted-foreground mb-2 break-words [overflow-wrap:anywhere]">
-            <span>Cc: {message.cc.map((r) => r.email).join(", ")}</span>
+        {showRecipients && (
+          <div className="mb-3 rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground space-y-1">
+            {to.length > 0 && (
+              <div className="break-words [overflow-wrap:anywhere]">
+                <span className="text-xs uppercase tracking-wide mr-2">To</span>
+                {to.map(participantDetail).join(", ")}
+              </div>
+            )}
+            {cc.length > 0 && (
+              <div className="break-words [overflow-wrap:anywhere]">
+                <span className="text-xs uppercase tracking-wide mr-2">Cc</span>
+                {cc.map(participantDetail).join(", ")}
+              </div>
+            )}
           </div>
         )}
 
