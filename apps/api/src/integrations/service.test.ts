@@ -75,7 +75,7 @@ describe('IntegrationService.createOrUpdate', () => {
     expect(repo.updateKeysById).toHaveBeenCalledWith(
       INTEGRATION_ID,
       expect.objectContaining({ keys: expect.objectContaining({ email: EMAIL }) }),
-      { reactivate: true }
+      { reactivate: true, authType: 'oauth' }
     );
     expect(result).toMatchObject({ updated: true, reactivated: true });
   });
@@ -89,7 +89,7 @@ describe('IntegrationService.createOrUpdate', () => {
     expect(repo.updateKeysById).toHaveBeenCalledWith(
       INTEGRATION_ID,
       expect.anything(),
-      { reactivate: false }
+      { reactivate: false, authType: 'oauth' }
     );
     expect(result).toMatchObject({ updated: true, reactivated: false });
   });

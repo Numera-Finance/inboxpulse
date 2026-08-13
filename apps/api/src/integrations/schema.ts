@@ -37,9 +37,10 @@ export const integrations = pgTable('integrations', {
   // Note: Drizzle doesn't support GIN indexes directly, add via SQL migration (012).
   //
   // Migration 015 also adds a partial UNIQUE index over
-  // (tenant_id, source, lower(<email parameter>)) WHERE is_active, enforcing at
-  // most one connected integration per mailbox. It is an expression index on
-  // JSONB, which Drizzle cannot express either — it lives only in SQL.
+  // (tenant_id, source, lower(COALESCE(email, impersonatedUserEmail, userEmail)))
+  // WHERE is_active, enforcing at most one connected integration per mailbox. It
+  // is an expression index on JSONB, which Drizzle cannot express either — it
+  // lives only in SQL.
   parameters: jsonb('parameters').$type<IntegrationParameters>().notNull(),
 
   // OAuth tokens (if auth_type = 'oauth')

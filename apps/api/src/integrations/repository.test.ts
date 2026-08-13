@@ -135,18 +135,36 @@ describe('IntegrationRepository.findByTenantAndEmail', () => {
     expect(whereParams(captured)).toContain(TENANT_ID);
   });
 
-  it('matches the mailbox by JSONB containment under both email keys', async () => {
+  it('matches the mailbox under every email-bearing key', async () => {
     const { db, captured } = createFakeDb({ selected: [], updated: [] });
 
     await new IntegrationRepository(db).findByTenantAndEmail(TENANT_ID, 'gmail', EMAIL);
 
-    // parameters is an ARRAY of {key, value}, so the match has to be containment
-    // against an array literal rather than an object-style ->> lookup.
-    expect(renderWhere(captured)).toContain('@>');
-    expect(whereParams(captured)).toContain(JSON.stringify([{ key: 'email', value: EMAIL }]));
-    expect(whereParams(captured)).toContain(
-      JSON.stringify([{ key: 'impersonatedUserEmail', value: EMAIL }])
+    // A mailbox stored under a later key must resolve here too. Covering only
+    // `email` let such a row be found by the Gmail webhook but not by a
+    // reconnect, so it forked its email_threads exactly as in ADR-006.
+    // The jsonpath is bound as a parameter, so the key set shows up there.
+    const params = whereParams(captured);
+    for (const key of ['email', 'impersonatedUserEmail', 'userEmail']) {
+      expect(params).toContain(`$[*] ? (@.key == "${key}").value`);
+    }
+  });
+
+  it('matches case-insensitively, the way the unique index compares', async () => {
+    const { db, captured } = createFakeDb({ selected: [], updated: [] });
+
+    await new IntegrationRepository(db).findByTenantAndEmail(
+      TENANT_ID,
+      'gmail',
+      'EmailSentiment@MyStartupCFO.com'
     );
+
+    // Byte-exact containment would miss a row stored in different case, fall
+    // through to INSERT, and then violate the lowercased unique index from
+    // migration 015 — failing the OAuth callback instead of connecting.
+    expect(renderWhere(captured)).toContain('lower(');
+    expect(whereParams(captured)).toContain(EMAIL);
+    expect(whereParams(captured)).not.toContain('EmailSentiment@MyStartupCFO.com');
   });
 
   it('binds the mailbox as a parameter rather than interpolating it', async () => {
@@ -272,6 +290,82 @@ describe('IntegrationRepository.updateKeysById', () => {
     expect(keys).not.toContain('refreshToken');
     expect(keys).not.toContain('accessToken');
     expect(keys).not.toContain('accessTokenExpiresAt');
+  });
+
+  it('stores the mailbox lowercased so one address cannot become two rows', async () => {
+    const row = disconnectedRow();
+    const { db, captured } = createFakeDb({ selected: [row], updated: [row] });
+
+    await new IntegrationRepository(db).updateKeysById(INTEGRATION_ID, {
+      keys: { email: 'EmailSentiment@MyStartupCFO.com' },
+    });
+
+    const stored = captured.set?.parameters as { key: string; value: unknown }[];
+    expect(stored.find((p) => p.key === 'email')?.value).toBe(EMAIL);
+  });
+
+  it('drops the cached access token when a new refresh token arrives', async () => {
+    const row = disconnectedRow({ isActive: true });
+    const { db, captured } = createFakeDb({ selected: [row], updated: [row] });
+
+    await new IntegrationRepository(db).updateKeysById(INTEGRATION_ID, {
+      keys: { refreshToken: 'new-refresh-token' },
+    });
+
+    // Re-authorizing a still-connected mailbox is how a revoked grant gets
+    // repaired. The Gmail client trusts any stored access token expiring more
+    // than 5 minutes out, so keeping one would 401 for up to an hour.
+    expect(captured.set?.accessToken).toBeNull();
+    expect(captured.set?.accessTokenExpiresAt).toBeNull();
+  });
+
+  it('keeps the cached access token on a settings-only update', async () => {
+    const row = disconnectedRow({ isActive: true });
+    const { db, captured } = createFakeDb({ selected: [row], updated: [row] });
+
+    await new IntegrationRepository(db).updateKeysById(INTEGRATION_ID, {
+      keys: { blacklistEmails: ['example.com'] },
+    });
+
+    // The merged token carries the row's existing value forward, so the trigger
+    // has to be the caller-supplied one — otherwise saving a setting would force
+    // a needless token refresh.
+    expect(captured.set).not.toHaveProperty('accessToken');
+    expect(captured.set).not.toHaveProperty('accessTokenExpiresAt');
+  });
+
+  it('retires service-account credentials when the mailbox moves to OAuth', async () => {
+    const row = disconnectedRow({
+      authType: 'service_account',
+      parameters: [
+        { key: 'email', value: EMAIL },
+        { key: 'serviceAccountEmail', value: 'sa@project.iam.gserviceaccount.com' },
+        { key: 'serviceAccountKey', value: { private_key: 'stale' } },
+      ],
+    });
+    const { db, captured } = createFakeDb({ selected: [row], updated: [row] });
+
+    await new IntegrationRepository(db).updateKeysById(
+      INTEGRATION_ID,
+      { keys: { email: EMAIL, refreshToken: 'new-refresh-token' } },
+      { reactivate: false, authType: 'oauth' }
+    );
+
+    // GmailClientFactory tests the service-account fields BEFORE the OAuth
+    // branch, so merging them forward would ignore the grant just made.
+    const keys = (captured.set?.parameters as { key: string }[]).map((p) => p.key);
+    expect(keys).not.toContain('serviceAccountEmail');
+    expect(keys).not.toContain('serviceAccountKey');
+    expect(captured.set?.authType).toBe('oauth');
+  });
+
+  it('leaves auth_type alone when the caller does not supply one', async () => {
+    const row = disconnectedRow();
+    const { db, captured } = createFakeDb({ selected: [row], updated: [row] });
+
+    await new IntegrationRepository(db).updateKeysById(INTEGRATION_ID, { keys: {} });
+
+    expect(captured.set).not.toHaveProperty('authType');
   });
 
   it('reactivating clears the stale Gmail sync cursor and watch bookkeeping', async () => {

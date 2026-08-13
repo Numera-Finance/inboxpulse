@@ -410,11 +410,33 @@ thread rows and 16,849 emails sitting under a non-surviving thread.
    the legacy `token`, because `getCredentials` prefers the former: writing only
    the legacy column left a previously rotated refresh token winning over the one
    the reconnect had just issued.
-5. **A partial unique index as the backstop** (migration 015):
+5. **Identity is case-insensitive on both sides.** Addresses are
+   case-insensitive, so `Ops@acme.com` and `ops@acme.com` are one mailbox.
+   Writes lowercase every mailbox-bearing key, and the lookup compares
+   lowercased rather than by byte-exact JSONB containment. The two halves are
+   required together: with a lowercasing unique index in place, a lookup that
+   missed on case would fall through to INSERT and violate the index, turning
+   what used to be a silent duplicate into a failed OAuth callback.
+6. **One key set everywhere.** A mailbox can be stored under `email`,
+   `impersonatedUserEmail` or `userEmail` — `getIntegration` and `listByTenant`
+   already fall back across all three. The identity lookup and the unique index
+   now cover the same set (`EMAIL_PARAMETER_KEYS`), so a row keyed under a later
+   spelling can no longer resolve for Gmail webhooks but not for reconnects.
+7. **Auth strategy follows the credentials.** The update branch writes
+   `auth_type`, and re-authorizing over OAuth deletes any `serviceAccountEmail` /
+   `serviceAccountKey` the row carried. `GmailClientFactory.getClient` tests
+   those *before* the OAuth branch, so merging them forward would keep the row
+   authenticating as a service account and never exercise the new grant.
+8. **A partial unique index as the backstop** (migration 015):
    `uniq_integrations_active_tenant_source_email` over
-   `(tenant_id, source, lower(<email parameter>)) WHERE is_active`. It is an
-   expression index because the mailbox lives inside a JSONB *array*; `lower()`
-   makes it case-insensitive even though today's data is uniform.
+   `(tenant_id, source, lower(COALESCE(<the three mailbox keys>))) WHERE
+   is_active`. It is an expression index because the mailbox lives inside a JSONB
+   *array*, and it COALESCEs in the same precedence the API uses to derive
+   `connectedEmail`. Only the Gmail webhook lookup (`findByEmail`) still uses
+   byte-exact containment — it runs on every notification and depends on
+   `idx_integrations_parameters_gin` to avoid the full table scans migration 012
+   exists to prevent. Gmail delivers lowercase addresses and writes are
+   normalized, so the two agree in practice.
 
 **Why the index is partial.** The invariant worth having is one row per mailbox
 regardless of `is_active`, but that index cannot be built: the 13 legacy rows
@@ -463,10 +485,15 @@ as a numbered migration, so that `sql/migrations/` stays safe to replay in bulk.
   are unique per `(tenant_id, provider, message_id)`.
 - `createOrUpdate` returns `reactivated: boolean` on the update branch so callers
   and logs can distinguish a reconnect from a routine credential refresh.
-- Integrations whose mailbox is stored under `impersonatedUserEmail` (service
-  accounts) index as NULL and are not covered by the unique index. NULLs are
-  distinct in a unique index, so those rows are simply unconstrained; the
-  code-level lookup still matches that key. No such integration exists today.
+- A row carrying no mailbox under any of the three keys indexes as NULL and is
+  unconstrained. NULLs are distinct in a unique index, which is the right
+  outcome: such a row has no identity to collide on. Every production row today
+  stores `email`.
+- Re-authorizing now invalidates the cached access token, so a user repairing a
+  revoked grant stops seeing 401s immediately instead of waiting out the stored
+  expiry. A settings-only update still leaves it alone — the trigger is a
+  caller-supplied refresh token, not the merged value, which always carries the
+  row's existing token forward.
 - `deactivate(tenantId, source)` still deactivates *every* mailbox for the
   tenant+source, and `updateKeys`/`updateTokenExpiration`/`updateRefreshToken`
   still write to every row for a tenant+source. Those are the same

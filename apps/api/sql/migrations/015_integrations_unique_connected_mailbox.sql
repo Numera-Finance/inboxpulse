@@ -30,16 +30,22 @@
 -- IntegrationRepository matches on the stored string, so two casings of one
 -- mailbox would otherwise be two rows.
 --
--- Rows carrying the mailbox under a different parameter key (impersonatedUserEmail
--- for service accounts) index as NULL here and are not constrained. NULLs are
--- distinct in a unique index, so those rows are simply not covered — no service
--- account integration exists in production today, and the code-level lookup still
--- matches that key.
+-- The mailbox can live under any of three keys, so the expression COALESCEs them
+-- in the same precedence the API already uses to derive connectedEmail
+-- (email > impersonatedUserEmail > userEmail). Covering only "email" would leave
+-- a service-account or legacy row indexing as NULL, and NULLs are distinct in a
+-- unique index — so exactly the rows most likely to duplicate would be the ones
+-- the constraint ignored. A row with no mailbox at all still indexes as NULL and
+-- is unconstrained, which is correct: it has no identity to collide on.
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_integrations_active_tenant_source_email
   ON integrations (
     tenant_id,
     source,
-    (lower(jsonb_path_query_first(parameters, '$[*] ? (@.key == "email").value') #>> '{}'))
+    (lower(COALESCE(
+      jsonb_path_query_first(parameters, '$[*] ? (@.key == "email").value') #>> '{}',
+      jsonb_path_query_first(parameters, '$[*] ? (@.key == "impersonatedUserEmail").value') #>> '{}',
+      jsonb_path_query_first(parameters, '$[*] ? (@.key == "userEmail").value') #>> '{}'
+    )))
   )
   WHERE is_active;
 

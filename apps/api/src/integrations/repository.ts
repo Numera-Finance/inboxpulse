@@ -63,6 +63,37 @@ function parametersToObject(params: IntegrationParameters | Record<string, any>)
 }
 
 /**
+ * Parameter keys under which a mailbox address can be stored. `email` is what
+ * OAuth writes, `impersonatedUserEmail` what service accounts use, and
+ * `userEmail` a legacy spelling — `getIntegration` and `listByTenant` fall back
+ * across all three when deriving connectedEmail, so identity lookups must cover
+ * the same set or a mailbox stored under a later key resolves for Gmail webhooks
+ * but not for reconnects, and forks its email_threads (ADR-006).
+ */
+const EMAIL_PARAMETER_KEYS = ['email', 'impersonatedUserEmail', 'userEmail'] as const;
+
+/**
+ * Lowercase the address under every mailbox-bearing key.
+ *
+ * Email addresses are case-insensitive, and the unique index from migration 015
+ * lowercases before comparing. Storing mixed case would let one mailbox occupy
+ * two rows, and — now that the index exists — turn the resulting missed lookup
+ * into a constraint violation surfacing as a failed OAuth callback rather than a
+ * silent duplicate.
+ */
+function normalizeEmailParameters(params: Record<string, any>): Record<string, any> {
+  const normalized = { ...params };
+
+  for (const key of EMAIL_PARAMETER_KEYS) {
+    if (typeof normalized[key] === 'string') {
+      normalized[key] = normalized[key].toLowerCase();
+    }
+  }
+
+  return normalized;
+}
+
+/**
  * Convert object to key-value array
  * Values are stored as native JSON (arrays, objects, strings, etc.)
  */
@@ -73,10 +104,12 @@ function objectToParameters(obj: Record<string, any>): IntegrationParameters {
   }));
 }
 
+export type IntegrationAuthType = 'oauth' | 'service_account' | 'api_key';
+
 export interface CreateIntegrationInput {
   tenantId: string;
   source: IntegrationSource;
-  authType: 'oauth' | 'service_account' | 'api_key';
+  authType: IntegrationAuthType;
   keys: IntegrationKeys;
   createdBy?: string;
   tokenExpiresAt?: Date;
@@ -112,7 +145,7 @@ export class IntegrationRepository {
     const { refreshToken, accessToken, ...params } = input.keys;
 
     // Convert params object to key-value array for JSONB storage
-    const parametersArray = objectToParameters(params);
+    const parametersArray = objectToParameters(normalizeEmailParameters(params));
 
     const result = await this.db
       .insert(integrations)
@@ -412,7 +445,7 @@ export class IntegrationRepository {
    */
   private emailMatchesParameters(
     email: string,
-    keys: readonly string[] = ['email', 'impersonatedUserEmail', 'userEmail']
+    keys: readonly string[] = EMAIL_PARAMETER_KEYS
   ): SQL {
     // A falsy email (or empty keys) must match nothing. Without this guard,
     // JSON.stringify drops an undefined value so the predicate degrades to
@@ -425,6 +458,46 @@ export class IntegrationRepository {
     return or(
       ...keys.map(
         (key) => sql`${integrations.parameters} @> ${JSON.stringify([{ key, value: email }])}::jsonb`
+      )
+    )!;
+  }
+
+  /**
+   * Case-insensitive variant of the predicate above, matching the address under
+   * any mailbox-bearing key.
+   *
+   * Containment (`@>`) compares JSONB values byte-exactly, so it cannot see that
+   * `Ops@acme.com` and `ops@acme.com` are the same mailbox. That mismatch matters
+   * now that migration 015 enforces uniqueness over the *lowercased* address: a
+   * lookup that missed on case would fall through to an INSERT and hit the unique
+   * index, failing the OAuth callback instead of connecting. This expression is
+   * deliberately identical to the one the index is built on.
+   *
+   * Only identity lookups use this. The Gmail webhook path (findByEmail) stays on
+   * containment because it runs on every notification and depends on
+   * idx_integrations_parameters_gin to avoid the full table scans that migration
+   * 012 exists to prevent; addresses arriving from Gmail are already lowercase,
+   * and writes are normalized, so the two agree in practice.
+   *
+   * Key names come from a fixed internal list, never from a caller; the address
+   * is bound as a query parameter.
+   */
+  private emailMatchesParametersIgnoringCase(
+    email: string,
+    keys: readonly string[] = EMAIL_PARAMETER_KEYS
+  ): SQL {
+    // Same guard as above: a falsy email must match nothing rather than degrade
+    // into a predicate that matches any row carrying an email key at all.
+    if (!email || keys.length === 0) {
+      return sql`false`;
+    }
+
+    const needle = email.toLowerCase();
+
+    return or(
+      ...keys.map(
+        (key) =>
+          sql`lower(jsonb_path_query_first(${integrations.parameters}, ${`$[*] ? (@.key == "${key}").value`}::jsonpath) #>> '{}') = ${needle}`
       )
     )!;
   }
@@ -455,7 +528,7 @@ export class IntegrationRepository {
         and(
           eq(integrations.tenantId, tenantId),
           eq(integrations.source, source),
-          this.emailMatchesParameters(email, ['email', 'impersonatedUserEmail'])
+          this.emailMatchesParametersIgnoringCase(email)
         )
       )
       .orderBy(desc(integrations.isActive), desc(integrations.createdAt), integrations.id)
@@ -485,7 +558,7 @@ export class IntegrationRepository {
   async updateKeysById(
     integrationId: string,
     input: UpdateKeysInput,
-    options: { reactivate: boolean } = { reactivate: false }
+    options: { reactivate: boolean; authType?: IntegrationAuthType } = { reactivate: false }
   ): Promise<IntegrationWithKeys> {
     const current = await this.findById(integrationId);
 
@@ -507,11 +580,28 @@ export class IntegrationRepository {
       ...input.keys,
     };
 
+    // Re-authorizing over OAuth must retire the service-account credentials this
+    // mailbox may have carried: GmailClientFactory tests serviceAccountEmail and
+    // serviceAccountKey BEFORE the OAuth branch, so merging them forward would
+    // keep the row authenticating as a service account and leave the grant the
+    // user just made unused. impersonatedUserEmail is kept — it is an address,
+    // not a credential, and it is one of the keys this mailbox is found by.
+    if (options.authType === 'oauth') {
+      delete params.serviceAccountEmail;
+      delete params.serviceAccountKey;
+    }
+
     const values: Partial<NewIntegration> = {
-      parameters: objectToParameters(params),
+      parameters: objectToParameters(normalizeEmailParameters(params)),
       updatedBy: input.updatedBy,
       updatedAt: new Date(),
     };
+
+    // Keep auth_type in step with the credentials actually stored, so a mailbox
+    // that moves between strategies is not left claiming the old one.
+    if (options.authType) {
+      values.authType = options.authType;
+    }
 
     // Write both columns, and only when we actually hold a token — an absent one
     // means "unchanged", never "clear it". getCredentials prefers refresh_token
@@ -523,14 +613,24 @@ export class IntegrationRepository {
       values.token = refreshToken;
     }
 
+    // A caller-supplied refresh token means someone just re-authorized, so the
+    // cached access token is suspect — typically they revoked the grant and
+    // reconnected to repair it. The Gmail client trusts any stored access token
+    // whose expiry is more than 5 minutes out, so leaving it would keep a revoked
+    // token in use for up to an hour after a successful reconnect. Test
+    // input.keys rather than the merged value, which carries the row's existing
+    // token forward and would clear on every settings-only save.
+    if (input.keys.refreshToken || options.reactivate) {
+      values.accessToken = null;
+      values.accessTokenExpiresAt = null;
+    }
+
     if (options.reactivate) {
       values.isActive = true;
       values.lastRunToken = null;
       values.lastRunAt = null;
       values.watchSetAt = null;
       values.watchExpiresAt = null;
-      values.accessToken = null;
-      values.accessTokenExpiresAt = null;
     }
 
     const result = await this.db

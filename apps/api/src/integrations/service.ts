@@ -63,7 +63,7 @@ export class IntegrationService {
       const integration = await this.integrationRepo.updateKeysById(
         existing.id,
         { keys, updatedBy: createdBy },
-        { reactivate: reactivated }
+        { reactivate: reactivated, authType }
       );
       return { integration, updated: true, reactivated };
     }
