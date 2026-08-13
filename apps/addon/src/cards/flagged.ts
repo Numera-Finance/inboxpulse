@@ -31,6 +31,27 @@ export interface FlaggedMessage {
   flags: FlaggedFlag[];
 }
 
+/**
+ * Colour by flag TYPE, not by the message's severity score — a message carries
+ * one severity but can carry several flags, so scoring the row would paint an
+ * upsell the same red as the escalation sitting next to it.
+ *
+ * Upsell and kudos are good news and must not look like alarms; that is the
+ * whole reason this is per-flag.
+ */
+function flagColor(f: FlaggedFlag): string {
+  const t = f.type;
+  if (t === 'escalation' || t === 'competitor') return '#c5221f';
+  if (t === 'churn') return /critical|high/i.test(f.label) ? '#c5221f' : '#b06000';
+  if (t === 'upsell' || t === 'kudos') return '#137333';
+  return '#b06000';
+}
+
+/** `text` is an HTML subset, so model-authored strings must be escaped. */
+function escapeText(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s;
 }
@@ -97,18 +118,23 @@ export function buildFlaggedSection(
     .sort((a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime());
 
   const widgets: Widget[] = shown.map((m) => {
-    const labels = m.flags.map((f) => f.label).slice(0, 3).join(' · ');
+    // Colour the flag labels by severity. <font color> is the only formatting
+    // CardService offers and it costs nothing, so a list of flags should not
+    // render as undifferentiated grey text — the severity IS the point.
+    // DecoratedText's topLabel and bottomLabel are PLAIN TEXT — only `text`
+    // renders the HTML subset. Colouring the labels therefore means moving them
+    // into `text`, or the <font> tag prints literally on the card.
+    const labels = m.flags
+      .slice(0, 3)
+      .map((f) => `<font color="${flagColor(f)}"><b>${escapeText(f.label)}</b></font>`)
+      .join(' · ');
     const primary = m.flags[0];
     const who = m.fromName || m.fromEmail;
-    // The "why" is the meat, so it goes in the wrapping text; sender + flags in
-    // the top label, provenance + date in the bottom label.
-    const body = primary?.detail
-      ? `${who}: ${truncate(primary.detail, 160)}`
-      : `${who} — ${truncate(m.subject, 80)}`;
+    const why = primary?.detail ? truncate(primary.detail, 160) : truncate(m.subject, 80);
     return deco({
-      topLabel: labels,
-      text: body,
-      bottomLabel: [primary?.provenance, day(m.receivedAt)].filter(Boolean).join(' · '),
+      topLabel: [who, day(m.receivedAt)].filter(Boolean).join(' · '),
+      text: `${labels}<br>${escapeText(why)}`,
+      bottomLabel: primary?.provenance,
       wrapText: true,
       // Expand in the panel rather than navigating: the add-on can't move Gmail's
       // thread pane, but it CAN push a detail card of its own. Falls back to

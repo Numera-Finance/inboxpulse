@@ -624,7 +624,13 @@ export class EmailService {
             ? { type: 'escalation', label: 'At risk', detail: str(res.reason), provenance: prov, severity: 100 }
             : null;
         case 'churn':
-          return r.risk_level
+          // 'low' is not a flag. The churn analysis assigns a risk_level to
+          // EVERY analysed message, so surfacing any level turned every routine
+          // email into a flag — including ones whose own reason reads "shows no
+          // signs of dissatisfaction or intent to churn". That drove a "Needs
+          // attention" headline on a scheduling confirmation, which is the panel
+          // crying wolf. A flag has to mean something needs doing.
+          return r.risk_level && r.risk_level !== 'low'
             ? {
                 type: 'churn',
                 label: `Churn risk · ${cap(r.risk_level)}`,

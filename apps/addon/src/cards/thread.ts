@@ -176,14 +176,20 @@ function deriveState(
       ? `${negatives} of the last ${trend.length} messages ${negatives === 1 ? 'was' : 'were'} negative.`
       : `${flagged.length} message${flagged.length === 1 ? '' : 's'} flagged on this thread.`;
     return {
-      headline: falling ? '<b>Needs attention — getting worse</b>' : '<b>Needs attention</b>',
+      headline: falling
+        ? `<b><font color="${LIVE_COLOR.negative}">Needs attention — getting worse</font></b>`
+        : `<b><font color="${LIVE_COLOR.negative}">Needs attention</font></b>`,
       detail,
     };
   }
 
-  if (!trend.length) return { headline: '<b>No signal yet</b>', detail: 'This thread has not been analysed.' };
+  if (!trend.length)
+    return {
+      headline: `<b><font color="${LIVE_COLOR.neutral}">No signal yet</font></b>`,
+      detail: 'This thread has not been analysed.',
+    };
   return {
-    headline: '<b>Looks fine</b>',
+    headline: `<b><font color="${LIVE_COLOR.positive}">Looks fine</font></b>`,
     detail: latest?.sentiment === 'positive' ? 'Most recent message was positive.' : 'Nothing negative recently.',
   };
 }
@@ -559,6 +565,19 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     if (t.resolution) widgets.push(deco({ topLabel: 'Resolution', text: t.resolution, wrapText: true }));
     sections.push({ header: heading('Escalation'), widgets });
   }
+
+  // The tracked card had no actions at all — every button lived on the untracked
+  // branch. A thread InboxPulse knows about deserves them more, not less.
+  const trackedSearch = deriveSearch(input.headers);
+  const trackedBtns = [];
+  if (input.draft) trackedBtns.push(linkButton('Draft a reply', gmailComposeUrl(input, input.draft)));
+  if (trackedSearch)
+    trackedBtns.push(linkButton('Find related emails', gmailSearchUrl(trackedSearch.query, input.viewerEmail)));
+  if (trackedBtns.length) {
+    sections.push({ header: heading('Do next'), widgets: [buttons(...trackedBtns)] });
+  }
+
+  sections.push(...loopInSections(input));
 
   // Envelope last, as reference. Gmail already shows subject and sender in the
   // thread pane; the only genuinely additive fields here are the full To/Cc/Bcc

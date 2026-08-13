@@ -21,11 +21,14 @@ describe('buildFlaggedSection', () => {
   it('renders flag label(s), the why reason, and provenance', () => {
     const section = buildFlaggedSection([msg({})])!;
     const d = (section.widgets[0] as { decoratedText: { topLabel: string; text: string; bottomLabel: string } }).decoratedText;
-    expect(d.topLabel).toBe('Churn risk · High');
-    expect(d.text).toContain('Oliver Hahn');
+    // Flag labels live in `text`, not topLabel: only `text` renders the HTML
+    // subset, so a coloured label in topLabel would print its <font> tag.
+    expect(d.text).toContain('Churn risk · High');
+    expect(d.text).toContain('#c5221f');
+    expect(d.topLabel).toContain('Oliver Hahn');
     expect(d.text).toContain('frustrated');
     expect(d.bottomLabel).toContain('AI · 95%');
-    expect(d.bottomLabel).toContain('2026-05-26');
+    expect(d.topLabel).toContain('2026-05-26');
   });
 
   it('surfaces keyword-rule provenance verbatim', () => {
@@ -52,7 +55,7 @@ describe('buildFlaggedSection', () => {
       msg({ messageId: 'oldest', receivedAt: '2026-05-04T00:00:00Z', severity: 70 }),
     ])!;
     const days = section.widgets.map(
-      (w) => (w as { decoratedText: { bottomLabel: string } }).decoratedText.bottomLabel,
+      (w) => (w as { decoratedText: { topLabel: string } }).decoratedText.topLabel,
     );
     expect(days[0]).toContain('2026-05-04');
     expect(days[1]).toContain('2026-05-20');
