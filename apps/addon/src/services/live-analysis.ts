@@ -173,17 +173,36 @@ export function parseAnalysis(raw: string): LiveAnalysis | null {
  */
 export async function analyseThreadLive(
   messages: Array<{ from?: string; body: string }>,
-  limit = 5,
+  limit = 3,
 ): Promise<LiveAnalysis[]> {
   if (!isLiveAnalysisEnabled() || !messages.length) return [];
 
-  // Most recent `limit`, then back to oldest-first so the series reads left to
-  // right the way the sparkline renders it.
+  // Concurrency does NOT buy parallelism here. A local Ollama serves one model
+  // at a time, so N concurrent requests queue behind each other and the wall
+  // clock is the sum, not the max. Measured: 3 messages took 3.7s. Shipping a
+  // cap of 5 pushed the whole contextual response past 9s, Gmail gave up on it,
+  // and the panel fell back to the homepage card.
+  //
+  // So the cap is small AND the total is bounded: whatever has resolved when the
+  // deadline passes is what gets rendered. A shorter sparkline is a fine
+  // outcome; a card that never arrives is not.
   const recent = messages.slice(-limit);
-  const results = await Promise.all(
-    recent.map((m) => analyseMessageLive({ from: m.from, body: m.body })),
+  const deadline = new Promise<'deadline'>((r) =>
+    setTimeout(() => r('deadline'), getEnv().LIVE_ANALYSIS_TIMEOUT_MS),
   );
-  return results.filter((r): r is LiveAnalysis => r !== null);
+
+  const settled: Array<LiveAnalysis | null> = new Array(recent.length).fill(null);
+  const calls = recent.map((m, i) =>
+    analyseMessageLive({ from: m.from, body: m.body }).then((r) => {
+      settled[i] = r;
+    }),
+  );
+
+  const raced = await Promise.race([Promise.all(calls).then(() => 'done' as const), deadline]);
+  if (raced === 'deadline') {
+    logger.warn({ requested: recent.length, got: settled.filter(Boolean).length }, 'live thread analysis: deadline');
+  }
+  return settled.filter((r): r is LiveAnalysis => r !== null);
 }
 
 /**
