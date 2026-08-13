@@ -35,6 +35,13 @@ export interface PriorConcern {
 
 export interface AccountContext {
   found: boolean;
+  /**
+   * 'tenant' — everything the organisation has with this customer, shown only
+   * to a viewer entitled to that customer.
+   * 'viewer' — only mail the viewer is personally on. Their own correspondence,
+   * so it needs no customer assignment.
+   */
+  scope?: 'tenant' | 'viewer';
   customerId?: string;
   name?: string;
   /** Total messages exchanged with this customer, across every mailbox. */
@@ -66,36 +73,54 @@ export class AccountContextService {
   async byDomain(
     tenantId: string,
     domain: string,
-    viewer: { userId: string; isAdmin: boolean },
+    viewer: { userId: string; isAdmin: boolean; email?: string },
   ): Promise<AccountContext> {
     const clean = domain.trim().toLowerCase();
     if (!clean.includes('.')) return EMPTY;
-
-    // Non-admins are restricted to their accessible customers. Same subquery the
-    // customers service uses, so the two cannot drift apart.
-    const accessFilter = viewer.isAdmin
-      ? sql``
-      : sql`AND c.id IN (SELECT uac.customer_id FROM user_accessible_customers uac WHERE uac.user_id = ${viewer.userId})`;
 
     const rows = await this.db.execute(sql`
       SELECT c.id, c.name
       FROM customer_domains cd
       JOIN customers c ON c.id = cd.customer_id
       WHERE cd.tenant_id = ${tenantId} AND lower(cd.domain) = ${clean}
-      ${accessFilter}
       LIMIT 1
     `);
     const customer = (rows as unknown as Array<{ id: string; name: string }>)[0];
     if (!customer) return EMPTY;
 
+    // Two scopes, and which one applies is decided here rather than by the caller.
+    //
+    // A viewer entitled to this customer sees everything the organisation has.
+    // A viewer who is not still sees THEIR OWN correspondence with the company —
+    // mail they were personally on is theirs to read, and refusing it would hide
+    // a user's own inbox from them. What it must never do is widen that into the
+    // organisation's history, which is the leak.
+    const entitled =
+      viewer.isAdmin ||
+      (await this.hasCustomerAccess(viewer.userId, customer.id));
+
+    const viewerEmail = viewer.email?.trim().toLowerCase();
+    if (!entitled && !viewerEmail) return EMPTY;
+
+    const mine = entitled
+      ? sql``
+      : sql`AND EXISTS (
+              SELECT 1 FROM email_participants me
+              WHERE me.email_id = e.id AND lower(me.email) = ${viewerEmail}
+            )`;
+
     const [stats, tasks, concerns] = await Promise.all([
-      this.stats(tenantId, customer.id),
-      this.openTasks(tenantId, customer.id),
-      this.priorConcerns(tenantId, customer.id),
+      this.stats(tenantId, customer.id, mine),
+      entitled ? this.openTasks(tenantId, customer.id) : Promise.resolve(0),
+      this.priorConcerns(tenantId, customer.id, mine),
     ]);
+
+    // Nothing of the viewer's own with this company is not worth a section.
+    if (!entitled && stats.messages === 0) return EMPTY;
 
     return {
       found: true,
+      scope: entitled ? 'tenant' : 'viewer',
       customerId: customer.id,
       name: customer.name,
       ...stats,
@@ -105,16 +130,62 @@ export class AccountContextService {
     };
   }
 
-  private async stats(tenantId: string, customerId: string) {
+  private async hasCustomerAccess(userId: string, customerId: string): Promise<boolean> {
+    const rows = await this.db.execute(sql`
+      SELECT 1 FROM user_accessible_customers
+      WHERE user_id = ${userId} AND customer_id = ${customerId} LIMIT 1
+    `);
+    return (rows as unknown as unknown[]).length > 0;
+  }
+
+  /**
+   * Resolve a Gmail address to the InboxPulse user behind it.
+   *
+   * The add-on knows the viewer's email from Google's signed token but nothing
+   * about their role, and hardcoding a role client-side is how an access check
+   * becomes decorative. Admin status is decided here, from the user's actual
+   * permissions.
+   */
+  async resolveViewer(
+    tenantId: string,
+    email: string,
+  ): Promise<{ found: boolean; userId?: string; isAdmin: boolean; accessibleCustomers: number }> {
+    const rows = await this.db.execute(sql`
+      SELECT u.id, r.permissions
+      FROM users u
+      LEFT JOIN roles r ON r.id = u.role_id
+      WHERE u.tenant_id = ${tenantId} AND lower(u.email) = ${email.trim().toLowerCase()}
+      LIMIT 1
+    `);
+    const u = (rows as unknown as Array<{ id: string; permissions: number[] | null }>)[0];
+    if (!u) return { found: false, isAdmin: false, accessibleCustomers: 0 };
+
+    // Permission 1 is ADMIN in packages/shared/src/types/rbac.ts.
+    const isAdmin = Array.isArray(u.permissions) && u.permissions.includes(1);
+
+    const countRows = await this.db.execute(sql`
+      SELECT COUNT(*)::int AS n FROM user_accessible_customers WHERE user_id = ${u.id}
+    `);
+
+    return {
+      found: true,
+      userId: u.id,
+      isAdmin,
+      accessibleCustomers: Number((countRows as unknown as Array<{ n: number }>)[0]?.n ?? 0),
+    };
+  }
+
+  private async stats(tenantId: string, customerId: string, mine: ReturnType<typeof sql>) {
     const rows = await this.db.execute(sql`
       SELECT
-        COUNT(*)::int AS messages,
+        COUNT(DISTINCT e.id)::int AS messages,
         COUNT(DISTINCT e.thread_id)::int AS threads,
         MIN(e.received_at)::date::text AS first_seen,
         MAX(e.received_at)::date::text AS last_seen
       FROM email_participants p
       JOIN emails e ON e.id = p.email_id
       WHERE p.tenant_id = ${tenantId} AND p.customer_id = ${customerId}
+      ${mine}
     `);
     const r = (rows as unknown as Array<Record<string, unknown>>)[0] ?? {};
 
@@ -146,7 +217,7 @@ export class AccountContextService {
    * appears once per message in a thread, and three identical rows read as three
    * separate problems when they are one.
    */
-  private async priorConcerns(tenantId: string, customerId: string) {
+  private async priorConcerns(tenantId: string, customerId: string, mine: ReturnType<typeof sql>) {
     const rows = await this.db.execute(sql`
       SELECT e.received_at::date::text AS when, a.reasoning
       FROM email_analyses a
@@ -156,6 +227,7 @@ export class AccountContextService {
         AND p.customer_id = ${customerId}
         AND a.analysis_type = 'sentiment'
         AND a.sentiment_value = 'negative'
+        ${mine}
       ORDER BY e.received_at DESC
       LIMIT 40
     `);

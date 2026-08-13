@@ -382,7 +382,9 @@ export function buildThreadCard(input: ThreadCardInput): Card {
           deco({
             text: `<b>${escapeText(acct.name ?? 'Customer')}</b>`,
             bottomLabel: [
-              `${acct.messages.toLocaleString()} messages`,
+              acct.scope === 'viewer'
+                ? `${acct.messages.toLocaleString()} messages you are on`
+                : `${acct.messages.toLocaleString()} messages`,
               `${acct.threads} threads`,
               acct.firstSeen ? `since ${acct.firstSeen}` : null,
             ]

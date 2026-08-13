@@ -24,10 +24,28 @@ addonRoutes.get('/account-context', async (c) => {
   if (!userId) throw new InvalidInputError('userId is required');
 
   const isAdmin = c.req.query('isAdmin') === 'true';
+  const viewerEmail = c.req.query('email') ?? undefined;
 
   const service = container.resolve(AccountContextService);
   return c.json({
     success: true,
-    data: await service.byDomain(tenantId, domain, { userId, isAdmin }),
+    data: await service.byDomain(tenantId, domain, { userId, isAdmin, email: viewerEmail }),
   });
+});
+
+/**
+ * GET /api/internal/addon/viewer?email=&tenantId=
+ *
+ * Resolve a Gmail address to the InboxPulse user, so the add-on can scope
+ * account context to a REAL viewer instead of asserting one. Returns the user id
+ * and whether they hold ADMIN — never the permission list itself.
+ */
+addonRoutes.get('/viewer', async (c) => {
+  const email = c.req.query('email');
+  const tenantId = c.req.query('tenantId');
+  if (!email) throw new InvalidInputError('email is required');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+
+  const service = container.resolve(AccountContextService);
+  return c.json({ success: true, data: await service.resolveViewer(tenantId, email) });
 });

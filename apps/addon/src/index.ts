@@ -181,6 +181,7 @@ app.post('/gmail/analyse', async (c) => {
       ? getAccountContext(externalDomain, tenantId, {
           userId: getEnv().ADDON_DEV_USER_ID ?? '',
           isAdmin: false,
+          email: viewerEmail,
         })
       : null,
   ]);

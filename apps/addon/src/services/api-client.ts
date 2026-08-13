@@ -278,6 +278,8 @@ export interface PriorConcern {
 
 export interface AccountContext {
   found: boolean;
+  /** 'viewer' = only mail you are on; 'tenant' = everything the org has. */
+  scope?: 'tenant' | 'viewer';
   customerId?: string;
   name?: string;
   messages: number;
@@ -300,7 +302,7 @@ export interface AccountContext {
 export async function getAccountContext(
   domain: string,
   tenantId: string,
-  viewer: { userId: string; isAdmin: boolean },
+  viewer: { userId: string; isAdmin: boolean; email?: string },
 ): Promise<AccountContext | null> {
   const env = getEnv();
   // No viewer, no call. The endpoint rejects a missing userId, and asking
@@ -312,7 +314,8 @@ export async function getAccountContext(
       `?domain=${encodeURIComponent(domain)}` +
       `&tenantId=${encodeURIComponent(tenantId)}` +
       `&userId=${encodeURIComponent(viewer.userId)}` +
-      `&isAdmin=${viewer.isAdmin ? 'true' : 'false'}`;
+      `&isAdmin=${viewer.isAdmin ? 'true' : 'false'}` +
+      (viewer.email ? `&email=${encodeURIComponent(viewer.email)}` : '');
     const res = await fetch(url, { headers: internalHeaders() });
     if (!res.ok) {
       logger.warn({ status: res.status, domain }, 'account-context non-OK');
