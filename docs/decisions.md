@@ -309,14 +309,35 @@ per distinct integration — or a sequential scan before PG18.
   the new**.
 - Historical TAT is **not** recoverable. Reply messages are never stored, so the
   62,562 orphaned emails can only be populated by replies arriving from now on.
+- **Average TAT will jump on deploy.** The 9,008 orphaned emails on threads that
+  are still live become eligible, and a reply landing today on an email received
+  in April yields a delta of ~3,000 hours. `getTatMetrics`
+  (`apps/api/src/emails/repository.ts:1263-1285`) averages
+  `first_reply_at - received_at` with no upper bound; `dateFrom`/`dateTo` are
+  optional and constrain `received_at`, not `first_reply_at`, so any all-time or
+  wide-window view averages these recovered outliers in. The numbers are
+  genuine — the emails really did go unanswered that long — but the shift is an
+  artifact of this deploy, not of changed team behavior. Operators should expect
+  it; capping or winsorizing the average is a separate decision.
 - The root cause is untouched: reconnecting a mailbox still creates a new
   `integrations` row rather than updating the existing one (14 rows exist for this
   one mailbox). This ADR makes first-reply immune to that fragmentation; it does
   not stop the fragmentation, which also splits any other per-integration query.
-- `setFirstReplyForThreads` (the sync path, keyed by internal `thread_id`) was
-  never affected — but it is also never exercised in production, because Gmail's
-  domain blacklist drops tenant-domain senders before storage, so every reply
-  arrives through the marker path.
+- The sync path is **only partly** immune, and is NOT fixed here.
+  `setFirstReplyForThreads` itself is keyed by internal `thread_id`, so its UPDATE
+  never had the defect — but its caller does. The reply-only branch of
+  `saveThreadWithEmailsTransactionally`
+  (`apps/api/src/emails/service.ts:614-627`) resolves the thread with
+  `UPDATE email_threads ... WHERE tenant_id = ? AND integration_id = ? AND
+  provider_thread_id = ?`. For a thread first stored under a previous
+  integration, that matches no row, so the batch returns `noopResult`,
+  `setFirstReplyForThreads` is never called, and it logs "Reply received before
+  its thread exists" — which misattributes the cause, since the thread does exist
+  under the prior integration. That path is not exercised in production today
+  (Gmail's domain blacklist drops tenant-domain senders before storage, so every
+  reply arrives through the marker path), which is why it is left for a follow-up
+  rather than fixed here — but narrowing the blacklist, or onboarding a tenant
+  with no blacklisted domains, would reintroduce the exact bug this ADR fixes.
 - `updatedCount` still cannot distinguish "already answered" from "no candidate
   matched"; the 65% figure conflated both. Logging a rejection reason remains
   worthwhile follow-up.
