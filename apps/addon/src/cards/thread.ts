@@ -294,11 +294,17 @@ export function buildThreadCard(input: ThreadCardInput): Card {
 
       // Provenance sits at the bottom: it matters for trust, but nobody opens
       // the panel to read it. Quiet, and unambiguous that nothing was written.
+      // Say how many messages were actually read. Claiming "the open message"
+      // while the trend above shows four is a small lie the user can see.
+      const analysed = input.trend?.length ?? 0;
       sections.push({
         widgets: [
           deco({
             topLabel: 'How this was read',
-            text: 'Analysed live from the open message. Not stored.',
+            text:
+              analysed > 1
+                ? `Analysed live from ${analysed} messages on this thread. Not stored.`
+                : 'Analysed live from the open message. Not stored.',
             wrapText: true,
           }),
         ],
