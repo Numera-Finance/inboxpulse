@@ -116,6 +116,29 @@ const envSchema = z.object({
    * user is already waiting deliberately; failing them at 12s to save 8s of
    * patience is the wrong trade.
    */
+  /**
+   * Where to persist analysed threads so they survive a restart. BLANK = off,
+   * and off is the default.
+   *
+   * The in-memory cache dies with the process, so a code change, a tunnel
+   * reconnect or closing the laptop re-analyses every thread already read --
+   * which on a personal mailbox is the common case, not the rare one.
+   *
+   * Setting this is a DELIBERATE relaxation of "Analysed live. Not stored".
+   * Only point it at a directory on the operator's own machine, never at shared
+   * or synced storage (no Drive, no Dropbox, no network mount). It holds only
+   * threads that operator personally opened, files are written 0600 with
+   * sha256-hashed names so no address appears in a filename, and the whole
+   * directory is destroyed by a single clear().
+   *
+   * It is NEVER wired to the tenant database. The entire reason a personal
+   * mailbox can be analysed at all is that its contents do not enter the shared
+   * system, and a cache is not an exception to that.
+   *
+   * Suggested: ~/.inboxpulse-cache
+   */
+  ADDON_CACHE_DIR: z.string().default(''),
+
   LIVE_ANALYSIS_TIMEOUT_MS: z.coerce.number().default(20000),
 
   // 'ollama' uses the NATIVE /api/chat endpoint, which is the only way to turn a
