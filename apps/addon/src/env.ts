@@ -32,7 +32,14 @@ const envSchema = z.object({
   ADDON_AUDIENCE: z.string().default(''),
 
   // The add-on's OAuth client id — the audience of event.userIdToken (which
-  // carries the signed-in user's email). Reuses the CRM Google client by default.
+  // carries the signed-in user's email).
+  //
+  // This must be the client the MARKETPLACE SDK created for the add-on
+  // ("Google Workspace Add-ons", visible under Marketplace SDK > Credentials >
+  // Authorization Resource), NOT crm-oauth. Google mints event.userIdToken for
+  // the add-on's own client, so verifying against the CRM client checks the
+  // wrong audience. The earlier "reuses the CRM Google client" default predates
+  // the dedicated client existing.
   GOOGLE_CLIENT_ID: z.string().default(''),
 
   // ---------------------------------------------------------------------------
