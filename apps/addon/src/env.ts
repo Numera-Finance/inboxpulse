@@ -84,6 +84,11 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v.toLowerCase() === 'true'),
+
+  // Google Chat incoming webhook for "Share to Chat". A webhook needs NO Google
+  // OAuth scope on the add-on — it is a plain HTTPS POST — which is why this is
+  // buildable today while draft-reply is not. Blank disables the button.
+  CHAT_WEBHOOK_URL: z.string().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

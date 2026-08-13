@@ -32,6 +32,7 @@ import {
   resolveThreadIdByProvider,
 } from './services/api-client';
 import { analyseMessageLive, analyseThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
+import { shareToChat, isChatShareEnabled } from './services/chat';
 
 const app = new Hono();
 
@@ -93,6 +94,47 @@ app.post('/gmail/flagged/detail', async (c) => {
 
   return c.json(pushCard(buildFlaggedDetailCard({ message, body, viewerEmail: verified.email })));
 });
+
+// Action callback: "Share to Chat" on the thread card. Posts a short summary to
+// the configured space and answers with a toast — deliberately NOT a card
+// rebuild, so the user keeps their place in the panel.
+app.post('/gmail/share/chat', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) {
+    logger.warn({ reason: verified.reason }, 'share/chat: request not verified');
+    return c.json(notify('Could not verify this request.'));
+  }
+
+  const p = getActionParameters(event);
+  const ok = await shareToChat({
+    subject: p.subject,
+    from: p.from,
+    sentiment: p.sentiment,
+    reason: p.reason,
+    link: p.messageId ? gmailMessageLink(p.messageId, verified.email) : undefined,
+    sharedBy: verified.email,
+  });
+
+  return c.json(notify(ok ? 'Shared to Chat' : 'Could not share to Chat'));
+});
+
+/** Deep link to a single message, targeting the viewer's account by address. */
+function gmailMessageLink(messageId: string, viewerEmail?: string): string {
+  const target = viewerEmail ? `?authuser=${encodeURIComponent(viewerEmail)}` : '';
+  return `https://mail.google.com/mail/u/0/${target}#all/${encodeURIComponent(messageId)}`;
+}
+
+/** A toast, with no card mutation — the cheapest possible action response. */
+function notify(text: string) {
+  return { action: { notification: { text } } };
+}
 
 // Homepage trigger — opened without a message context.
 app.post('/homepage', async (c) => {
@@ -240,6 +282,7 @@ app.post('/gmail/contextual', async (c) => {
           threadId: dbThreadId ?? undefined,
           baseUrl,
           live,
+          chatShareEnabled: isChatShareEnabled(),
         }),
       ),
     );

@@ -1,4 +1,4 @@
-import { type Card, type CardSection, type Widget, text, deco, heading, separated, buttons, linkButton } from './widgets';
+import { type Card, type CardSection, type Widget, text, deco, heading, separated, buttons, linkButton, actionButton } from './widgets';
 import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
@@ -54,6 +54,8 @@ export interface ThreadCardInput {
    * stored. Only ever set for threads InboxPulse does not track.
    */
   live?: LiveAnalysis | null;
+  /** Renders the "Share to Chat" button when a webhook is configured. */
+  chatShareEnabled?: boolean;
 }
 
 /**
@@ -275,22 +277,32 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       if (trendSection) sections.push(trendSection);
       if (flaggedSection) sections.push(flaggedSection);
 
-      // 3. Do next — a real action, derived from the message alone.
+      // 3. Do next — real actions, all derived from the message alone.
       const search = deriveSearch(input.headers);
-      if (search) {
-        sections.push({
-          header: heading('Do next'),
-          widgets: [
-            buttons(
-              linkButton('Find related emails', gmailSearchUrl(search.query, input.viewerEmail)),
-            ),
-            deco({
-              text: `Opens a new Gmail tab searching ${search.terms.join(', ') || 'this sender'}.`,
-              wrapText: true,
-            }),
-          ],
-        });
+      const doNext: Widget[] = [];
+      const btns = [];
+      if (search) btns.push(linkButton('Find related emails', gmailSearchUrl(search.query, input.viewerEmail)));
+      if (input.chatShareEnabled && input.baseUrl) {
+        btns.push(
+          actionButton('Share to Chat', `${input.baseUrl}/gmail/share/chat`, {
+            subject: input.headers?.subject ?? '',
+            from: input.headers?.from ?? '',
+            sentiment: LIVE_LABEL[input.live.sentiment],
+            reason: input.live.reason,
+            messageId: input.messageId ?? '',
+          }),
+        );
       }
+      if (btns.length) doNext.push(buttons(...btns));
+      if (search) {
+        doNext.push(
+          deco({
+            text: `Opens a new Gmail tab searching ${search.terms.join(', ') || 'this sender'}.`,
+            wrapText: true,
+          }),
+        );
+      }
+      if (doNext.length) sections.push({ header: heading('Do next'), widgets: doNext });
 
       // Provenance sits at the bottom: it matters for trust, but nobody opens
       // the panel to read it. Quiet, and unambiguous that nothing was written.
