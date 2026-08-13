@@ -5,6 +5,16 @@ import type { MessageHeaders } from '../gmail/gmail-api';
 import { resolveWhen, calendarUrl } from '../services/when';
 import { suggestConnector } from '../services/connectors';
 import type { LiveAnalysis, ThreadDigest, ThreadMode, ReplyOption } from '../services/live-analysis';
+import { THREAD_MODES } from '../services/live-analysis';
+
+/** Short button text per mode — the button says what you'd get, not the enum. */
+const MODE_LABEL: Record<ThreadMode, string> = {
+  complaint: 'Complaint',
+  scheduling: 'Scheduling',
+  opportunity: 'Opportunity',
+  working: 'Working',
+  fyi: 'FYI',
+};
 import type { Participant } from '../services/participants';
 import type { AccountContext } from '../services/api-client';
 
@@ -74,6 +84,8 @@ export interface ThreadCardInput {
   connectedSources?: string[];
   /** Offer a full read anyway — the user disagreeing that nothing is needed. */
   fyiEscape?: boolean;
+  /** Demo only: offer to re-render this thread in each of the five modes. */
+  demoModes?: boolean;
   /**
    * Nothing has been analysed yet — render instantly with what is free and
    * offer analysis as an action. See buildThreadCard.
@@ -778,6 +790,38 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             deco({
               topLabel: `${suggestion.name} · not connected`,
               text: escapeText(suggestion.changesTheReply),
+              wrapText: true,
+            }),
+          ],
+        });
+      }
+
+      // Demo affordance: the same thread, re-rendered in another mode.
+      //
+      // Showing the modal design used to mean finding a complaint thread, then a
+      // scheduling thread, live in front of an audience -- and `opportunity` has
+      // never fired on 169 real threads, so one of the five could not be shown
+      // at all. This re-renders the REAL analysis of the open thread in a
+      // different shape; nothing is invented, which is the only reason it is
+      // acceptable on a surface whose argument is that its numbers are true.
+      //
+      // Free: the reading is cached by thread content, so this costs a render.
+      if (input.demoModes && input.baseUrl) {
+        const others = THREAD_MODES.filter((m) => m !== (input.mode ?? 'working'));
+        sections.push({
+          header: heading('Show as'),
+          widgets: [
+            buttons(
+              ...others.map((m) =>
+                actionButton(MODE_LABEL[m], `${input.baseUrl}/gmail/read`, {
+                  threadId: input.providerThreadId ?? '',
+                  messageId: input.messageId ?? '',
+                  forceMode: m,
+                }),
+              ),
+            ),
+            deco({
+              text: '<font color="#5f6368">Same thread, same analysis, different shape. Demo only.</font>',
               wrapText: true,
             }),
           ],

@@ -32,8 +32,8 @@ import {
   getAccountContext,
   createTask,
 } from './services/api-client';
-import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled } from './services/live-analysis';
-import type { ReplyOption } from './services/live-analysis';
+import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled, THREAD_MODES } from './services/live-analysis';
+import type { ReplyOption, ThreadMode } from './services/live-analysis';
 import { AnalysisCache } from './services/analysis-cache';
 
 /**
@@ -273,11 +273,20 @@ app.post('/gmail/analyse', async (c) => {
   });
   const cached = p.force === 'true' ? null : analysisCache.get(cacheKey);
 
-  const mode = cached
+  const classified = cached
     ? cached.mode
     : threadText
       ? await classifyThreadMode({ subject: headers?.subject, thread: threadText })
       : null;
+
+  // Demo override: re-render this thread's real analysis in another mode.
+  // Only honoured when ADDON_DEMO_MODE is on, so a stray parameter cannot
+  // reshape a real user's card.
+  const forced =
+    getEnv().ADDON_DEMO_MODE && p.forceMode && THREAD_MODES.includes(p.forceMode as ThreadMode)
+      ? (p.forceMode as ThreadMode)
+      : null;
+  const mode = forced ?? classified;
 
   // Extraction and prose run CONCURRENTLY, on different models.
   //
@@ -324,6 +333,10 @@ app.post('/gmail/analyse', async (c) => {
           account,
           historyPoints: buildHistoryPoints(account),
           mode: 'fyi',
+          // Without this, an fyi card is a dead end in a demo: the short-circuit
+          // returns before the "Show as" row is built, so there is no way back
+          // to the other four shapes.
+          demoModes: getEnv().ADDON_DEMO_MODE,
           // The escape hatch for the classifier's most costly error. 8 of 37
           // fyi calls on the gauntlet were threads that needed work, and a
           // wrong 'fyi' hides everything -- the user is told there is nothing
@@ -404,6 +417,7 @@ app.post('/gmail/analyse', async (c) => {
         // Deterministic, instant, and it cannot hallucinate a date.
         historyPoints: buildHistoryPoints(account),
         mode: mode ?? reading.mode,
+        demoModes: getEnv().ADDON_DEMO_MODE,
         // Only gmail has rows in `integrations` (15, of which 2 active); the
         // enum allows outlook/slack/other and none are configured. Hardcoded
         // rather than queried -- a per-render round trip for a fact that

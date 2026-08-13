@@ -139,6 +139,26 @@ const envSchema = z.object({
    */
   ADDON_CACHE_DIR: z.string().default(''),
 
+  /**
+   * Show a "Show as" row that re-renders the open thread in each of the five
+   * modes. OFF by default and must stay off for real users.
+   *
+   * Demos could not show the modal design at all: it needs a complaint thread,
+   * then a scheduling thread, then an opportunity thread, found live in front of
+   * an audience -- and `opportunity` has never once fired on 169 real threads,
+   * so one of the five was undemonstrable by any amount of hunting.
+   *
+   * Forcing the mode re-renders the SAME thread's REAL analysis in a different
+   * shape. Nothing is fabricated, which is why this is acceptable at all: the
+   * alternative -- a preview card filled with invented commitments and quotes --
+   * would put sample values on a surface whose whole argument is that its
+   * numbers can be trusted.
+   *
+   * Free, too: the reading is already cached by thread content, so switching
+   * mode costs a re-render and no model call.
+   */
+  ADDON_DEMO_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
+
   LIVE_ANALYSIS_TIMEOUT_MS: z.coerce.number().default(20000),
 
   // 'ollama' uses the NATIVE /api/chat endpoint, which is the only way to turn a
