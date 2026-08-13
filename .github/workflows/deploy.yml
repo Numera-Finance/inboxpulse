@@ -32,6 +32,7 @@ jobs:
       gmail: ${{ steps.filter.outputs.gmail }}
       web: ${{ steps.filter.outputs.web }}
       analysis: ${{ steps.filter.outputs.analysis }}
+      addon: ${{ steps.filter.outputs.addon }}
       notifications: ${{ steps.filter.outputs.notifications }}
       manager: ${{ steps.filter.outputs.manager }}
       deploy-all: ${{ steps.check.outputs.deploy-all }}
@@ -58,6 +59,8 @@ jobs:
               - 'apps/notifications/**'
             manager:
               - 'apps/manager/**'
+            addon:
+              - 'apps/addon/**'
 
       - name: Determine deployment strategy
         id: check
@@ -516,3 +519,104 @@ jobs:
           echo "### crm-manager Deployed" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** crm-manager:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "**Access:** IAM-gated — reach it with \`gcloud run services proxy crm-manager --region ${{ env.REGION }} --port 8080\`" >> $GITHUB_STEP_SUMMARY
+
+  # crm-addon — the Google Workspace Add-on.
+  #
+  # Unlike the Chrome extension, this is NOT redistributed to users. The card is
+  # rendered server-side by this service, so deploying it updates every installed
+  # user at once with no reinstall. The Marketplace deployment only holds a URL.
+  #
+  # --ingress all (not internal): Google's own servers call the trigger and
+  # action endpoints from outside the VPC. Requests are authenticated by the
+  # signed ID token Google sends, verified in auth/verify.ts, which is why
+  # ADDON_VERIFY_ID_TOKEN must be true here.
+  #
+  # PREREQUISITES, none of which this job creates:
+  #   - service account  crm-addon-sa@  with roles/secretmanager.secretAccessor
+  #   - secret  ADDON_GOOGLE_CLIENT_ID   the add-on's OWN OAuth client id, from
+  #     Marketplace SDK > Credentials. NOT crm-oauth: Google mints
+  #     event.userIdToken for the add-on's client, so verifying against the CRM
+  #     client checks the wrong audience and every request fails to verify.
+  #   - secret  ADDON_SERVICE_API_URL    the crm-api base URL
+  # Deploying without these gives a service that starts and then rejects every
+  # request Google sends it.
+  deploy-addon:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.deploy-all == 'true' ||
+      needs.detect-changes.outputs.addon == 'true' ||
+      (github.event_name == 'workflow_dispatch' && contains(github.event.inputs.services, 'addon'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-addon"
+          docker build -f apps/addon/Dockerfile -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
+
+          gcloud run deploy crm-addon \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-addon:${{ github.sha }}" \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --service-account "crm-addon-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --network ${{ env.VPC_NAME }} \
+            --subnet "${SUBNET}" \
+            --vpc-egress private-ranges-only \
+            --ingress all \
+            --allow-unauthenticated \
+            --update-env-vars "\
+          NODE_ENV=production,\
+          LOG_LEVEL=info,\
+          ADDON_VERIFY_ID_TOKEN=true,\
+          LIVE_ANALYSIS_PROVIDER=gemini,\
+          LIVE_ANALYSIS_MODEL=gemini-3.1-flash-lite,\
+          LIVE_ANALYSIS_REASONING=none,\
+          LIVE_ANALYSIS_TIMEOUT_MS=20000" \
+            --update-secrets "\
+          SERVICE_API_KEY=SERVICE_API_KEY:latest,\
+          LIVE_ANALYSIS_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,\
+          SERVICE_API_URL=ADDON_SERVICE_API_URL:latest,\
+          GOOGLE_CLIENT_ID=ADDON_GOOGLE_CLIENT_ID:latest" \
+            --min-instances 0 \
+            --max-instances 10 \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 120 \
+            --concurrency 40
+
+      - name: Point the add-on at this revision
+        run: |
+          URL=$(gcloud run services describe crm-addon --region ${{ env.REGION }} --format 'value(status.url)')
+          gcloud run services update crm-addon --region ${{ env.REGION }} \
+            --update-env-vars "ADDON_BASE_URL=${URL},ADDON_AUDIENCE=${URL}"
+          echo "### crm-addon Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${URL}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The Marketplace deployment still points at whatever URL it was" >> $GITHUB_STEP_SUMMARY
+          echo "registered with. If this URL changed, update it:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "gcloud workspace-add-ons deployments replace inboxpulse-live --deployment-file=apps/addon/deployment.json" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
