@@ -87,6 +87,11 @@ psql $DATABASE_URL -f apps/api/sql/migrations/012_integrations_parameters_gin_in
 # Ships with the originator matching rule: a reply only counts for a customer
 # email when it is addressed to that email's own sender. No backfill.
 psql $DATABASE_URL -f apps/api/sql/migrations/013_email_first_reply_by.sql
+
+# Add a partial UNIQUE index enforcing one CONNECTED integration per
+# (tenant, source, mailbox). Reconnecting a mailbox must revive the existing row,
+# never insert a second one — duplicates fragment email_threads (ADR-006).
+psql $DATABASE_URL -f apps/api/sql/migrations/015_integrations_unique_connected_mailbox.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
@@ -102,6 +107,7 @@ Migration files are idempotent (safe to run multiple times).
 - The `contacts` table has a unique constraint: `CONSTRAINT uniq_contacts_tenant_email UNIQUE (tenant_id, email)`
 - The `emails` table has a unique constraint: `CONSTRAINT uniq_emails_tenant_provider_message UNIQUE (tenant_id, provider, message_id)`
 - The `email_threads` table has a unique constraint: `CONSTRAINT uniq_thread_tenant_integration UNIQUE (tenant_id, integration_id, provider_thread_id)`
+- The `integrations` table has a partial unique index: `uniq_integrations_active_tenant_source_email` over `(tenant_id, source, lower(<the "email" entry in parameters>)) WHERE is_active` - at most one *connected* integration per mailbox. It is partial because pre-existing disconnected duplicates would block a full unique index; see ADR-006 for the historical merge that has to precede the strict version. Expression indexes over JSONB cannot be expressed in Drizzle, so this lives only in SQL (migration 015)
 - The `email_analyses` table has a unique constraint: `CONSTRAINT uniq_email_analysis_type UNIQUE (email_id, analysis_type)` - ensures one analysis result per email per analysis type
 - The `thread_analyses` table has a unique constraint: `CONSTRAINT uniq_thread_analysis_type UNIQUE (thread_id, analysis_type)` - ensures one thread summary per thread per analysis type
 - The `contacts` table has a foreign key reference to `customers(id)` with SET NULL on delete

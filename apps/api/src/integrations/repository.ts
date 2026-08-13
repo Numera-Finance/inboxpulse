@@ -1,8 +1,14 @@
 import { injectable, inject } from 'tsyringe';
 import type { Database } from '@crm/database';
-import { integrations, type IntegrationSource, type IntegrationParameters } from './schema';
+import {
+  integrations,
+  type Integration,
+  type NewIntegration,
+  type IntegrationSource,
+  type IntegrationParameters,
+} from './schema';
 import { users } from '../users/schema';
-import { eq, and, or, isNull, lt, sql, type SQL } from 'drizzle-orm';
+import { eq, and, or, desc, isNull, lt, sql, type SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
 export interface IntegrationKeys {
@@ -80,6 +86,19 @@ export interface UpdateKeysInput {
   keys: Partial<IntegrationKeys>;
   updatedBy?: string;
 }
+
+/**
+ * Identity of an integration resolved by mailbox, plus whether it is currently
+ * connected. Callers need `isActive` to tell a routine credential refresh from a
+ * reconnect of a previously disconnected mailbox.
+ */
+export interface IntegrationLookupResult {
+  id: string;
+  isActive: boolean;
+}
+
+/** An integration row with its `parameters` array flattened into a keys object. */
+export type IntegrationWithKeys = Integration & { keys: IntegrationKeys };
 
 @injectable()
 export class IntegrationRepository {
@@ -411,66 +430,112 @@ export class IntegrationRepository {
   }
 
   /**
-   * Find integration ID by email address (for internal use)
+   * Find the integration owning `email` for this tenant/source, connected or not.
+   *
+   * Deliberately NOT filtered by is_active. Disconnecting a mailbox flips
+   * is_active to false, so an active-only lookup made every reconnect miss the
+   * existing row and INSERT a duplicate instead — which is what fragmented one
+   * production mailbox across 13 rows and split its email_threads three ways
+   * (see ADR-006).
+   *
+   * Ordering prefers the connected row, then the most recently created one. For
+   * a tenant still carrying pre-fix duplicates that is the row holding the newest
+   * email_threads, so a reconnect revives the richest row rather than an empty
+   * one from months earlier.
    */
-  async findIdByEmail(tenantId: string, source: IntegrationSource, email: string): Promise<string | null> {
+  async findByTenantAndEmail(
+    tenantId: string,
+    source: IntegrationSource,
+    email: string
+  ): Promise<IntegrationLookupResult | null> {
     const result = await this.db
-      .select({ id: integrations.id })
+      .select({ id: integrations.id, isActive: integrations.isActive })
       .from(integrations)
       .where(
         and(
           eq(integrations.tenantId, tenantId),
           eq(integrations.source, source),
-          eq(integrations.isActive, true),
           this.emailMatchesParameters(email, ['email', 'impersonatedUserEmail'])
         )
       )
-      // Deterministic pick when more than one row matches.
-      .orderBy(integrations.createdAt, integrations.id)
+      .orderBy(desc(integrations.isActive), desc(integrations.createdAt), integrations.id)
       .limit(1);
 
-    return result.length > 0 ? result[0].id : null;
+    return result.length > 0 ? result[0] : null;
   }
 
   /**
-   * Update integration keys by email
+   * Merge `input.keys` into one specific integration row.
+   *
+   * Current parameters are read from that same row by ID. The previous
+   * implementation merged from getCredentials(tenantId, source), which returns an
+   * arbitrary ACTIVE row for the tenant — with more than one mailbox connected
+   * that copied the wrong mailbox's parameters over this one.
+   *
+   * `reactivate` marks a reconnect of a disconnected mailbox. Besides flipping
+   * is_active back on it clears the stale sync bookkeeping: last_run_token is a
+   * Gmail historyId, and Gmail rejects ones older than roughly a week, so
+   * incrementalSync would throw rather than fall back (it only degrades to
+   * initialSync when the cursor is absent). Clearing it makes the next run a full
+   * initial sync — what used to happen implicitly when a reconnect minted a fresh
+   * row. The watch and access-token fields are cleared for the same reason: the
+   * watch was stopped at disconnect, and a stale expiry in the future would
+   * suppress renewal.
    */
-  async updateKeysByEmail(
-    tenantId: string,
-    source: IntegrationSource,
-    email: string,
-    input: UpdateKeysInput
-  ) {
-    const integrationId = await this.findIdByEmail(tenantId, source, email);
-
-    if (!integrationId) {
-      throw new Error(`Integration not found for tenant ${tenantId}, source ${source}, and email ${email}`);
-    }
-
-    // Get current keys
-    const current = await this.getCredentials(tenantId, source);
+  async updateKeysById(
+    integrationId: string,
+    input: UpdateKeysInput,
+    options: { reactivate: boolean } = { reactivate: false }
+  ): Promise<IntegrationWithKeys> {
+    const current = await this.findById(integrationId);
 
     if (!current) {
-      throw new Error(`Integration not found for tenant ${tenantId} and source ${source}`);
+      throw new Error(`Integration not found: ${integrationId}`);
     }
 
-    // Merge with new keys
-    const updatedKeys = { ...current, ...input.keys };
+    const currentKeys: IntegrationKeys = {
+      ...parametersToObject(current.parameters as IntegrationParameters),
+      refreshToken: current.refreshToken || current.token || undefined,
+    };
 
-    // Separate token from other parameters
-    const { refreshToken, accessToken, ...params } = updatedKeys;
+    // accessToken/accessTokenExpiresAt are columns, not parameters — keep them
+    // out of the JSONB. The access token is intentionally not written here: the
+    // Gmail client only trusts one when a matching expiry is stored, and we have
+    // no expiry on this path, so it refreshes from the refresh token instead.
+    const { refreshToken, accessToken, accessTokenExpiresAt, ...params } = {
+      ...currentKeys,
+      ...input.keys,
+    };
 
-    // Convert params to key-value array
-    const parametersArray = objectToParameters(params);
+    const values: Partial<NewIntegration> = {
+      parameters: objectToParameters(params),
+      updatedBy: input.updatedBy,
+      updatedAt: new Date(),
+    };
+
+    // Write both columns, and only when we actually hold a token — an absent one
+    // means "unchanged", never "clear it". getCredentials prefers refresh_token
+    // and falls back to the legacy token, so writing only the legacy column would
+    // leave a previously rotated refresh token winning over the one a reconnect
+    // just issued.
+    if (refreshToken) {
+      values.refreshToken = refreshToken;
+      values.token = refreshToken;
+    }
+
+    if (options.reactivate) {
+      values.isActive = true;
+      values.lastRunToken = null;
+      values.lastRunAt = null;
+      values.watchSetAt = null;
+      values.watchExpiresAt = null;
+      values.accessToken = null;
+      values.accessTokenExpiresAt = null;
+    }
 
     const result = await this.db
       .update(integrations)
-      .set({
-        parameters: parametersArray,
-        token: refreshToken,
-        updatedBy: input.updatedBy,
-        updatedAt: new Date(),
-      })
+      .set(values)
       .where(eq(integrations.id, integrationId))
       .returning();
 
@@ -637,7 +702,7 @@ export class IntegrationRepository {
     return this.mapToIntegration(result[0]);
   }
 
-  private async mapToIntegration(row: any) {
+  private async mapToIntegration(row: Integration): Promise<IntegrationWithKeys> {
     // Convert parameters array to object
     const params = parametersToObject(row.parameters as IntegrationParameters);
 

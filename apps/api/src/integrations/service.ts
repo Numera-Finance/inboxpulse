@@ -1,9 +1,23 @@
 import { injectable, inject } from 'tsyringe';
-import { IntegrationRepository, type CreateIntegrationInput, type UpdateKeysInput, type IntegrationKeys } from './repository';
+import {
+  IntegrationRepository,
+  type CreateIntegrationInput,
+  type UpdateKeysInput,
+  type IntegrationKeys,
+  type IntegrationWithKeys,
+} from './repository';
 import { TenantRepository } from '../tenants/repository';
 import type { IntegrationSource } from './schema';
 import type { UpdateRunState, UpdateAccessToken, UpdateWatchExpiry } from '@crm/clients';
 import { logger } from '../utils/logger';
+
+/**
+ * Outcome of createOrUpdate. `reactivated` distinguishes a reconnect of a
+ * previously disconnected mailbox from a routine credential refresh.
+ */
+export type CreateOrUpdateResult =
+  | { integration: IntegrationWithKeys; updated: true; reactivated: boolean }
+  | { integration: IntegrationWithKeys; created: true };
 
 @injectable()
 export class IntegrationService {
@@ -14,14 +28,19 @@ export class IntegrationService {
 
   /**
    * Create or update integration
-   * Now checks by email to allow multiple integrations per tenant
+   * Keyed by mailbox, so a tenant can connect several mailboxes
+   *
+   * The lookup covers disconnected integrations too. Matching only connected
+   * ones made every reconnect insert a fresh row, and since email_threads is
+   * unique on (tenant_id, integration_id, provider_thread_id) the same Gmail
+   * thread was then re-ingested under each row (ADR-006).
    */
   async createOrUpdate(input: {
     tenantId: string;
     authType: 'oauth' | 'service_account' | 'api_key';
     keys: IntegrationKeys;
     createdBy?: string;
-  }) {
+  }): Promise<CreateOrUpdateResult> {
     const { tenantId, authType, keys, createdBy } = input;
 
     // Validate that email is set for lookup
@@ -30,25 +49,35 @@ export class IntegrationService {
       throw new Error('keys.email or keys.impersonatedUserEmail is required for tenant lookup');
     }
 
-    // Check if integration exists for this specific email
-    const existingIntegrationId = await this.integrationRepo.findIdByEmail(tenantId, 'gmail', email);
+    // Check if an integration already owns this mailbox, connected or not
+    const existing = await this.integrationRepo.findByTenantAndEmail(tenantId, 'gmail', email);
 
-    if (existingIntegrationId) {
-      logger.info({ tenantId, email }, 'Updating existing Gmail integration');
-      const integration = await this.integrationRepo.updateKeysByEmail(tenantId, 'gmail', email, { keys });
-      return { integration, updated: true };
-    } else {
-      logger.info({ tenantId, email, authType, createdBy }, 'Creating new Gmail integration');
-      const integration = await this.integrationRepo.create({
-        tenantId,
-        source: 'gmail',
-        authType,
-        keys,
-        tokenExpiresAt: keys.expiresAt ? new Date(keys.expiresAt) : undefined,
-        createdBy,
-      });
-      return { integration, created: true };
+    if (existing) {
+      const reactivated = !existing.isActive;
+      logger.info(
+        { tenantId, email, integrationId: existing.id, reactivated },
+        reactivated
+          ? 'Reconnecting previously disconnected Gmail integration'
+          : 'Updating existing Gmail integration'
+      );
+      const integration = await this.integrationRepo.updateKeysById(
+        existing.id,
+        { keys, updatedBy: createdBy },
+        { reactivate: reactivated }
+      );
+      return { integration, updated: true, reactivated };
     }
+
+    logger.info({ tenantId, email, authType, createdBy }, 'Creating new Gmail integration');
+    const integration = await this.integrationRepo.create({
+      tenantId,
+      source: 'gmail',
+      authType,
+      keys,
+      tokenExpiresAt: keys.expiresAt ? new Date(keys.expiresAt) : undefined,
+      createdBy,
+    });
+    return { integration, created: true };
   }
 
   /**

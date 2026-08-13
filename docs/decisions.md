@@ -250,3 +250,132 @@ requirement — escalations frequently need someone outside that team.
 - Documented in [ACCESS_CONTROL_DESIGN.md](./ACCESS_CONTROL_DESIGN.md) under
   "Direct Assignment"; covered by `apps/api/src/tasks/repository.test.ts` and
   `apps/api/src/emails/__tests__/analyzed-email-access.test.ts`.
+
+### ADR-006: An integration is identified by its mailbox, connected or not (2026-08-12)
+
+**Status:** Accepted
+
+**Context:** Production tenant `9f34e10b-…` held 14 `integrations` rows, all
+`source='gmail'`, and 13 of them were the *same* mailbox
+(`emailsentiment@mystartupcfo.com`). Three of those own `email_threads`:
+
+| integration | created | threads | emails | is_active |
+|---|---|---|---|---|
+| `019d5fae-…` | 2026-04-05 | 12,344 | 22,940 | false |
+| `019e733d-…` | 2026-05-29 | 23,883 | 46,989 | false |
+| `019f1c7a-…` | 2026-07-01 | 30,311 | 60,189 | true |
+
+`IntegrationService.createOrUpdate` was already written to be idempotent — it
+looked the mailbox up and only inserted on a miss. The lookup was the problem:
+`findIdByEmail` filtered `is_active = true`. Disconnecting a mailbox flips
+`is_active` to false (and `deactivate` does it for *every* row of that
+tenant+source), so on the next OAuth reconnect the lookup matched nothing and the
+service took the insert branch. Every disconnect/reconnect cycle minted another
+row.
+
+Everything else about the lookup was sound, and was checked against production
+before changing it: `parameters` is a JSONB array of `{key, value}` and the `@>`
+containment predicate matches all 13 rows; the stored address is byte-identical
+across every row, so case sensitivity was not a factor; the OAuth callback does
+call `createOrUpdate` rather than inserting directly. Removing one `AND` is the
+entire root cause.
+
+The damage came from `email_threads` being unique on
+`(tenant_id, integration_id, provider_thread_id)`: a new integration id makes the
+same Gmail thread eligible for a second row, so one conversation now exists as 2
+or 3 partial thread rows. Measured: 5,515 `provider_thread_id`s are duplicated
+(5,302 across two integrations, 213 across three), accounting for 5,728 redundant
+thread rows and 16,849 emails sitting under a non-surviving thread.
+
+**Decision:**
+
+1. **Identity ignores connection state.** `findIdByEmail` is replaced by
+   `findByTenantAndEmail`, which drops the `is_active` filter and returns
+   `{ id, isActive }`. A mailbox this tenant has ever connected resolves to its
+   existing row, so a reconnect updates instead of inserting.
+2. **Ordering prefers the live row, then the newest.** The old lookup ordered by
+   `created_at ASC`. For a tenant already carrying duplicates that would revive
+   the *oldest* row — for this tenant a 2026-03-24 row with zero threads — and
+   send all future ingest there. `is_active DESC, created_at DESC, id` picks the
+   connected row, or failing that the one holding the most recent threads.
+3. **Reconnect resets stale sync state.** Reviving a row is not the same as
+   creating one, and the difference is `last_run_token` — a Gmail historyId.
+   Gmail rejects historyIds older than about a week, and `incrementalSync` only
+   degrades to a full sync when the cursor is *absent*, so a revived row would
+   throw where a fresh row used to just backfill. `updateKeysById(..., {
+   reactivate: true })` therefore clears `last_run_token`, `last_run_at`, the
+   watch timestamps (the watch was stopped at disconnect; a stale future expiry
+   suppresses renewal) and the access token.
+4. **Merges read from the row being written.** `updateKeysByEmail` resolved the
+   right integration id and then pulled the current parameters from
+   `getCredentials(tenantId, source)`, which returns an arbitrary *active* row for
+   the tenant. With two mailboxes connected — this tenant also has
+   `npradhan@mystartupcfo.com` — that copied one mailbox's parameters onto the
+   other. `updateKeysById` reads by id. It also writes both `refresh_token` and
+   the legacy `token`, because `getCredentials` prefers the former: writing only
+   the legacy column left a previously rotated refresh token winning over the one
+   the reconnect had just issued.
+5. **A partial unique index as the backstop** (migration 015):
+   `uniq_integrations_active_tenant_source_email` over
+   `(tenant_id, source, lower(<email parameter>)) WHERE is_active`. It is an
+   expression index because the mailbox lives inside a JSONB *array*; `lower()`
+   makes it case-insensitive even though today's data is uniform.
+
+**Why the index is partial.** The invariant worth having is one row per mailbox
+regardless of `is_active`, but that index cannot be built: the 13 legacy rows
+violate it and `CREATE UNIQUE INDEX` would fail on production. The partial form
+builds cleanly today (verified: zero collisions across all tenants) and covers
+the state every read path actually filters on. It does not by itself stop the
+original bug — inserting a new active row while the old ones are inactive
+satisfies it — so the code fix, not the index, is the primary guard here. The
+strict index ships with the merge below.
+
+**The existing split data — recommended, NOT yet run.** Nothing here has been
+applied to production; it needs sign-off first. Collapsing the three integrations
+onto `019f1c7a-…` cannot be a plain `UPDATE email_threads SET integration_id`,
+because the 5,515 duplicated `provider_thread_id`s would violate
+`uniq_thread_tenant_integration`. The merge is:
+
+1. For each duplicated `provider_thread_id`, elect a winner (the surviving
+   integration's row where one exists, newest otherwise).
+2. Repoint the 16,849 emails under loser threads to the winner thread and to the
+   surviving integration. No unique constraint blocks this: `emails` is unique on
+   `(tenant_id, provider, message_id)`, and a given Gmail message already exists
+   exactly once — the duplicate threads hold *disjoint* slices of a conversation,
+   which is precisely the damage being repaired. `thread_analyses` needs no
+   conflict handling either — zero rows hang off loser threads, so
+   `uniq_thread_analysis_type` cannot collide.
+3. Delete the 5,728 loser thread rows, repoint the remaining threads, then
+   delete the 12 redundant integration rows (or leave them inactive).
+4. Only then add the strict unique index.
+5. `runs` is left alone: 209,811 rows reference the dead integrations and it is
+   append-only history, not something any read path joins for correctness.
+
+Doing nothing is a tenable fallback — ADR-005 already made first-reply/TAT match
+threads by `(tenant_id, provider_thread_id)`, so the metric that motivated this
+investigation is immune to the fragmentation. What stays broken without the merge
+is thread-level completeness for pre-July conversations: any view that reads one
+thread row sees part of the conversation. The merge is deliberately *not* filed
+as a numbered migration, so that `sql/migrations/` stays safe to replay in bulk.
+
+**Consequences:**
+
+- Reconnecting a mailbox is now an update. `email_threads` stops forking, and the
+  `(tenant_id, integration_id, provider_thread_id)` uniqueness starts working as
+  intended instead of being defeated by a changing integration id.
+- A reconnect triggers a full initial sync rather than an incremental one, by
+  design (point 3). Re-ingest is idempotent — threads upsert on conflict, emails
+  are unique per `(tenant_id, provider, message_id)`.
+- `createOrUpdate` returns `reactivated: boolean` on the update branch so callers
+  and logs can distinguish a reconnect from a routine credential refresh.
+- Integrations whose mailbox is stored under `impersonatedUserEmail` (service
+  accounts) index as NULL and are not covered by the unique index. NULLs are
+  distinct in a unique index, so those rows are simply unconstrained; the
+  code-level lookup still matches that key. No such integration exists today.
+- `deactivate(tenantId, source)` still deactivates *every* mailbox for the
+  tenant+source, and `updateKeys`/`updateTokenExpiration`/`updateRefreshToken`
+  still write to every row for a tenant+source. Those are the same
+  one-integration-per-tenant assumption showing up elsewhere and are left as
+  found; they are now the only remaining instances.
+- Covered by `apps/api/src/integrations/repository.test.ts` and
+  `apps/api/src/integrations/service.test.ts`.
