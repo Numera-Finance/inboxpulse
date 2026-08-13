@@ -309,8 +309,12 @@ per distinct integration — or a sequential scan before PG18.
   the new**.
 - Historical TAT is **not** recoverable. Reply messages are never stored, so the
   62,562 orphaned emails can only be populated by replies arriving from now on.
-- **Average TAT will jump on deploy.** The 9,008 orphaned emails on threads that
-  are still live become eligible, and a reply landing today on an email received
+- **Average TAT will jump on deploy.** All 62,562 orphaned emails become
+  matchable — the widened join no longer requires a thread row under the active
+  integration, so a reply arriving for a Gmail thread whose only rows sit under
+  superseded integrations now matches too. (9,008 of them are on threads already
+  known to be live under the active integration; that is a floor on how many will
+  actually be reached, not a ceiling.) A reply landing today on an email received
   in April yields a delta of ~3,000 hours. `getTatMetrics`
   (`apps/api/src/emails/repository.ts:1263-1285`) averages
   `first_reply_at - received_at` with no upper bound; `dateFrom`/`dateTo` are
