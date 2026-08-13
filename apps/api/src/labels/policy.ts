@@ -52,6 +52,21 @@ import { Signal } from '@crm/shared';
  *    Under the previous rules 1,893 emails would have taken two or more. A
  *    message wearing three coloured tags is not triaged, it is decorated.
  *    Ordered by which one most changes what the reader does next.
+ *
+ * ---------------------------------------------------------------------------
+ * THE TEST FOR ANYTHING NEW
+ * ---------------------------------------------------------------------------
+ *
+ * Would seeing this CHANGE WHAT THE USER DOES? Not "is it true", not "can we
+ * compute it". A label's only job is to make someone open a message sooner, or
+ * decide not to open it at all. Each surviving label carries the action it
+ * implies, written beside it below; a tag that merely describes the message has
+ * no claim on the mailbox.
+ *
+ * This is the same bar the connector spec applies
+ * (apps/addon/src/services/connectors.ts): one fact per system, and only if it
+ * changes the reply. A classification that changes nothing is a fact about our
+ * pipeline, not about the user's day.
  */
 
 export interface LabelDecision {
@@ -74,8 +89,14 @@ const NS = 'InboxPulse';
  * unhappy in passing.
  */
 export const LABELS: LabelDecision[] = [
+  // Means: call them. A customer at real risk of leaving is worth interrupting
+  // a day for, which is the highest claim any tag can make on an inbox.
   { name: `${NS}/Churn risk`, bg: '#fb4c2f', text: '#ffffff', maxShare: 0.05 },
+  // Means: follow up when you have the energy to sell. Not urgent, but it
+  // decays — an opening ignored for two weeks is not an opening.
   { name: `${NS}/Upsell`, bg: '#16a765', text: '#ffffff', maxShare: 0.05 },
+  // Means: read this now. The cheapest possible action, and the one most often
+  // skipped because an unhappy message looks like every other message in a list.
   { name: `${NS}/Negative`, bg: '#ffad47', text: '#ffffff', maxShare: 0.05 },
 ];
 

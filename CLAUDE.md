@@ -26,6 +26,44 @@ interface ApiResponse<T> {
 - Zod validation errors should map to clear field-level error messages
 - Background job failures must store structured errors and notify users
 
+## Writing Into the User's Mailbox
+
+Labels are the only sanctioned mailbox write (ADR-005), and the policy is
+**label only when it makes sense** — enforced in `apps/api/src/labels/policy.ts`,
+not left to judgement at the call site.
+
+Four rules, each derived from measuring the corpus rather than from taste:
+
+1. **A label that fires on more than 5% of mail carries no information.**
+   Checked at RUN TIME against the actual mailbox, not just asserted — the
+   corpus that set a threshold is one tenant's mail. `Automated` was 51.7%.
+2. **Never duplicate what Gmail already does.** Automated / Marketing /
+   Transactional / Spam are Gmail's own categories; a second, worse copy spends
+   credibility for nothing.
+3. **A label that has never fired is not a label.** Kudos and Escalation were 0
+   rows in 125,685.
+4. **One label per message.** A message wearing three coloured tags is
+   decorated, not triaged.
+
+The deeper test, and the one to apply to anything new: **would seeing this
+change what the user does?** Not "is it true", not "is it available". A label's
+job is to make someone open a message sooner, or not at all. `Churn risk` means
+call them; `Upsell` means follow up when you have energy to sell; `Negative`
+means read this now. A tag that only describes the message has no claim on the
+mailbox. Same bar as the connector spec in `apps/addon/src/services/connectors.ts`.
+
+**Rules for any mailbox write:**
+- Namespace everything (`InboxPulse/`) so the whole set is removable in one
+  operation, and **ship the remover with the writer** — `remove-gmail-labels.ts`
+  did not exist until ~103,000 labels were already applied.
+- No default target. `INTEGRATION_ID` must be explicit; it once defaulted to a
+  colleague's live mailbox.
+- `DRY_RUN` first, always, and print whose mailbox is about to change.
+- **Absence in `emails.labels` is not evidence a label was never applied.** That
+  column is our ingested copy of Gmail's labels, written at sync time, holding
+  only system values. Writes via `users.messages.modify` never touch it. Check
+  Gmail, not the mirror.
+
 ## Export Rules
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.
