@@ -41,6 +41,12 @@ export const emailThreads = pgTable('email_threads', {
   index('idx_threads_tenant_last_message').on(table.tenantId, table.lastMessageAt),
   index('idx_threads_integration_thread').on(table.integrationId, table.providerThreadId),
   index('idx_threads_integration').on(table.integrationId),
+  // Serves the first-reply marker lookup, which matches a provider thread id
+  // across every integration of the tenant, not just the submitting one. Every
+  // other index here leads with integration_id, leaving that lookup to a PG18
+  // skip scan (one index search per integration) or, pre-PG18, a seq scan.
+  // See ADR-005.
+  index('idx_threads_tenant_provider_thread').on(table.tenantId, table.providerThreadId),
   uniqueIndex('uniq_thread_tenant_integration').on(
     table.tenantId,
     table.integrationId,

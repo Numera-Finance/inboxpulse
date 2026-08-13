@@ -63,6 +63,10 @@ import { emails, emailThreads } from '../emails/schema';
 const SQL_DIR = resolve(__dirname, '../../sql');
 const TENANT_ID = '00000000-0000-0000-0000-0000000000a1';
 const INTEGRATION_ID = '00000000-0000-0000-0000-0000000000b1';
+// A SECOND integration for the same mailbox, as reconnecting Gmail creates. Threads
+// stored under it must still be reachable by markers submitted under the first.
+const OLD_INTEGRATION_ID = '00000000-0000-0000-0000-0000000000b2';
+const OTHER_TENANT_ID = '00000000-0000-0000-0000-0000000000a2';
 const AGENT_ID = '00000000-0000-0000-0000-0000000000c1';
 const THREAD = 'gmail-thread-1';
 
@@ -110,8 +114,8 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
   } as unknown as TenantRepository;
   const contactRepo = {} as unknown as ContactRepository;
 
-  const insert = (collections: EmailCollection[]) =>
-    service.bulkInsertWithThreads(TENANT_ID, INTEGRATION_ID, collections);
+  const insert = (collections: EmailCollection[], integrationId = INTEGRATION_ID) =>
+    service.bulkInsertWithThreads(TENANT_ID, integrationId, collections);
 
   const storedEmails = () => db.select().from(emails).where(eq(emails.tenantId, TENANT_ID));
   const thread = async () =>
@@ -127,11 +131,16 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
       await client.unsafe(readFileSync(resolve(SQL_DIR, `${f}.sql`), 'utf-8'));
     }
     await client.unsafe(
-      `INSERT INTO tenants (id, name, domains) VALUES ('${TENANT_ID}', 'Test', '{tenant.com}') ON CONFLICT (id) DO NOTHING;`
+      `INSERT INTO tenants (id, name, domains)
+       VALUES ('${TENANT_ID}', 'Test', '{tenant.com}'),
+              ('${OTHER_TENANT_ID}', 'Other', '{other.com}')
+       ON CONFLICT (id) DO NOTHING;`
     );
     await client.unsafe(
       `INSERT INTO integrations (id, tenant_id, source, auth_type, parameters)
-       VALUES ('${INTEGRATION_ID}', '${TENANT_ID}', 'gmail', 'oauth', '{}') ON CONFLICT (id) DO NOTHING;`
+       VALUES ('${INTEGRATION_ID}', '${TENANT_ID}', 'gmail', 'oauth', '{}'),
+              ('${OLD_INTEGRATION_ID}', '${TENANT_ID}', 'gmail', 'oauth', '{}')
+       ON CONFLICT (id) DO NOTHING;`
     );
     // agent@tenant.com is a known user; every other tenant-domain sender in these
     // tests deliberately is not, so firstReplyById can be exercised both ways.
@@ -538,6 +547,57 @@ describe.skipIf(!TEST_DB)('first-reply / TAT integration', () => {
       const res = await applyMarkers([
         mkMarker({ autoSubmitted: 'auto-replied', receivedAt: '2026-01-01T09:05:00Z' }),
       ]);
+
+      expect(res.updatedCount).toBe(0);
+      expect((await storedEmails())[0].firstReplyAt).toBeNull();
+    });
+
+    // Regression: reconnecting a mailbox mints a new integrations row, so the same
+    // Gmail thread gets a second email_threads row. Matching used to be scoped to
+    // the submitting integration, which silently orphaned every customer email
+    // stored under a previous connection — 62k of them in production. See ADR-005.
+    it('matches a thread stored under a previous integration for the same mailbox', async () => {
+      await insert(
+        [mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])],
+        OLD_INTEGRATION_ID
+      );
+
+      // Marker arrives tagged with the CURRENT integration, as the Gmail sync sends it.
+      const res = await applyMarkers([mkMarker({ receivedAt: '2026-01-01T11:00:00Z' })]);
+
+      expect(res.updatedCount).toBe(1);
+      const rows = await storedEmails();
+      expect(rows[0].firstReplyAt?.toISOString()).toBe('2026-01-01T11:00:00.000Z');
+      expect(rows[0].firstReplyById).toBe(AGENT_ID);
+    });
+
+    // The same Gmail thread under two integrations is two thread rows, so the join
+    // matches both. Each customer email must still resolve to exactly one reply.
+    it('sets first_reply_at on customer emails across duplicate thread rows', async () => {
+      await insert(
+        [mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])],
+        OLD_INTEGRATION_ID
+      );
+      await insert([mkCollection([mkEmail({ messageId: 'c2', receivedAt: t('2026-01-01T10:00:00Z') })])]);
+
+      const res = await applyMarkers([mkMarker({ receivedAt: '2026-01-01T11:00:00Z' })]);
+
+      expect(res.updatedCount).toBe(2);
+      const rows = await storedEmails();
+      expect(rows).toHaveLength(2);
+      expect(
+        rows.every((r) => r.firstReplyAt?.toISOString() === '2026-01-01T11:00:00.000Z')
+      ).toBe(true);
+    });
+
+    // Scoping is by tenant, not integration — but never wider than the tenant.
+    it('does not match a thread belonging to another tenant', async () => {
+      await insert([mkCollection([mkEmail({ messageId: 'c1', receivedAt: t('2026-01-01T09:00:00Z') })])]);
+      await client.unsafe(
+        `UPDATE email_threads SET tenant_id = '${OTHER_TENANT_ID}' WHERE tenant_id = '${TENANT_ID}';`
+      );
+
+      const res = await applyMarkers([mkMarker({ receivedAt: '2026-01-01T11:00:00Z' })]);
 
       expect(res.updatedCount).toBe(0);
       expect((await storedEmails())[0].firstReplyAt).toBeNull();

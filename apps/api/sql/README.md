@@ -83,6 +83,12 @@ psql $DATABASE_URL -f apps/api/sql/migrations/012_integrations_parameters_gin_in
 # Ships with the originator matching rule: a reply only counts for a customer
 # email when it is addressed to that email's own sender. No backfill.
 psql $DATABASE_URL -f apps/api/sql/migrations/013_email_first_reply_by.sql
+
+# Add email_threads (tenant_id, provider_thread_id) index. First-reply markers now
+# match a thread across every integration of the tenant rather than only the
+# submitting one — reconnecting a mailbox mints a new integration id and used to
+# orphan every thread stored under the previous one (ADR-005).
+psql $DATABASE_URL -f apps/api/sql/migrations/014_threads_tenant_provider_thread_index.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
