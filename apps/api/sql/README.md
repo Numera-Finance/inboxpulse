@@ -4,8 +4,12 @@ This directory contains the SQL schema files for the CRM database, split into in
 
 ## Connection String
 
-```
-postgresql://neondb_owner:npg_1gHnfsaiR8Fz@ep-odd-thunder-a88b2g71-pooler.eastus2.azure.neon.tech/neondb?sslmode=require&channel_binding=require
+Every command below reads `$DATABASE_URL`. Take it from `apps/api/.env.local` (or
+GCP Secret Manager for deployed environments) — never commit a connection string
+that carries a password.
+
+```bash
+export DATABASE_URL=$(grep -m1 '^DATABASE_URL=' apps/api/.env.local | cut -d= -f2-)
 ```
 
 ## Execution Order
