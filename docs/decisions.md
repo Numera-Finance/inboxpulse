@@ -569,13 +569,19 @@ summary instead shares the sender's line and costs no vertical space:
   `apiEmailToInboxContent`, since both feed this same panel.
 
 **Consequences:**
-- `AnalyzedEmail` is additive-only, so existing consumers keep compiling. The
-  export deliberately opts out: `analyzedEmailExportItemSchema` omits `tos`/`ccs`
-  and `exportAnalyzedEmails` does not select them, because the XLSX builder in
-  `apps/web/app/escalations/page.tsx` maps a fixed column list with no To/Cc
-  columns and that query is unpaginated — carrying them would be dead payload on
-  every exported row. Adding To/Cc export columns is a separate, deliberate
-  change that would also add them back to the query.
+- Only the **detail** endpoint carries recipients. `getAnalyzedEmailById` selects
+  them; the list and export paths deliberately do not, because neither renders
+  them and both would pay for the JSONB on every row:
+  - `AnalyzedEmailListItem` (`Omit<AnalyzedEmail, 'tos' | 'ccs'>`) is the row type
+    for `AnalyzedEmailSearchResponse`. The list shows sender/subject/status via
+    `analyzedEmailToInboxItem`, and the detail view fetches its own row.
+  - `analyzedEmailExportItemSchema` omits the same two fields, and
+    `exportAnalyzedEmails` does not select them: the XLSX builder in
+    `apps/web/app/escalations/page.tsx` maps a fixed column list with no To/Cc
+    columns, and that query is unpaginated.
+
+  Adding To/Cc export columns is a separate, deliberate change that must restore
+  the fields in the schema, the query, and the repository return type.
 - The clients package is not runtime-validated on read (`getAnalyzedById` casts
   rather than `parse`s), so `.default([])` protects the *server*'s response
   shape, not the client's: a web build reaching production ahead of the API

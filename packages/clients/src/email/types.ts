@@ -74,10 +74,17 @@ export const analyzedEmailSchema = z.object({
 export type AnalyzedEmail = z.infer<typeof analyzedEmailSchema>;
 
 /**
+ * Row shape for the analyzed-email list. Recipients are omitted: the list
+ * renders sender/subject/status only, and the detail view fetches its own row
+ * via `getAnalyzedById`, so carrying them would be dead payload on every page.
+ */
+export type AnalyzedEmailListItem = Omit<AnalyzedEmail, 'tos' | 'ccs'>;
+
+/**
  * Search response for analyzed emails
  */
 export interface AnalyzedEmailSearchResponse {
-  items: AnalyzedEmail[];
+  items: AnalyzedEmailListItem[];
   total: number;
   limit: number;
   offset: number;

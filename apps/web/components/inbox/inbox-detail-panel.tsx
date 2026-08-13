@@ -166,6 +166,11 @@ function MessageContent({ message }: { message: InboxItemContent }) {
   // so the expanded state has to be dropped explicitly. Left alone, a message
   // with three or fewer recipients renders the expanded block while drawing no
   // chevron to close it — the toggle only exists when something is hidden.
+  // Ties the toggle to the block it reveals: the two sit in different subtrees,
+  // so without aria-controls assistive tech announces "expanded" with no way to
+  // reach what expanded.
+  const recipientsId = React.useId()
+
   const [shownFor, setShownFor] = React.useState(message.id)
   if (shownFor !== message.id) {
     setShownFor(message.id)
@@ -205,6 +210,7 @@ function MessageContent({ message }: { message: InboxItemContent }) {
                   type="button"
                   onClick={() => setShowRecipients((shown) => !shown)}
                   aria-expanded={showRecipients}
+                  aria-controls={recipientsId}
                   className="flex items-center gap-1 min-w-0 text-left rounded px-1 -mx-1 hover:text-foreground hover:bg-muted/60 transition-colors"
                 >
                   <span className="break-words [overflow-wrap:anywhere]">
@@ -231,7 +237,10 @@ function MessageContent({ message }: { message: InboxItemContent }) {
       {/* Recipients */}
       <div className="pl-[52px]">
         {showRecipients && (
-          <div className="mb-3 rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground space-y-1">
+          <div
+            id={recipientsId}
+            className="mb-3 rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground space-y-1"
+          >
             {to.length > 0 && (
               <div className="break-words [overflow-wrap:anywhere]">
                 <span className="text-xs uppercase tracking-wide mr-2">To</span>

@@ -9,7 +9,7 @@ import { customers } from '../customers/schema';
 import { users } from '../users/schema';
 import { eq, and, desc, asc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
-import type { AnalyzedEmail, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
+import type { AnalyzedEmail, AnalyzedEmailListItem, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
 
 // Re-export TATMetricRow from shared
 export type { TATMetricRow } from '@crm/shared';
@@ -1826,8 +1826,6 @@ export class EmailRepository extends ScopedRepository {
       body: string | null;
       from_email: string;
       from_name: string | null;
-      tos: Array<{ email: string; name?: string }> | null;
-      ccs: Array<{ email: string; name?: string }> | null;
       received_at: Date;
       signals: number[];
       customer_id: string;
@@ -1850,8 +1848,6 @@ export class EmailRepository extends ScopedRepository {
         e.body,
         e.from_email,
         e.from_name,
-        e.tos,
-        e.ccs,
         e.received_at,
         e.created_at,
         e.signals,
@@ -1880,14 +1876,14 @@ export class EmailRepository extends ScopedRepository {
       OFFSET ${offset}
     `);
 
-    const items: AnalyzedEmail[] = rows.map(row => ({
+    // Recipients are omitted here — see AnalyzedEmailListItem. The detail view
+    // fetches them via getAnalyzedEmailById.
+    const items: AnalyzedEmailListItem[] = rows.map(row => ({
       id: row.id,
       subject: row.subject,
       body: row.body,
       fromEmail: row.from_email,
       fromName: row.from_name,
-      tos: row.tos ?? [],
-      ccs: row.ccs ?? [],
       receivedAt: new Date(row.received_at),
       signals: row.signals ?? [],
       customerId: row.customer_id,
