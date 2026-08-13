@@ -70,6 +70,8 @@ export interface ThreadCardInput {
   analysisPending?: boolean;
   /** Echoed back into the analyse action so the callback can re-fetch. */
   providerThreadId?: string;
+  /** How many messages the reading actually covered, for the provenance line. */
+  analysedMessages?: number;
 }
 
 /**
@@ -432,7 +434,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // the panel to read it. Quiet, and unambiguous that nothing was written.
       // Say how many messages were actually read. Claiming "the open message"
       // while the trend above shows four is a small lie the user can see.
-      const analysed = input.trend?.length ?? 0;
+      const analysed = input.analysedMessages ?? input.trend?.length ?? 0;
       sections.push({
         widgets: [
           deco({

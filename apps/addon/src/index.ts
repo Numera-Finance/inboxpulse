@@ -206,6 +206,7 @@ app.post('/gmail/analyse', async (c) => {
         participants,
         baseUrl,
         providerThreadId: threadId,
+        analysedMessages: threadMessages?.length ?? 0,
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,
