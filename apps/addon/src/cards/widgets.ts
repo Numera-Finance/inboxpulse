@@ -47,6 +47,12 @@ export interface DecoratedText {
   startIcon?: Icon;
   /** Makes the whole row clickable (e.g. deep-link into the Gmail message). */
   onClick?: OnClick;
+  /**
+   * A control docked at the end of the row. Cards v2 calls this the widget's
+   * accessory — it lets a row carry its own action without spending a whole
+   * ButtonSet on it.
+   */
+  button?: Button;
 }
 
 export interface Button {

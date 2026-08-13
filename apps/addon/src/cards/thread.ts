@@ -443,10 +443,26 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // which is why it earns space on a benign thread where sentiment does not.
       const digest = input.digest;
       if (digest?.commitments.length) {
+        // Each commitment gets a Track button — the one control on this card
+        // that changes state rather than opening Gmail. Only when we know which
+        // customer to file it against; a task with no account is not trackable.
+        const canTrack = Boolean(input.account?.customerId && input.baseUrl);
         sections.push({
           header: heading('Who owes what'),
           widgets: digest.commitments.map((c) =>
-            deco({ text: c.who, bottomLabel: [c.what, c.when].filter(Boolean).join(' · '), wrapText: true }),
+            deco({
+              text: `<b>${escapeText(c.who)}</b>`,
+              bottomLabel: [c.what, c.when].filter(Boolean).join(' · '),
+              wrapText: true,
+              ...(canTrack
+                ? {
+                    button: actionButton('Track', `${input.baseUrl}/gmail/task`, {
+                      customerId: input.account!.customerId!,
+                      title: `${c.who}: ${c.what}`.slice(0, 200),
+                    }),
+                  }
+                : {}),
+            }),
           ),
         });
       }

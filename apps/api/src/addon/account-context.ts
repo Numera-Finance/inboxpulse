@@ -130,6 +130,31 @@ export class AccountContextService {
     };
   }
 
+  /**
+   * Create a task against a customer, assigned to the creator.
+   *
+   * Refuses when the caller is not entitled to that customer — a write path must
+   * enforce the same rule as the read path, or the panel becomes a way to place
+   * records into accounts the viewer cannot see.
+   */
+  async createTaskForViewer(
+    tenantId: string,
+    customerId: string,
+    title: string,
+    viewer: { userId: string; isAdmin: boolean },
+  ): Promise<{ created: boolean; taskId?: string }> {
+    const entitled = viewer.isAdmin || (await this.hasCustomerAccess(viewer.userId, customerId));
+    if (!entitled) return { created: false };
+
+    const rows = await this.db.execute(sql`
+      INSERT INTO tasks (id, tenant_id, customer_id, title, status, assigned_to_id, created_by_system)
+      VALUES (gen_random_uuid(), ${tenantId}, ${customerId}, ${title}, 1, ${viewer.userId}, false)
+      RETURNING id
+    `);
+    const id = (rows as unknown as Array<{ id: string }>)[0]?.id;
+    return { created: Boolean(id), taskId: id };
+  }
+
   private async hasCustomerAccess(userId: string, customerId: string): Promise<boolean> {
     const rows = await this.db.execute(sql`
       SELECT 1 FROM user_accessible_customers

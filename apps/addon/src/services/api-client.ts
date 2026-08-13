@@ -328,3 +328,31 @@ export async function getAccountContext(
     return null;
   }
 }
+
+/** Create a task from the panel. Returns false when the viewer is not entitled. */
+export async function createTask(input: {
+  tenantId: string;
+  userId: string;
+  isAdmin: boolean;
+  customerId: string;
+  title: string;
+}): Promise<boolean> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return false;
+  try {
+    const res = await fetch(`${env.SERVICE_API_URL}/api/internal/addon/task`, {
+      method: 'POST',
+      headers: { ...internalHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      logger.warn({ status: res.status }, 'createTask non-OK');
+      return false;
+    }
+    const json = (await res.json()) as { data?: { created?: boolean } };
+    return json.data?.created === true;
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'createTask failed');
+    return false;
+  }
+}

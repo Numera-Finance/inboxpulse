@@ -49,3 +49,39 @@ addonRoutes.get('/viewer', async (c) => {
   const service = container.resolve(AccountContextService);
   return c.json({ success: true, data: await service.resolveViewer(tenantId, email) });
 });
+
+/**
+ * POST /api/internal/addon/task
+ *
+ * Create a task from the add-on panel. The only endpoint here that WRITES.
+ *
+ * The panel's other buttons all open Gmail — useful, but nothing changes when
+ * you press them. This one turns a commitment the model found into a tracked
+ * task, which is the difference between a summary and a tool.
+ *
+ * Scoped like everything else: a task can only be attached to a customer the
+ * caller is entitled to, so this cannot be used to write into an account the
+ * viewer cannot otherwise see.
+ */
+addonRoutes.post('/task', async (c) => {
+  const body = await c.req.json<{
+    tenantId?: string;
+    userId?: string;
+    isAdmin?: boolean;
+    customerId?: string;
+    title?: string;
+  }>();
+
+  if (!body.tenantId) throw new InvalidInputError('tenantId is required');
+  if (!body.userId) throw new InvalidInputError('userId is required');
+  if (!body.customerId) throw new InvalidInputError('customerId is required');
+  if (!body.title?.trim()) throw new InvalidInputError('title is required');
+
+  const service = container.resolve(AccountContextService);
+  const created = await service.createTaskForViewer(body.tenantId, body.customerId, body.title.trim(), {
+    userId: body.userId,
+    isAdmin: body.isAdmin === true,
+  });
+
+  return c.json({ success: true, data: created });
+});

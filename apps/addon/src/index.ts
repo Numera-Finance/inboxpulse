@@ -30,6 +30,7 @@ import {
   getThreadFlagged,
   resolveThreadIdByProvider,
   getAccountContext,
+  createTask,
 } from './services/api-client';
 import { analyseMessageLive, readThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
@@ -211,8 +212,20 @@ app.post('/gmail/analyse', async (c) => {
     );
   }
 
+  // Sparkline series, straight from the same reading.
+  const liveTrend = reading.messageSentiments.map((sent, i) => ({
+    score: sent === 'positive' ? 85 : sent === 'negative' ? 20 : 55,
+    sentiment: sent,
+    receivedAt: threadMessages?.[i]?.date ?? '',
+    isCustomer: true,
+  }));
+
   logger.info(
-    { commitments: reading.commitments.length, hasDraft: Boolean(reading.draft) },
+    {
+      commitments: reading.commitments.length,
+      hasDraft: Boolean(reading.draft),
+      series: liveTrend.length,
+    },
     'thread analysed on demand',
   );
 
@@ -234,6 +247,38 @@ app.post('/gmail/analyse', async (c) => {
       }),
     ),
   );
+});
+
+// Action callback: "Track" on a commitment. The one control on the panel that
+// WRITES — it turns a commitment the model found into a task in the CRM.
+// Answers with a toast rather than rebuilding the card, so the user keeps their
+// place and sees the outcome immediately.
+app.post('/gmail/task', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const p = getActionParameters(event);
+  const tenantId = await resolveTenant(verified.email);
+  if (!tenantId || !p.customerId || !p.title) return c.json(notify('Could not create the task.'));
+
+  const ok = await createTask({
+    tenantId,
+    userId: getEnv().ADDON_DEV_USER_ID ?? '',
+    isAdmin: false,
+    customerId: p.customerId,
+    title: p.title,
+  });
+
+  // A refusal here is an ENTITLEMENT refusal, not a failure — the viewer is not
+  // assigned to that customer. Say so, rather than reporting a generic error.
+  return c.json(notify(ok ? 'Task created' : 'You do not have access to this account'));
 });
 
 // Homepage trigger — opened without a message context.

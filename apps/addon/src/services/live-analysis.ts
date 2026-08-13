@@ -424,6 +424,15 @@ export interface ThreadReading {
   commitments: Commitment[];
   openQuestions: string[];
   draft: string;
+  /**
+   * One sentiment per message, oldest first — the sparkline's series.
+   *
+   * Asked for in the SAME call as everything else. A separate per-message loop
+   * was what made the render path slow enough to time out; the model is already
+   * reading every message here, so returning a value per message costs almost
+   * nothing.
+   */
+  messageSentiments: LiveSentiment[];
 }
 
 /**
@@ -464,13 +473,15 @@ export async function readThreadLive(input: {
     '4. openQuestions: questions asked that nobody answered later in the thread.',
     '5. draft: a reply the recipient could send. Three sentences maximum, no',
     '   greeting, no sign-off. Commit only to what the thread already supports.',
+    '6. messageSentiments: one sentiment per message IN ORDER, oldest first.',
+    '   The array length MUST equal the number of "From:" blocks below.',
     '',
     `Subject: ${input.subject ?? '(none)'}`,
     '',
     input.thread.slice(0, 6000),
     '',
     'Return ONLY this JSON:',
-    '{"sentiment":"positive|neutral|negative","reason":"...","commitments":[{"who":"...","what":"...","when":"optional"}],"openQuestions":["..."],"draft":"..."}',
+    '{"sentiment":"positive|neutral|negative","reason":"...","commitments":[{"who":"...","what":"...","when":"optional"}],"openQuestions":["..."],"draft":"...","messageSentiments":["neutral","positive"]}',
   ].join('\n');
 
   const controller = new AbortController();
@@ -530,12 +541,22 @@ export function parseReading(raw: string): ThreadReading | null {
     const o = JSON.parse(match[0]) as Record<string, unknown>;
     const sentiment = String(o.sentiment ?? '').toLowerCase() as LiveSentiment;
     const digest = parseDigest(match[0]);
+    // Only keep values the model actually returned. Padding the series to the
+    // message count would invent data points, which is the one thing the
+    // sparkline must never do.
+    const messageSentiments = Array.isArray(o.messageSentiments)
+      ? (o.messageSentiments as unknown[])
+          .map((v) => String(v).toLowerCase() as LiveSentiment)
+          .filter((v) => SENTIMENTS.has(v))
+      : [];
+
     return {
       sentiment: SENTIMENTS.has(sentiment) ? sentiment : 'neutral',
       reason: typeof o.reason === 'string' ? o.reason.trim() : '',
       commitments: digest?.commitments ?? [],
       openQuestions: digest?.openQuestions ?? [],
       draft: typeof o.draft === 'string' ? o.draft.trim() : '',
+      messageSentiments,
     };
   } catch {
     return null;
