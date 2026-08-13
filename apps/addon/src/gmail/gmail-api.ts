@@ -30,6 +30,8 @@ interface GmailPayload {
   mimeType?: string;
   body?: { data?: string };
   parts?: GmailPayload[];
+  /** Present when the message is fetched with format=full. */
+  headers?: Array<{ name?: string; value?: string }>;
 }
 
 /** Decode Gmail's base64url part data to UTF-8; '' when absent or malformed. */
@@ -221,4 +223,51 @@ export async function fetchMessageHeaders(
     cc: pick('cc'),
     bcc: pick('bcc'),
   };
+}
+
+/** One message of a thread, reduced to what live analysis needs. */
+export interface ThreadMessage {
+  id: string;
+  from?: string;
+  date?: string;
+  body: string;
+}
+
+/**
+ * Every message on the open thread, oldest first.
+ *
+ * Whether this is permitted depends on the grant: the contextual trigger's
+ * per-message token is scoped to the message the user has open, so a thread
+ * read may be refused even though the message read succeeds. gmailGet already
+ * tries the user's OAuth token as well, which is the credential that can carry
+ * broader access — so this returns undefined rather than throwing, and the
+ * caller degrades to single-message analysis.
+ */
+export async function fetchThreadMessages(
+  threadId: string | undefined,
+  oauthToken: string | undefined,
+  accessToken: string | undefined,
+): Promise<ThreadMessage[] | undefined> {
+  if (!threadId) return undefined;
+
+  const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`;
+  const json = await gmailGet<{
+    messages?: Array<{ id?: string; internalDate?: string; payload?: GmailPayload }>;
+  }>(url, oauthToken, accessToken, 'thread messages');
+  if (!json?.messages?.length) return undefined;
+
+  const out: ThreadMessage[] = [];
+  for (const m of json.messages) {
+    const body = extractBodyText(m.payload);
+    if (!body) continue;
+    const headers = m.payload?.headers ?? [];
+    const from = headers.find((h) => h.name?.toLowerCase() === 'from')?.value;
+    out.push({
+      id: m.id ?? '',
+      from,
+      date: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : undefined,
+      body,
+    });
+  }
+  return out.length ? out : undefined;
 }

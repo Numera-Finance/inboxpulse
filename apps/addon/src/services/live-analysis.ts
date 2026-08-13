@@ -159,3 +159,29 @@ export function parseAnalysis(raw: string): LiveAnalysis | null {
     return null;
   }
 }
+
+/**
+ * Analyse several messages concurrently to produce a real sentiment series.
+ *
+ * The sparkline needs more than one point, and a single-message reading cannot
+ * supply one. Padding a lone value into five bars would invent data — the exact
+ * failure the design forbids — so the series is only as long as the messages we
+ * actually analysed, and is empty when we could not read the thread.
+ *
+ * Capped, because every entry is an LLM call sitting in the card's render path.
+ * Concurrency keeps wall-clock at roughly one call, not N.
+ */
+export async function analyseThreadLive(
+  messages: Array<{ from?: string; body: string }>,
+  limit = 5,
+): Promise<LiveAnalysis[]> {
+  if (!isLiveAnalysisEnabled() || !messages.length) return [];
+
+  // Most recent `limit`, then back to oldest-first so the series reads left to
+  // right the way the sparkline renders it.
+  const recent = messages.slice(-limit);
+  const results = await Promise.all(
+    recent.map((m) => analyseMessageLive({ from: m.from, body: m.body })),
+  );
+  return results.filter((r): r is LiveAnalysis => r !== null);
+}

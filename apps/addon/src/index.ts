@@ -16,10 +16,11 @@ import { logger } from './utils/logger';
 import { pushCard } from './cards/widgets';
 import { buildHomepageCard } from './cards/homepage';
 import { buildThreadCard } from './cards/thread';
+import type { TrendPoint } from './cards/trend';
 import { buildFlaggedDetailCard } from './cards/flagged-detail';
 import { signalNames } from './cards/signals';
 import { getGmail, getActionParameters, type AddonEvent } from './gmail/event';
-import { fetchMessageHeaders, fetchMessageBody, normalizeGmailMessageId } from './gmail/gmail-api';
+import { fetchMessageHeaders, fetchMessageBody, fetchThreadMessages, normalizeGmailMessageId } from './gmail/gmail-api';
 import { verifyRequest } from './auth/verify';
 import {
   getEmailStats,
@@ -30,7 +31,7 @@ import {
   getThreadFlagged,
   resolveThreadIdByProvider,
 } from './services/api-client';
-import { analyseMessageLive, isLiveAnalysisEnabled } from './services/live-analysis';
+import { analyseMessageLive, analyseThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
 
 const app = new Hono();
 
@@ -199,7 +200,28 @@ app.post('/gmail/contextual', async (c) => {
     // throw the result away. Opt-in, and only on this branch: a tracked thread
     // always uses its stored analysis. Every failure returns null, so the card
     // renders exactly as before.
-    const live = !trend.length && !flagged.length ? await liveForOpenMessage() : null;
+    // Nothing stored for this thread. Read the WHOLE thread and analyse each
+    // message, so the sparkline has a real series rather than one padded point.
+    // Falls back to the open message alone when the thread read is refused —
+    // the per-message token may not reach beyond the message being viewed.
+    let live = null;
+    let liveTrend: TrendPoint[] = [];
+    if (!trend.length && !flagged.length && isLiveAnalysisEnabled()) {
+      const threadMessages = await fetchThreadMessages(providerThreadId, oauthToken, accessToken);
+      if (threadMessages?.length) {
+        const series = await analyseThreadLive(threadMessages);
+        liveTrend = series.map((a, i) => ({
+          score: a.sentiment === 'positive' ? 85 : a.sentiment === 'negative' ? 20 : 55,
+          sentiment: a.sentiment,
+          receivedAt: threadMessages[threadMessages.length - series.length + i]?.date ?? '',
+          isCustomer: true,
+        }));
+        live = series.length ? series[series.length - 1] : null;
+        logger.info({ messages: threadMessages.length, analysed: series.length }, 'live thread analysis');
+      } else {
+        live = await liveForOpenMessage();
+      }
+    }
 
     // Gmail refused the read, so we know nothing about the open message. Saying
     // "not a tracked client thread" here would be a confident answer to a
@@ -213,7 +235,7 @@ app.post('/gmail/contextual', async (c) => {
           status,
           headers,
           viewerEmail,
-          trend,
+          trend: liveTrend.length ? liveTrend : trend,
           flagged,
           threadId: dbThreadId ?? undefined,
           baseUrl,
