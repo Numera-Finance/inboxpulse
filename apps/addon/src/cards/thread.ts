@@ -182,7 +182,15 @@ const SENTIMENT_RANK: Record<TrendPoint['sentiment'], number> = {
 
 export function buildThreadCard(input: ThreadCardInput): Card {
   const { status } = input;
-  const sections: CardSection[] = [buildOpenMessageSection(input)];
+
+  // The panel opens with the ANSWER, not with the envelope.
+  //
+  // "Open message" used to be the first section, printing Title / From / To /
+  // Cc — every one of which Gmail is already showing, larger, a few inches to
+  // the left. It pushed the only non-redundant thing on the card below the
+  // fold. It now appears last, and only when it adds something Gmail does not
+  // already have on screen.
+  const sections: CardSection[] = [];
 
   // Sentiment trend (§5) + flagged messages (§6) are THREAD-level, so they show
   // whenever the thread is known — even when the open message itself isn't a
@@ -200,6 +208,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     // content. Labelled as not-stored so nobody mistakes it for the analysed
     // record a tracked thread would have.
     if (input.live) {
+      // 1. State — the answer, first, with the evidence under it.
       sections.push({
         widgets: [
           deco({
@@ -207,15 +216,23 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             bottomLabel: input.live.reason,
             wrapText: true,
           }),
+        ],
+      });
+
+      if (trendSection) sections.push(trendSection);
+      if (flaggedSection) sections.push(flaggedSection);
+
+      // Provenance sits at the bottom: it matters for trust, but nobody opens
+      // the panel to read it. Quiet, and unambiguous that nothing was written.
+      sections.push({
+        widgets: [
           deco({
-            topLabel: 'Read live from this message',
-            text: 'Not stored — this thread is not tracked by InboxPulse.',
+            topLabel: 'How this was read',
+            text: 'Analysed live from the open message. Not stored.',
             wrapText: true,
           }),
         ],
       });
-      if (trendSection) sections.push(trendSection);
-      if (flaggedSection) sections.push(flaggedSection);
       return { sections: separated(sections) };
     }
 
@@ -223,6 +240,8 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     sections.push({
       widgets: [deco({ text: NON_RESOLVED_COPY[status], bottomLabel: hint, wrapText: true })],
     });
+    // Only worth showing the envelope when we have nothing else to say.
+    sections.push(buildOpenMessageSection(input));
     // Trend and flags are THREAD-level, so show them if we have them even when
     // the open message itself isn't tracked — an internal reply inside a tracked
     // client thread still has thread context worth seeing.
@@ -271,7 +290,10 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     sections.push({ header: heading('Escalation'), widgets });
   }
 
-  // (Subject / From / Received used to repeat in a trailing "Message" section —
-  // they now live in "Open message" at the top, alongside To / Cc / Bcc.)
+  // Envelope last, as reference. Gmail already shows subject and sender in the
+  // thread pane; the only genuinely additive fields here are the full To/Cc/Bcc
+  // lists, which Gmail keeps collapsed.
+  sections.push(buildOpenMessageSection(input));
+
   return { sections: separated(sections) };
 }

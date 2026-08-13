@@ -40,6 +40,9 @@ describe('homepage card', () => {
   });
 });
 
+const openMessageSection = (card: { sections: Array<{ header?: string }> }) =>
+  card.sections.find((s) => s.header === '<b>Open message</b>');
+
 describe('thread card', () => {
   it('renders a resolved account + flags + escalation + message', () => {
     const flat = JSON.stringify(
@@ -62,7 +65,7 @@ describe('thread card', () => {
     expect(flat).toContain('2026-07-20');
   });
 
-  it('opens with a bold "Open message" section describing the email, not its id', () => {
+  it('puts the envelope LAST, not first — Gmail already shows it', () => {
     const card = buildThreadCard({
       messageId: 'msg-f:123',
       status: 'resolved',
@@ -75,7 +78,9 @@ describe('thread card', () => {
         bcc: 'audit@mystartupcfo.com',
       },
     });
-    const [open] = card.sections;
+    // The answer leads; the envelope is reference and comes last. Gmail shows
+    // subject and sender inches away, so opening with them wasted the fold.
+    const open = card.sections[card.sections.length - 1];
     expect(open.header).toBe('<b>Open message</b>');
 
     const rows = rowsOf(open);
@@ -101,19 +106,20 @@ describe('thread card', () => {
   });
 
   it('falls back to InboxPulse-side subject/sender when Gmail headers are unavailable', () => {
-    const [open] = buildThreadCard({
+    const card = buildThreadCard({
       messageId: 'm',
       status: 'resolved',
       subject: 'Unhappy with the delays',
       fromEmail: 'cfo@acme.com',
-    }).sections;
+    });
+    const open = openMessageSection(card)!;
     const rows = rowsOf(open);
     expect(rows.map((r) => r.topLabel)).toEqual(['Title', 'From']);
     expect(rows[0].text).toBe('Unhappy with the delays');
   });
 
   it('says so plainly when nothing is known about the open message', () => {
-    const [open] = buildThreadCard({ status: 'preview' }).sections;
+    const open = openMessageSection(buildThreadCard({ status: 'preview' }))!;
     expect((open.widgets[0] as { textParagraph: { text: string } }).textParagraph.text).toContain(
       'No details available',
     );
