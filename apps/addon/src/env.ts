@@ -157,7 +157,14 @@ const envSchema = z.object({
    * Raise it only for a job that is genuinely a judgement call, never for
    * extraction.
    */
-  LIVE_ANALYSIS_REASONING: z.enum(['none', 'low', 'medium', 'high']).default('none'),
+  /**
+   * 'unset' omits the field entirely. Necessary, not cosmetic: several
+   * flash-lite variants REJECT reasoning_effort outright with "Request contains
+   * an invalid argument" -- verified against the live API on
+   * gemini-3.5-flash-lite and gemini-flash-lite-latest. gemini-3.1-flash-lite
+   * accepts it, which is one reason it is the default.
+   */
+  LIVE_ANALYSIS_REASONING: z.enum(['none', 'low', 'medium', 'high', 'unset']).default('none'),
   /**
    * Only honoured when provider is 'ollama'. Off by default: 7.6x faster on a
    * reasoning model, and Ollama REJECTS the field outright for models that

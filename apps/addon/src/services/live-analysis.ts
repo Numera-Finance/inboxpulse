@@ -655,7 +655,7 @@ export async function readThreadLive(input: {
               // reasoning_effort is what stops 2.5 Flash thinking by default,
               // which is billed as output tokens on top of the latency.
               ...schemaFields(env.LIVE_ANALYSIS_PROVIDER, READING_SCHEMA, 'reading'),
-              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini'
+              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini' && env.LIVE_ANALYSIS_REASONING !== 'unset'
                 ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
                 : {}),
             },
@@ -861,7 +861,22 @@ export async function classifyThreadMode(input: {
               stream: false,
               options: { temperature: 0 },
             }
-          : { model: env.LIVE_ANALYSIS_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 12 },
+          : {
+              model: env.LIVE_ANALYSIS_MODEL,
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0,
+              // 64, not 12. Gemini counts THINKING against max_tokens, so a tight
+              // cap plus default thinking returns a response with no `content`
+              // field at all -- not an error, just an absent answer, which this
+              // function then read as "unclassifiable" and fell back to working
+              // on every single thread.
+              max_tokens: 64,
+              // The actual fix: without this, 2.5 Flash reasons about a
+              // one-word classification. With it, the answer costs 1 token.
+              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini' && env.LIVE_ANALYSIS_REASONING !== 'unset'
+                ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
+                : {}),
+            },
       ),
     });
     if (!res.ok) return null;
@@ -1080,7 +1095,7 @@ export async function writeReplyOptions(input: {
               temperature: 0.4,
               // Gemini DOES honour it, and this is the runtime path.
               ...schemaFields(env.LIVE_ANALYSIS_PROVIDER, OPTIONS_SCHEMA, 'replyOptions'),
-              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini'
+              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini' && env.LIVE_ANALYSIS_REASONING !== 'unset'
                 ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
                 : {}),
             },
