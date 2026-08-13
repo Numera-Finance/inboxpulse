@@ -251,6 +251,101 @@ requirement — escalations frequently need someone outside that team.
   "Direct Assignment"; covered by `apps/api/src/tasks/repository.test.ts` and
   `apps/api/src/emails/__tests__/analyzed-email-access.test.ts`.
 
+### ADR-005: First-reply markers match threads by tenant, not integration (2026-08-12)
+
+**Status:** Accepted
+
+**Context:** `first_reply_at` was populating for only a fraction of customer
+emails — 11.5% overall — and production logs showed the reply-marker path
+rejecting 65% of the replies it was handed (1,160 of 1,786 over two days), with
+`updatedCount: 0` the only trace.
+
+The cause was in `setFirstReplyForProviderThreads`, which resolved a reply's
+thread with:
+
+```sql
+JOIN email_threads et ON et.id = e2.thread_id
+ AND et.tenant_id = $tenantId
+ AND et.integration_id = $integrationId
+```
+
+Scoping by integration mirrors the `email_threads` uniqueness of
+`(tenant_id, integration_id, provider_thread_id)`, so it reads as correct. But
+reconnecting a Gmail mailbox creates a **new `integrations` row**, and the same
+Gmail threads then acquire a second set of `email_threads` rows under the new id.
+Reply markers are submitted under whichever integration is current, so every
+reply to a thread first seen under an earlier connection matched nothing.
+
+One mailbox (`emailsentiment@mystartupcfo.com`) had been reconnected three times,
+fragmenting 66,527 thread rows across three integrations — only 30,300 (46%)
+under the active one. That 46% is exactly the observed marker match rate, and the
+answered rate fell off by integration age: 16.1% (active), 10.1%, 1.1% (oldest).
+62,562 unanswered customer emails sat on superseded threads, 9,008 of them on
+Gmail threads still receiving mail.
+
+Ruled out on the way: `is_customer_email` eligibility (no NULL rows), the
+originator rule (93% of threads carry a single sender, so it can rarely reject),
+recipient normalization, missing threads, and timestamp/timezone handling.
+
+**Decision:** Match a reply's thread on `(tenant_id, provider_thread_id)` across
+every integration of the tenant. `integrationId` remains a parameter but is used
+only for log context, never for matching.
+
+A provider thread id is unique per mailbox and the originator rule still gates
+which email a reply may answer, so widening to the tenant cannot attach a reply
+to an unrelated conversation. Where a Gmail thread has rows under several
+integrations, all of them match; `DISTINCT ON (e2.id)` still yields one winning
+reply per email.
+
+Adds `idx_threads_tenant_provider_thread (tenant_id, provider_thread_id)`
+(migration 014). Every other index on `email_threads` leads with `integration_id`,
+which leaves the widened lookup to a PostgreSQL 18 skip scan — one index search
+per distinct integration — or a sequential scan before PG18.
+
+**Consequences:**
+- Replies now attach to customer emails regardless of which connection first
+  stored the thread. Verified read-only against production: a real reply replayed
+  against one orphaned thread matched **0 emails under the old join and 5 under
+  the new**.
+- Historical TAT is **not** recoverable. Reply messages are never stored, so the
+  62,562 orphaned emails can only be populated by replies arriving from now on.
+- **Average TAT will jump on deploy.** All 62,562 orphaned emails become
+  matchable — the widened join no longer requires a thread row under the active
+  integration, so a reply arriving for a Gmail thread whose only rows sit under
+  superseded integrations now matches too. (9,008 of them are on threads already
+  known to be live under the active integration; that is a floor on how many will
+  actually be reached, not a ceiling.) A reply landing today on an email received
+  in April yields a delta of ~3,000 hours. `getTatMetrics`
+  (`apps/api/src/emails/repository.ts:1263-1285`) averages
+  `first_reply_at - received_at` with no upper bound; `dateFrom`/`dateTo` are
+  optional and constrain `received_at`, not `first_reply_at`, so any all-time or
+  wide-window view averages these recovered outliers in. The numbers are
+  genuine — the emails really did go unanswered that long — but the shift is an
+  artifact of this deploy, not of changed team behavior. Operators should expect
+  it; capping or winsorizing the average is a separate decision.
+- The root cause is untouched: reconnecting a mailbox still creates a new
+  `integrations` row rather than updating the existing one (14 rows exist for this
+  one mailbox). This ADR makes first-reply immune to that fragmentation; it does
+  not stop the fragmentation, which also splits any other per-integration query.
+- The sync path is **only partly** immune, and is NOT fixed here.
+  `setFirstReplyForThreads` itself is keyed by internal `thread_id`, so its UPDATE
+  never had the defect — but its caller does. The reply-only branch of
+  `saveThreadWithEmailsTransactionally`
+  (`apps/api/src/emails/service.ts:614-627`) resolves the thread with
+  `UPDATE email_threads ... WHERE tenant_id = ? AND integration_id = ? AND
+  provider_thread_id = ?`. For a thread first stored under a previous
+  integration, that matches no row, so the batch returns `noopResult`,
+  `setFirstReplyForThreads` is never called, and it logs "Reply received before
+  its thread exists" — which misattributes the cause, since the thread does exist
+  under the prior integration. That path is not exercised in production today
+  (Gmail's domain blacklist drops tenant-domain senders before storage, so every
+  reply arrives through the marker path), which is why it is left for a follow-up
+  rather than fixed here — but narrowing the blacklist, or onboarding a tenant
+  with no blacklisted domains, would reintroduce the exact bug this ADR fixes.
+- `updatedCount` still cannot distinguish "already answered" from "no candidate
+  matched"; the 65% figure conflated both. Logging a rejection reason remains
+  worthwhile follow-up.
+
 ### ADR-006: An integration is identified by its mailbox, connected or not (2026-08-12)
 
 **Status:** Accepted

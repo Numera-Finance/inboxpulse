@@ -88,6 +88,12 @@ psql $DATABASE_URL -f apps/api/sql/migrations/012_integrations_parameters_gin_in
 # email when it is addressed to that email's own sender. No backfill.
 psql $DATABASE_URL -f apps/api/sql/migrations/013_email_first_reply_by.sql
 
+# Add email_threads (tenant_id, provider_thread_id) index. First-reply markers now
+# match a thread across every integration of the tenant rather than only the
+# submitting one — reconnecting a mailbox mints a new integration id and used to
+# orphan every thread stored under the previous one (ADR-005).
+psql $DATABASE_URL -f apps/api/sql/migrations/014_threads_tenant_provider_thread_index.sql
+
 # Add a partial UNIQUE index enforcing one CONNECTED integration per
 # (tenant, source, mailbox). Reconnecting a mailbox must revive the existing row,
 # never insert a second one — duplicates fragment email_threads (ADR-006).

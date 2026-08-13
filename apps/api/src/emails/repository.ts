@@ -2500,10 +2500,26 @@ export class EmailRepository extends ScopedRepository {
    *
    * Same semantics as {@link setFirstReplyForThreads}, but callers that only have
    * header metadata — e.g. blacklisted tenant-domain replies the Gmail sync never
-   * stores — don't need to resolve internal thread UUIDs first. Threads are
-   * scoped by (tenant, integration) to match the email_threads uniqueness.
+   * stores — don't need to resolve internal thread UUIDs first.
    *
-   * @param integrationId  Integration the threads belong to
+   * Threads are matched on (tenant, provider_thread_id) across EVERY integration,
+   * deliberately NOT the submitting one. `email_threads` is unique on
+   * (tenant, integration, provider_thread_id), so reconnecting a mailbox — which
+   * mints a new integration row — starts a second set of thread rows for the very
+   * same Gmail threads. Scoping the lookup to the submitting integration therefore
+   * made every reply to a thread first seen under a previous connection
+   * unmatchable: the join dropped it silently, with `updatedCount: 0` the only
+   * trace. In production that fragmented one mailbox across three integrations and
+   * put 62k customer emails permanently out of reach. See ADR-005.
+   *
+   * A provider thread id is unique per mailbox, and a reply's recipients still have
+   * to satisfy the originator rule, so widening to the tenant does not let a reply
+   * attach to an unrelated conversation. Where the same Gmail thread has rows under
+   * several integrations, all of them match — `DISTINCT ON (e2.id)` in
+   * {@link runFirstReplyUpdate} still yields one winning reply per email.
+   *
+   * @param integrationId  Integration that submitted the batch — recorded in the
+   *                       log context for observability, NOT used for matching.
    * @param replies        Replies keyed by provider thread id
    */
   async setFirstReplyForProviderThreads(
@@ -2530,7 +2546,6 @@ export class EmailRepository extends ScopedRepository {
       JOIN email_threads et
         ON et.id = e2.thread_id
        AND et.tenant_id = ${tenantId}
-       AND et.integration_id = ${integrationId}
       JOIN (VALUES ${sql.join(rows, sql`, `)}) AS r(provider_thread_id, reply_at, recipients, replied_by_id)
         ON r.provider_thread_id = et.provider_thread_id
        AND r.reply_at > e2.received_at

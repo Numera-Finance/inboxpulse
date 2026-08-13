@@ -34,7 +34,7 @@ interface ApiResponse<T> {
 
 Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer management, email sync (Gmail), AI-powered email analysis, task management, dashboards, and notifications.
 
-- **GCP Project**: `health-474623`
+- **GCP Project**: `project-y-email-sentiment` (project number `203731638840`) — the Cloud Run deploy target for all services, supplied to CI as the `GCP_PROJECT_ID` secret. The older `health-474623` project still hosts stale copies of the `crm-*` services; do NOT read logs, revisions, or deploy state from it.
 - **Runtime**: Bun (backend services), Vite (frontend dev), Nginx (frontend prod)
 - **Database**: PostgreSQL (Neon) with Drizzle ORM
 - **Auth**: Better-Auth with Google OAuth SSO
