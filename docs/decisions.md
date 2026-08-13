@@ -510,3 +510,50 @@ as a numbered migration, so that `sql/migrations/` stays safe to replay in bulk.
   found; they are now the only remaining instances.
 - Covered by `apps/api/src/integrations/repository.test.ts` and
   `apps/api/src/integrations/service.test.ts`.
+
+### ADR-007: Escalation detail shows the message's own To/Cc (2026-08-13)
+
+**Status:** Accepted
+
+**Context:** The escalation detail panel rendered a `To:` line with nothing after
+it, and never rendered `Cc:` at all. The cause was in the frontend adapter, not
+the data: `analyzedEmailToInboxContent` set `to` to the *escalation assignee*
+(`[{ name: assignedToName, id: assignedToId }]`) — a participant with a name but
+no `email`, so the panel's `to.map(r => r.email).join(", ")` produced an empty
+string. `cc` was never populated.
+
+The underlying recipients were never missing. Gmail sync parses the `To`/`Cc`/
+`Bcc` headers (`apps/gmail/src/services/email-parser.ts`) and the API persists
+them to `emails.tos` / `emails.ccs` / `emails.bccs`. A production count confirms
+full coverage: all 132,205 emails have a non-empty `tos`, and 37,351 carry a
+`ccs`. No capture work or backfill was required.
+
+**Decision:** Expose the stored recipients on the analyzed-email API contract and
+render them from there.
+
+- `analyzedEmailSchema` (`packages/clients/src/email/types.ts`) gains `tos` and
+  `ccs`, both `z.array(emailAddressSchema).default([])` — empty arrays rather
+  than optional, so the UI can map unconditionally. `emailAddressSchema` is
+  extracted and shared with `firstReplyMarkerSchema`, which already declared the
+  same shape inline. `bccs` is deliberately left out: it is stored, but showing
+  blind-copy recipients in a customer-facing escalation view is a disclosure
+  decision, not a display one.
+- All three analyzed-email queries in `apps/api/src/emails/repository.ts`
+  (`searchAnalyzedEmails`, `exportAnalyzedEmails`, `getAnalyzedEmailById`) select
+  `e.tos` / `e.ccs` and map them with `?? []`.
+- The adapter maps `to`/`cc` from the message's own recipients. The assignee is
+  unaffected — it was already shown in the meta grid above the message, so the
+  old `to` was both wrong and redundant.
+
+**Consequences:**
+- `AnalyzedEmail` is additive-only, so existing consumers keep compiling. The
+  escalation export is unchanged: it maps an explicit column list in
+  `apps/web/app/escalations/page.tsx`, so the new fields ride along in the
+  payload without appearing as columns. Adding To/Cc export columns is a
+  separate, deliberate change.
+- The clients package is not runtime-validated on read (`getAnalyzedById` casts
+  rather than `parse`s), so the `.default([])` protects the *server*'s response
+  shape, not the client's. Both ends now always send arrays; a consumer reading
+  an older cached response would still see `undefined`.
+- The inbox page needed no change — `apiEmailToInboxContent` already mapped
+  `tos`/`ccs`/`bccs` correctly. Only the escalations path was wrong.

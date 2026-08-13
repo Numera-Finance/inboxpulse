@@ -606,9 +606,16 @@ export const analyzedEmailToInboxContent = (
       name: email.fromName || extractNameFromEmail(email.fromEmail),
       email: email.fromEmail,
     },
-    to: email.assignedToName
-      ? [{ name: email.assignedToName, id: email.assignedToId || undefined }]
-      : [],
+    // The message's own recipients, not the escalation assignee — the assignee
+    // is already shown in the meta grid above the message.
+    to: email.tos.map((recipient) => ({
+      name: recipient.name || extractNameFromEmail(recipient.email),
+      email: recipient.email,
+    })),
+    cc: email.ccs.map((recipient) => ({
+      name: recipient.name || extractNameFromEmail(recipient.email),
+      email: recipient.email,
+    })),
     timestamp,
     comments: inboxComments,
     metadata: {

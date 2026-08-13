@@ -25,6 +25,17 @@ export const analyzedEmailSearchRequestSchema = z.object({
 export type AnalyzedEmailSearchRequest = z.infer<typeof analyzedEmailSearchRequestSchema>;
 
 /**
+ * A single email address with an optional display name, as stored in the
+ * `tos`/`ccs`/`bccs` JSONB columns on `emails`.
+ */
+export const emailAddressSchema = z.object({
+  email: z.string(),
+  name: z.string().optional(),
+});
+
+export type EmailAddress = z.infer<typeof emailAddressSchema>;
+
+/**
  * Analyzed email response - email with optional task overlay
  */
 export const analyzedEmailSchema = z.object({
@@ -34,6 +45,11 @@ export const analyzedEmailSchema = z.object({
   body: z.string().nullable(),
   fromEmail: z.string(),
   fromName: z.string().nullable(),
+  // Recipients as received on the message headers. Empty arrays when the
+  // provider gave us no To/Cc (rather than absent) so the UI can render
+  // unconditionally.
+  tos: z.array(emailAddressSchema).default([]),
+  ccs: z.array(emailAddressSchema).default([]),
   receivedAt: z.coerce.date(),
   signals: z.array(z.number()).default([]),
 
@@ -102,8 +118,8 @@ export const firstReplyMarkerSchema = z.object({
   /** Reply sender address (expected to be on a tenant domain) */
   fromEmail: z.string().min(1),
   /** Recipients — used to require an external (customer) recipient */
-  tos: z.array(z.object({ email: z.string(), name: z.string().optional() })).default([]),
-  ccs: z.array(z.object({ email: z.string(), name: z.string().optional() })).default([]),
+  tos: z.array(emailAddressSchema).default([]),
+  ccs: z.array(emailAddressSchema).default([]),
   /** Gmail labels (e.g. SENT) */
   labels: z.array(z.string()).default([]),
   /** Reply timestamp (Gmail internalDate), ISO string */

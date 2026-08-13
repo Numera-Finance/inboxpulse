@@ -150,12 +150,12 @@ function MessageContent({ message }: { message: InboxItemContent }) {
       {/* Recipients */}
       <div className="pl-[52px]">
         {message.to && message.to.length > 0 && (
-          <div className="text-sm text-muted-foreground mb-2">
+          <div className="text-sm text-muted-foreground mb-2 break-words [overflow-wrap:anywhere]">
             <span>To: {message.to.map((r) => r.email).join(", ")}</span>
           </div>
         )}
         {message.cc && message.cc.length > 0 && (
-          <div className="text-sm text-muted-foreground mb-2">
+          <div className="text-sm text-muted-foreground mb-2 break-words [overflow-wrap:anywhere]">
             <span>Cc: {message.cc.map((r) => r.email).join(", ")}</span>
           </div>
         )}
