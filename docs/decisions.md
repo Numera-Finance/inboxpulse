@@ -719,3 +719,55 @@ reply has no schema to get wrong. See ADR notes in `env.ts`.
 - Llama 4's MoE shape (109B total, ~17B active) is precisely what this workload
   wants: big-model accuracy at small-model generation speed. Worth revisiting on
   a machine that can hold it. That is a hardware decision, not a code one.
+
+### ADR-018: Labels are precision-only, budgeted, and one per message (2026-08-13)
+
+**Status:** Accepted
+
+**Context:** Applying analysis flags as native Gmail labels is the one sanctioned
+mailbox write (ADR-005). A script existed (`apps/api/scripts/apply-gmail-labels.ts`)
+but had never run, and reading it against the corpus showed it would have written
+**129,607 labels across 125,685 analysed emails** — more labels than messages.
+
+Measured share of analysed mail per label:
+
+| label | share |
+|---|---|
+| Automated | 51.7% |
+| Churn (incl. low) | 25.7% |
+| Transactional | 8.2% |
+| Marketing | 5.2% |
+| Spam | 4.9% |
+| Upsell | 3.6% |
+| Churn (medium+) | 3.2% |
+| Competitor | 2.9% |
+| Negative | 0.8% |
+| Positive | 0.2% |
+| Kudos / Escalation | 0.0% |
+
+**Decision:** Four rules, in `apps/api/src/labels/policy.ts`:
+
+1. **Over 5% of mail = no information.** Enforced at run time against the actual
+   mailbox (`withinBudget`), not merely asserted — the corpus that set the
+   thresholds is one tenant's mail, and the failure mode is thousands of labels
+   in a real inbox.
+2. **Never duplicate Gmail.** Automated / Marketing / Transactional / Spam are
+   Gmail's own categories. A second, worse copy spends credibility for nothing.
+3. **A label that has never fired is not a label.** Kudos and Escalation are 0
+   rows in 125,685.
+4. **One label per message.** 1,893 emails would have taken two or more.
+
+Surviving set: `Churn risk` (medium+ only), `Upsell`, `Negative`.
+
+Competitor is excluded: it is keyword-matched and 1,947 of 3,595 hits matched a
+stopword — mostly `"and"` — while the remainder includes `"&"`, `"Accounting"`
+and `"Global"`. A parser fix landed later but the historical rows remain, and a
+label sweep reads history.
+
+**Consequences:**
+- Dry run against the real corpus: **8,118 labels instead of 129,607** — 3.19%
+  churn, 3.18% upsell, 0.09% negative.
+- A refused label is not an error. The run logs why and continues.
+- All names are namespaced under `InboxPulse/` so the entire set is removable in
+  one operation. A labeller that cannot be fully undone should not run.
+- CHURN_LOW stays excluded everywhere: the panel, the sweep script, and here.
