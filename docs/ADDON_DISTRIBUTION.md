@@ -17,6 +17,42 @@ no artefact to redistribute and no version skew between users.
 This is also what makes the two "trivial install / feels native" constraints
 achievable at all. A zip that each person loads unpacked is neither.
 
+## Measured against the shipped zip
+
+`InboxPulse-extension.zip` (749 KB, manifest `InboxPulse — Thread (read-only)`
+v0.1.0) with a well-written INSTALL.md. What a user actually does:
+
+1. unzip, and **move the folder somewhere permanent** — Chrome reads it from
+   that path forever, so clearing Downloads breaks the extension
+2. open `chrome://extensions`
+3. turn on **Developer mode**
+4. **Load unpacked**, select the folder
+5. reload Gmail (a tab open during install does not pick it up)
+6. sign in through a popup
+
+Then, from the guide's own "things worth knowing": *"Chrome will nag you on
+every restart — you'll see 'Disable developer mode extensions' each time you
+open Chrome. Dismiss it; don't click Disable."*
+
+Uninstalling is two steps and includes deleting the folder by hand.
+
+None of that is a criticism of the build — it is what unpacked distribution
+costs, and the guide is honest about it. It is the reason "trivial install"
+cannot be met this way. The add-on's equivalent list is: *an admin installs it;
+the user does nothing.*
+
+### Two defects in the shipped zip
+
+- **The name in the guide is not the name Chrome shows.** INSTALL.md tells users
+  to look for "CRM Sidebar for Gmail" (twice — in step 2 and in uninstall); the
+  manifest says `InboxPulse — Thread (read-only)`. A user following the guide
+  looks for a row that is not there.
+- **It points at the clone, not production.** Both `host_permissions` and the
+  code call `crm-api-clone-…run.app` / `crm-web-clone-…run.app`, while
+  `.env.production` has `inboxpulse-api.mystartupcfo.com`. Fine for a pilot, but
+  this zip must not be handed to real users as-is — it would send their traffic
+  to the clone environment.
+
 ## What has to be true before a user can see it
 
 Current state: one deployment registered, `inboxpulse-live`, pointing at a
