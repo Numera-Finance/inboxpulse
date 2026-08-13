@@ -222,6 +222,14 @@ function addressOf(raw: string | undefined): string | undefined {
 const STOPWORDS = new Set([
   're','fwd','fw','the','and','for','with','this','that','from','your','about','you','are','our','was',
   'has','have','will','can','into','they','their','there','here','when','what','been','were','not',
+  // Subject-line filler. These are words that appear in every third subject and
+  // narrow a search by nothing: "Another revenue reporting tool" produced
+  // (another OR revenue OR reporting OR tool), which matches most of an inbox.
+  // A search that returns everything is the same as no search, except the user
+  // paid a click to find that out.
+  'another','again','update','updates','question','questions','quick','follow','following','followup',
+  'meeting','call','chat','sync','touch','base','info','information','note','notes','new','next',
+  'please','thanks','thank','hello','team','regarding','request','some','need','needs','help',
 ]);
 
 /**
@@ -230,9 +238,18 @@ const STOPWORDS = new Set([
  * on a thread InboxPulse has never seen, which is exactly when the panel would
  * otherwise have nothing to offer.
  */
-function deriveSearch(headers: MessageHeaders | undefined): { query: string; terms: string[] } | null {
+export function deriveSearch(
+  headers: MessageHeaders | undefined,
+  viewerEmail?: string,
+): { query: string; terms: string[] } | null {
   const from = addressOf(headers?.from);
   const domain = from?.split('@')[1];
+  const viewerDomain = viewerEmail?.split('@')[1]?.toLowerCase();
+
+  // Scoping a search to your OWN domain is not a filter -- on an internal thread
+  // it matches nearly everything you have ever been sent.
+  const useful = domain && domain !== viewerDomain ? domain : undefined;
+
   const terms = (headers?.subject ?? '')
     .split(/[^A-Za-z0-9-]+/)
     .map((w) => w.toLowerCase())
@@ -240,10 +257,14 @@ function deriveSearch(headers: MessageHeaders | undefined): { query: string; ter
     .filter((w, i, a) => a.indexOf(w) === i)
     .slice(0, 4);
 
-  if (!domain && !terms.length) return null;
+  // An external sender narrows on its own. Subject words only narrow when there
+  // are enough of them to be specific -- one generic noun is not a search, and
+  // offering it as one spends the user's click to teach them the button is
+  // useless. Better to show no button than a bad one.
+  if (!useful && terms.length < 2) return null;
 
   const parts: string[] = [];
-  if (domain) parts.push(`from:(${domain})`);
+  if (useful) parts.push(`from:(${useful})`);
   if (terms.length) parts.push(`(${terms.map((t) => `"${t}"`).join(' OR ')})`);
   return { query: parts.join(' '), terms };
 }
@@ -412,7 +433,14 @@ function loopInSections(input: ThreadCardInput): CardSection[] {
   if (!people.length) return [];
 
   const dropped = people.filter((p) => !p.onLatest);
-  const stillOn = people.filter((p) => p.onLatest);
+
+  // Nobody dropped off means this section has nothing to say. Listing everyone
+  // on the thread reproduces Gmail's own "to me, Sandeep, Vigneshwar" header
+  // two inches to the left -- a section that costs space and tells the reader
+  // something they are already looking at. The only reason this section exists
+  // is the person who was part of the conversation and is NOT on the latest
+  // reply, because that one is genuinely invisible.
+  if (!dropped.length) return [];
 
   const widgets: Widget[] = dropped.map((p) =>
     deco({
@@ -425,16 +453,6 @@ function loopInSections(input: ThreadCardInput): CardSection[] {
       wrapText: true,
     }),
   );
-
-  if (stillOn.length) {
-    widgets.push(
-      deco({
-        topLabel: dropped.length ? 'Already on the latest reply' : 'On this thread',
-        text: stillOn.map((p) => p.name ?? p.address).join(', '),
-        wrapText: true,
-      }),
-    );
-  }
 
   return [{ header: heading('Loop in'), widgets }];
 }
@@ -491,7 +509,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         ],
       });
 
-      const search = deriveSearch(input.headers);
+      const search = deriveSearch(input.headers, input.viewerEmail);
       if (search) {
         sections.push({
           header: heading('Do next'),
@@ -637,7 +655,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       }
 
       // 3. Do next — real actions, all derived from the message alone.
-      const search = deriveSearch(input.headers);
+      const search = deriveSearch(input.headers, input.viewerEmail);
       const doNext: Widget[] = [];
       const btns = [];
       // Stance choice, not a menu. The first is recommended and gets the FILLED
@@ -649,12 +667,16 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         // The recommended stance arrives written; the alternatives arrive as a
         // choice. Writing all three costs ~7s more and two of them were always
         // going to be discarded — see ReplyOption.text.
+        // The draft goes in `text`, which wraps and renders in full. It was in
+        // bottomLabel, truncated at 147 characters -- so the user was asked to
+        // choose between approaches while being shown half of one of them.
+        // A choice you cannot read is not a choice.
         const widgets: Widget[] = options.map((o, i) =>
           deco({
-            text: `<b>${escapeText(o.stance)}</b>${
-              i === 0 ? ' <font color="#1a73e8">·  recommended</font>' : ''
-            }${o.rationale ? ` — ${escapeText(o.rationale)}` : ''}`,
-            bottomLabel: o.text ? (o.text.length > 150 ? `${o.text.slice(0, 147)}…` : o.text) : undefined,
+            topLabel: `${o.stance}${i === 0 ? '  ·  recommended' : ''}${
+              o.rationale ? ` — ${o.rationale}` : ''
+            }`,
+            text: o.text ? escapeText(o.text) : '<i>Pick this approach to have it written</i>',
             wrapText: true,
             button: o.text
               ? {
@@ -780,7 +802,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
 
   // The tracked card had no actions at all — every button lived on the untracked
   // branch. A thread InboxPulse knows about deserves them more, not less.
-  const trackedSearch = deriveSearch(input.headers);
+  const trackedSearch = deriveSearch(input.headers, input.viewerEmail);
   const trackedBtns = [];
   if (input.draft) trackedBtns.push(linkButton('Draft a reply', gmailComposeUrl(input, input.draft)));
   if (trackedSearch)

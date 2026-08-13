@@ -1,5 +1,6 @@
 import { getEnv } from '../env';
 import { logger } from '../utils/logger';
+import { filterCommitments } from './commitments';
 
 /**
  * Live, in-request analysis of the OPEN message — nothing is stored.
@@ -338,6 +339,11 @@ export async function digestThreadLive(input: {
     '',
     '1. Commitments: anything someone said they WOULD DO. Use the name as written.',
     '   Include a due date only if the thread states one.',
+    '   Include "quote": the exact sentence it came from, copied verbatim.',
+    '   A commitment is something the person UNDERTOOK. "We should meet",',
+    '   "let\'s schedule a call" and "it would be good to loop them in" are',
+    '   suggestions that somebody act -- they are NOT commitments, no matter how',
+    '   actionable they sound.',
     '2. Open questions: questions asked that nobody answered later in the thread.',
     '',
     'Do not invent commitments. If someone only expressed an opinion, that is not',
@@ -348,7 +354,7 @@ export async function digestThreadLive(input: {
     input.thread.slice(0, 6000),
     '',
     'Return ONLY this JSON:',
-    '{"commitments":[{"who":"name","what":"short phrase","when":"or omit"}],"openQuestions":["..."]}',
+    '{"commitments":[{"who":"name","what":"short phrase","when":"or omit","quote":"exact sentence"}],"openQuestions":["..."]}',
   ].join('\n');
 
   const controller = new AbortController();
@@ -422,7 +428,12 @@ export function parseDigest(raw: string): ThreadDigest | null {
     const openQuestions = Array.isArray(obj.openQuestions)
       ? obj.openQuestions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0).map((q) => q.trim())
       : [];
-    return { commitments, openQuestions };
+    // The prompt forbids suggestions and the model returns them anyway --
+    // "We should meet and learn from them" was rendered on a live thread as a
+    // commitment by the person who wrote it. Filing a suggestion as a debt puts
+    // a colleague's name against something they never agreed to, so this is a
+    // rule, not a request. See services/commitments.ts.
+    return { commitments: filterCommitments(commitments), openQuestions };
   } catch {
     return null;
   }
