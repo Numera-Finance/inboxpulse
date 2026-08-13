@@ -1,4 +1,4 @@
-import { getEnv } from '../env';
+import { getEnv, type Env } from '../env';
 import { logger } from '../utils/logger';
 import { filterCommitments } from './commitments';
 
@@ -51,7 +51,7 @@ export async function analyseMessageLive(input: {
   body: string;
 }): Promise<LiveAnalysis | null> {
   const env = getEnv();
-  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  const base = baseFor(env);
   if (!base) return null;
 
   const body = input.body.slice(0, MAX_BODY_CHARS);
@@ -79,7 +79,7 @@ export async function analyseMessageLive(input: {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
 
-    const url = ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`;
+    const url = endpointFor(base, env.LIVE_ANALYSIS_PROVIDER);
     const payload = ollama
       ? {
           model: env.LIVE_ANALYSIS_MODEL,
@@ -226,7 +226,7 @@ export async function draftReplyLive(input: {
   senderFirstName?: string;
 }): Promise<string | null> {
   const env = getEnv();
-  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  const base = baseFor(env);
   if (!base) return null;
 
   const prompt = [
@@ -249,7 +249,7 @@ export async function draftReplyLive(input: {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
 
-    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+    const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
       signal: controller.signal,
@@ -331,7 +331,7 @@ export async function digestThreadLive(input: {
   thread: string;
 }): Promise<ThreadDigest | null> {
   const env = getEnv();
-  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  const base = baseFor(env);
   if (!base) return null;
 
   const prompt = [
@@ -365,7 +365,7 @@ export async function digestThreadLive(input: {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
 
-    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+    const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
       signal: controller.signal,
@@ -579,7 +579,7 @@ export async function readThreadLive(input: {
   history?: string;
 }): Promise<ThreadReading | null> {
   const env = getEnv();
-  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  const base = baseFor(env);
   if (!base) return null;
 
   const prompt = [
@@ -630,7 +630,7 @@ export async function readThreadLive(input: {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
 
-    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+    const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
       signal: controller.signal,
@@ -641,7 +641,7 @@ export async function readThreadLive(input: {
               messages: [{ role: 'user', content: prompt }],
               think: env.LIVE_ANALYSIS_THINK,
               stream: false,
-              format: READING_SCHEMA,
+              ...schemaFields(env.LIVE_ANALYSIS_PROVIDER, READING_SCHEMA, 'reading'),
               options: { temperature: 0 },
             }
           : {
@@ -649,6 +649,15 @@ export async function readThreadLive(input: {
               messages: [{ role: 'user', content: prompt }],
               temperature: 0,
               max_tokens: MAX_TOKENS,
+              // Runtime is Gemini Flash, and it is the path that has to be
+              // right. The schema is what stops `when` going missing -- the
+              // failure that silently removes the reminder button -- and
+              // reasoning_effort is what stops 2.5 Flash thinking by default,
+              // which is billed as output tokens on top of the latency.
+              ...schemaFields(env.LIVE_ANALYSIS_PROVIDER, READING_SCHEMA, 'reading'),
+              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini'
+                ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
+                : {}),
             },
       ),
     });
@@ -735,12 +744,57 @@ export function parseReading(raw: string): ThreadReading | null {
  * It also enables the real saving below — most mail needs nothing, and knowing
  * that for 0.6s means never paying 5s to find out.
  */
+/**
+ * The chat endpoint for the configured provider.
+ *
+ * Centralised because it was written out at seven call sites. The 'gemini'
+ * branch exists because the path differs: Google documents the compat API at
+ * .../v1beta/openai/chat/completions, while the 'openai' branch appends
+ * /v1/chat/completions to its base.
+ *
+ * UNVERIFIED whether the doubled path would actually have failed -- Google
+ * rejects on the missing Authorization header before it routes, so both spellings
+ * return the same 400 and no key was available to test past it. The 'gemini'
+ * branch uses the documented path, which is the defensible choice either way.
+ */
+function endpointFor(base: string, provider: string): string {
+  if (provider === 'ollama') return `${base}/api/chat`;
+  if (provider === 'gemini') return `${base}/chat/completions`;
+  return `${base}/v1/chat/completions`;
+}
+
+/** The base URL for the configured provider. */
+function baseFor(env: Env): string {
+  const raw =
+    env.LIVE_ANALYSIS_PROVIDER === 'gemini'
+      ? env.LIVE_ANALYSIS_GEMINI_URL
+      : env.LIVE_ANALYSIS_URL;
+  return raw.trim().replace(/\/+$/, '');
+}
+
+/**
+ * Provider-specific fields that constrain the output to a JSON schema.
+ *
+ * Ollama takes a bare `format`; the OpenAI-compatible providers take
+ * `response_format` with a named json_schema. Gemini honours it. Ollama honours
+ * it for gguf models and SILENTLY IGNORES it on the MLX runner, which is how
+ * the reply section once rendered empty with no error -- so callers on that path
+ * must still parse defensively rather than trusting the shape.
+ */
+function schemaFields(provider: string, schema: unknown, name: string): Record<string, unknown> {
+  if (!schema) return {};
+  if (provider === 'ollama') return { format: schema };
+  return {
+    response_format: { type: 'json_schema', json_schema: { name, schema, strict: true } },
+  };
+}
+
 export async function classifyThreadMode(input: {
   subject?: string;
   thread: string;
 }): Promise<ThreadMode | null> {
   const env = getEnv();
-  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  const base = baseFor(env);
   if (!base) return null;
 
   const prompt = [
@@ -764,7 +818,7 @@ export async function classifyThreadMode(input: {
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
-    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+    const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
       signal: controller.signal,
@@ -811,7 +865,7 @@ export async function draftForStance(input: {
   history?: string;
 }): Promise<string | null> {
   const env = getEnv();
-  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  const base = baseFor(env);
   if (!base) return null;
 
   // Pure prose, no schema to get wrong — exactly the job the fast model is for.
@@ -844,7 +898,7 @@ export async function draftForStance(input: {
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
-    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+    const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
       signal: controller.signal,
@@ -904,6 +958,25 @@ export async function draftForStance(input: {
  * there is no risk of a label from one model being attached to prose from
  * another.
  */
+const OPTIONS_SCHEMA = {
+  type: 'object',
+  properties: {
+    replyOptions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          stance: { type: 'string' },
+          rationale: { type: 'string' },
+          text: { type: 'string' },
+        },
+        required: ['stance', 'rationale', 'text'],
+      },
+    },
+  },
+  required: ['replyOptions'],
+} as const;
+
 export async function writeReplyOptions(input: {
   subject?: string;
   thread: string;
@@ -911,7 +984,7 @@ export async function writeReplyOptions(input: {
   history?: string;
 }): Promise<ReplyOption[]> {
   const env = getEnv();
-  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  const base = baseFor(env);
   if (!base) return [];
   const model = env.LIVE_ANALYSIS_FAST_MODEL || env.LIVE_ANALYSIS_MODEL;
 
@@ -953,7 +1026,7 @@ export async function writeReplyOptions(input: {
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
-    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+    const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
       signal: controller.signal,
@@ -964,18 +1037,22 @@ export async function writeReplyOptions(input: {
               messages: [{ role: 'user', content: prompt }],
               think: env.LIVE_ANALYSIS_THINK,
               stream: false,
-              // No `format` here. Ollama's MLX runner IGNORES constrained
-              // decoding -- nemotron-3.5-lightning:30b-mlx returns prose and
-              // the parse finds no JSON at all, which is how this section
-              // silently rendered empty. The schema is enforced by prompt and
-              // a tolerant parser instead. gguf models DO honour `format`,
-              // which is why the extraction call keeps it.
+              // No `format` on the Ollama branch. The MLX runner IGNORES
+              // constrained decoding -- nemotron-3.5-lightning:30b-mlx returns
+              // prose and the parse finds no JSON at all, which is how this
+              // section once rendered empty with no error. Enforced by prompt
+              // and a tolerant parser there instead.
               options: { temperature: 0.4 },
             }
           : {
               model,
               messages: [{ role: 'user', content: prompt }],
               temperature: 0.4,
+              // Gemini DOES honour it, and this is the runtime path.
+              ...schemaFields(env.LIVE_ANALYSIS_PROVIDER, OPTIONS_SCHEMA, 'replyOptions'),
+              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini'
+                ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
+                : {}),
             },
       ),
     });

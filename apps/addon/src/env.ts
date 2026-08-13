@@ -124,7 +124,40 @@ const envSchema = z.object({
   // nemotron-3.5-lightning:30b-mlx, that is the difference between 0.84s and
   // 6.4s in the card render path. 'openai' is the portable default for LiteLLM
   // or any hosted provider.
-  LIVE_ANALYSIS_PROVIDER: z.enum(['openai', 'ollama']).default('openai'),
+  LIVE_ANALYSIS_PROVIDER: z.enum(['openai', 'ollama', 'gemini']).default('openai'),
+
+  /**
+   * Gemini's OpenAI-compatible base. RUNTIME USES THIS -- the local Ollama
+   * models are the demo path only.
+   *
+   * A separate provider from 'openai' because the path differs: Google documents
+   * the compat API at .../v1beta/openai/chat/completions, while the 'openai'
+   * branch appends /v1/chat/completions to its base.
+   *
+   * NOTHING ON THIS PATH IS VERIFIED AGAINST THE LIVE API -- no key was
+   * reachable (gcloud auth had expired and no secret was readable). Google
+   * rejects on the missing Authorization header before routing, so even the URL
+   * could not be confirmed by probing. Treat the first real call as the test.
+   */
+  LIVE_ANALYSIS_GEMINI_URL: z
+    .string()
+    .default('https://generativelanguage.googleapis.com/v1beta/openai'),
+
+  /**
+   * Thinking budget for Gemini 2.5 models, as OpenAI-compat reasoning_effort.
+   *
+   * 'none' by default and that is a deliberate default, not a shrug: 2.5 Flash
+   * thinks by default, and thinking is billed as output tokens on top of the
+   * latency. Locally the same setting was worth 7.6x on a reasoning model, and
+   * turning it ON for structured extraction was catastrophic -- three runs of
+   * the deep read all ran past 120s and returned nothing, because a reasoning
+   * model handed a six-field schema spends its budget reasoning about the
+   * schema.
+   *
+   * Raise it only for a job that is genuinely a judgement call, never for
+   * extraction.
+   */
+  LIVE_ANALYSIS_REASONING: z.enum(['none', 'low', 'medium', 'high']).default('none'),
   /**
    * Only honoured when provider is 'ollama'. Off by default: 7.6x faster on a
    * reasoning model, and Ollama REJECTS the field outright for models that
