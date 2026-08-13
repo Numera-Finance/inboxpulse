@@ -682,3 +682,40 @@ ported endpoints — a number that renders plausibly instead of failing. A count
 with no upper bound in the UI cannot be sanity-checked by eye, so filters
 against enum values should be written from the enum definition, and confirmed
 against a column that independently records the same state.
+
+### ADR-017: gemma3:12b is the local extraction model — bigger is worse (2026-08-13)
+
+**Status:** Accepted
+
+**Context:** The deep read takes ~7s, which is the largest single cost in
+time-to-respond. The obvious lever is a different model, and the obvious
+intuition is that a larger one would be more accurate.
+
+**Decision:** Stay on gemma3:12b for structured extraction. Measured on the real
+deep-read prompt, three runs each, M5 Pro / 48GB:
+
+| model | latency | commitment found | `when` populated |
+|---|---|---|---|
+| gemma3:12b | 6.2–7.3s | 3/3 | **3/3** |
+| gemma3:27b | 20.3–29.7s | 3/3 | **0/3** |
+| qwen2.5:32b | 23.5–31.8s | 3/3 | 3/3 |
+
+`when` is the field the calendar reminder is built on, so losing it silently
+removes the "Remind me" button — the panel gets quieter, not visibly wrong.
+
+Llama 4 was evaluated and does not fit: Scout is 67.4GB against 48GB of RAM
+(~36GB addressable by the GPU); Maverick is 244.8GB.
+
+Separately, prose generation routes to `LIVE_ANALYSIS_FAST_MODEL`
+(nemotron-3.5-lightning:30b-mlx, 81.3 tok/s against gemma3's 31.9) because a
+reply has no schema to get wrong. See ADR notes in `env.ts`.
+
+**Consequences:**
+- Bigger is not better for constrained JSON extraction. gemma3:27b is 3x slower
+  *and* strictly worse on the field that matters; qwen2.5:32b buys nothing for
+  3.5x the wait.
+- Do not re-litigate model choice by intuition — this table is cheap to
+  regenerate and the intuition was wrong.
+- Llama 4's MoE shape (109B total, ~17B active) is precisely what this workload
+  wants: big-model accuracy at small-model generation speed. Worth revisiting on
+  a machine that can hold it. That is a hardware decision, not a code one.

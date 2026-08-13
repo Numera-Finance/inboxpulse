@@ -58,6 +58,26 @@ const envSchema = z.object({
   // this add-on must run on a host that can reach it. Cloud Run cannot.
   // ---------------------------------------------------------------------------
   LIVE_ANALYSIS_URL: z.string().default(''),
+  /**
+   * The model doing structured extraction. gemma3:12b locally.
+   *
+   * Measured on the deep read, three runs each, M5 Pro / 48GB. "when" is the
+   * field the calendar reminder is built on, so losing it silently removes the
+   * Remind button:
+   *
+   *   gemma3:12b     6.2-7.3s    commit 3/3   when 3/3
+   *   gemma3:27b    20.3-29.7s   commit 3/3   when 0/3
+   *   qwen2.5:32b   23.5-31.8s   commit 3/3   when 3/3
+   *
+   * Bigger is not better here. gemma3:27b is 3x slower AND drops "when" every
+   * time; qwen2.5:32b matches 12b's quality at 3.5x the wait. Do not re-litigate
+   * this by intuition -- the 12b is the right choice on this hardware, and it is
+   * the fastest option that gets every field right.
+   *
+   * Llama 4 does not fit: Scout is 67.4GB against 48GB of RAM (~36GB addressable
+   * by the GPU), and Maverick is 244.8GB. Its MoE shape (17B active) is exactly
+   * what this workload wants, so it is worth revisiting on a larger machine.
+   */
   LIVE_ANALYSIS_MODEL: z.string().default('gpt-4o-mini'),
   /**
    * A faster model for jobs that are pure prose and need no structure.
