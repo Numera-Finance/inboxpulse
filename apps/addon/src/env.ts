@@ -59,6 +59,31 @@ const envSchema = z.object({
   // ---------------------------------------------------------------------------
   LIVE_ANALYSIS_URL: z.string().default(''),
   LIVE_ANALYSIS_MODEL: z.string().default('gpt-4o-mini'),
+  /**
+   * A faster model for jobs that are pure prose and need no structure.
+   *
+   * Measured on this machine, generation rate is the whole story:
+   *   gemma3:12b                       31.9 tok/s
+   *   nemotron-3.5-lightning:30b-mlx   81.3 tok/s
+   *
+   * But faster is not better everywhere. On the same thread, three runs each,
+   * nemotron found the commitment 1/0/1 times against gemma3's 3/3, never
+   * populated the `when` field at all -- which is what the calendar reminder is
+   * built on, so "Remind me" simply disappears -- and missed the open question
+   * every time. It is 3x quicker at losing the fields the card is
+   * differentiated by.
+   *
+   * So the split is by JOB, not by preference: structured extraction stays on
+   * the accurate model, and writing a reply -- where there is no schema to get
+   * wrong and the only measure is whether the prose is good -- goes here.
+   * Blank falls back to LIVE_ANALYSIS_MODEL.
+   *
+   * Turning nemotron's reasoning ON does not recover the lost fields, it just
+   * fails: three runs of the deep read all ran past 120s and aborted, returning
+   * nothing at all. A reasoning model handed six structured instructions spends
+   * its budget reasoning about the schema. See LIVE_ANALYSIS_THINK.
+   */
+  LIVE_ANALYSIS_FAST_MODEL: z.string().default(''),
   LIVE_ANALYSIS_KEY: z.string().default(''),
   /**
    * Hard ceiling on the in-request LLM call; the card renders without it on

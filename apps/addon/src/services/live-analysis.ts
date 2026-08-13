@@ -776,6 +776,9 @@ export async function draftForStance(input: {
   const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
   if (!base) return null;
 
+  // Pure prose, no schema to get wrong — exactly the job the fast model is for.
+  const model = env.LIVE_ANALYSIS_FAST_MODEL || env.LIVE_ANALYSIS_MODEL;
+
   const prompt = [
     `Write a reply to this email thread taking this approach: "${input.stance}".`,
     '',
@@ -810,14 +813,14 @@ export async function draftForStance(input: {
       body: JSON.stringify(
         ollama
           ? {
-              model: env.LIVE_ANALYSIS_MODEL,
+              model,
               messages: [{ role: 'user', content: prompt }],
               think: env.LIVE_ANALYSIS_THINK,
               stream: false,
               options: { temperature: 0.3 },
             }
           : {
-              model: env.LIVE_ANALYSIS_MODEL,
+              model,
               messages: [{ role: 'user', content: prompt }],
               temperature: 0.3,
             },
