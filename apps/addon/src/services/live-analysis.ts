@@ -518,6 +518,51 @@ export interface ThreadReading {
  * reading the whole thread for each of these questions, so asking all three at
  * once costs barely more than asking one.
  */
+/**
+ * The exact shape the deep read must return, enforced by the decoder.
+ *
+ * Ollama accepts a JSON Schema as `format` and constrains sampling to tokens
+ * that can still produce a valid document. That matters here more than model
+ * size does: our need is narrow -- six fields off ~1500 tokens of email -- and
+ * the failures have all been SHAPE failures, not comprehension ones. gemma3:27b
+ * understood every thread perfectly and still dropped `when` on 3 runs out of 3.
+ *
+ * A field the schema requires cannot be dropped. That converts the reminder
+ * button from something that works when the model remembers to something that
+ * works.
+ *
+ * `when` is required but may be empty, deliberately. Making it optional is how
+ * it goes missing; making it a required non-empty string is how it gets
+ * invented. Required-and-emptyable forces the model to decide rather than to
+ * forget.
+ */
+const READING_SCHEMA = {
+  type: 'object',
+  properties: {
+    sentiment: { type: 'string', enum: ['positive', 'neutral', 'negative'] },
+    reason: { type: 'string' },
+    commitments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          who: { type: 'string' },
+          what: { type: 'string' },
+          when: { type: 'string' },
+          quote: { type: 'string' },
+        },
+        required: ['who', 'what', 'when', 'quote'],
+      },
+    },
+    openQuestions: { type: 'array', items: { type: 'string' } },
+    messageSentiments: {
+      type: 'array',
+      items: { type: 'string', enum: ['positive', 'neutral', 'negative'] },
+    },
+  },
+  required: ['sentiment', 'reason', 'commitments', 'openQuestions'],
+} as const;
+
 export async function readThreadLive(input: {
   subject?: string;
   thread: string;
@@ -566,26 +611,7 @@ export async function readThreadLive(input: {
     '   description of how something works. If in doubt, leave it out.',
     '4. openQuestions: questions asked that nobody answered later in the thread,',
     '   quoted VERBATIM as they were written. Not your rephrasing of them.',
-    '5. replyOptions: TWO OR THREE genuinely different ways to answer, best',
-    '   first. Each has a stance (2-3 words naming the move, e.g. "Own it",',
-    '   "Ask first", "Escalate") and a rationale (one short clause for why that',
-    '   move). They must differ in APPROACH, not wording — taking ownership with',
-    '   a date, versus asking the one question that unblocks it, versus bringing',
-    '   in someone senior. Two options that say the same thing differently are',
-    '   worthless.',
-    '   Write the full reply text for the FIRST one ONLY. Leave text empty for',
-    '   the rest — the user picks a stance before anyone needs the prose.',
-    '   That text is three sentences maximum, no greeting, no sign-off.',
-    '   NEVER write a placeholder. No [Name], no [date], no [team], no blank to',
-    '   fill in. A reply the user has to edit before sending has not saved them',
-    '   anything, and a bracket is the tell that a machine wrote it. If you would',
-    '   need a name you do not have, choose a different stance instead.',
-    '   Commit only to what the thread already supports; never invent a date, a',
-    '   price, or a promise.',
-    '   If the HISTORY section shows this was raised before, the reply MUST',
-    '   acknowledge that — a reply that ignores a repeat complaint is the single',
-    '   worst thing this product could produce.',
-    '6. messageSentiments: one sentiment per message IN ORDER, oldest first.',
+    '5. messageSentiments: one sentiment per message IN ORDER, oldest first.',
     '   The array length MUST equal the number of "From:" blocks below.',
     '',
     `Subject: ${input.subject ?? '(none)'}`,
@@ -593,7 +619,7 @@ export async function readThreadLive(input: {
     input.thread.slice(0, 6000),
     '',
     'Return ONLY this JSON:',
-    '{"sentiment":"positive|neutral|negative","reason":"\\"exact quote\\"","commitments":[{"who":"...","what":"...","when":"optional","quote":"exact sentence"}],"openQuestions":["exact question"],"replyOptions":[{"stance":"Own it","rationale":"third time raised","text":"full reply here"},{"stance":"Ask first","rationale":"scope is unclear","text":""}],"messageSentiments":["neutral","positive"]}',
+    '{"sentiment":"positive|neutral|negative","reason":"\\"exact quote\\"","commitments":[{"who":"...","what":"...","when":"optional","quote":"exact sentence"}],"openQuestions":["exact question"],"messageSentiments":["neutral","positive"]}',
   ].join('\n');
 
   const controller = new AbortController();
@@ -615,6 +641,7 @@ export async function readThreadLive(input: {
               messages: [{ role: 'user', content: prompt }],
               think: env.LIVE_ANALYSIS_THINK,
               stream: false,
+              format: READING_SCHEMA,
               options: { temperature: 0 },
             }
           : {
@@ -781,7 +808,7 @@ export async function draftForStance(input: {
   subject?: string;
   thread: string;
   stance: string;
-  history?: string[];
+  history?: string;
 }): Promise<string | null> {
   const env = getEnv();
   const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
@@ -798,9 +825,9 @@ export async function draftForStance(input: {
     'price, or a promise.',
     'NEVER write a placeholder. No [Name], no [date], no blank to fill in. A',
     'reply the user has to edit before sending has not saved them anything.',
-    ...(input.history?.length
-      ? ['', 'This was raised before, and the reply must acknowledge it:',
-         ...input.history.map((h) => `- ${h}`)]
+    ...(input.history
+      ? ['', 'Context the thread does not contain, which the reply must account',
+         'for:', input.history]
       : []),
     '',
     `Subject: ${input.subject ?? '(none)'}`,
@@ -848,6 +875,132 @@ export async function draftForStance(input: {
   } catch (err) {
     logger.warn({ err: String(err) }, 'stance draft: failed');
     return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * How to answer -- stances plus the recommended draft.
+ *
+ * Split off the extraction call and run CONCURRENTLY with it, on the fast model.
+ *
+ * Two facts make this the right shape. First, Ollama runs two DIFFERENT models
+ * at once when both fit in memory: measured, work that takes 4.8s + 2.7s
+ * sequentially completes in 4.8s wall. (Which is the opposite of the same model
+ * called twice -- that serialises, and wall-clock is the sum.) Second, the reply
+ * was the largest block of output tokens in a response whose cost is almost
+ * entirely generation at ~31.9 tok/s, so moving it off the extraction call makes
+ * that call shorter as well as making the two overlap.
+ *
+ * It also puts each job on the model that is good at it. Extraction is a shape
+ * problem and gemma3:12b is reliable at it; prose is a fluency problem and
+ * nemotron is 2.5x faster with no schema to get wrong. The reverse pairing is
+ * what produced "well-formed garbage" on phi3.5 -- every field present, the
+ * sentiment wrong, the reason empty, and the open question echoing the schema
+ * hint back.
+ *
+ * This call owns the whole "How to answer" section, stance labels included, so
+ * there is no risk of a label from one model being attached to prose from
+ * another.
+ */
+export async function writeReplyOptions(input: {
+  subject?: string;
+  thread: string;
+  /** Joined account history — what the thread does NOT contain. */
+  history?: string;
+}): Promise<ReplyOption[]> {
+  const env = getEnv();
+  const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
+  if (!base) return [];
+  const model = env.LIVE_ANALYSIS_FAST_MODEL || env.LIVE_ANALYSIS_MODEL;
+
+  const prompt = [
+    'Give TWO genuinely different ways to answer this email thread, best first.',
+    '',
+    'Each has a stance (2-3 words naming the move, e.g. "Own it", "Ask first",',
+    '"Escalate") and a rationale (one short clause for why that move). They must',
+    'differ in APPROACH, not wording -- taking ownership with a date, versus',
+    'asking the one question that unblocks it, versus bringing in someone senior.',
+    'Two options that say the same thing differently are worthless.',
+    '',
+    'Write the full reply text for the FIRST one ONLY. Leave text empty for the',
+    'second -- the user picks a stance before anyone needs the prose. That text',
+    'is three sentences maximum, no greeting, no sign-off.',
+    '',
+    'NEVER write a placeholder. No [Name], no [date], no blank to fill in. A',
+    'reply the user has to edit before sending has not saved them anything.',
+    'Commit only to what the thread already supports -- never invent a date, a',
+    'price, or a promise.',
+    ...(input.history
+      ? ['', 'CONTEXT the thread does not contain. The first reply MUST account',
+         'for it -- a reply that ignores a repeat complaint is the single worst',
+         'thing this product could produce:', input.history]
+      : []),
+    '',
+    `Subject: ${input.subject ?? '(none)'}`,
+    '',
+    input.thread.slice(0, 6000),
+    '',
+    'Return ONLY this JSON:',
+    '{"replyOptions":[{"stance":"Own it","rationale":"third time raised","text":"full reply here"},{"stance":"Ask first","rationale":"scope is unclear","text":""}]}',
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), env.LIVE_ANALYSIS_TIMEOUT_MS);
+  const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
+
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const res = await fetch(ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(
+        ollama
+          ? {
+              model,
+              messages: [{ role: 'user', content: prompt }],
+              think: env.LIVE_ANALYSIS_THINK,
+              stream: false,
+              // No `format` here. Ollama's MLX runner IGNORES constrained
+              // decoding -- nemotron-3.5-lightning:30b-mlx returns prose and
+              // the parse finds no JSON at all, which is how this section
+              // silently rendered empty. The schema is enforced by prompt and
+              // a tolerant parser instead. gguf models DO honour `format`,
+              // which is why the extraction call keeps it.
+              options: { temperature: 0.4 },
+            }
+          : {
+              model,
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0.4,
+            },
+      ),
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      message?: { content?: string };
+    };
+    const raw = (ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '';
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return [];
+    const o = JSON.parse(match[0]) as Record<string, unknown>;
+    if (!Array.isArray(o.replyOptions)) return [];
+    return (o.replyOptions as Array<Record<string, unknown>>)
+      .filter((r) => typeof r?.stance === 'string')
+      .map((r) => ({
+        stance: String(r.stance).trim(),
+        rationale: typeof r.rationale === 'string' ? String(r.rationale).trim() : '',
+        text: typeof r.text === 'string' ? String(r.text).trim() : '',
+      }))
+      .filter((r) => r.stance)
+      .slice(0, 3);
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'reply options: failed');
+    return [];
   } finally {
     clearTimeout(timer);
   }

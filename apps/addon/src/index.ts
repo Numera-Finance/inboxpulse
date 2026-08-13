@@ -32,7 +32,8 @@ import {
   getAccountContext,
   createTask,
 } from './services/api-client';
-import { analyseMessageLive, readThreadLive, draftForStance, classifyThreadMode, isLiveAnalysisEnabled } from './services/live-analysis';
+import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled } from './services/live-analysis';
+import type { ReplyOption } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
 import { deriveParticipants, type Participant } from './services/participants';
 
@@ -246,10 +247,23 @@ app.post('/gmail/analyse', async (c) => {
   // analyse.
   const mode = threadText ? await classifyThreadMode({ subject: headers?.subject, thread: threadText }) : null;
 
-  const reading =
+  // Extraction and prose run CONCURRENTLY, on different models.
+  //
+  // Ollama runs two different models at once when both fit in memory -- measured,
+  // work taking 4.8s + 2.7s sequentially finishes in 4.8s wall. (The same model
+  // called twice does NOT: that serialises and wall-clock is the sum, which is
+  // the mistake made twice earlier in this build.)
+  //
+  // So the wait is now max(extraction, prose) rather than one call doing both.
+  // It also puts each job on the model suited to it: gemma3:12b is reliable at
+  // shape, nemotron is 2.5x faster at prose and has no schema to get wrong.
+  const [reading, replyOptions] =
     threadText && mode !== 'fyi'
-      ? await readThreadLive({ subject: headers?.subject, thread: threadText, history })
-      : null;
+      ? await Promise.all([
+          readThreadLive({ subject: headers?.subject, thread: threadText, history }),
+          writeReplyOptions({ subject: headers?.subject, thread: threadText, history }),
+        ])
+      : [null, [] as ReplyOption[]];
 
   logger.info({ mode, deepRead: Boolean(reading) }, 'thread mode');
 
@@ -351,7 +365,7 @@ app.post('/gmail/analyse', async (c) => {
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,
-        replyOptions: reading.replyOptions,
+        replyOptions,
       }),
     ),
   );
