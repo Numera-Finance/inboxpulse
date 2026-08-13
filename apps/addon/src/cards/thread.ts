@@ -338,7 +338,11 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     threadId: input.threadId,
   });
 
-  if (status !== 'resolved') {
+  // `|| input.analysisPending` so a TRACKED thread also reaches the pending
+  // branch below. Gating the analysis behind "not resolved" meant a thread
+  // InboxPulse knows about could not be read at all — no commitments, no Track,
+  // no draft — while an unknown one could. Backwards.
+  if (status !== 'resolved' || input.analysisPending) {
     // A live, in-request reading of the open message. Shown INSTEAD of the
     // "nothing here" copy, because it answers the same question with real
     // content. Labelled as not-stored so nobody mistakes it for the analysed
@@ -527,6 +531,10 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       });
       return { sections: separated(sections) };
     }
+
+    // Reachable with status 'resolved' now that the pending branch is hoisted —
+    // but only when analysis is off, since pending returns above.
+    if (status === 'resolved') return { sections: separated(sections) };
 
     const hint = NON_RESOLVED_HINT[status];
     sections.push({

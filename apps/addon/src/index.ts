@@ -165,6 +165,21 @@ app.post('/gmail/analyse', async (c) => {
   const threadMessages = await fetchThreadMessages(threadId, oauthToken, accessToken);
   const participants = threadMessages?.length ? deriveParticipants(threadMessages, viewerEmail) : [];
 
+  // A TRACKED thread must not lose the live reading. Forcing status 'untracked'
+  // here meant a thread InboxPulse actually knows about got no commitments, no
+  // Track buttons and no draft — strictly less than one it had never seen.
+  // Resolve it, and carry the stored trend and flags alongside the live reading.
+  const tenantIdEarly = await resolveTenant(viewerEmail);
+  const dbThreadId =
+    threadId && tenantIdEarly ? await resolveThreadIdByProvider(threadId, tenantIdEarly) : null;
+  const [storedTrend, storedFlagged] =
+    dbThreadId && tenantIdEarly
+      ? await Promise.all([
+          getThreadTrend(dbThreadId, tenantIdEarly),
+          getThreadFlagged(dbThreadId, tenantIdEarly),
+        ])
+      : [[], []];
+
   const threadText = (threadMessages ?? [])
     .map((m) => `From: ${m.from ?? 'unknown'}\n${m.body}`)
     .join('\n\n')
@@ -173,7 +188,7 @@ app.post('/gmail/analyse', async (c) => {
   // The external participant's domain is the key to account history. Taken from
   // the thread's participants rather than the open message's From: on a reply
   // the sender is often internal, and the customer is the point.
-  const tenantId = await resolveTenant(viewerEmail);
+  const tenantId = tenantIdEarly;
   const externalDomain = participants.find((p) => p.external)?.address.split('@')[1];
 
   const [reading, account] = await Promise.all([
@@ -206,6 +221,9 @@ app.post('/gmail/analyse', async (c) => {
           baseUrl,
           providerThreadId: threadId,
           account,
+          trend: storedTrend,
+          flagged: storedFlagged,
+          threadId: dbThreadId ?? undefined,
           analysisPending: true,
         }),
       ),
@@ -466,6 +484,8 @@ app.post('/gmail/contextual', async (c) => {
       buildThreadCard({
         messageId,
         status: 'resolved',
+        analysisPending: isLiveAnalysisEnabled(),
+        providerThreadId,
         accountName: analyzed?.customerName,
         flags,
         headers,
