@@ -1,4 +1,4 @@
-import { type Card, type CardSection, type Widget, text, deco, heading, separated } from './widgets';
+import { type Card, type CardSection, type Widget, text, deco, heading, separated, buttons, linkButton } from './widgets';
 import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
@@ -167,6 +167,59 @@ function deriveState(
   };
 }
 
+/** Pull a bare address out of `Name <addr@host>` or a plain address. */
+function addressOf(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const angled = raw.match(/<([^>]+)>/);
+  const addr = (angled ? angled[1] : raw).trim();
+  return addr.includes('@') ? addr.toLowerCase() : undefined;
+}
+
+const STOPWORDS = new Set([
+  're','fwd','fw','the','and','for','with','this','that','from','your','about','you','are','our','was',
+  'has','have','will','can','into','they','their','there','here','when','what','been','were','not',
+]);
+
+/**
+ * A Gmail search built from the open message alone — sender domain plus the
+ * meaningful words of the subject. No stored data, no analysis: available even
+ * on a thread InboxPulse has never seen, which is exactly when the panel would
+ * otherwise have nothing to offer.
+ */
+function deriveSearch(headers: MessageHeaders | undefined): { query: string; terms: string[] } | null {
+  const from = addressOf(headers?.from);
+  const domain = from?.split('@')[1];
+  const terms = (headers?.subject ?? '')
+    .split(/[^A-Za-z0-9-]+/)
+    .map((w) => w.toLowerCase())
+    .filter((w) => w.length > 3 && !STOPWORDS.has(w))
+    .filter((w, i, a) => a.indexOf(w) === i)
+    .slice(0, 4);
+
+  if (!domain && !terms.length) return null;
+
+  const parts: string[] = [];
+  if (domain) parts.push(`from:(${domain})`);
+  if (terms.length) parts.push(`(${terms.map((t) => `"${t}"`).join(' OR ')})`);
+  return { query: parts.join(' '), terms };
+}
+
+function gmailSearchUrl(query: string, viewerEmail?: string): string {
+  const target = viewerEmail ? `?authuser=${encodeURIComponent(viewerEmail)}` : '';
+  return `https://mail.google.com/mail/u/0/${target}#search/${encodeURIComponent(query)}`;
+}
+
+/**
+ * Severity colour. <font color> is the ONLY formatting CardService offers, and
+ * it costs nothing — no stored data, no extra call. Paired with the label text
+ * below so the signal never rides on colour alone.
+ */
+const LIVE_COLOR: Record<LiveAnalysis['sentiment'], string> = {
+  negative: '#c5221f',
+  neutral: '#5f6368',
+  positive: '#137333',
+};
+
 /** Plain-language headline per live sentiment. Words, never colour alone. */
 const LIVE_LABEL: Record<LiveAnalysis['sentiment'], string> = {
   negative: 'Needs attention',
@@ -212,7 +265,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       sections.push({
         widgets: [
           deco({
-            text: `<b>${LIVE_LABEL[input.live.sentiment]}</b>`,
+            text: `<b><font color="${LIVE_COLOR[input.live.sentiment]}">${LIVE_LABEL[input.live.sentiment]}</font></b>`,
             bottomLabel: input.live.reason,
             wrapText: true,
           }),
@@ -221,6 +274,23 @@ export function buildThreadCard(input: ThreadCardInput): Card {
 
       if (trendSection) sections.push(trendSection);
       if (flaggedSection) sections.push(flaggedSection);
+
+      // 3. Do next — a real action, derived from the message alone.
+      const search = deriveSearch(input.headers);
+      if (search) {
+        sections.push({
+          header: heading('Do next'),
+          widgets: [
+            buttons(
+              linkButton('Find related emails', gmailSearchUrl(search.query, input.viewerEmail)),
+            ),
+            deco({
+              text: `Opens a new Gmail tab searching ${search.terms.join(', ') || 'this sender'}.`,
+              wrapText: true,
+            }),
+          ],
+        });
+      }
 
       // Provenance sits at the bottom: it matters for trust, but nobody opens
       // the panel to read it. Quiet, and unambiguous that nothing was written.
