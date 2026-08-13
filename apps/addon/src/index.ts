@@ -133,6 +133,30 @@ function gmailMessageLink(messageId: string, viewerEmail?: string): string {
   return `https://mail.google.com/mail/u/0/${target}#all/${encodeURIComponent(messageId)}`;
 }
 
+/**
+ * The things worth knowing that the thread does not contain, straight from the
+ * account record. This is the differentiated content on the card and it costs
+ * one database round-trip that has already happened.
+ */
+function buildHistoryPoints(account: { found: boolean; negativeCount: number; openTasks: number; lastSeen?: string; priorConcerns: Array<{ when: string; reason: string }> } | null): string[] {
+  if (!account?.found) return [];
+  const points: string[] = [];
+
+  // Repeat complaints lead — a customer raising the same thing again is the
+  // single most useful thing to know before replying, and it is invisible in
+  // the open thread.
+  for (const c of account.priorConcerns.slice(0, 2)) {
+    const short = c.reason.length > 120 ? `${c.reason.slice(0, 117)}…` : c.reason;
+    points.push(`${c.when} — ${short}`);
+  }
+
+  if (account.openTasks > 0) {
+    points.push(`${account.openTasks} task${account.openTasks === 1 ? '' : 's'} still open on this account`);
+  }
+
+  return points.slice(0, 3);
+}
+
 /** A toast, with no card mutation — the cheapest possible action response. */
 function notify(text: string) {
   return { action: { notification: { text } } };
@@ -191,16 +215,34 @@ app.post('/gmail/analyse', async (c) => {
   const tenantId = tenantIdEarly;
   const externalDomain = participants.find((p) => p.external)?.address.split('@')[1];
 
-  const [reading, account] = await Promise.all([
-    threadText ? readThreadLive({ subject: headers?.subject, thread: threadText }) : null,
+  // Account history FIRST, then the reading — the reading needs the history as
+  // input. Running them in parallel was faster and produced a worse card: the
+  // model could only ever talk about the thread, which is exactly what Gemini
+  // does three inches to the left.
+  const account =
     externalDomain && tenantId
-      ? getAccountContext(externalDomain, tenantId, {
+      ? await getAccountContext(externalDomain, tenantId, {
           userId: getEnv().ADDON_DEV_USER_ID ?? '',
           isAdmin: false,
           email: viewerEmail,
         })
-      : null,
-  ]);
+      : null;
+
+  const history = account?.found
+    ? [
+        `Customer: ${account.name}`,
+        `${account.messages} messages over ${account.threads} threads since ${account.firstSeen ?? 'unknown'}`,
+        account.openTasks ? `${account.openTasks} tasks still open` : null,
+        account.negativeCount ? `${account.negativeCount} negative messages on record` : null,
+        ...account.priorConcerns.map((c) => `${c.when}: ${c.reason}`),
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : undefined;
+
+  const reading = threadText
+    ? await readThreadLive({ subject: headers?.subject, thread: threadText, history })
+    : null;
 
   logger.info(
     { externalDomain, account: account?.name ?? null, negatives: account?.negativeCount ?? 0 },
@@ -259,6 +301,15 @@ app.post('/gmail/analyse', async (c) => {
         providerThreadId: threadId,
         analysedMessages: threadMessages?.length ?? 0,
         account,
+        // Built from the DATABASE, not from the model.
+        //
+        // Asking the reading for these was slower, cost tokens, and did not
+        // work — gemma3:12b returned an empty array even with the history in
+        // the prompt, because it was instruction 7 of 7. But the model was only
+        // ever being asked to restate structured rows we already hold, and a
+        // model restating a database is the least efficient thing on this card.
+        // Deterministic, instant, and it cannot hallucinate a date.
+        historyPoints: buildHistoryPoints(account),
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,

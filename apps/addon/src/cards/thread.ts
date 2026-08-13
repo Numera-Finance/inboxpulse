@@ -75,6 +75,11 @@ export interface ThreadCardInput {
   analysedMessages?: number;
   /** History for the sender's company — the part Gemini cannot know. */
   account?: AccountContext | null;
+  /**
+   * Points drawn from that history which are NOT in the thread. The single most
+   * differentiated thing on the card, so it leads.
+   */
+  historyPoints?: string[];
 }
 
 /**
@@ -380,7 +385,26 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     }
 
     if (input.live) {
-      // 0. The account. This goes ABOVE the summary on purpose: a summary of the
+      // 0. What history says that the thread does not.
+      //
+      // This leads the card, above even the account counts. Every other section
+      // is derived from the open thread, and Gemini reads that same thread from
+      // three inches away — so thread-derived content is content the user can
+      // already get. These points cannot be got anywhere else, and a design that
+      // buries or collapses them is a design that competes on Gemini's terms.
+      if (input.historyPoints?.length) {
+        sections.push({
+          header: heading('You should know'),
+          widgets: input.historyPoints.map((p) =>
+            deco({
+              text: `<font color="${LIVE_COLOR.negative}">${escapeText(p)}</font>`,
+              wrapText: true,
+            }),
+          ),
+        });
+      }
+
+      // 0b. The account. This goes ABOVE the summary on purpose: a summary of the
       // open thread is what Gmail's own Gemini button already gives, so it is
       // not what makes this panel worth opening. What Gemini structurally
       // CANNOT know is history — how long this customer has been writing, what

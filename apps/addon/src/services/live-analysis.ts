@@ -425,6 +425,11 @@ export interface ThreadReading {
   openQuestions: string[];
   draft: string;
   /**
+   * Points that come from account history and are NOT in the thread. The only
+   * output here Gemini cannot produce.
+   */
+  historyPoints: string[];
+  /**
    * One sentiment per message, oldest first — the sparkline's series.
    *
    * Asked for in the SAME call as everything else. A separate per-message loop
@@ -452,6 +457,17 @@ export interface ThreadReading {
 export async function readThreadLive(input: {
   subject?: string;
   thread: string;
+  /**
+   * What we know about this customer that the thread does NOT contain — prior
+   * complaints with dates, open tasks, how long the relationship has run.
+   *
+   * This is the whole differentiation. Gemini sits three inches to the left and
+   * reads the same thread we do, so any point derived only from the thread is a
+   * point it already makes. History is what it structurally cannot see, and
+   * feeding it into the reading is what turns "answer her question" into
+   * "she raised billing twice before and it is still open".
+   */
+  history?: string;
 }): Promise<ThreadReading | null> {
   const env = getEnv();
   const base = env.LIVE_ANALYSIS_URL.trim().replace(/\/+$/, '');
@@ -473,6 +489,9 @@ export async function readThreadLive(input: {
     '4. openQuestions: questions asked that nobody answered later in the thread.',
     '5. draft: a reply the recipient could send. Three sentences maximum, no',
     '   greeting, no sign-off. Commit only to what the thread already supports.',
+    '   If the HISTORY section below shows this was raised before, the draft must',
+    '   acknowledge that explicitly — a reply that ignores a repeat complaint is',
+    '   the single worst thing this product could produce.',
     '6. messageSentiments: one sentiment per message IN ORDER, oldest first.',
     '   The array length MUST equal the number of "From:" blocks below.',
     '',
@@ -557,6 +576,12 @@ export function parseReading(raw: string): ThreadReading | null {
       openQuestions: digest?.openQuestions ?? [],
       draft: typeof o.draft === 'string' ? o.draft.trim() : '',
       messageSentiments,
+      historyPoints: Array.isArray(o.historyPoints)
+        ? (o.historyPoints as unknown[])
+            .filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
+            .map((q) => q.trim())
+            .slice(0, 3)
+        : [],
     };
   } catch {
     return null;
