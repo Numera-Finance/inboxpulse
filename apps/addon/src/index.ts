@@ -29,6 +29,7 @@ import {
   getThreadTrend,
   getThreadFlagged,
   resolveThreadIdByProvider,
+  getAccountContext,
 } from './services/api-client';
 import { analyseMessageLive, readThreadLive, isLiveAnalysisEnabled } from './services/live-analysis';
 import { shareToChat, isChatShareEnabled } from './services/chat';
@@ -168,9 +169,26 @@ app.post('/gmail/analyse', async (c) => {
     .join('\n\n')
     .slice(0, 8000);
 
-  const reading = threadText
-    ? await readThreadLive({ subject: headers?.subject, thread: threadText })
-    : null;
+  // The external participant's domain is the key to account history. Taken from
+  // the thread's participants rather than the open message's From: on a reply
+  // the sender is often internal, and the customer is the point.
+  const tenantId = await resolveTenant(viewerEmail);
+  const externalDomain = participants.find((p) => p.external)?.address.split('@')[1];
+
+  const [reading, account] = await Promise.all([
+    threadText ? readThreadLive({ subject: headers?.subject, thread: threadText }) : null,
+    externalDomain && tenantId
+      ? getAccountContext(externalDomain, tenantId, {
+          userId: getEnv().ADDON_DEV_USER_ID ?? '',
+          isAdmin: false,
+        })
+      : null,
+  ]);
+
+  logger.info(
+    { externalDomain, account: account?.name ?? null, negatives: account?.negativeCount ?? 0 },
+    'account context',
+  );
 
   if (!reading) {
     // Analysis failed or timed out. Re-render the pending card rather than an
@@ -185,6 +203,7 @@ app.post('/gmail/analyse', async (c) => {
           participants,
           baseUrl,
           providerThreadId: threadId,
+          account,
           analysisPending: true,
         }),
       ),
@@ -207,6 +226,7 @@ app.post('/gmail/analyse', async (c) => {
         baseUrl,
         providerThreadId: threadId,
         analysedMessages: threadMessages?.length ?? 0,
+        account,
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,

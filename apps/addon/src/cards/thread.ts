@@ -4,6 +4,7 @@ import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
 import type { LiveAnalysis, ThreadDigest } from '../services/live-analysis';
 import type { Participant } from '../services/participants';
+import type { AccountContext } from '../services/api-client';
 
 export type ThreadStatus =
   | 'preview'
@@ -72,6 +73,8 @@ export interface ThreadCardInput {
   providerThreadId?: string;
   /** How many messages the reading actually covered, for the provenance line. */
   analysedMessages?: number;
+  /** History for the sender's company — the part Gemini cannot know. */
+  account?: AccountContext | null;
 }
 
 /**
@@ -183,6 +186,11 @@ function deriveState(
     headline: '<b>Looks fine</b>',
     detail: latest?.sentiment === 'positive' ? 'Most recent message was positive.' : 'Nothing negative recently.',
   };
+}
+
+/** Card text is an HTML subset, so model-authored strings must be escaped. */
+function escapeText(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** Pull a bare address out of `Name <addr@host>` or a plain address. */
@@ -362,6 +370,52 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     }
 
     if (input.live) {
+      // 0. The account. This goes ABOVE the summary on purpose: a summary of the
+      // open thread is what Gmail's own Gemini button already gives, so it is
+      // not what makes this panel worth opening. What Gemini structurally
+      // CANNOT know is history — how long this customer has been writing, what
+      // they have complained about before, what is still open. That is the
+      // reason to look here rather than there, so it leads.
+      const acct = input.account;
+      if (acct?.found) {
+        const widgets: Widget[] = [
+          deco({
+            text: `<b>${escapeText(acct.name ?? 'Customer')}</b>`,
+            bottomLabel: [
+              `${acct.messages.toLocaleString()} messages`,
+              `${acct.threads} threads`,
+              acct.firstSeen ? `since ${acct.firstSeen}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            wrapText: true,
+          }),
+        ];
+
+        if (acct.openTasks > 0) {
+          widgets.push(
+            deco({
+              text: `<font color="${LIVE_COLOR.negative}">${acct.openTasks} open task${acct.openTasks === 1 ? '' : 's'}</font>`,
+              wrapText: true,
+            }),
+          );
+        }
+
+        if (acct.priorConcerns.length) {
+          widgets.push(
+            deco({
+              topLabel: `Raised before — ${acct.negativeCount} negative message${acct.negativeCount === 1 ? '' : 's'}`,
+              text: acct.priorConcerns
+                .map((p) => `<b>${p.when}</b> ${escapeText(p.reason)}`)
+                .join('<br>'),
+              wrapText: true,
+            }),
+          );
+        }
+
+        sections.push({ header: heading('This account'), widgets });
+      }
+
       // 1. State — the answer, first, with the evidence under it.
       sections.push({
         widgets: [

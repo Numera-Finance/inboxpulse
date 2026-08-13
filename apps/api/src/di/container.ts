@@ -41,6 +41,7 @@ import { HolidayRepository } from '../holidays/repository';
 import { HolidayService } from '../holidays/service';
 import { KeywordRepository } from '../keywords/repository';
 import { KeywordService } from '../keywords/service';
+import { AccountContextService } from '../addon/account-context';
 import { BetterAuthUserService } from '../auth/better-auth-user-service';
 
 export function setupContainer() {
@@ -112,6 +113,7 @@ export function setupContainer() {
   container.register(DashboardService, { useClass: DashboardService });
   container.register(HolidayService, { useClass: HolidayService });
   container.register(KeywordService, { useClass: KeywordService });
+  container.register(AccountContextService, { useClass: AccountContextService });
 
   // Register services with more dependencies (after their dependencies)
   container.register(ThreadAnalysisService, { useClass: ThreadAnalysisService });

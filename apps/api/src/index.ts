@@ -50,6 +50,7 @@ import { dashboardRoutes } from './dashboards/routes';
 import { managerRoutes } from './manager/routes';
 import { holidayRoutes } from './holidays/routes';
 import { keywordRoutes } from './keywords/routes';
+import { addonRoutes } from './addon/routes';
 import { authRoutes } from './auth/routes';
 import { betterAuthRoutes } from './auth/better-auth-routes';
 import inngestRoutes from './inngest/routes';
@@ -271,6 +272,7 @@ app.use('/api/internal/*', requireInternalAuth());
 app.route('/api/internal/integrations', integrationsRoutes);
 app.route('/api/internal/runs', runsRoutes);
 app.route('/api/internal/emails', emailsRoutes);
+app.route('/api/internal/addon', addonRoutes);
 
 // Protected routes (auth required)
 // Use better-auth middleware chain (tries better-auth first, falls back to legacy in dev)

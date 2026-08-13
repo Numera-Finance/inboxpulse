@@ -269,3 +269,59 @@ export async function getAnalyzedEmail(
     return null;
   }
 }
+
+/** What we know about a sender's company that is NOT in the open thread. */
+export interface PriorConcern {
+  when: string;
+  reason: string;
+}
+
+export interface AccountContext {
+  found: boolean;
+  customerId?: string;
+  name?: string;
+  messages: number;
+  threads: number;
+  contacts: number;
+  firstSeen?: string;
+  lastSeen?: string;
+  openTasks: number;
+  negativeCount: number;
+  priorConcerns: PriorConcern[];
+}
+
+/**
+ * Resolve a sender's DOMAIN to account history.
+ *
+ * Domain rather than customer id on purpose: the add-on always has the sender's
+ * address from Gmail headers, so this works on a thread InboxPulse has never
+ * ingested — which is every thread in an inbox excluded from ingestion.
+ */
+export async function getAccountContext(
+  domain: string,
+  tenantId: string,
+  viewer: { userId: string; isAdmin: boolean },
+): Promise<AccountContext | null> {
+  const env = getEnv();
+  // No viewer, no call. The endpoint rejects a missing userId, and asking
+  // without one would only ever produce a 400.
+  if (!env.SERVICE_API_KEY || !viewer.userId) return null;
+  try {
+    const url =
+      `${env.SERVICE_API_URL}/api/internal/addon/account-context` +
+      `?domain=${encodeURIComponent(domain)}` +
+      `&tenantId=${encodeURIComponent(tenantId)}` +
+      `&userId=${encodeURIComponent(viewer.userId)}` +
+      `&isAdmin=${viewer.isAdmin ? 'true' : 'false'}`;
+    const res = await fetch(url, { headers: internalHeaders() });
+    if (!res.ok) {
+      logger.warn({ status: res.status, domain }, 'account-context non-OK');
+      return null;
+    }
+    const json = (await res.json()) as { data?: AccountContext };
+    return json.data?.found ? json.data : null;
+  } catch (err) {
+    logger.warn({ err: String(err), domain }, 'account-context failed');
+    return null;
+  }
+}
