@@ -11,8 +11,8 @@ describe('connector catalogue', () => {
   });
 
   it('never suggests anything on a thread with no customer', () => {
-    // Promising a Stripe lookup for a company we cannot identify is a promise we
-    // could not keep even if Stripe were connected.
+    // Promising a Canopy lookup for a client we cannot identify is a promise we
+    // could not keep even if Canopy were connected.
     expect(suggestConnector({ mode: 'complaint', connected: [], hasCustomer: false })).toBeNull();
   });
 
@@ -21,11 +21,21 @@ describe('connector catalogue', () => {
   });
 
   it('matches the suggestion to the kind of thread', () => {
-    // Payments on a scheduling thread is noise, and noise is how a section
+    // Close status on a scheduling thread is noise, and noise is how a section
     // teaches users to skip it.
     const s = suggestConnector({ mode: 'scheduling', connected: [], hasCustomer: true });
-    expect(s!.key).toBe('calendar');
-    expect(CONNECTORS.find((c) => c.key === 'payments')!.modes).not.toContain('scheduling');
+    expect(['canopy', 'calendar']).toContain(s!.key);
+    expect(CONNECTORS.find((c) => c.key === 'qbo')!.modes).not.toContain('scheduling');
+  });
+
+  it('is the stack this firm actually runs', () => {
+    // An earlier version listed Jira, Stripe, HubSpot and Slack — a catalogue of
+    // a generic SaaS company rather than a spec for this one.
+    const keys = CONNECTORS.map((c) => c.key);
+    expect(keys).toEqual(expect.arrayContaining(['canopy', 'qbo', 'streak', 'gchat']));
+    for (const dead of ['jira', 'stripe', 'hubspot', 'slack']) {
+      expect(keys).not.toContain(dead);
+    }
   });
 
   it('never suggests something already connected', () => {
