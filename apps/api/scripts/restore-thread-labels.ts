@@ -24,7 +24,7 @@ dotenv.config({ path: resolve(process.cwd(), '.env') });
 import { createDatabase, sql } from '@crm/database';
 import { google, gmail_v1 } from 'googleapis';
 
-const INTEGRATION_ID = process.env.INTEGRATION_ID ?? '019f957c-d3b0-747d-a510-36fb66fb0fa3';
+const INTEGRATION_ID = process.env.INTEGRATION_ID;
 const SUBJECT = process.env.SUBJECT ?? '';
 const APPLY = Boolean(process.env.APPLY);
 

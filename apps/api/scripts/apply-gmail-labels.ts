@@ -23,8 +23,27 @@ dotenv.config({ path: resolve(process.cwd(), '.env') });
 import { createDatabase, sql } from '@crm/database';
 import { google, gmail_v1 } from 'googleapis';
 
-const INTEGRATION_ID = process.env.INTEGRATION_ID ?? '019f957c-d3b0-747d-a510-36fb66fb0fa3';
+const INTEGRATION_ID = process.env.INTEGRATION_ID;
 const DRY_RUN = Boolean(process.env.DRY_RUN);
+
+/**
+ * No default mailbox. This used to fall back to a hardcoded integration id --
+ * npradhan@mystartupcfo.com, a colleague's live mailbox -- so running the script
+ * with no arguments wrote coloured labels into someone else's inbox.
+ *
+ * A script whose only mailbox-write path has a default target is a loaded gun.
+ * The id must be passed explicitly, every time, by someone who knows whose mail
+ * it is.
+ */
+if (!INTEGRATION_ID) {
+  console.error(
+    'INTEGRATION_ID is required — this writes labels into a real mailbox.\n' +
+      '  DRY_RUN=1 INTEGRATION_ID=<id> bun scripts/apply-gmail-labels.ts   # preview\n' +
+      'Find the id and whose mailbox it is:\n' +
+      "  select id, parameters->0->>'value' from integrations where is_active;",
+  );
+  process.exit(1);
+}
 
 /** Gmail label spec keyed by a stable name; color uses Gmail's allowed palette. */
 interface LabelSpec {
