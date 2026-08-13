@@ -89,3 +89,6 @@ scripts/insert-gmail-integration.sh
 # Local screenshots
 .shots/
 .shots*.png
+
+# Tunnel URL changes every run; the deployment file is generated from it
+apps/addon/deployment.live-local.json
