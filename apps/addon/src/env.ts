@@ -55,6 +55,16 @@ const envSchema = z.object({
   LIVE_ANALYSIS_KEY: z.string().default(''),
   /** Hard ceiling on the in-request LLM call; the card renders without it on timeout. */
   LIVE_ANALYSIS_TIMEOUT_MS: z.coerce.number().default(8000),
+
+  // 'ollama' uses the NATIVE /api/chat endpoint, which is the only way to turn a
+  // reasoning model's thinking off. Ollama's OpenAI-compatible route silently
+  // ignores the flag and reasons anyway — measured on
+  // nemotron-3.5-lightning:30b-mlx, that is the difference between 0.84s and
+  // 6.4s in the card render path. 'openai' is the portable default for LiteLLM
+  // or any hosted provider.
+  LIVE_ANALYSIS_PROVIDER: z.enum(['openai', 'ollama']).default('openai'),
+  /** Only honoured when provider is 'ollama'. Off by default: 7.6x faster here. */
+  LIVE_ANALYSIS_THINK: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof envSchema>;

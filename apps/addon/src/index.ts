@@ -30,6 +30,7 @@ import {
   getThreadFlagged,
   resolveThreadIdByProvider,
 } from './services/api-client';
+import { analyseMessageLive, isLiveAnalysisEnabled } from './services/live-analysis';
 
 const app = new Hono();
 
@@ -157,6 +158,19 @@ app.post('/gmail/contextual', async (c) => {
   const untrackedCard = async () => {
     const dbThreadId = providerThreadId ? await resolveThreadIdByProvider(providerThreadId, tenantId) : null;
     const [trend, flagged] = await threadExtras(dbThreadId);
+
+    // Nothing stored for this thread — analyse the open message in-request and
+    // throw the result away. Opt-in, and only on this branch: a tracked thread
+    // always uses its stored analysis. Every failure returns null, so the card
+    // renders exactly as before.
+    let live = null;
+    if (isLiveAnalysisEnabled() && !trend.length && !flagged.length) {
+      const body = await fetchMessageBody(messageId, oauthToken, accessToken);
+      if (body) {
+        live = await analyseMessageLive({ subject: headers?.subject, from: headers?.from, body });
+      }
+    }
+
     return c.json(
       pushCard(
         buildThreadCard({
@@ -168,6 +182,7 @@ app.post('/gmail/contextual', async (c) => {
           flagged,
           threadId: dbThreadId ?? undefined,
           baseUrl,
+          live,
         }),
       ),
     );

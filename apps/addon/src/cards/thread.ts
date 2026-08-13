@@ -2,6 +2,7 @@ import { type Card, type CardSection, type Widget, text, deco, heading, separate
 import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
+import type { LiveAnalysis } from '../services/live-analysis';
 
 export type ThreadStatus = 'preview' | 'unverified' | 'unidentified' | 'untracked' | 'resolved';
 
@@ -36,6 +37,11 @@ export interface ThreadCardInput {
   baseUrl?: string;
   /** Signed-in user's email — targets the right account in Gmail deep links. */
   viewerEmail?: string;
+  /**
+   * Ephemeral analysis of the OPEN message, computed in-request and never
+   * stored. Only ever set for threads InboxPulse does not track.
+   */
+  live?: LiveAnalysis | null;
 }
 
 /**
@@ -146,6 +152,13 @@ function deriveState(
   };
 }
 
+/** Plain-language headline per live sentiment. Words, never colour alone. */
+const LIVE_LABEL: Record<LiveAnalysis['sentiment'], string> = {
+  negative: 'Needs attention',
+  neutral: 'Nothing concerning',
+  positive: 'Positive',
+};
+
 const SENTIMENT_RANK: Record<TrendPoint['sentiment'], number> = {
   positive: 1,
   neutral: 0,
@@ -167,6 +180,30 @@ export function buildThreadCard(input: ThreadCardInput): Card {
   });
 
   if (status !== 'resolved') {
+    // A live, in-request reading of the open message. Shown INSTEAD of the
+    // "nothing here" copy, because it answers the same question with real
+    // content. Labelled as not-stored so nobody mistakes it for the analysed
+    // record a tracked thread would have.
+    if (input.live) {
+      sections.push({
+        widgets: [
+          deco({
+            text: `<b>${LIVE_LABEL[input.live.sentiment]}</b>`,
+            bottomLabel: input.live.reason,
+            wrapText: true,
+          }),
+          deco({
+            topLabel: 'Read live from this message',
+            text: 'Not stored — this thread is not tracked by InboxPulse.',
+            wrapText: true,
+          }),
+        ],
+      });
+      if (trendSection) sections.push(trendSection);
+      if (flaggedSection) sections.push(flaggedSection);
+      return { sections: separated(sections) };
+    }
+
     const hint = NON_RESOLVED_HINT[status];
     sections.push({
       widgets: [deco({ text: NON_RESOLVED_COPY[status], bottomLabel: hint, wrapText: true })],

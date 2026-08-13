@@ -72,38 +72,57 @@ export async function analyseMessageLive(input: {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), env.LIVE_ANALYSIS_TIMEOUT_MS);
+  const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
 
-    const res = await fetch(`${base}/v1/chat/completions`, {
+    const url = ollama ? `${base}/api/chat` : `${base}/v1/chat/completions`;
+    const payload = ollama
+      ? {
+          model: env.LIVE_ANALYSIS_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          // The whole reason this branch exists — see env.ts.
+          think: env.LIVE_ANALYSIS_THINK,
+          stream: false,
+          options: { temperature: 0 },
+        }
+      : {
+          model: env.LIVE_ANALYSIS_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0,
+          max_tokens: MAX_TOKENS,
+        };
+
+    const res = await fetch(url, {
       method: 'POST',
       headers,
       signal: controller.signal,
-      body: JSON.stringify({
-        model: env.LIVE_ANALYSIS_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0,
-        max_tokens: MAX_TOKENS,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
-      logger.warn({ status: res.status }, 'live analysis: non-OK response');
+      logger.warn({ status: res.status, provider: env.LIVE_ANALYSIS_PROVIDER }, 'live analysis: non-OK response');
       return null;
     }
 
     const json = (await res.json()) as {
+      // OpenAI shape
       choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+      // Ollama native shape
+      message?: { content?: string };
+      done_reason?: string;
     };
-    const choice = json.choices?.[0];
-    const content = choice?.message?.content ?? '';
+
+    const content = ollama ? (json.message?.content ?? '') : (json.choices?.[0]?.message?.content ?? '');
+    const finish = ollama ? json.done_reason : json.choices?.[0]?.finish_reason;
 
     if (!content.trim()) {
       // Ran out of budget mid-reasoning. Reported rather than silently dropped:
-      // it means MAX_TOKENS is too low for the configured model.
-      logger.warn({ finish: choice?.finish_reason }, 'live analysis: empty content');
+      // an empty body with HTTP 200 is a success-shaped failure, and the usual
+      // cause is a reasoning model with thinking left on.
+      logger.warn({ finish, provider: env.LIVE_ANALYSIS_PROVIDER }, 'live analysis: empty content');
       return null;
     }
 
