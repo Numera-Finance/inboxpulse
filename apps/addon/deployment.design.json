@@ -1,5 +1,4 @@
 {
-  "_comment": "Parallel deployment for design iteration. Points at the crm-addon-design Cloud Run service, NOT crm-addon. Named distinctly so it does not collide with the inboxpulse-dev deployment in Gmail's add-on rail — running two identically-titled panels is the exact problem that caused the original deployment to be deleted on 2026-08-03. Register with: gcloud workspace-add-ons deployments create inboxpulse-design --deployment-file=apps/addon/deployment.design.json --project project-y-email-sentiment",
   "oauthScopes": [
     "https://www.googleapis.com/auth/gmail.addons.execute",
     "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
