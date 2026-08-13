@@ -593,7 +593,7 @@ presented as a fact is worse than no answer.
   that is no longer displayed; ADR-013 removed the failure mode that made them
   necessary day to day.
 
-### ADR-007: Triangulating against other systems — one fact per connector (2026-08-13)
+### ADR-015: Triangulating against other systems — one fact per connector (2026-08-13)
 
 **Status:** Accepted
 
@@ -604,25 +604,33 @@ systems Gemini cannot reach.
 
 None of those systems are connected. `integrations.source` is an enum of exactly
 four values — gmail, outlook, slack, other — and only gmail has rows (15, of
-which 2 active). HubSpot, Stripe, Jira and the rest are not modelled at all.
+which 2 active). Every connector below needs that enum extended before it can
+even be stored, which is a migration.
 
 **Decision:** Specify the connectors before building them, in code
 (`apps/addon/src/services/connectors.ts`) rather than prose, so the shape of what
 we ask for is reviewable.
+
+The list is the stack MyStartupCFO actually runs — Streak and Canopy for CRM and
+practice management, Google Chat rather than Slack, QuickBooks Online for client
+books, no Jira. A first version listed Jira, Stripe, HubSpot and Slack, which
+made it a catalogue of a generic SaaS company rather than a spec for this one. A
+roadmap aimed at systems nobody here uses is worse than no roadmap: it looks
+researched.
 
 Each connector pulls exactly ONE fact, and the bar for that fact is *would
 knowing this change the reply* — not "is it interesting", not "is it available".
 
 | System | The one fact | Why it changes the reply |
 |---|---|---|
-| Jira | status of issues this customer raised | whether "we're working on it" is true, and since when |
+| Canopy | open client requests and how long outstanding | whether the ball is with us or with them |
+| QuickBooks Online | how far the books are closed for this client | whether you can promise a date, and which one |
+| Streak | pipeline and stage this contact sits in | what stage the relationship is at, so the tone matches |
+| Google Chat | discussed internally in the last 7 days? | whether to reply at all, or check with whoever is on it |
 | Google Calendar | next meeting already booked with anyone on the thread | whether to write a long reply at all, or just say "Thursday" |
-| Stripe | unpaid invoice count and oldest due date | how much goodwill to extend, whether to raise billing |
-| HubSpot | open deal stage, amount, close date | what the thread is worth and how fast it must be handled |
-| Slack | whether this customer was discussed internally in 7 days | whether to reply at all, or check with whoever is on it |
 
-Suggestions are mode-gated (payments on a scheduling thread is noise), require a
-resolved customer, and render ONE at a time.
+Suggestions are mode-gated (close status on a scheduling thread is noise),
+require a resolved customer, and render ONE at a time.
 
 Until a connector exists, the card shows the QUESTION it would answer and the
 words "not connected" — never a sample value.
@@ -635,15 +643,23 @@ words "not connected" — never a sample value.
   seconds later. A panel that has shown one invented number has spent the
   credibility of every real number on it — so the rule is absolute.
 - Every connector inherits the entitlement rule in `account-context.ts`.
-  Cross-system data makes leakage worse, not better: an unpaid invoice total is
-  more sensitive than an email subject, and pulling it through a panel keyed on
-  a sender domain is exactly how someone reads a company's finances because they
-  received one email from them.
-- Calendar is the highest-value and most expensive: `calendar.readonly` is
-  RESTRICTED tier and needs security review. Slack is the least speculative —
-  it is already in the enum.
+  Cross-system data makes leakage worse, not better: a client's close status or
+  AR position is more sensitive than an email subject, and pulling it through a
+  panel keyed on a sender domain is exactly how someone reads a company's
+  finances because they received one email from them.
+- **Canopy is the highest-value.** For outsourced finance the dominant friction
+  is "whose turn is it", the thread almost never says, and the two answers
+  produce opposite emails.
+- **Streak is the cheapest** — Gmail-native, so the box is already attached to
+  the thread being read. Build it first because it is easy, not because it is
+  most valuable; its data is arguably already on screen, which caps what it adds.
+- **Google Chat is the least awkward OAuth ask** — the same Google identity the
+  add-on already holds. **Calendar is the most expensive**: `calendar.readonly`
+  is RESTRICTED tier and needs security review.
+- All five need `integrations.source` enum values added before anything can be
+  persisted. That migration is a prerequisite, not part of this decision.
 
-### ADR-008: tasks.status has no value 2 (2026-08-13)
+### ADR-016: tasks.status has no value 2 (2026-08-13)
 
 **Status:** Accepted
 
