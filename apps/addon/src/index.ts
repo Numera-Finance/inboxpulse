@@ -269,7 +269,11 @@ app.post('/gmail/analyse', async (c) => {
 
   // An FYI thread gets a one-line answer and stops. Saying "nothing needed" fast
   // is more useful, and more honest, than four manufactured sections.
-  if (mode === 'fyi') {
+  //
+  // Unless the user pressed "Read it anyway", which overrides the classifier.
+  // They are looking at the thread and we are not; when they disagree with a
+  // judgement call, they are the better source.
+  if (mode === 'fyi' && p.force !== 'true') {
     return c.json(
       pushCard(
         buildThreadCard({
@@ -283,6 +287,12 @@ app.post('/gmail/analyse', async (c) => {
           account,
           historyPoints: buildHistoryPoints(account),
           mode: 'fyi',
+          // The escape hatch for the classifier's most costly error. 8 of 37
+          // fyi calls on the gauntlet were threads that needed work, and a
+          // wrong 'fyi' hides everything -- the user is told there is nothing
+          // to do and has no way to disagree. One button costs nothing on the
+          // 29 correct calls and rescues the 8 wrong ones.
+          fyiEscape: true,
           analysedMessages: threadMessages?.length ?? 0,
           live: { sentiment: 'neutral', reason: '', ephemeral: true },
         }),

@@ -72,6 +72,8 @@ export interface ThreadCardInput {
   now?: Date;
   /** integrations.source values with rows — never suggest connecting what is on. */
   connectedSources?: string[];
+  /** Offer a full read anyway — the user disagreeing that nothing is needed. */
+  fyiEscape?: boolean;
   /**
    * Nothing has been analysed yet — render instantly with what is free and
    * offer analysis as an action. See buildThreadCard.
@@ -371,6 +373,14 @@ const MODE_SPEC: Record<ThreadMode, ModeSpec> = {
   },
   // Nothing is owed. Say so and stop. The panel earns trust by being short when
   // short is the truth.
+  //
+  // This is also the most expensive mode to get WRONG. Measured against Haiku
+  // judges on 169 real threads, 8 of 37 fyi calls were threads that actually
+  // needed work -- and unlike a wrong 'complaint' (which still shows history,
+  // account and a draft), a wrong 'fyi' hides everything and tells the user
+  // there is nothing to do. It fails silently and in the direction of missed
+  // work, so the card carries an escape hatch rather than pretending the
+  // classifier is right. See buildFyiEscape().
   fyi: {
     headline: () => 'Nothing needed from you',
     showHistory: true,
@@ -532,6 +542,28 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // already get. These points cannot be got anywhere else, and a design that
       // buries or collapses them is a design that competes on Gemini's terms.
       const spec = MODE_SPEC[input.mode ?? 'working'];
+
+      // The classifier said nothing is needed. Let the user disagree.
+      //
+      // A wrong 'fyi' is the only mode error that HIDES work: complaint and
+      // scheduling still render sections the user can read past, but fyi stops
+      // the card. Measured on 169 real threads, 8 of 37 fyi calls were threads
+      // that needed work. This button costs one line on the 29 that were right
+      // and rescues the 8 that were not, which is the correct trade for a
+      // judgement that will never be perfect.
+      if (input.fyiEscape && input.baseUrl) {
+        sections.push({
+          widgets: [
+            buttons(
+              actionButton('Read it anyway', `${input.baseUrl}/gmail/read`, {
+                threadId: input.providerThreadId ?? '',
+                messageId: input.messageId ?? '',
+                force: 'true',
+              }),
+            ),
+          ],
+        });
+      }
 
       if (spec.showHistory && input.historyPoints?.length) {
         sections.push({
