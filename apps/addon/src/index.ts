@@ -346,6 +346,7 @@ app.post('/gmail/analyse', async (c) => {
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,
+        replyOptions: reading.replyOptions,
       }),
     ),
   );

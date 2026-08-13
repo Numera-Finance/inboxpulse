@@ -2,7 +2,8 @@ import { type Card, type CardSection, type Widget, text, deco, heading, separate
 import { buildTrendSection, type TrendPoint } from './trend';
 import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
-import type { LiveAnalysis, ThreadDigest, ThreadMode } from '../services/live-analysis';
+import { resolveWhen, calendarUrl } from '../services/when';
+import type { LiveAnalysis, ThreadDigest, ThreadMode, ReplyOption } from '../services/live-analysis';
 import type { Participant } from '../services/participants';
 import type { AccountContext } from '../services/api-client';
 
@@ -64,6 +65,10 @@ export interface ThreadCardInput {
   digest?: ThreadDigest | null;
   /** A generated reply, carried into Gmail's compose window by URL. */
   draft?: string | null;
+  /** Ways to answer, recommended first. */
+  replyOptions?: ReplyOption[];
+  /** Reference date for resolving commitment deadlines; injected so it's testable. */
+  now?: Date;
   /**
    * Nothing has been analysed yet — render instantly with what is free and
    * offer analysis as an action. See buildThreadCard.
@@ -370,6 +375,38 @@ const SENTIMENT_RANK: Record<TrendPoint['sentiment'], number> = {
  * "Loop in", shared by the instant first paint and the analysed card — it needs
  * no model call, only headers we already hold.
  */
+/**
+ * The one control on a commitment — a reminder, a task, or nothing.
+ * See the comment at the call site for why the order is date-first.
+ */
+function commitmentButton(
+  c: { who: string; what: string; when?: string },
+  ctx: { canTrack: boolean; today: Date; input: ThreadCardInput },
+): Record<string, unknown> {
+  const day = resolveWhen(c.when, ctx.today);
+  if (day) {
+    return {
+      button: {
+        text: 'Remind me',
+        onClick: {
+          openLink: {
+            url: calendarUrl(`${c.who}: ${c.what}`, day, ctx.input.subject ?? undefined),
+          },
+        },
+      },
+    };
+  }
+  if (ctx.canTrack) {
+    return {
+      button: actionButton('Track', `${ctx.input.baseUrl}/gmail/task`, {
+        customerId: ctx.input.account!.customerId!,
+        title: `${c.who}: ${c.what}`.slice(0, 200),
+      }),
+    };
+  }
+  return {};
+}
+
 function loopInSections(input: ThreadCardInput): CardSection[] {
   const people = input.participants ?? [];
   if (!people.length) return [];
@@ -562,10 +599,20 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // which is why it earns space on a benign thread where sentiment does not.
       const digest = input.digest;
       if (spec.showCommitments && digest?.commitments.length) {
-        // Each commitment gets a Track button — the one control on this card
-        // that changes state rather than opening Gmail. Only when we know which
-        // customer to file it against; a task with no account is not trackable.
+        // Every commitment gets an action that is NOT writing an email, because
+        // writing the email is the one thing Gmail already does for you. The
+        // failure this section exists to prevent is a promise being made and
+        // then dropped, and no draft prevents that.
+        //
+        // Which action depends on what we can honestly offer:
+        //   a resolvable date -> a calendar reminder, because a dated promise is
+        //     precisely the droppable one, and a template URL needs no OAuth
+        //     scope so it works for every user on day one;
+        //   no date but a known account -> a tracked task, so an open-ended
+        //     promise lands somewhere durable instead of in this thread.
+        // Neither is available -> no button, rather than a control that lies.
         const canTrack = Boolean(input.account?.customerId && input.baseUrl);
+        const today = input.now ?? new Date();
         sections.push({
           header: heading('Who owes what'),
           widgets: digest.commitments.map((c) =>
@@ -577,14 +624,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
               }`,
               bottomLabel: c.when,
               wrapText: true,
-              ...(canTrack
-                ? {
-                    button: actionButton('Track', `${input.baseUrl}/gmail/task`, {
-                      customerId: input.account!.customerId!,
-                      title: `${c.who}: ${c.what}`.slice(0, 200),
-                    }),
-                  }
-                : {}),
+              ...commitmentButton(c, { canTrack, today, input }),
             }),
           ),
         });
@@ -600,7 +640,27 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       const search = deriveSearch(input.headers);
       const doNext: Widget[] = [];
       const btns = [];
-      if (spec.showDraft && input.draft) {
+      // Stance choice, not a menu. The first is recommended and gets the FILLED
+      // button; alternates are OUTLINED. Three equal buttons would be three
+      // decisions, and the median user does the default — so there has to be
+      // one, and it has to be the right one.
+      const options = spec.showDraft ? input.replyOptions ?? [] : [];
+      if (options.length) {
+        sections.push({
+          header: heading('How to answer'),
+          widgets: options.map((o, i) =>
+            deco({
+              text: `<b>${escapeText(o.stance)}</b>${o.rationale ? ` — ${escapeText(o.rationale)}` : ''}`,
+              bottomLabel: o.text.length > 150 ? `${o.text.slice(0, 147)}…` : o.text,
+              wrapText: true,
+              button: {
+                text: i === 0 ? 'Use this' : 'Use',
+                onClick: { openLink: { url: gmailComposeUrl(input, o.text) } },
+              },
+            }),
+          ),
+        });
+      } else if (spec.showDraft && input.draft) {
         btns.push(linkButton('Draft a reply', gmailComposeUrl(input, input.draft)));
       }
       if (search) btns.push(linkButton('Find related emails', gmailSearchUrl(search.query, input.viewerEmail)));

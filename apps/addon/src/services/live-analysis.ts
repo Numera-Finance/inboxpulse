@@ -438,8 +438,28 @@ export type ThreadMode = 'complaint' | 'scheduling' | 'opportunity' | 'working' 
 
 export const THREAD_MODES: ThreadMode[] = ['complaint', 'scheduling', 'opportunity', 'working', 'fyi'];
 
+/**
+ * One way of answering. The stance is the expertise: a good CSM knows whether
+ * this thread wants ownership, a question, or escalation. The median user gets
+ * handed one draft and has to make that judgement alone — which is exactly the
+ * floor this product is meant to raise.
+ *
+ * Offered as a choice, not a menu: the first is recommended and renders FILLED,
+ * the rest OUTLINED. Three equal buttons would be three decisions.
+ */
+export interface ReplyOption {
+  /** 2-3 words naming the move: "Own it", "Ask first", "Escalate". */
+  stance: string;
+  /** Why this stance, in one short clause. */
+  rationale: string;
+  /** The reply itself. */
+  text: string;
+}
+
 export interface ThreadReading {
   mode: ThreadMode;
+  /** Ordered: the recommended stance first. */
+  replyOptions: ReplyOption[];
   sentiment: LiveSentiment;
   reason: string;
   commitments: Commitment[];
@@ -523,11 +543,19 @@ export async function readThreadLive(input: {
     '   description of how something works. If in doubt, leave it out.',
     '4. openQuestions: questions asked that nobody answered later in the thread,',
     '   quoted VERBATIM as they were written. Not your rephrasing of them.',
-    '5. draft: a reply the recipient could send. Three sentences maximum, no',
-    '   greeting, no sign-off. Commit only to what the thread already supports.',
-    '   If the HISTORY section below shows this was raised before, the draft must',
-    '   acknowledge that explicitly — a reply that ignores a repeat complaint is',
-    '   the single worst thing this product could produce.',
+    '5. replyOptions: TWO OR THREE genuinely different ways to answer, best',
+    '   first. Each has a stance (2-3 words naming the move), a rationale (one',
+    '   short clause for why), and text (the reply, three sentences maximum, no',
+    '   greeting, no sign-off).',
+    '   They must differ in APPROACH, not wording — e.g. taking ownership with a',
+    '   date, versus asking the one question that unblocks it, versus bringing in',
+    '   someone senior. Two options that say the same thing differently are',
+    '   worthless.',
+    '   Commit only to what the thread already supports; never invent a date, a',
+    '   price, or a promise.',
+    '   If the HISTORY section shows this was raised before, EVERY option must',
+    '   acknowledge that — a reply that ignores a repeat complaint is the single',
+    '   worst thing this product could produce.',
     '6. messageSentiments: one sentiment per message IN ORDER, oldest first.',
     '   The array length MUST equal the number of "From:" blocks below.',
     '',
@@ -536,7 +564,7 @@ export async function readThreadLive(input: {
     input.thread.slice(0, 6000),
     '',
     'Return ONLY this JSON:',
-    '{"sentiment":"positive|neutral|negative","reason":"\\"exact quote\\"","commitments":[{"who":"...","what":"...","when":"optional","quote":"exact sentence"}],"openQuestions":["exact question"],"draft":"...","messageSentiments":["neutral","positive"]}',
+    '{"sentiment":"positive|neutral|negative","reason":"\\"exact quote\\"","commitments":[{"who":"...","what":"...","when":"optional","quote":"exact sentence"}],"openQuestions":["exact question"],"replyOptions":[{"stance":"Own it","rationale":"third time raised","text":"..."},{"stance":"Ask first","rationale":"scope is unclear","text":"..."}],"messageSentiments":["neutral","positive"]}',
   ].join('\n');
 
   const controller = new AbortController();
@@ -613,6 +641,17 @@ export function parseReading(raw: string): ThreadReading | null {
       reason: typeof o.reason === 'string' ? o.reason.trim() : '',
       commitments: digest?.commitments ?? [],
       openQuestions: digest?.openQuestions ?? [],
+      replyOptions: Array.isArray(o.replyOptions)
+        ? (o.replyOptions as Array<Record<string, unknown>>)
+            .filter((r) => typeof r?.stance === 'string' && typeof r?.text === 'string')
+            .map((r) => ({
+              stance: String(r.stance).trim(),
+              rationale: typeof r.rationale === 'string' ? String(r.rationale).trim() : '',
+              text: String(r.text).trim(),
+            }))
+            .filter((r) => r.stance && r.text)
+            .slice(0, 3)
+        : [],
       draft: typeof o.draft === 'string' ? o.draft.trim() : '',
       messageSentiments,
       historyPoints: Array.isArray(o.historyPoints)
