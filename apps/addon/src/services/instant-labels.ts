@@ -109,7 +109,10 @@ export const INSTANT_LABELS: InstantLabel[] = [
   },
   {
     key: 'waiting',
-    name: `${NS}/Waiting on`,
+    // 'Blocked' rather than 'Waiting on'. The mode set already contributes
+    // 'Waiting on you', and two labels differing by one word are two labels
+    // nobody can tell apart in a sidebar — which defeats a colour-coded tag.
+    name: `${NS}/Blocked`,
     means: 'Blocked on someone else',
     bg: '#ffad47',
     text: '#ffffff',
@@ -160,6 +163,21 @@ export function isInstantLabelName(name: string): boolean {
 export function allSweepableNames(): string[] {
   const current = [...INSTANT_LABELS, ...MODE_LABELS].map((l) => l.name);
   return [...current, ...current.map((n) => n.replace(`${NS}/`, `${LEGACY_NS}/`))];
+}
+
+/**
+ * Names that should no longer exist in a mailbox at all.
+ *
+ * Every legacy-prefixed name, plus the old 'Waiting on' before it became
+ * 'Blocked'. These are DELETED rather than detached: a renamed label leaves an
+ * empty definition sitting in the sidebar forever, and after two renames the
+ * user is looking at sixteen entries where eight were intended.
+ */
+export function retiredLabelNames(): string[] {
+  const legacy = [...INSTANT_LABELS, ...MODE_LABELS].map((l) =>
+    l.name.replace(`${NS}/`, `${LEGACY_NS}/`),
+  );
+  return [...legacy, `${LEGACY_NS}/Waiting on`, `${NS}/Waiting on`];
 }
 
 export interface InstantApplication {

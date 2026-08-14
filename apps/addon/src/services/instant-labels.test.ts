@@ -4,6 +4,7 @@ import {
   instantLabelByKey, isInstantLabelName,
   MODE_LABELS,
   modeLabelFor,
+  retiredLabelNames,
 } from './instant-labels';
 
 describe('instant labels', () => {
@@ -148,5 +149,29 @@ describe('mode labels', () => {
     expect(isInstantLabelName('InboxPulse ⚡/Focus')).toBe(true);
     expect(isInstantLabelName('⚡/Focus')).toBe(true);
     expect(isInstantLabelName('InboxPulse/Churn risk')).toBe(false);
+  });
+});
+
+describe('retired labels', () => {
+  it('lists every legacy-prefixed name for deletion', () => {
+    // Renaming the prefix created a SECOND set beside the first: sixteen
+    // labels where eight were intended, half permanently empty.
+    const retired = retiredLabelNames();
+    for (const l of [...INSTANT_LABELS, ...MODE_LABELS]) {
+      expect(retired).toContain(l.name.replace('⚡/', 'InboxPulse ⚡/'));
+    }
+  });
+
+  it('retires the old "Waiting on" name', () => {
+    // 'Waiting on' and 'Waiting on you' are indistinguishable in a sidebar,
+    // which defeats a colour-coded tag. It is now 'Blocked'.
+    expect(retiredLabelNames()).toContain('⚡/Waiting on');
+    expect(INSTANT_LABELS.map((l) => l.name)).toContain('⚡/Blocked');
+    expect(INSTANT_LABELS.map((l) => l.name)).not.toContain('⚡/Waiting on');
+  });
+
+  it('never retires a name that is still in use', () => {
+    const live = new Set([...INSTANT_LABELS, ...MODE_LABELS].map((l) => l.name));
+    for (const r of retiredLabelNames()) expect(live.has(r)).toBe(false);
   });
 });

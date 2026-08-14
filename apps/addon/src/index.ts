@@ -47,8 +47,9 @@ import {
   instantLabelByKey,
   modeLabelFor,
   gmailThreadUrl,
+  retiredLabelNames,
 } from './services/instant-labels';
-import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads, clearAllOfLabel } from './gmail/labels';
+import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads, clearAllOfLabel, deleteLabelByName } from './gmail/labels';
 import { rankTriage, splitQuiet } from './services/triage';
 import { buildTriageCard } from './cards/triage';
 
@@ -808,13 +809,19 @@ app.post('/gmail/clear-marks', async (c) => {
   if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
 
   let total = 0;
-  // Legacy names included: the prefix changed from `InboxPulse ⚡/` to `⚡/`, and
-  // labels written before that must stay reachable or the rename orphans them.
-  const legacy = [...INSTANT_LABELS, ...MODE_LABELS].map((l) => ({
-    ...l,
-    name: l.name.replace('⚡/', 'InboxPulse ⚡/'),
-  }));
-  for (const label of [...INSTANT_LABELS, ...MODE_LABELS, ...legacy]) {
+
+  // Retired names are DELETED, not detached.
+  //
+  // Renaming the prefix created a second set of labels beside the first, so the
+  // sidebar showed sixteen entries where eight were intended — half of them
+  // permanently empty. Detaching leaves the definition behind; deleting removes
+  // it AND takes it off every thread that carried it.
+  let removedDefs = 0;
+  for (const name of retiredLabelNames()) {
+    if (await deleteLabelByName(name, oauthToken)) removedDefs += 1;
+  }
+
+  for (const label of [...INSTANT_LABELS, ...MODE_LABELS]) {
     total += await clearAllOfLabel(label, oauthToken);
     for (const a of instantState.active().filter((x) => x.labelKey === label.key)) {
       instantState.turnOff(a.threadId, a.labelKey);
@@ -823,8 +830,10 @@ app.post('/gmail/clear-marks', async (c) => {
   workingSet.prune();
   return c.json(
     notify(
-      total
-        ? `Cleared ${total} thread${total === 1 ? '' : 's'} — refresh Gmail to see`
+      total || removedDefs
+        ? `Cleared ${total} thread${total === 1 ? '' : 's'}` +
+          (removedDefs ? `, removed ${removedDefs} old label${removedDefs === 1 ? '' : 's'}` : '') +
+          ' — refresh Gmail to see'
         : 'Nothing marked',
     ),
   );

@@ -222,3 +222,30 @@ export async function clearAllOfLabel(
   }
   return n;
 }
+
+/**
+ * Delete a label outright, rather than detaching it from threads.
+ *
+ * `clearAllOfLabel` takes a label OFF messages but leaves the definition in the
+ * sidebar. That is right for a label still in use and wrong for one that should
+ * not exist — renaming the prefix from `InboxPulse ⚡/` to `⚡/` created a second
+ * set beside the first, so the user ended up with sixteen labels where eight
+ * were intended, half of them permanently empty.
+ *
+ * Deleting also detaches: Gmail removes a deleted label from every thread that
+ * carried it, so this is strictly more thorough than the sweep.
+ */
+export async function deleteLabelByName(name: string, token: string): Promise<boolean> {
+  const list = await gapi('/labels', token);
+  const found = (list?.labels as Array<{ id: string; name: string }> | undefined)?.find(
+    (l) => l.name === name,
+  );
+  if (!found) return false;
+  const res = await gapi(`/labels/${found.id}`, token, { method: 'DELETE' });
+  // Gmail returns an empty body on a successful delete, which `gapi` turns into
+  // a JSON parse failure and therefore null. Re-list to confirm rather than
+  // trusting the return value.
+  const after = await gapi('/labels', token);
+  const still = (after?.labels as Array<{ name: string }> | undefined)?.some((l) => l.name === name);
+  return !still;
+}
