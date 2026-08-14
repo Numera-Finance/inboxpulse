@@ -73,6 +73,8 @@ describe('instant labels', () => {
     // these use `InboxPulse ⚡/`. remove-gmail-labels.ts deletes by prefix, so a
     // sweep of one must never take the other with it.
     const analysisNames = ['InboxPulse/Churn risk', 'InboxPulse/Upsell', 'InboxPulse/Negative'];
+    // The analysis set is `InboxPulse/…`; ours is `⚡/…`. Neither prefix may
+    // match the other, or a teardown of one removes the other.
     for (const l of INSTANT_LABELS) {
       expect(isInstantLabelName(l.name)).toBe(true);
       expect(analysisNames).not.toContain(l.name);
@@ -129,5 +131,22 @@ describe('mode labels', () => {
   it('does not collide with the user-chosen labels', () => {
     const user = new Set(INSTANT_LABELS.map((l) => l.name));
     for (const l of MODE_LABELS) expect(user.has(l.name)).toBe(false);
+  });
+
+  it('keeps the chip readable — the prefix is one character', () => {
+    // Gmail truncated the row chip to "InboxPul.../Waiting on you": twelve
+    // characters of branding pushing out the only part that carries meaning,
+    // on every row. The chip IS the product surface here.
+    for (const l of [...INSTANT_LABELS, ...MODE_LABELS]) {
+      expect(l.name.split('/')[0].length, l.name).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('still recognises the old prefix, so teardown can reach old labels', () => {
+    // Dropping it would strand labels we wrote — applied by us, unsweepable by
+    // us, which is the orphaning this feature keeps answering for.
+    expect(isInstantLabelName('InboxPulse ⚡/Focus')).toBe(true);
+    expect(isInstantLabelName('⚡/Focus')).toBe(true);
+    expect(isInstantLabelName('InboxPulse/Churn risk')).toBe(false);
   });
 });

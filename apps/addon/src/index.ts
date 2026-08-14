@@ -794,7 +794,13 @@ app.post('/gmail/clear-marks', async (c) => {
   if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
 
   let total = 0;
-  for (const label of [...INSTANT_LABELS, ...MODE_LABELS]) {
+  // Legacy names included: the prefix changed from `InboxPulse ⚡/` to `⚡/`, and
+  // labels written before that must stay reachable or the rename orphans them.
+  const legacy = [...INSTANT_LABELS, ...MODE_LABELS].map((l) => ({
+    ...l,
+    name: l.name.replace('⚡/', 'InboxPulse ⚡/'),
+  }));
+  for (const label of [...INSTANT_LABELS, ...MODE_LABELS, ...legacy]) {
     total += await clearAllOfLabel(label, oauthToken);
     for (const a of instantState.active().filter((x) => x.labelKey === label.key)) {
       instantState.turnOff(a.threadId, a.labelKey);

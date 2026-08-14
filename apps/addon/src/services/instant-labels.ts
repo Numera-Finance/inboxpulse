@@ -56,7 +56,26 @@ export interface InstantLabel {
   text: string;
 }
 
-const NS = 'InboxPulse ⚡';
+/**
+ * The label prefix, and it is short on purpose.
+ *
+ * It was `InboxPulse ⚡/`, which Gmail truncated in the row chip:
+ * "InboxPul.../Waiting on you". Twelve characters of branding were pushing out
+ * the only part that carries information, on every row, forever. The chip is
+ * the entire product surface here — a label the user cannot read at a glance is
+ * a label that has failed at the one job it has.
+ *
+ * `⚡` alone still namespaces it: nothing else in a mailbox starts with a bolt,
+ * the sweep matches on it, and it reads as ours without spelling it out.
+ */
+const NS = '⚡';
+
+/**
+ * The old prefix, still recognised so teardown can reach labels written before
+ * the rename. Dropping it would strand them — applied by us, unsweepable by us,
+ * which is precisely the orphaning this feature keeps having to answer for.
+ */
+const LEGACY_NS = 'InboxPulse ⚡';
 
 /**
  * Four, and four is the point.
@@ -134,7 +153,13 @@ export function modeLabelFor(mode: string): InstantLabel | null {
 
 /** Only these are ever swept. The analysis labels use `InboxPulse/` and are untouched. */
 export function isInstantLabelName(name: string): boolean {
-  return name.startsWith(`${NS}/`);
+  return name.startsWith(`${NS}/`) || name.startsWith(`${LEGACY_NS}/`);
+}
+
+/** Every label name we might have written, current and legacy, for teardown. */
+export function allSweepableNames(): string[] {
+  const current = [...INSTANT_LABELS, ...MODE_LABELS].map((l) => l.name);
+  return [...current, ...current.map((n) => n.replace(`${NS}/`, `${LEGACY_NS}/`))];
 }
 
 export interface InstantApplication {
