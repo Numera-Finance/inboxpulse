@@ -121,7 +121,7 @@ describe('mode labels', () => {
     // "Unhappy" tells the reader why the row is worth opening; "complaint" is
     // our pipeline's opinion of it, which the user does not care about.
     expect(modeLabelFor('complaint')!.name).toContain('Unhappy');
-    expect(modeLabelFor('working')!.name).toContain('Waiting on you');
+    expect(modeLabelFor('working')!.name).toContain('Reply due');
     for (const l of MODE_LABELS) expect(l.name).not.toMatch(/complaint|opportunity/i);
   });
 
@@ -162,12 +162,30 @@ describe('retired labels', () => {
     }
   });
 
-  it('retires the old "Waiting on" name', () => {
-    // 'Waiting on' and 'Waiting on you' are indistinguishable in a sidebar,
-    // which defeats a colour-coded tag. It is now 'Blocked'.
-    expect(retiredLabelNames()).toContain('⚡/Waiting on');
-    expect(INSTANT_LABELS.map((l) => l.name)).toContain('⚡/Blocked');
-    expect(INSTANT_LABELS.map((l) => l.name)).not.toContain('⚡/Waiting on');
+  it('retires every name this set has ever carried', () => {
+    // Each rename leaves a definition behind in the sidebar unless retired
+    // explicitly — that is how eight labels became sixteen.
+    for (const gone of [
+      '⚡/Waiting on', '⚡/Blocked', '⚡/Block time', '⚡/Waiting on you',
+      '⚡/Needs a time', '⚡/Needs reply',
+    ]) {
+      expect(retiredLabelNames(), gone).toContain(gone);
+    }
+  });
+
+  it('no two labels share a word', () => {
+    // 'Waiting on' collided with 'Waiting on you'; renaming it to 'Blocked'
+    // then collided with 'Block time'. Renaming one at a time without looking
+    // at the whole set just moves the collision.
+    const words = [...INSTANT_LABELS, ...MODE_LABELS].map((l) =>
+      l.name.split('/')[1].toLowerCase().split(/\s+/),
+    );
+    for (let i = 0; i < words.length; i += 1) {
+      for (let j = i + 1; j < words.length; j += 1) {
+        const shared = words[i].filter((w) => words[j].includes(w) && w.length > 2);
+        expect(shared, `${words[i].join(' ')} vs ${words[j].join(' ')}`).toHaveLength(0);
+      }
+    }
   });
 
   it('never retires a name that is still in use', () => {

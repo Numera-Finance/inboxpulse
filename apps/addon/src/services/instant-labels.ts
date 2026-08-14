@@ -102,17 +102,23 @@ export const INSTANT_LABELS: InstantLabel[] = [
   },
   {
     key: 'blocktime',
-    name: `${NS}/Block time`,
+    name: `${NS}/Calendar`,
     means: 'Needs a calendar slot',
     bg: '#16a765',
     text: '#ffffff',
   },
   {
     key: 'waiting',
-    // 'Blocked' rather than 'Waiting on'. The mode set already contributes
-    // 'Waiting on you', and two labels differing by one word are two labels
-    // nobody can tell apart in a sidebar — which defeats a colour-coded tag.
-    name: `${NS}/Blocked`,
+    // Third name for this one, and the reason is worth recording: 'Waiting on'
+    // collided with the mode label 'Waiting on you', and the replacement
+    // 'Blocked' then collided with 'Block time'. Renaming one label at a time
+    // without looking at the whole set just moves the collision.
+    //
+    // The set now separates by SUBJECT: the four labels a user picks are about
+    // what THEY are doing (Focus, Research, Calendar, Chasing); the four
+    // derived ones are about what the THREAD is (Unhappy, Needs a time, Needs
+    // reply, Opening). No two share a word.
+    name: `${NS}/Chasing`,
     means: 'Blocked on someone else',
     bg: '#ffad47',
     text: '#ffffff',
@@ -144,8 +150,8 @@ export function instantLabelByKey(key: string): InstantLabel | null {
  */
 export const MODE_LABELS: InstantLabel[] = [
   { key: 'm_complaint', name: `${NS}/Unhappy`, means: 'Someone is unhappy', bg: '#fb4c2f', text: '#ffffff' },
-  { key: 'm_scheduling', name: `${NS}/Needs a time`, means: 'A time is being arranged', bg: '#4986e7', text: '#ffffff' },
-  { key: 'm_working', name: `${NS}/Waiting on you`, means: 'Live work, waiting on you', bg: '#ffad47', text: '#ffffff' },
+  { key: 'm_scheduling', name: `${NS}/Schedule`, means: 'A time is being arranged', bg: '#4986e7', text: '#ffffff' },
+  { key: 'm_working', name: `${NS}/Reply due`, means: 'Live work, waiting on you', bg: '#ffad47', text: '#ffffff' },
   { key: 'm_opportunity', name: `${NS}/Opening`, means: 'An opening worth a look', bg: '#16a765', text: '#ffffff' },
 ];
 
@@ -177,7 +183,13 @@ export function retiredLabelNames(): string[] {
   const legacy = [...INSTANT_LABELS, ...MODE_LABELS].map((l) =>
     l.name.replace(`${NS}/`, `${LEGACY_NS}/`),
   );
-  return [...legacy, `${LEGACY_NS}/Waiting on`, `${NS}/Waiting on`];
+  // Every name this set has ever carried. Each rename leaves a definition
+  // behind in the sidebar unless it is retired explicitly.
+  const oldNames = ['Waiting on', 'Blocked', 'Block time', 'Waiting on you', 'Needs a time', 'Needs reply'];
+  return [
+    ...legacy,
+    ...oldNames.flatMap((n) => [`${NS}/${n}`, `${LEGACY_NS}/${n}`]),
+  ];
 }
 
 export interface InstantApplication {

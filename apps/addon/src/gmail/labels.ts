@@ -211,10 +211,13 @@ export async function clearAllOfLabel(
   const labelId = await ensureLabel(label, token);
   if (!labelId) return 0;
 
-  const list = await gapi(
-    `/threads?maxResults=100&q=${encodeURIComponent(`label:"${label.name}"`)}`,
-    token,
-  );
+  // Query by labelIds, NOT by a `label:"..."` search string.
+  //
+  // Gmail's search syntax does not reliably match a label whose name contains a
+  // non-ASCII character and spaces — `label:"⚡/Waiting on you"` returned
+  // nothing, so the sweep detached nothing while cheerfully reporting success.
+  // The label id is exact and involves no query parsing at all.
+  const list = await gapi(`/threads?maxResults=100&labelIds=${encodeURIComponent(labelId)}`, token);
   const ids = ((list?.threads as Array<{ id: string }> | undefined) ?? []).map((t) => t.id);
   let n = 0;
   for (const id of ids) {
