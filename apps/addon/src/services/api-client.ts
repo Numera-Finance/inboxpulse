@@ -540,3 +540,27 @@ export async function getDangerPulse(tenantId: string, days = 90): Promise<Dange
     return null;
   }
 }
+
+export interface OwnerLoad {
+  name: string;
+  threads: number;
+  oldestDays: number;
+  unassigned: boolean;
+}
+
+/** Who is carrying the unanswered angry mail, by task assignee. */
+export async function getOwnerLoad(tenantId: string, days = 30): Promise<OwnerLoad[]> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return [];
+  const res = await apiFetch(
+    `${env.SERVICE_API_URL}/api/internal/addon/owner-load?tenantId=${encodeURIComponent(tenantId)}&days=${days}`,
+    { headers: internalHeaders(tenantId) },
+  );
+  if (!res || !res.ok) return [];
+  try {
+    const d = unwrap<OwnerLoad[]>(await res.json());
+    return Array.isArray(d) ? d : [];
+  } catch {
+    return [];
+  }
+}

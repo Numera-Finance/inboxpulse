@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { InvalidInputError } from '@crm/shared';
-import { AccountContextService, WaitingClientsService, DangerPulseService } from './account-context';
+import { AccountContextService, WaitingClientsService, DangerPulseService, OwnerLoadService } from './account-context';
 
 export const addonRoutes = new Hono();
 
@@ -140,5 +140,25 @@ addonRoutes.get('/pulse', async (c) => {
   return c.json({
     success: true,
     data: await container.resolve(DangerPulseService).get(tenantId, days),
+  });
+});
+
+/**
+ * GET /api/internal/addon/owner-load?tenantId=&days=
+ *
+ * Who is carrying the unanswered angry mail, by task assignee — the one
+ * attribution source with a single owner per thread. See OwnerLoadService for
+ * why reply attribution and customer ownership were both rejected.
+ *
+ * Tenant-wide: an aggregate of counts per person, with no customer or message
+ * detail, so it discloses nothing about an account the viewer cannot open.
+ */
+addonRoutes.get('/owner-load', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  const days = Math.min(90, Math.max(1, Number(c.req.query('days') ?? 30)));
+  return c.json({
+    success: true,
+    data: await container.resolve(OwnerLoadService).get(tenantId, days),
   });
 });

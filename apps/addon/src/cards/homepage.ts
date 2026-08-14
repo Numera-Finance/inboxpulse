@@ -79,6 +79,11 @@ function sparkline(values: number[]): string {
     .join('');
 }
 
+export interface OwnerLoadView {
+  owners: Array<{ name: string; threads: number; oldestDays: number; unassigned: boolean }>;
+  webUrl: string;
+}
+
 export interface WaitingView {
   clients: Array<{
     customerId: string | null;
@@ -95,6 +100,7 @@ export function buildHomepageCard(
   baseUrl?: string,
   waiting?: WaitingView,
   pulse?: PulseView,
+  ownerLoad?: OwnerLoadView,
 ): Card {
   const sections: CardSection[] = [
     {
@@ -190,6 +196,45 @@ export function buildHomepageCard(
             ]
           : []),
       ],
+    });
+  }
+
+  // Who is carrying it.
+  //
+  // Attributed by TASK ASSIGNEE — the only source with one owner per thread.
+  // Reply attribution covers 7% of this population because replies are never
+  // stored, and customer ownership assigns four to five people per account with
+  // no role to distinguish them, which turned 188 threads into 379
+  // person-thread pairs.
+  //
+  // Unassigned is shown as a row rather than dropped. It is the largest single
+  // group at 43%, and a management review that silently omits its biggest
+  // bucket is worse than no review — it reports on the work that already has an
+  // owner and stays quiet about the work that has none.
+  if (ownerLoad?.owners.length) {
+    sections.unshift({
+      header: heading('Who is carrying it'),
+      widgets: ownerLoad.owners.map((o) =>
+        deco({
+          topLabel: `${o.threads} thread${o.threads === 1 ? '' : 's'} · oldest ${o.oldestDays}d`,
+          text: o.unassigned
+            ? `<b><font color="#c5221f">Nobody assigned</font></b>`
+            : `<b>${escapeText(o.name)}</b>`,
+          wrapText: false,
+          ...(o.unassigned
+            ? {
+                button: {
+                  text: 'Open',
+                  onClick: {
+                    openLink: {
+                      url: `${ownerLoad.webUrl}/escalations?signal=negative&status=open&assigned=unassigned`,
+                    },
+                  },
+                },
+              }
+            : {}),
+        }),
+      ),
     });
   }
 
