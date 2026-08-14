@@ -293,15 +293,12 @@ export function buildHomepageCard(
   }
 
 
-  if (stats) {
-    sections.push({
-      header: heading('This workspace'),
-      widgets: [
-        deco({ topLabel: 'Emails ingested', text: stats.total.toLocaleString() }),
-        deco({ topLabel: 'Analyzed', text: stats.analyzed.toLocaleString() }),
-      ],
-    });
-  } else {
+  // "Emails ingested 264,437 / Analyzed 82,782" used to sit here. Removed: it is
+  // a fact about our pipeline, not about the reader's day. Nobody opens this
+  // panel to learn how much mail we have processed, and it cannot change what
+  // anyone does next — the same test the label policy applies. It was also
+  // taking the space directly under the numbers that CAN be acted on.
+  if (!stats) {
     sections.push({
       widgets: [
         text(

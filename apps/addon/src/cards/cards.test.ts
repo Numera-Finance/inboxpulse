@@ -29,10 +29,15 @@ describe('response envelope', () => {
 });
 
 describe('homepage card', () => {
-  it('shows live stats when connected', () => {
+  it('does not show pipeline volume', () => {
+    // "Emails ingested 264,437 / Analyzed 82,782" was removed: it is a fact
+    // about our pipeline, not the reader's day, and it cannot change what
+    // anyone does next — the same test the label policy applies. It was also
+    // occupying the space directly under the numbers that CAN be acted on.
     const flat = JSON.stringify(buildHomepageCard({ total: 174109, analyzed: 54477 }));
-    expect(flat).toContain('174,109');
-    expect(flat).toContain('54,477');
+    expect(flat).not.toContain('174,109');
+    expect(flat).not.toContain('54,477');
+    expect(flat).not.toContain('This workspace');
   });
 
   it('shows preview copy when not connected', () => {
