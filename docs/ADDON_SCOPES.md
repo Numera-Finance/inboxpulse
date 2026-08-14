@@ -34,8 +34,13 @@ scope; this is not a matter of finding the right one.
 
 **1. The consent string, not the review.**
 
-`gmail.modify` renders to the user as roughly *"Read, compose, send, and
-permanently delete all your email from Gmail."* Every user sees that at install.
+`gmail.modify` renders to the user as **"Read, compose, and send emails from
+your Gmail account."** Every user sees that at install.
+
+(An earlier version of this document quoted *"…and permanently delete all your
+email"*. That is the string for `https://mail.google.com/`, full access — not
+this scope. Verified against the live consent screen; the real text is milder,
+which weakens the case against asking for it.)
 
 For a feature whose value is a coloured tag that removes itself after thirty
 minutes, that is a wildly disproportionate ask, and it lands squarely on the
