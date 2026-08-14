@@ -33,6 +33,43 @@ export interface WorkingSetView {
   threadUrl: (threadId: string, viewerEmail?: string) => string;
 }
 
+export interface PulseView {
+  negativeMedianH: number | null;
+  otherMedianH: number | null;
+  negativeP90H: number | null;
+  negativeCount: number;
+  trend: Array<{ month: string; medianH: number }>;
+  attributionPct: number;
+}
+
+/** Hours as something a person reads without converting. */
+function hrs(h: number | null): string {
+  if (h === null) return '—';
+  if (h < 1) return `${Math.round(h * 60)}m`;
+  if (h < 48) return `${h.toFixed(1)}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+/**
+ * A trend drawn in block characters.
+ *
+ * CardService has no canvas and no SVG, so a chart is not available at any
+ * price. Eight block glyphs are — and for "is this getting better", eight
+ * glyphs is the entire question. Lower is better here, so the bars are
+ * INVERTED: a falling line means faster replies, which is what the reader
+ * expects a good trend to look like.
+ */
+function sparkline(values: number[]): string {
+  if (values.length < 2) return '';
+  const blocks = '▁▂▃▄▅▆▇█';
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = max - min || 1;
+  return values
+    .map((v) => blocks[Math.round(((max - v) / span) * (blocks.length - 1))])
+    .join('');
+}
+
 export interface WaitingView {
   clients: Array<{
     customerId: string | null;
@@ -48,6 +85,7 @@ export function buildHomepageCard(
   working?: WorkingSetView,
   baseUrl?: string,
   waiting?: WaitingView,
+  pulse?: PulseView,
 ): Card {
   const sections: CardSection[] = [
     {
@@ -64,6 +102,66 @@ export function buildHomepageCard(
       ],
     },
   ];
+  // The number this product exists to move, and the comparison that gives it
+  // meaning.
+  //
+  // Reported ALONGSIDE the same figure for everything else, because the number
+  // alone says nothing. On the current data that comparison IS the finding:
+  // negative 12.9h against other 15.1h. Angry mail is answered barely faster
+  // than routine mail, so sentiment is not currently changing anyone's
+  // behaviour — and a lead reading "12.9h" by itself would conclude things were
+  // fine.
+  //
+  // p90 sits next to it because the median hides the cases that matter. Half of
+  // angry clients hear back inside 13 hours; a tenth wait nearly six days, and
+  // those are the ones that leave.
+  if (pulse?.negativeMedianH !== null && pulse !== undefined) {
+    const faster =
+      pulse.otherMedianH !== null && pulse.negativeMedianH !== null
+        ? pulse.otherMedianH - pulse.negativeMedianH
+        : null;
+    const verdict =
+      faster === null
+        ? ''
+        : faster < 2
+          ? `<font color="#c5221f">only ${hrs(Math.abs(faster))} faster than routine mail — sentiment is not changing behaviour</font>`
+          : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
+    const spark = sparkline(pulse.trend.map((t) => t.medianH));
+
+    sections.unshift({
+      header: heading('Reply time to unhappy clients'),
+      widgets: [
+        deco({
+          topLabel: `median over ${pulse.negativeCount} replies`,
+          text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? ` — ${verdict}` : ''}`,
+          wrapText: true,
+        }),
+        deco({
+          topLabel: 'the tail',
+          text: `1 in 10 waits <b>${hrs(pulse.negativeP90H)}</b> or more`,
+          wrapText: true,
+        }),
+        ...(spark
+          ? [
+              deco({
+                topLabel: `by month · ${pulse.trend[0]?.month ?? ''} → ${pulse.trend[pulse.trend.length - 1]?.month ?? ''}`,
+                text: `<font color="#1a73e8">${spark}</font>  <font color="#5f6368">lower is faster</font>`,
+                wrapText: false,
+              }),
+            ]
+          : []),
+        ...(pulse.attributionPct < 50
+          ? [
+              deco({
+                text: `<font color="#5f6368">Per-person breakdown needs reply attribution: ${pulse.attributionPct}% of replies currently identify who sent them.</font>`,
+                wrapText: true,
+              }),
+            ]
+          : []),
+      ],
+    });
+  }
+
   // The team-lead question, answered directly and put first.
   //
   // "Is there an angry client nobody is answering?" is the thing a lead opens a

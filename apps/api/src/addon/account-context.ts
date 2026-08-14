@@ -380,3 +380,105 @@ export class WaitingClientsService {
       .sort((a, b) => b.daysWaiting - a.daysWaiting);
   }
 }
+
+export interface DangerPulse {
+  /** Median hours to first reply on NEGATIVE inbound, last 90 days. */
+  negativeMedianH: number | null;
+  /** Same for everything else — the comparison is the whole point. */
+  otherMedianH: number | null;
+  /** The tail: 10% of angry clients wait at least this long. */
+  negativeP90H: number | null;
+  negativeCount: number;
+  /** Median per month, oldest first, for a text sparkline. */
+  trend: Array<{ month: string; medianH: number }>;
+  /** Share of replies attributable to a person — caveats the per-person view. */
+  attributionPct: number;
+}
+
+/**
+ * The number InboxPulse exists to move.
+ *
+ * The product is a management tool for sensing where the danger is, and the
+ * danger is an unhappy client waiting. So the headline is **median time to
+ * first reply on negative mail** — and it is reported ALONGSIDE the same figure
+ * for everything else, because the number alone is meaningless.
+ *
+ * On the current data that comparison is the finding: negative 12.9h against
+ * other 15.1h. Angry mail is answered barely faster than routine mail, which
+ * means sentiment is not currently changing anyone's behaviour. A lead reading
+ * "12.9h" alone would conclude things are fine.
+ *
+ * p90 is reported because the median hides the cases that matter. Half of angry
+ * clients hear back inside 13 hours; a tenth wait nearly six days, and those are
+ * the ones that leave.
+ *
+ * Rows where first_reply_at precedes received_at are excluded — the field is
+ * populated by a matcher that can mis-associate, and a negative duration would
+ * drag a median toward a number nobody can act on.
+ */
+@injectable()
+export class DangerPulseService {
+  constructor(@inject('Database') private readonly db: Database) {}
+
+  async get(tenantId: string, days = 90): Promise<DangerPulse> {
+    const base = sql`
+      FROM emails e
+      JOIN email_analyses a ON a.email_id = e.id AND a.analysis_type = 'sentiment'
+      WHERE e.tenant_id = ${tenantId}
+        AND e.is_customer_email
+        AND e.first_reply_at IS NOT NULL
+        AND e.first_reply_at > e.received_at
+        AND e.received_at > now() - (${days} || ' days')::interval
+    `;
+
+    const rows = await this.db.execute(sql`
+      SELECT
+        (a.sentiment_value = 'negative') AS is_neg,
+        count(*)::int AS n,
+        percentile_cont(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
+        ) AS median_h,
+        percentile_cont(0.9) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
+        ) AS p90_h
+      ${base}
+      GROUP BY 1
+    `);
+
+    const byNeg = new Map(
+      (rows as unknown as Array<Record<string, unknown>>).map((r) => [Boolean(r.is_neg), r]),
+    );
+    const neg = byNeg.get(true);
+    const oth = byNeg.get(false);
+
+    const trendRows = await this.db.execute(sql`
+      SELECT to_char(date_trunc('month', e.received_at), 'YYYY-MM') AS month,
+             percentile_cont(0.5) WITHIN GROUP (
+               ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
+             ) AS median_h
+      ${base} AND a.sentiment_value = 'negative'
+      GROUP BY 1 ORDER BY 1
+    `);
+
+    const attrRows = await this.db.execute(sql`
+      SELECT count(*)::int AS n, count(e.first_reply_by_id)::int AS attributed
+      ${base} AND a.sentiment_value = 'negative'
+    `);
+    const attr = (attrRows as unknown as Array<{ n: number; attributed: number }>)[0];
+
+    const num = (v: unknown): number | null =>
+      v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10;
+
+    return {
+      negativeMedianH: num(neg?.median_h),
+      otherMedianH: num(oth?.median_h),
+      negativeP90H: num(neg?.p90_h),
+      negativeCount: Number(neg?.n ?? 0),
+      trend: (trendRows as unknown as Array<{ month: string; median_h: unknown }>).map((r) => ({
+        month: r.month,
+        medianH: Number(num(r.median_h) ?? 0),
+      })),
+      attributionPct: attr?.n ? Math.round((100 * attr.attributed) / attr.n) : 0,
+    };
+  }
+}

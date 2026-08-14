@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { InvalidInputError } from '@crm/shared';
-import { AccountContextService, WaitingClientsService } from './account-context';
+import { AccountContextService, WaitingClientsService, DangerPulseService } from './account-context';
 
 export const addonRoutes = new Hono();
 
@@ -119,5 +119,26 @@ addonRoutes.get('/waiting', async (c) => {
         ownDomains: ['mystartupcfo.com', 'numerafinance.com'],
       },
     ),
+  });
+});
+
+/**
+ * GET /api/internal/addon/pulse?tenantId=&days=
+ *
+ * Median time to first reply on negative mail — the number this product exists
+ * to move — reported against the same figure for everything else, because the
+ * number alone says nothing.
+ *
+ * Tenant-wide rather than viewer-scoped: it is an aggregate over thousands of
+ * threads with no per-customer detail, so it discloses nothing about an account
+ * the viewer cannot open.
+ */
+addonRoutes.get('/pulse', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  const days = Math.min(365, Math.max(7, Number(c.req.query('days') ?? 90)));
+  return c.json({
+    success: true,
+    data: await container.resolve(DangerPulseService).get(tenantId, days),
   });
 });

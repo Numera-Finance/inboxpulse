@@ -511,3 +511,28 @@ export async function resolveViewer(tenantId: string, email: string): Promise<Vi
     return null;
   }
 }
+
+export interface DangerPulse {
+  negativeMedianH: number | null;
+  otherMedianH: number | null;
+  negativeP90H: number | null;
+  negativeCount: number;
+  trend: Array<{ month: string; medianH: number }>;
+  attributionPct: number;
+}
+
+/** The number the product exists to move. Tenant-wide aggregate, no per-account detail. */
+export async function getDangerPulse(tenantId: string, days = 90): Promise<DangerPulse | null> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return null;
+  const res = await apiFetch(
+    `${env.SERVICE_API_URL}/api/internal/addon/pulse?tenantId=${encodeURIComponent(tenantId)}&days=${days}`,
+    { headers: internalHeaders(tenantId) },
+  );
+  if (!res || !res.ok) return null;
+  try {
+    return unwrap<DangerPulse>(await res.json());
+  } catch {
+    return null;
+  }
+}

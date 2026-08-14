@@ -25,6 +25,7 @@ import {
   createTask,
   getAccountContext,
   getAnalyzedEmail,
+  getDangerPulse,
   getEmailStats,
   getThreadFlagged,
   getThreadTrend,
@@ -906,6 +907,7 @@ app.post('/homepage', async (c) => {
   // "who is unhappy" must not become a way to read accounts they cannot open.
   const who = tenantId && verified.email ? await resolveViewer(tenantId, verified.email) : null;
   const waiting = tenantId && who ? await getWaitingClients(tenantId, who.userId, who.isAdmin) : [];
+  const pulse = tenantId ? await getDangerPulse(tenantId) : null;
   // The working set is the reason to open the panel without a message: it is
   // the only view of what the user marked, since nothing was written to Gmail.
   workingSet.prune();
@@ -922,6 +924,7 @@ app.post('/homepage', async (c) => {
         },
         getEnv().ADDON_BASE_URL,
         { clients: waiting, webUrl: getEnv().WEB_URL },
+        pulse ?? undefined,
       ),
     ),
   );
