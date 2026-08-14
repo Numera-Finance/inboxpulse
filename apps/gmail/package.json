@@ -7,7 +7,7 @@
     "dev": "bun --watch src/index.ts",
     "build": "tsup src/index.ts --format esm --target node22",
     "start": "bun dist/index.js",
-    "test": "vitest",
+    "test": "vitest --passWithNoTests",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

@@ -16,7 +16,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --external react",
     "dev": "tsup src/index.ts --format cjs,esm --dts --external react --watch",
-    "test": "vitest",
+    "test": "vitest --passWithNoTests",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

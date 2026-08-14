@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsup --config tsup.config.ts",
     "dev": "tsup --config tsup.config.ts --watch",
-    "test": "vitest",
+    "test": "vitest --passWithNoTests",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
