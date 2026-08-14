@@ -235,6 +235,14 @@ app.post('/gmail/analyse', async (c) => {
   const threadMessages = await fetchThreadMessages(threadId, oauthToken, accessToken);
   const participants = threadMessages?.length ? deriveParticipants(threadMessages, viewerEmail) : [];
 
+  // Sweep on EVERY thread open, not just when a label button is pressed.
+  //
+  // The sweep used to run in one place — the mark route — so a label only
+  // expired if the user happened to press another label button afterwards.
+  // Opening a message is the thing a user does constantly, which makes it the
+  // only trigger frequent enough for a thirty-minute promise to mean anything.
+  if (oauthToken) void sweepExpired(oauthToken);
+
   // A TRACKED thread must not lose the live reading. Forcing status 'untracked'
   // here meant a thread InboxPulse actually knows about got no commitments, no
   // Track buttons and no draft — strictly less than one it had never seen.
@@ -631,8 +639,10 @@ app.post('/gmail/mark', async (c) => {
   return c.json(
     notify(
       res.on
-        ? `${short} — clears in ${res.minutesLeft} min${wrote ? '' : ' (panel only)'}`
-        : `${short} cleared`,
+        ? wrote
+          ? `${short} added — refresh Gmail to see it. Clears in ${res.minutesLeft} min.`
+          : `${short} — clears in ${res.minutesLeft} min (panel only)`
+        : `${short} cleared — refresh Gmail to see it go`,
     ),
   );
 });
@@ -746,7 +756,17 @@ app.post('/gmail/triage/label', async (c) => {
       n += 1;
     }
   }
-  return c.json(notify(`Focus added to ${n} thread${n === 1 ? '' : 's'} — clears in 30 min`));
+  // Say that Gmail needs a refresh.
+  //
+  // An add-on cannot repaint the host message list. There is no API for it:
+  // CardService controls the panel only, and Apps Script's refreshMessages()
+  // reloads the add-on's view of message state, not Gmail's UI. So the labels
+  // are genuinely applied and genuinely invisible until the user reloads, and
+  // the only honest thing is to say so rather than let them wonder whether the
+  // button worked.
+  return c.json(
+    notify(`Focus added to ${n} thread${n === 1 ? '' : 's'} — refresh Gmail to see them. Clears in 30 min.`),
+  );
 });
 
 // Homepage trigger — opened without a message context.
@@ -766,6 +786,8 @@ app.post('/homepage', async (c) => {
   // The working set is the reason to open the panel without a message: it is
   // the only view of what the user marked, since nothing was written to Gmail.
   workingSet.prune();
+  const { oauthToken: homeToken } = getGmail(event);
+  if (homeToken) void sweepExpired(homeToken);
   return c.json(
     pushCard(
       buildHomepageCard(

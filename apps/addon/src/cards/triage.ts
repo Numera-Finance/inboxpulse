@@ -60,7 +60,7 @@ export function buildTriageCard(input: {
           ),
         ),
         deco({
-          text: '<font color="#5f6368">Adds <b>InboxPulse ⚡/Focus</b> to the top of this list so the order is visible while you scan. Clears itself in 30 minutes.</font>',
+          text: '<font color="#5f6368">Adds <b>InboxPulse ⚡/Focus</b> to the top of this list so the order is visible while you scan. <b>Refresh Gmail to see them</b> — an add-on cannot repaint the message list. Clears itself in 30 minutes.</font>',
           wrapText: true,
         }),
       ],

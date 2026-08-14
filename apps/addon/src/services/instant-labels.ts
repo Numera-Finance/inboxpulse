@@ -116,15 +116,26 @@ export interface InstantApplication {
 /**
  * State for one user's instant labels.
  *
- * In memory, and that is deliberate rather than lazy: the whole contract is
- * that these do not outlive the session. Persisting them would recreate the
- * accretion problem in a database instead of a mailbox, and a label whose
- * expiry survives a restart is a label that can be forgotten about.
+ * IN MEMORY, WHICH IS A REAL LIMITATION, NOT A DESIGN FLOURISH.
  *
- * The consequence is honest and worth stating: if the process restarts while a
- * label is live, the sweep loses track of it and the label stays in Gmail until
- * the user removes it. That is a real gap, and the reason `sweepAll` also
- * accepts labels discovered in the mailbox rather than only ones it remembers.
+ * The expiry promise — "clears in 30 minutes" — is only kept while the process
+ * that made it is alive. Cloud Run scales to zero after roughly fifteen minutes
+ * idle, which is INSIDE the thirty-minute window, so an instance can and will
+ * die holding live labels. When it does, nothing knows those labels should come
+ * off and they stay in Gmail until the user removes them by hand.
+ *
+ * Two things reduce it and neither eliminates it:
+ *
+ *   - `min-instances 1` keeps the process alive, so the state survives normal
+ *     use. It does not survive a deploy, a crash, or a region restart.
+ *   - The sweep runs on every thread open, not just on a label press, so an
+ *     active user reliably triggers it.
+ *
+ * The real fix is durable expiry — a row per mark, swept by a job that holds
+ * its own credential. That needs both a schema change and a stored refresh
+ * token, and neither exists yet. Until then, treat the thirty minutes as a
+ * strong default rather than a guarantee, and keep the manual toggle
+ * prominent — it is the only removal path that cannot fail.
  */
 export class InstantLabelState {
   private readonly live = new Map<string, InstantApplication>();

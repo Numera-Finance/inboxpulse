@@ -863,7 +863,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             ),
             deco({
               text: marked.size
-                ? `<font color="#5f6368">Clears itself in 30 minutes. Press again to clear now. Open InboxPulse from the rail to see everything marked.</font>`
+                ? `<font color="#5f6368">Refresh Gmail to see the label — an add-on cannot repaint the message list. Clears itself in 30 minutes; press again to clear now.</font>`
                 : `<font color="#5f6368">${INSTANT_LABELS.map((l) => l.means.toLowerCase()).join(' · ')}</font>`,
               wrapText: true,
             }),
