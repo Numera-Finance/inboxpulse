@@ -34,12 +34,21 @@ export interface WorkingSetView {
 }
 
 export interface PulseView {
+  /** Days the median is computed over — the deep link must match it. */
+  windowDays: number;
   negativeMedianH: number | null;
   otherMedianH: number | null;
   negativeP90H: number | null;
   negativeCount: number;
   trend: Array<{ month: string; medianH: number }>;
   attributionPct: number;
+}
+
+/** ISO date N days ago — the `from` filter the escalations route reads. */
+function sinceDays(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
 /** Hours as something a person reads without converting. */
@@ -135,6 +144,28 @@ export function buildHomepageCard(
           topLabel: `median over ${pulse.negativeCount} replies`,
           text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? ` — ${verdict}` : ''}`,
           wrapText: true,
+          // Land on exactly the population the median was computed over:
+          // negative, still open, same window. A headline number you cannot
+          // click into is a number you have to take on trust — and the whole
+          // argument for the panel is that its claims are checkable.
+          //
+          // `signal` and `status` are what apps/web/app/escalations/page.tsx
+          // reads, and it already defaults to signal=negative; passing it
+          // explicitly means the link keeps working if that default changes.
+          ...(waiting?.webUrl
+            ? {
+                button: {
+                  text: 'See them',
+                  onClick: {
+                    openLink: {
+                      url:
+                        `${waiting.webUrl}/escalations?signal=negative&status=open` +
+                        `&from=${sinceDays(pulse.windowDays)}`,
+                    },
+                  },
+                },
+              }
+            : {}),
         }),
         deco({
           topLabel: 'the tail',

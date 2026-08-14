@@ -513,6 +513,7 @@ export async function resolveViewer(tenantId: string, email: string): Promise<Vi
 }
 
 export interface DangerPulse {
+  windowDays: number;
   negativeMedianH: number | null;
   otherMedianH: number | null;
   negativeP90H: number | null;
@@ -531,7 +532,10 @@ export async function getDangerPulse(tenantId: string, days = 90): Promise<Dange
   );
   if (!res || !res.ok) return null;
   try {
-    return unwrap<DangerPulse>(await res.json());
+    const d = unwrap<DangerPulse>(await res.json());
+    // Carry the window so the deep link lands on the same population the
+    // median was computed over, rather than a different default.
+    return d ? { ...d, windowDays: days } : null;
   } catch {
     return null;
   }
