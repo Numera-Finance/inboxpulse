@@ -1,4 +1,4 @@
-import { type Card, type CardSection, text, deco, buttons, linkButton, heading, separated } from './widgets';
+import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated } from './widgets';
 import type { EmailStats } from '../services/api-client';
 
 /**
@@ -33,7 +33,11 @@ export interface WorkingSetView {
   threadUrl: (threadId: string, viewerEmail?: string) => string;
 }
 
-export function buildHomepageCard(stats: EmailStats | null, working?: WorkingSetView): Card {
+export function buildHomepageCard(
+  stats: EmailStats | null,
+  working?: WorkingSetView,
+  baseUrl?: string,
+): Card {
   const sections: CardSection[] = [
     {
       widgets: [
@@ -49,6 +53,27 @@ export function buildHomepageCard(stats: EmailStats | null, working?: WorkingSet
       ],
     },
   ];
+  // The one button worth pressing from the inbox, so it leads.
+  //
+  // Gmail add-ons cannot see which rows you selected — there are two triggers,
+  // compose and message-open, and neither carries a selection. So instead of
+  // acting on threads the user ticks, this reads the top of the inbox and puts
+  // it in order. Better shape anyway: the value is that the DEFAULT order is
+  // good, not that the reordering tools are.
+  if (baseUrl) {
+    sections.unshift({
+      widgets: [
+        buttons(
+          actionButton('Prioritise my inbox', `${baseUrl}/gmail/triage`, {}),
+        ),
+        deco({
+          text: '<font color="#5f6368">Reads the top of your inbox and orders it by what each thread costs you to leave.</font>',
+          wrapText: true,
+        }),
+      ],
+    });
+  }
+
   // Leads the card when present. Someone opening the panel with no message
   // open is almost always coming back to what they marked.
   if (working?.entries.length) {

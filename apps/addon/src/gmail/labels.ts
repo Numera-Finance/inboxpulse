@@ -111,3 +111,78 @@ export async function removeLabel(
   });
   return r !== null;
 }
+
+/**
+ * Which of our labels are on this thread, according to GMAIL.
+ *
+ * Gmail is the truth, not our in-memory state. The state lives in a process
+ * that Cloud Run scales to zero, so it is forgotten routinely rather than
+ * exceptionally — and a toggle that consults a forgotten memory re-applies a
+ * label that is already there, tells the user "clears in 30 min", and changes
+ * nothing they can see. That is exactly what happened.
+ *
+ * So on/off is decided by asking Gmail. Memory is only good for WHEN something
+ * expires, which Gmail cannot tell us.
+ */
+export async function labelsOnThread(
+  threadId: string,
+  token: string,
+): Promise<Set<string>> {
+  const t = await gapi(`/threads/${threadId}?format=minimal`, token);
+  const messages = (t?.messages as Array<{ labelIds?: string[] }> | undefined) ?? [];
+  const ids = new Set<string>();
+  for (const m of messages) for (const id of m.labelIds ?? []) ids.add(id);
+  return ids;
+}
+
+export interface ThreadSummary {
+  id: string;
+  subject: string;
+  from: string;
+  /** Gmail's own snippet — enough text to classify without fetching bodies. */
+  snippet: string;
+  /** Epoch ms of the latest message, for tie-breaking by age. */
+  at: number;
+}
+
+/**
+ * Recent threads, for marking without opening each one.
+ *
+ * Gmail add-ons cannot see what you have SELECTED in the inbox list. There are
+ * exactly two Gmail triggers — compose, and contextual (a message is open) —
+ * and neither carries a selection. The checkbox column is not addressable by an
+ * add-on at all, so "press Focus on the row I ticked" is not a thing that can
+ * be built, however the panel is arranged.
+ *
+ * What can be done is the other way round: let the PANEL list threads and mark
+ * them from there. The user never opens the conversation, which is most of what
+ * they wanted from the row-level button.
+ *
+ * Capped hard. Bulk labelling is precisely the failure the whole labels policy
+ * exists to prevent, and a list long enough to need scrolling is a list long
+ * enough to mark something by accident.
+ */
+export async function recentThreads(
+  token: string,
+  query: string,
+  max = 8,
+): Promise<ThreadSummary[]> {
+  const list = await gapi(
+    `/threads?maxResults=${max}&q=${encodeURIComponent(query)}`,
+    token,
+  );
+  const ids = ((list?.threads as Array<{ id: string }> | undefined) ?? []).map((t) => t.id);
+  const out: ThreadSummary[] = [];
+  for (const id of ids) {
+    const t = await gapi(`/threads/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`, token);
+    const msgs = (t?.messages as Array<{ payload?: { headers?: Array<{ name: string; value: string }> } }>) ?? [];
+    const headers = msgs[msgs.length - 1]?.payload?.headers ?? [];
+    const pick = (n: string) => headers.find((h) => h.name.toLowerCase() === n)?.value ?? '';
+    // Snippets rather than bodies: classification needs the gist, and fetching
+    // full bodies for a dozen threads would make the button feel like a report.
+    const snippet = msgs.map((m) => (m as { snippet?: string }).snippet ?? '').join(' ').slice(0, 600);
+    const at = Number((msgs[msgs.length - 1] as { internalDate?: string })?.internalDate ?? 0);
+    out.push({ id, subject: pick('subject') || '(no subject)', from: pick('from'), snippet, at });
+  }
+  return out;
+}

@@ -246,6 +246,22 @@ export class WorkingSet {
     return this.state.isOn(threadId, labelKey);
   }
 
+  /** Set on, without toggling — used when Gmail has already decided the state. */
+  turnOnFor(threadId: string, labelKey: string, subject: string): void {
+    this.state.turnOn(threadId, labelKey);
+    if (subject.trim()) this.subjects.set(threadId, subject.trim());
+  }
+
+  /** Set off, without toggling. */
+  turnOffFor(threadId: string, labelKey: string): void {
+    this.state.turnOff(threadId, labelKey);
+    if (!this.state.active().some((a) => a.threadId === threadId)) this.subjects.delete(threadId);
+  }
+
+  minutesLeftFor(threadId: string, labelKey: string): number | null {
+    return this.state.minutesLeft(threadId, labelKey);
+  }
+
   /** Everything still live, ordered by label so the list reads as groups. */
   entries(): WorkingSetEntry[] {
     const out: WorkingSetEntry[] = [];

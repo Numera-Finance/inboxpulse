@@ -43,7 +43,9 @@ import {
   instantLabelByKey,
   gmailThreadUrl,
 } from './services/instant-labels';
-import { ensureLabel, addLabel, removeLabel } from './gmail/labels';
+import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads } from './gmail/labels';
+import { rankTriage, splitQuiet } from './services/triage';
+import { buildTriageCard } from './cards/triage';
 
 /**
  * The user's working set — threads they marked, and when each mark expires.
@@ -591,23 +593,35 @@ app.post('/gmail/mark', async (c) => {
   const threadId = normalizeGmailMessageId(p.threadId);
   if (!label || !threadId) return c.json(notify('Could not mark this thread.'));
 
-  const res = workingSet.mark(threadId, label.key, p.subject ?? '');
   const short = label.name.split('/')[1];
-
-  // Write it into Gmail so it shows in the inbox list, which is the whole point
-  // of a working set. Needs gmail.modify; when the grant is missing the state
-  // above still holds and the panel still lists it, so the feature degrades to
-  // the in-panel version rather than failing.
   const { oauthToken } = getGmail(event);
+
+  // GMAIL DECIDES whether this is on, not our memory.
+  //
+  // The in-memory state lives in a process Cloud Run scales to zero, so it is
+  // forgotten as a matter of course. A toggle that trusted it re-applied a
+  // label that was already there and reported "clears in 30 min" while nothing
+  // visibly changed — the exact bug this replaces. Memory is still where expiry
+  // lives, because Gmail cannot tell us when something should come off.
+  let on: boolean;
   let wrote = false;
   if (oauthToken) {
     const labelId = await ensureLabel(label, oauthToken);
+    const present = labelId ? (await labelsOnThread(threadId, oauthToken)).has(labelId) : false;
+    on = !present;
     if (labelId) {
-      wrote = res.on
+      wrote = on
         ? await addLabel(threadId, labelId, oauthToken)
         : await removeLabel(threadId, labelId, oauthToken);
     }
+    // Keep the panel's view in step with what we just did to the mailbox.
+    if (on) workingSet.turnOnFor(threadId, label.key, p.subject ?? '');
+    else workingSet.turnOffFor(threadId, label.key);
+  } else {
+    const res = workingSet.mark(threadId, label.key, p.subject ?? '');
+    on = res.on;
   }
+  const res = { on, minutesLeft: workingSet.minutesLeftFor(threadId, label.key) };
 
   // Sweep anything that expired while the user was away. Lazy, because there is
   // no cron -- and the moment a user is not opening their mail is the moment a
@@ -639,6 +653,52 @@ async function sweepExpired(oauthToken: string): Promise<void> {
   }
 }
 
+/**
+ * Prioritise the inbox: one press, an ordered list of what to do next.
+ *
+ * The panel cannot see which rows the user has selected — Gmail gives add-ons
+ * two triggers, compose and message-open, and neither carries a selection. So
+ * this picks the threads instead of the user picking them, which is the better
+ * shape anyway: the point is that the DEFAULT order is good, not that the tools
+ * for reordering are.
+ *
+ * Classification runs concurrently. Sequentially, a dozen threads at ~0.5s each
+ * is six seconds of staring at a spinner; against a network model there is no
+ * reason to pay that.
+ */
+app.post('/gmail/triage', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const { oauthToken } = getGmail(event);
+  if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
+
+  const threads = await recentThreads(oauthToken, 'in:inbox -category:promotions', 12);
+  if (!threads.length) return c.json(notify('Nothing in the inbox to prioritise.'));
+
+  const classified = await Promise.all(
+    threads.map(async (t) => ({
+      threadId: t.id,
+      subject: t.subject,
+      from: t.from,
+      at: t.at,
+      mode:
+        (await classifyThreadMode({ subject: t.subject, thread: t.snippet })) ?? ('working' as const),
+    })),
+  );
+
+  const { work, quiet } = splitQuiet(rankTriage(classified, Date.now()));
+  return c.json(
+    pushCard(buildTriageCard({ work, quiet, viewerEmail: verified.email ?? undefined })),
+  );
+});
+
 // Homepage trigger — opened without a message context.
 app.post('/homepage', async (c) => {
   const env = getEnv();
@@ -658,11 +718,15 @@ app.post('/homepage', async (c) => {
   workingSet.prune();
   return c.json(
     pushCard(
-      buildHomepageCard(stats, {
-        entries: workingSet.entries(),
-        viewerEmail: verified.email ?? undefined,
-        threadUrl: gmailThreadUrl,
-      }),
+      buildHomepageCard(
+        stats,
+        {
+          entries: workingSet.entries(),
+          viewerEmail: verified.email ?? undefined,
+          threadUrl: gmailThreadUrl,
+        },
+        getEnv().ADDON_BASE_URL,
+      ),
     ),
   );
 });
