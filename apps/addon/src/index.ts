@@ -34,6 +34,7 @@ import {
 } from './services/api-client';
 import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled, THREAD_MODES } from './services/live-analysis';
 import type { ReplyOption, ThreadMode } from './services/live-analysis';
+import { LOGO_PNG_BASE64 } from './assets/logo';
 import { AnalysisCache } from './services/analysis-cache';
 import {
   InstantLabelState,
@@ -82,6 +83,16 @@ async function resolveTenant(email: string | undefined): Promise<string | null> 
   }
   return getEnv().ADDON_DEV_TENANT_ID ?? null;
 }
+
+app.get('/logo.png', (c) => {
+  // Served by the add-on itself so the icon cannot outlive its host. See
+  // assets/logo.ts — the previous URL stopped resolving and the rail showed an
+  // empty circle.
+  const png = Buffer.from(LOGO_PNG_BASE64, 'base64');
+  return new Response(png, {
+    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' },
+  });
+});
 
 app.get('/health', (c) =>
   c.json({ status: 'ok', service: 'crm-addon', timestamp: new Date().toISOString() }),

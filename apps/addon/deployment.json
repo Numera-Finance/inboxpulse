@@ -9,7 +9,7 @@
   "addOns": {
     "common": {
       "name": "InboxPulse",
-      "logoUrl": "https://emailsentiment.mystartupcfo.com/logo.png",
+      "logoUrl": "https://crm-addon-yn7zwaf2za-uc.a.run.app/logo.png",
       "homepageTrigger": {
         "runFunction": "REPLACE_ADDON_URL/homepage"
       }
