@@ -791,3 +791,55 @@ evidence of absence in the mailbox.
 - All names are namespaced under `InboxPulse/` so the entire set is removable in
   one operation. A labeller that cannot be fully undone should not run.
 - CHURN_LOW stays excluded everywhere: the panel, the sweep script, and here.
+
+### ADR-019: Instant labels — user-chosen, self-expiring working sets (2026-08-13)
+
+**Status:** Accepted (design + core; Gmail write path not built — needs `gmail.modify`)
+
+**Context:** Every label in ADR-018 is a *claim about the message* — this is churn
+risk, this is an upsell. Claims can be wrong, and the audit found 32,241 "Churn
+risk" labels where 4,015 qualified. The entire policy exists to stop a classifier
+writing noise into someone's inbox.
+
+Researched how Superhuman handles this. Their answer is **Split Inbox** (sections
+grouping mail by type, default Important/Other), **Auto Labels** (AI categories
+defined by short user prompts), and **snooze**. All three classify the *message*.
+Their own guidance notes users create temporary splits they "intend to keep for a
+week or two" — which is the accretion problem admitted in the product's own docs.
+
+**Decision:** A second, structurally different kind of label. Instant labels
+describe the **user's session**, not the email:
+
+| label | means |
+|---|---|
+| ⚡ Focus | Working these next |
+| ⚡ Research | Needs digging, not now |
+| ⚡ Block time | Needs a calendar slot |
+| ⚡ Waiting on | Blocked on someone else |
+
+Two properties do the work:
+
+1. **A label the user chose cannot be a false positive.** This removes the
+   precision problem rather than managing it — no budget, no volume cap, no
+   measurement of what share of the mailbox it covers. The user asserted it.
+2. **They expire in 30 minutes** unless turned off sooner. The failure mode of
+   every manual labelling system is accretion; expiry inverts the default so
+   nothing persists long enough to accumulate. Thirty minutes is a working
+   block — long enough to clear a batch, short enough that a forgotten label is
+   gone before it misleads.
+
+Namespaced `InboxPulse ⚡/` — deliberately distinct from the analysis set's
+`InboxPulse/`, so a sweep of either can never touch the other. Asserted in tests.
+
+**Consequences:**
+- State is in memory on purpose. Persisting it would recreate accretion in a
+  database instead of a mailbox. The honest cost: a process restart loses track
+  of a live label and it stays in Gmail until removed by hand.
+- Expiry is swept lazily on panel open, because there is no cron. A label
+  expires on schedule only if the user opens the panel again — which is the
+  least bad version, since a user not looking at their mail is not being
+  misled by a stale working-set label.
+- **Not shippable yet**: applying any label needs `gmail.modify`, a RESTRICTED
+  scope. The decision logic is built and tested; the Gmail write path is not.
+- Four labels, not a taxonomy. A longer list becomes something you maintain
+  rather than use, at which point it is the filing system this replaces.
