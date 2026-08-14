@@ -4,6 +4,7 @@ import { buildFlaggedSection, type FlaggedMessage } from './flagged';
 import type { MessageHeaders } from '../gmail/gmail-api';
 import { resolveWhen, calendarUrl } from '../services/when';
 import { suggestConnector } from '../services/connectors';
+import { nextActionsFor } from '../services/next-actions';
 import type { LiveAnalysis, ThreadDigest, ThreadMode, ReplyOption } from '../services/live-analysis';
 import { THREAD_MODES } from '../services/live-analysis';
 
@@ -762,6 +763,28 @@ export function buildThreadCard(input: ThreadCardInput): Card {
           }),
         );
       }
+      // Cross-app actions chosen by what the thread IS. Knowing a thread is
+      // about arranging a time is worth little; landing in a calendar draft
+      // with the right people already invited is worth the panel. Every one is
+      // a URL — see services/next-actions.ts for why that is a constraint and
+      // not a shortcut.
+      const cross = nextActionsFor({
+        mode: input.mode,
+        subject: input.headers?.subject,
+        participants: input.participants,
+        now: input.now,
+      });
+      for (const a of cross) {
+        doNext.push(
+          deco({
+            text: `<b>${escapeText(a.label)}</b>`,
+            bottomLabel: a.hint,
+            wrapText: true,
+            button: { text: 'Open', onClick: { openLink: { url: a.url } } },
+          }),
+        );
+      }
+
       if (doNext.length) sections.push({ header: heading('Do next'), widgets: doNext });
 
       // 4. Loop in — answered from the whole chain, not the open message.
