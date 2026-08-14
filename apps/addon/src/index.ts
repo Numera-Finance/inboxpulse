@@ -40,7 +40,9 @@ import {
   InstantLabelState,
   WorkingSet,
   INSTANT_LABELS,
+  MODE_LABELS,
   instantLabelByKey,
+  modeLabelFor,
   gmailThreadUrl,
 } from './services/instant-labels';
 import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads, clearAllOfLabel } from './gmail/labels';
@@ -792,7 +794,7 @@ app.post('/gmail/clear-marks', async (c) => {
   if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
 
   let total = 0;
-  for (const label of INSTANT_LABELS) {
+  for (const label of [...INSTANT_LABELS, ...MODE_LABELS]) {
     total += await clearAllOfLabel(label, oauthToken);
     for (const a of instantState.active().filter((x) => x.labelKey === label.key)) {
       instantState.turnOff(a.threadId, a.labelKey);
@@ -804,6 +806,65 @@ app.post('/gmail/clear-marks', async (c) => {
       total
         ? `Cleared ${total} thread${total === 1 ? '' : 's'} — refresh Gmail to see`
         : 'Nothing marked',
+    ),
+  );
+});
+
+/**
+ * Colour the inbox by what each thread needs.
+ *
+ * The triage already classified every thread; this writes that classification
+ * back so it is visible while scanning rather than only inside the panel.
+ *
+ * These are a MODEL'S claims, not the user's, which is the category ADR-018
+ * exists to restrain. So they inherit every guard the instant labels have —
+ * namespaced, self-clearing, one press to undo, cleared wholesale by "Clear all
+ * my marks" — and fyi is never written at all. Labelling the largest mode to
+ * say nothing is needed would be `Automated` at 51.7% again.
+ */
+app.post('/gmail/triage/label-types', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const { oauthToken } = getGmail(event);
+  const p = getActionParameters(event);
+  // "threadId:mode,threadId:mode" — the classification is already done, so this
+  // costs no model calls at all.
+  const pairs = (p.byMode ?? '')
+    .split(',')
+    .map((s) => s.split(':'))
+    .filter((x) => x.length === 2 && x[0] && x[1])
+    .slice(0, 12);
+  if (!oauthToken || !pairs.length) return c.json(notify('Nothing to label.'));
+
+  const ids = new Map<string, string>();
+  let n = 0;
+  for (const [threadId, mode] of pairs) {
+    const label = modeLabelFor(mode);
+    if (!label) continue; // fyi, deliberately
+    let labelId = ids.get(label.key);
+    if (!labelId) {
+      const created = await ensureLabel(label, oauthToken);
+      if (!created) continue;
+      labelId = created;
+      ids.set(label.key, labelId);
+    }
+    if (await addLabel(threadId, labelId, oauthToken)) {
+      workingSet.turnOnFor(threadId, label.key, '');
+      n += 1;
+    }
+  }
+  return c.json(
+    notify(
+      n
+        ? `Labelled ${n} thread${n === 1 ? '' : 's'} by type — refresh Gmail to see them. Clears in 30 min.`
+        : 'Nothing needed a label.',
     ),
   );
 });

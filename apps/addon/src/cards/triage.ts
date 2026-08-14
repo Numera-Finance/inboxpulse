@@ -54,13 +54,19 @@ export function buildTriageCard(input: {
       widgets: [
         buttons(
           actionButton(
-            input.labelled ? `Labelled ${input.labelled}` : `Label the top ${top.length} in my inbox`,
+            input.labelled ? `Labelled ${input.labelled}` : `Label the top ${top.length}`,
             `${input.baseUrl}/gmail/triage/label`,
             { threadIds: top.map((t) => t.threadId).join(','), subjects: top.map((t) => t.subject.slice(0, 40)).join('|') },
           ),
+          // Colour the whole list by what each thread needs, using the
+          // classification the triage already did — so this costs no model
+          // calls. fyi is excluded server-side; see modeLabelFor.
+          actionButton('Label by type', `${input.baseUrl}/gmail/triage/label-types`, {
+            byMode: input.work.map((t) => `${t.threadId}:${t.mode}`).join(','),
+          }),
         ),
         deco({
-          text: '<font color="#5f6368">Adds <b>InboxPulse ⚡/Focus</b> to the top of this list so the order is visible while you scan. <b>Refresh Gmail to see them</b> — an add-on cannot repaint the message list. Clears itself in 30 minutes.</font>',
+          text: '<font color="#5f6368"><b>Label the top</b> flags the first few as Focus. <b>Label by type</b> colours each row by what it needs — Unhappy, Needs a time, Waiting on you, Opening. Threads needing nothing get no label. <b>Refresh Gmail to see them</b> — an add-on cannot repaint the message list. Both clear in 30 minutes.</font>',
           wrapText: true,
         }),
       ],

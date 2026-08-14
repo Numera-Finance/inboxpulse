@@ -98,7 +98,38 @@ export const INSTANT_LABELS: InstantLabel[] = [
 ];
 
 export function instantLabelByKey(key: string): InstantLabel | null {
-  return INSTANT_LABELS.find((l) => l.key === key) ?? null;
+  return [...INSTANT_LABELS, ...MODE_LABELS].find((l) => l.key === key) ?? null;
+}
+
+/**
+ * Labels derived from what a thread IS, rather than what the user decided.
+ *
+ * A different animal from INSTANT_LABELS above, and the difference matters. An
+ * instant label is the user's own assertion and cannot be wrong. These are a
+ * MODEL'S claim written into a mailbox, which is the thing ADR-018 spends four
+ * rules defending against — so they inherit the expiry, the namespace and the
+ * one-press-to-undo, and they are never applied without the user asking.
+ *
+ * Named for what to DO, not for the classification. "Unhappy" and "Needs a
+ * time" tell the reader why the row is worth opening; "complaint" and
+ * "scheduling" describe our pipeline's opinion of it. The user does not care
+ * what the classifier called it.
+ *
+ * FYI IS DELIBERATELY ABSENT. It is the largest single mode and labelling it
+ * would mark most of an inbox to say nothing is needed — which is the
+ * `Automated` mistake at 51.7% all over again. The absence of a label already
+ * means "nothing here".
+ */
+export const MODE_LABELS: InstantLabel[] = [
+  { key: 'm_complaint', name: `${NS}/Unhappy`, means: 'Someone is unhappy', bg: '#fb4c2f', text: '#ffffff' },
+  { key: 'm_scheduling', name: `${NS}/Needs a time`, means: 'A time is being arranged', bg: '#4986e7', text: '#ffffff' },
+  { key: 'm_working', name: `${NS}/Waiting on you`, means: 'Live work, waiting on you', bg: '#ffad47', text: '#ffffff' },
+  { key: 'm_opportunity', name: `${NS}/Opening`, means: 'An opening worth a look', bg: '#16a765', text: '#ffffff' },
+];
+
+/** The label for a mode, or null when the mode should not be labelled at all. */
+export function modeLabelFor(mode: string): InstantLabel | null {
+  return MODE_LABELS.find((l) => l.key === `m_${mode}`) ?? null;
 }
 
 /** Only these are ever swept. The analysis labels use `InboxPulse/` and are untouched. */

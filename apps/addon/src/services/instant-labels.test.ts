@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   InstantLabelState, INSTANT_LABELS, INSTANT_TTL_MS,
   instantLabelByKey, isInstantLabelName,
+  MODE_LABELS,
+  modeLabelFor,
 } from './instant-labels';
 
 describe('instant labels', () => {
@@ -96,5 +98,36 @@ describe('instant labels', () => {
   it('resolves by key and refuses unknown keys', () => {
     expect(instantLabelByKey('focus')?.name).toContain('Focus');
     expect(instantLabelByKey('nonsense')).toBeNull();
+  });
+});
+
+describe('mode labels', () => {
+  it('never labels fyi — the largest mode', () => {
+    // Labelling most of an inbox to say nothing is needed is `Automated` at
+    // 51.7% all over again.
+    expect(modeLabelFor('fyi')).toBeNull();
+  });
+
+  it('covers every mode that does need something', () => {
+    for (const m of ['complaint', 'scheduling', 'working', 'opportunity']) {
+      expect(modeLabelFor(m), m).not.toBeNull();
+    }
+  });
+
+  it('names the action, not the classification', () => {
+    // "Unhappy" tells the reader why the row is worth opening; "complaint" is
+    // our pipeline's opinion of it, which the user does not care about.
+    expect(modeLabelFor('complaint')!.name).toContain('Unhappy');
+    expect(modeLabelFor('working')!.name).toContain('Waiting on you');
+    for (const l of MODE_LABELS) expect(l.name).not.toMatch(/complaint|opportunity/i);
+  });
+
+  it('shares the sweepable namespace so Clear all removes them too', () => {
+    for (const l of MODE_LABELS) expect(isInstantLabelName(l.name)).toBe(true);
+  });
+
+  it('does not collide with the user-chosen labels', () => {
+    const user = new Set(INSTANT_LABELS.map((l) => l.name));
+    for (const l of MODE_LABELS) expect(user.has(l.name)).toBe(false);
   });
 });
