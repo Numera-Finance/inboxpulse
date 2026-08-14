@@ -432,6 +432,11 @@ app.post('/gmail/analyse', async (c) => {
         // model restating a database is the least efficient thing on this card.
         // Deterministic, instant, and it cannot hallucinate a date.
         historyPoints: buildHistoryPoints(account),
+        // Explicitly, not only via `headers`: on an action-triggered render the
+        // message id may not travel and the header fetch returns undefined,
+        // which silently emptied the subject out of calendar titles and the
+        // related-mail search.
+        subject: headers?.subject ?? (p.subject || undefined),
         mode: mode ?? reading.mode,
         demoModes: getEnv().ADDON_DEMO_MODE,
         // Only gmail has rows in `integrations` (15, of which 2 active); the

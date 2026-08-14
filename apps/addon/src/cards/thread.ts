@@ -535,7 +535,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         ],
       });
 
-      const search = deriveSearch(input.headers, input.viewerEmail);
+      const search = deriveSearch(input.headers ?? (input.subject ? { subject: input.subject } as MessageHeaders : undefined), input.viewerEmail);
       if (search) {
         sections.push({
           header: heading('Do next'),
@@ -703,7 +703,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       }
 
       // 3. Do next — real actions, all derived from the message alone.
-      const search = deriveSearch(input.headers, input.viewerEmail);
+      const search = deriveSearch(input.headers ?? (input.subject ? { subject: input.subject } as MessageHeaders : undefined), input.viewerEmail);
       const doNext: Widget[] = [];
       const btns = [];
       // Stance choice, not a menu. The first is recommended and gets the FILLED
@@ -721,10 +721,15 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         // A choice you cannot read is not a choice.
         const widgets: Widget[] = options.map((o, i) =>
           deco({
-            topLabel: `${o.stance}${i === 0 ? '  ·  recommended' : ''}${
-              o.rationale ? ` — ${o.rationale}` : ''
-            }`,
-            text: o.text ? escapeText(o.text) : '<i>Pick this approach to have it written</i>',
+            // Stance and rationale go in `text`, which WRAPS. topLabel is a
+            // single plain-text line that Gmail clips, so this rendered as
+            // "Hand off — delegate the…" and "Unblock with questions — clari…",
+            // cutting off the reason at the moment the user is choosing between
+            // approaches. Same clipping that truncated the draft earlier.
+            text:
+              `<b>${escapeText(o.stance)}</b>${i === 0 ? ' <font color="#1a73e8">· recommended</font>' : ''}` +
+              (o.rationale ? ` — ${escapeText(o.rationale)}` : '') +
+              (o.text ? `<br>${escapeText(o.text)}` : '<br><i>Pick this approach to have it written</i>'),
             wrapText: true,
             button: o.text
               ? {
@@ -768,9 +773,16 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // with the right people already invited is worth the panel. Every one is
       // a URL — see services/next-actions.ts for why that is a constraint and
       // not a shortcut.
+      // Subject from EITHER source. `headers` is undefined whenever the message
+      // id did not travel -- which is exactly the demo path, where the button
+      // carries a thread id and the header fetch has nothing to key on. Reading
+      // only `headers.subject` produced a calendar invite titled "this thread"
+      // with four real attendees on it: the participants travelled and the
+      // subject did not, which looks more broken than either failing alone.
+      const crossSubject = input.headers?.subject ?? input.subject;
       const cross = nextActionsFor({
         mode: input.mode,
-        subject: input.headers?.subject,
+        subject: crossSubject,
         participants: input.participants,
         now: input.now,
       });
@@ -839,6 +851,10 @@ export function buildThreadCard(input: ThreadCardInput): Card {
                 actionButton(MODE_LABEL[m], `${input.baseUrl}/gmail/analyse`, {
                   threadId: input.providerThreadId ?? '',
                   messageId: input.messageId ?? '',
+                  // Carried explicitly. Without a message id the header fetch
+                  // returns undefined, and the calendar invite came out titled
+                  // "this thread" with four real attendees on it.
+                  subject: input.headers?.subject ?? input.subject ?? '',
                   forceMode: m,
                 }),
               ),

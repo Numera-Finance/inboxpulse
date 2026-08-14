@@ -85,7 +85,11 @@ export function nextActionsFor(input: {
   now?: Date;
 }): NextAction[] {
   const now = input.now ?? new Date();
-  const subject = (input.subject ?? 'this thread').replace(/^(re|fwd|fw):\s*/i, '');
+  // No fallback title. "this thread" once shipped as a real calendar event
+  // title with four genuine attendees on it, which reads as broken rather than
+  // as a placeholder. Without a subject the actions that name one are dropped.
+  const subject = (input.subject ?? '').replace(/^(re|fwd|fw):\s*/i, '').trim();
+  if (!subject) return [];
   const externals = (input.participants ?? []).filter((p) => p.external).map((p) => p.address);
   const everyone = (input.participants ?? []).map((p) => p.address);
 

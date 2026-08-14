@@ -76,3 +76,17 @@ describe('nextActionsFor', () => {
     }
   });
 });
+
+describe('missing subject', () => {
+  it('offers nothing rather than titling a calendar event "this thread"', () => {
+    // That shipped: a real invite, four real attendees, titled "this thread".
+    // A placeholder in a field the user is about to send to other people is
+    // worse than no button.
+    expect(nextActionsFor({ mode: 'scheduling', participants: PEOPLE, now: NOW })).toHaveLength(0);
+    expect(nextActionsFor({ mode: 'scheduling', subject: '  ', participants: PEOPLE, now: NOW })).toHaveLength(0);
+  });
+
+  it('still works when the subject is only a Re: prefix away from empty', () => {
+    expect(nextActionsFor({ mode: 'scheduling', subject: 'Re: ', participants: PEOPLE, now: NOW })).toHaveLength(0);
+  });
+});
