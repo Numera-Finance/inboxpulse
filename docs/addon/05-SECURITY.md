@@ -101,15 +101,29 @@ agreed to share with colleagues.
 
 **Identifiers are no longer written.** The user's email is dropped from the
 verification log entirely, and mailbox addresses and customer domains are
-replaced with an 8-character SHA-256 prefix:
+**namespaced, salted and hashed**:
 
 ```
-user: 3f9a1c2e     account: b71d40aa
+user: 3f9a1c2e4b70     account: b71d40aa9c12
 ```
 
-Enough to correlate two lines in one incident, far too little to enumerate back
-to an address. The principle is that **you cannot leak what was never written** —
-no future IAM mistake can expose a value that does not exist in the log.
+All three properties are load-bearing:
+
+- **Salted**, because a bare hash of a work email is not anonymous. The space is
+  `firstname@mystartupcfo.com` — a few hundred candidates — so anyone with the
+  staff list can hash them all and match. An unsalted digest is a lookup table
+  with extra steps. The salt is in Secret Manager (`ADDON_LOG_SALT`), so
+  reversing a log line needs **both the logs and the secret**, which are
+  different grants.
+- **Namespaced**, so the same string hashed as a mailbox and as a customer
+  domain yields different digests. Without it the two are cross-correlatable —
+  you could tell a viewer's address matches a customer's domain, which is
+  exactly the relationship the redaction hides.
+- **Fails closed.** With no salt configured it logs `redacted` rather than a weak
+  digest. A hash that looks anonymous and is not is worse than an omitted value.
+
+The principle is that **you cannot leak what was never written** — no future IAM
+mistake can expose a value that does not exist in the log.
 
 Message bodies, subjects and quotes have never been logged.
 

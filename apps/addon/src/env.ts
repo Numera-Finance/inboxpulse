@@ -137,6 +137,20 @@ const envSchema = z.object({
    *
    * Suggested: ~/.inboxpulse-cache
    */
+  /**
+   * Salt for pseudonymising identifiers in logs. From Secret Manager.
+   *
+   * Without it, identifiers are logged as 'redacted' rather than as a weak
+   * digest — a bare hash of a work email is a lookup table with extra steps,
+   * since the candidate space is a few hundred `firstname@company.com`. Salting
+   * means reversing a log line needs both the logs and the secret, which are
+   * different grants.
+   *
+   * Rotating it breaks correlation with older log lines. That is the intended
+   * trade, not a bug.
+   */
+  LOG_SALT: z.string().default(''),
+
   ADDON_CACHE_DIR: z.string().default(''),
 
   /**

@@ -3,23 +3,41 @@ import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger';
 
 /**
- * A stable, non-reversible stand-in for an identifier in logs.
+ * A namespaced, salted, non-reversible stand-in for an identifier in logs.
  *
- * Cloud Logging is readable by every project owner — four people on this
- * project — so anything written there is visible to colleagues, not just to
- * the user it belongs to. Logging a mailbox address or a customer's domain
- * hands them a record of who is talking to whom, which is not something an
- * add-on needs to function and not something the user agreed to.
+ * Cloud Logging is readable by every project owner — four on this project — so
+ * anything written there is visible to colleagues, not only to the user it
+ * belongs to. A log of which mailbox opened which panel is a record of
+ * behaviour nobody consented to share.
  *
- * Eight hex characters is enough to correlate two lines in one incident and far
- * too little to enumerate back to an address. The point is that the sensitive
- * value is never written, so no access-control mistake can expose it later —
- * you cannot leak what was never stored.
+ * All three properties are load-bearing:
+ *
+ * SALTED, because a bare hash of a work email is not anonymous. The space is
+ * `firstname@mystartupcfo.com` — a few hundred candidates. Anyone with the
+ * staff list can hash all of them and match, which makes an unsalted digest a
+ * lookup table with extra steps. The salt lives in Secret Manager, so reversing
+ * it requires the secret AND the logs, held by different grants.
+ *
+ * NAMESPACED, so the same string hashed as a mailbox and as a customer domain
+ * produces different digests. Without it, `user:` and `account:` values are
+ * cross-correlatable — you could tell that a viewer's address equals a
+ * customer's domain owner, which is exactly the relationship the redaction is
+ * meant to hide.
+ *
+ * FAILS CLOSED. With no salt configured this returns 'redacted' rather than a
+ * weak digest, because a hash that looks anonymous and is not is worse than
+ * visibly omitting the value.
  */
-function pseudo(value: string | undefined): string {
+function pseudo(ns: 'user' | 'account', value: string | undefined): string {
   if (!value) return 'none';
-  return createHash('sha256').update(value.toLowerCase()).digest('hex').slice(0, 8);
+  const salt = getEnv().LOG_SALT;
+  if (!salt) return 'redacted';
+  return createHash('sha256')
+    .update(`${salt}\u0000${ns}\u0000${value.toLowerCase()}`)
+    .digest('hex')
+    .slice(0, 12);
 }
+
 
 /**
  * Thin client for the InboxPulse API's internal service path
@@ -108,7 +126,7 @@ export async function resolveTenantByEmail(email: string): Promise<string | null
     const url = `${env.SERVICE_API_URL}/api/internal/integrations/lookup/by-email?email=${encodeURIComponent(email)}&source=gmail`;
     const res = await apiFetch(url, { headers: internalHeaders() });
     if (!res || !res.ok) {
-      logger.info({ status: res?.status, user: pseudo(email) }, 'lookup/by-email: no tenant for user');
+      logger.info({ status: res?.status, user: pseudo('user', email) }, 'lookup/by-email: no tenant for user');
       return null;
     }
     const d = unwrap<{ tenantId?: string }>(await res.json());
@@ -369,13 +387,13 @@ export async function getAccountContext(
       (viewer.email ? `&email=${encodeURIComponent(viewer.email)}` : '');
     const res = await apiFetch(url, { headers: internalHeaders() });
     if (!res || !res.ok) {
-      logger.warn({ status: res?.status, account: pseudo(domain) }, 'account-context non-OK');
+      logger.warn({ status: res?.status, account: pseudo('account', domain) }, 'account-context non-OK');
       return null;
     }
     const json = (await res.json()) as { data?: AccountContext };
     return json.data?.found ? json.data : null;
   } catch (err) {
-    logger.warn({ err: String(err), account: pseudo(domain) }, 'account-context failed');
+    logger.warn({ err: String(err), account: pseudo('account', domain) }, 'account-context failed');
     return null;
   }
 }
