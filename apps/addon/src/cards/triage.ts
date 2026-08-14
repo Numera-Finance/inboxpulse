@@ -1,4 +1,4 @@
-import { type Card, type CardSection, deco, heading, separated } from './widgets';
+import { type Card, type CardSection, deco, buttons, actionButton, heading, separated } from './widgets';
 import type { TriageItem } from '../services/triage';
 import { gmailThreadUrl } from '../services/instant-labels';
 
@@ -32,8 +32,40 @@ export function buildTriageCard(input: {
   work: TriageItem[];
   quiet: TriageItem[];
   viewerEmail?: string;
+  baseUrl?: string;
+  /** Set after labelling, so the card can say what it did. */
+  labelled?: number;
 }): Card {
   const sections: CardSection[] = [];
+
+  // Carry the order into the inbox itself.
+  //
+  // An ordering that exists only in this panel makes the user hold it in their
+  // head while they work a list that is still in date order. Labelling the top
+  // few puts the decision where the scanning happens.
+  //
+  // Only the top FIVE, and only the work items. A label on everything is the
+  // same as a label on nothing, and this is a model's opinion being written
+  // into a mailbox — the smallest write that carries the point is the right
+  // one. It clears itself in 30 minutes like every other instant label.
+  const top = input.work.slice(0, 5);
+  if (input.baseUrl && top.length) {
+    sections.push({
+      widgets: [
+        buttons(
+          actionButton(
+            input.labelled ? `Labelled ${input.labelled}` : `Label the top ${top.length} in my inbox`,
+            `${input.baseUrl}/gmail/triage/label`,
+            { threadIds: top.map((t) => t.threadId).join(','), subjects: top.map((t) => t.subject.slice(0, 40)).join('|') },
+          ),
+        ),
+        deco({
+          text: '<font color="#5f6368">Adds <b>InboxPulse ⚡/Focus</b> to the top of this list so the order is visible while you scan. Clears itself in 30 minutes.</font>',
+          wrapText: true,
+        }),
+      ],
+    });
+  }
 
   if (input.work.length) {
     sections.push({
@@ -41,8 +73,14 @@ export function buildTriageCard(input: {
       widgets: input.work.map((i, n) =>
         deco({
           topLabel: `${n + 1}.  ${i.why} · ${age(i.ageHours)}`,
-          text: `<b>${escapeText(who(i.from))}</b> — ${escapeText(i.subject)}`,
-          wrapText: true,
+          // Subject truncated, not wrapped. A calendar invite's subject runs to
+          // three lines of attendee names and timezone, and nine of those turn
+          // a ranked list into a wall the user has to scroll to see the ranking
+          // — which defeats the only thing this card is for.
+          text: `<b>${escapeText(who(i.from))}</b> — ${escapeText(
+            i.subject.length > 60 ? `${i.subject.slice(0, 57)}…` : i.subject,
+          )}`,
+          wrapText: false,
           button: {
             text: 'Open',
             onClick: { openLink: { url: gmailThreadUrl(i.threadId, input.viewerEmail) } },

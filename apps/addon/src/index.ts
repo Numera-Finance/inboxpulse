@@ -695,8 +695,58 @@ app.post('/gmail/triage', async (c) => {
 
   const { work, quiet } = splitQuiet(rankTriage(classified, Date.now()));
   return c.json(
-    pushCard(buildTriageCard({ work, quiet, viewerEmail: verified.email ?? undefined })),
+    pushCard(
+      buildTriageCard({
+        work,
+        quiet,
+        viewerEmail: verified.email ?? undefined,
+        baseUrl: getEnv().ADDON_BASE_URL,
+      }),
+    ),
   );
+});
+
+/**
+ * Put the triage order into the inbox as labels.
+ *
+ * The panel's ordering is only useful while the panel is open; the work happens
+ * in a list that is still sorted by date. Labelling the top few carries the
+ * decision to where the scanning is.
+ *
+ * Bounded deliberately. This writes a MODEL'S OPINION into a real mailbox, so
+ * it is the top five only, user-initiated by a second press, using the same
+ * self-clearing Focus label — the smallest write that carries the point, and
+ * one that undoes itself in thirty minutes whether or not anyone comes back.
+ */
+app.post('/gmail/triage/label', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const { oauthToken } = getGmail(event);
+  const p = getActionParameters(event);
+  const ids = (p.threadIds ?? '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 5);
+  const subjects = (p.subjects ?? '').split('|');
+  if (!oauthToken || !ids.length) return c.json(notify('Nothing to label.'));
+
+  const focus = instantLabelByKey('focus');
+  if (!focus) return c.json(notify('Nothing to label.'));
+  const labelId = await ensureLabel(focus, oauthToken);
+  if (!labelId) return c.json(notify('Could not create the label.'));
+
+  let n = 0;
+  for (const [i, id] of ids.entries()) {
+    if (await addLabel(id, labelId, oauthToken)) {
+      workingSet.turnOnFor(id, 'focus', subjects[i] ?? '');
+      n += 1;
+    }
+  }
+  return c.json(notify(`Focus added to ${n} thread${n === 1 ? '' : 's'} — clears in 30 min`));
 });
 
 // Homepage trigger — opened without a message context.
