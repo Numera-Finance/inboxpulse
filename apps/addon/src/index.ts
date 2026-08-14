@@ -43,7 +43,7 @@ import {
   instantLabelByKey,
   gmailThreadUrl,
 } from './services/instant-labels';
-import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads } from './gmail/labels';
+import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads, clearAllOfLabel } from './gmail/labels';
 import { rankTriage, splitQuiet } from './services/triage';
 import { buildTriageCard } from './cards/triage';
 
@@ -766,6 +766,45 @@ app.post('/gmail/triage/label', async (c) => {
   // button worked.
   return c.json(
     notify(`Focus added to ${n} thread${n === 1 ? '' : 's'} — refresh Gmail to see them. Clears in 30 min.`),
+  );
+});
+
+/**
+ * Clear every instant label, everywhere.
+ *
+ * The removal path that cannot fail. Timed expiry needs a live process to
+ * remember when each mark was made, and that memory does not survive a deploy
+ * or a restart — marks made before one are orphaned, sitting in the mailbox
+ * with nothing left that knows to remove them. This asks GMAIL what is labelled
+ * and takes it off, so it works no matter what the process remembers.
+ */
+app.post('/gmail/clear-marks', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const { oauthToken } = getGmail(event);
+  if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
+
+  let total = 0;
+  for (const label of INSTANT_LABELS) {
+    total += await clearAllOfLabel(label, oauthToken);
+    for (const a of instantState.active().filter((x) => x.labelKey === label.key)) {
+      instantState.turnOff(a.threadId, a.labelKey);
+    }
+  }
+  workingSet.prune();
+  return c.json(
+    notify(
+      total
+        ? `Cleared ${total} thread${total === 1 ? '' : 's'} — refresh Gmail to see`
+        : 'Nothing marked',
+    ),
   );
 });
 

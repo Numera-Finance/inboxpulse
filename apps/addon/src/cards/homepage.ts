@@ -79,7 +79,8 @@ export function buildHomepageCard(
   if (working?.entries.length) {
     sections.unshift({
       header: heading('Working set'),
-      widgets: working.entries.map((e) =>
+      widgets: [
+        ...working.entries.map((e) =>
         deco({
           topLabel: `${e.label.name.split('/')[1]} · ${e.minutesLeft}m left`,
           text: escapeText(e.subject),
@@ -89,7 +90,24 @@ export function buildHomepageCard(
             onClick: { openLink: { url: working.threadUrl(e.threadId, working.viewerEmail) } },
           },
         }),
-      ),
+        ),
+      ],
+    });
+  }
+
+  // The removal path that cannot fail. Shown whenever the panel can act, not
+  // only when the panel remembers something — the case it exists for is
+  // precisely the one where memory was lost and the list above is empty while
+  // the mailbox still carries labels.
+  if (baseUrl) {
+    sections.push({
+      widgets: [
+        buttons(actionButton('Clear all my marks', `${baseUrl}/gmail/clear-marks`, {})),
+        deco({
+          text: '<font color="#5f6368">Removes every InboxPulse ⚡ label from your mailbox. Use this if a mark outlived its 30 minutes — timed expiry needs the service to stay running, and a deploy or restart loses it.</font>',
+          wrapText: true,
+        }),
+      ],
     });
   }
 

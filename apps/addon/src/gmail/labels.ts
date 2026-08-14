@@ -186,3 +186,39 @@ export async function recentThreads(
   }
   return out;
 }
+
+/**
+ * Remove one of our labels from every thread carrying it.
+ *
+ * The reliable removal path, and the reason it exists is worth stating: the
+ * timed expiry depends on a process staying alive to remember WHEN each mark
+ * was made, and that process does not survive a deploy or a restart. Marks made
+ * before one are orphaned — the label sits in the mailbox with nothing left
+ * that knows it should come off.
+ *
+ * This needs no memory at all. It asks Gmail which threads carry the label and
+ * takes it off all of them, so it works regardless of what the process
+ * remembers, or whether it is even the same process.
+ *
+ * A blunt instrument on purpose: it clears marks that have not expired yet. That
+ * is the correct trade for a fallback — a working set the user cannot reliably
+ * empty is worse than one they occasionally empty early.
+ */
+export async function clearAllOfLabel(
+  label: InstantLabel,
+  token: string,
+): Promise<number> {
+  const labelId = await ensureLabel(label, token);
+  if (!labelId) return 0;
+
+  const list = await gapi(
+    `/threads?maxResults=100&q=${encodeURIComponent(`label:"${label.name}"`)}`,
+    token,
+  );
+  const ids = ((list?.threads as Array<{ id: string }> | undefined) ?? []).map((t) => t.id);
+  let n = 0;
+  for (const id of ids) {
+    if (await removeLabel(id, labelId, token)) n += 1;
+  }
+  return n;
+}
