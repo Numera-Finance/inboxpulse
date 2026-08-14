@@ -42,6 +42,7 @@ import {
   instantLabelByKey,
   gmailThreadUrl,
 } from './services/instant-labels';
+import { ensureLabel, addLabel, removeLabel } from './gmail/labels';
 
 /**
  * The user's working set — threads they marked, and when each mark expires.
@@ -50,7 +51,8 @@ import {
  * session, so persisting them would recreate exactly the accretion the expiry
  * exists to prevent. See services/instant-labels.ts.
  */
-const workingSet = new WorkingSet(new InstantLabelState());
+const instantState = new InstantLabelState();
+const workingSet = new WorkingSet(instantState);
 
 /**
  * Analysed threads, in memory, for as long as the thread has not changed.
@@ -580,10 +582,51 @@ app.post('/gmail/mark', async (c) => {
 
   const res = workingSet.mark(threadId, label.key, p.subject ?? '');
   const short = label.name.split('/')[1];
+
+  // Write it into Gmail so it shows in the inbox list, which is the whole point
+  // of a working set. Needs gmail.modify; when the grant is missing the state
+  // above still holds and the panel still lists it, so the feature degrades to
+  // the in-panel version rather than failing.
+  const { oauthToken } = getGmail(event);
+  let wrote = false;
+  if (oauthToken) {
+    const labelId = await ensureLabel(label, oauthToken);
+    if (labelId) {
+      wrote = res.on
+        ? await addLabel(threadId, labelId, oauthToken)
+        : await removeLabel(threadId, labelId, oauthToken);
+    }
+  }
+
+  // Sweep anything that expired while the user was away. Lazy, because there is
+  // no cron -- and the moment a user is not opening their mail is the moment a
+  // stale working-set label costs them nothing.
+  if (oauthToken) await sweepExpired(oauthToken);
+
   return c.json(
-    notify(res.on ? `${short} — clears in ${res.minutesLeft} min` : `${short} cleared`),
+    notify(
+      res.on
+        ? `${short} — clears in ${res.minutesLeft} min${wrote ? '' : ' (panel only)'}`
+        : `${short} cleared`,
+    ),
   );
 });
+
+/**
+ * Remove every instant label whose thirty minutes are up.
+ *
+ * Runs on every mark and every homepage open. A label that outlives its window
+ * is the accretion this feature exists to avoid, so the sweep is not optional
+ * housekeeping -- it is the half of the contract the user cannot see.
+ */
+async function sweepExpired(oauthToken: string): Promise<void> {
+  for (const app of instantState.takeExpired()) {
+    const label = instantLabelByKey(app.labelKey);
+    if (!label) continue;
+    const labelId = await ensureLabel(label, oauthToken);
+    if (labelId) await removeLabel(app.threadId, labelId, oauthToken);
+  }
+}
 
 // Homepage trigger — opened without a message context.
 app.post('/homepage', async (c) => {
