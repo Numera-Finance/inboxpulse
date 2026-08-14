@@ -605,6 +605,10 @@ app.post('/gmail/mark', async (c) => {
 
   const short = label.name.split('/')[1];
   const { oauthToken } = getGmail(event);
+  // Every working-set entry is namespaced by the viewer who made it — see
+  // instant-labels.ts. Without this the homepage listed one user's marked
+  // thread SUBJECTS to any other user of the service.
+  const viewer = verified.email ?? 'anon';
 
   // GMAIL DECIDES whether this is on, not our memory.
   //
@@ -625,13 +629,13 @@ app.post('/gmail/mark', async (c) => {
         : await removeLabel(threadId, labelId, oauthToken);
     }
     // Keep the panel's view in step with what we just did to the mailbox.
-    if (on) workingSet.turnOnFor(threadId, label.key, p.subject ?? '');
-    else workingSet.turnOffFor(threadId, label.key);
+    if (on) workingSet.turnOnFor(viewer, threadId, label.key, p.subject ?? '');
+    else workingSet.turnOffFor(viewer, threadId, label.key);
   } else {
-    const res = workingSet.mark(threadId, label.key, p.subject ?? '');
-    on = res.on;
+    const r = workingSet.mark(viewer, threadId, label.key, p.subject ?? '');
+    on = r.on;
   }
-  const res = { on, minutesLeft: workingSet.minutesLeftFor(threadId, label.key) };
+  const res = { on, minutesLeft: workingSet.minutesLeftFor(viewer, threadId, label.key) };
 
   // Sweep anything that expired while the user was away. Lazy, because there is
   // no cron -- and the moment a user is not opening their mail is the moment a
@@ -754,7 +758,7 @@ app.post('/gmail/triage/label', async (c) => {
   let n = 0;
   for (const [i, id] of ids.entries()) {
     if (await addLabel(id, labelId, oauthToken)) {
-      workingSet.turnOnFor(id, 'focus', subjects[i] ?? '');
+      workingSet.turnOnFor(verified.email ?? 'anon', id, 'focus', subjects[i] ?? '');
       n += 1;
     }
   }
@@ -862,7 +866,7 @@ app.post('/gmail/triage/label-types', async (c) => {
       ids.set(label.key, labelId);
     }
     if (await addLabel(threadId, labelId, oauthToken)) {
-      workingSet.turnOnFor(threadId, label.key, '');
+      workingSet.turnOnFor(verified.email ?? 'anon', threadId, label.key, '');
       n += 1;
     }
   }
@@ -899,7 +903,7 @@ app.post('/homepage', async (c) => {
       buildHomepageCard(
         stats,
         {
-          entries: workingSet.entries(),
+          entries: workingSet.entries(verified.email ?? 'anon'),
           viewerEmail: verified.email ?? undefined,
           threadUrl: gmailThreadUrl,
         },

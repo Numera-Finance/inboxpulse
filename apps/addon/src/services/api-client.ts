@@ -1,5 +1,25 @@
 import { getEnv } from '../env';
+import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger';
+
+/**
+ * A stable, non-reversible stand-in for an identifier in logs.
+ *
+ * Cloud Logging is readable by every project owner — four people on this
+ * project — so anything written there is visible to colleagues, not just to
+ * the user it belongs to. Logging a mailbox address or a customer's domain
+ * hands them a record of who is talking to whom, which is not something an
+ * add-on needs to function and not something the user agreed to.
+ *
+ * Eight hex characters is enough to correlate two lines in one incident and far
+ * too little to enumerate back to an address. The point is that the sensitive
+ * value is never written, so no access-control mistake can expose it later —
+ * you cannot leak what was never stored.
+ */
+function pseudo(value: string | undefined): string {
+  if (!value) return 'none';
+  return createHash('sha256').update(value.toLowerCase()).digest('hex').slice(0, 8);
+}
 
 /**
  * Thin client for the InboxPulse API's internal service path
@@ -88,7 +108,7 @@ export async function resolveTenantByEmail(email: string): Promise<string | null
     const url = `${env.SERVICE_API_URL}/api/internal/integrations/lookup/by-email?email=${encodeURIComponent(email)}&source=gmail`;
     const res = await apiFetch(url, { headers: internalHeaders() });
     if (!res || !res.ok) {
-      logger.info({ status: res?.status, email }, 'lookup/by-email: no tenant for user');
+      logger.info({ status: res?.status, user: pseudo(email) }, 'lookup/by-email: no tenant for user');
       return null;
     }
     const d = unwrap<{ tenantId?: string }>(await res.json());
@@ -349,13 +369,13 @@ export async function getAccountContext(
       (viewer.email ? `&email=${encodeURIComponent(viewer.email)}` : '');
     const res = await apiFetch(url, { headers: internalHeaders() });
     if (!res || !res.ok) {
-      logger.warn({ status: res?.status, domain }, 'account-context non-OK');
+      logger.warn({ status: res?.status, account: pseudo(domain) }, 'account-context non-OK');
       return null;
     }
     const json = (await res.json()) as { data?: AccountContext };
     return json.data?.found ? json.data : null;
   } catch (err) {
-    logger.warn({ err: String(err), domain }, 'account-context failed');
+    logger.warn({ err: String(err), account: pseudo(domain) }, 'account-context failed');
     return null;
   }
 }

@@ -276,6 +276,23 @@ export function gmailThreadUrl(threadId: string, viewerEmail?: string): string {
   return `https://mail.google.com/mail/u/0/${auth}#all/${threadId}`;
 }
 
+/**
+ * Namespace every entry by the viewer who made it.
+ *
+ * WorkingSet was a single process-global map with no notion of who marked what.
+ * With one user that is invisible; with two it is a leak — the homepage lists
+ * marked threads WITH THEIR SUBJECTS, so a second person opening the panel
+ * would have read the first person's mail subjects. The service is
+ * `--allow-unauthenticated` and reachable by anyone Google can vouch for, so
+ * "only one person has it installed" was the only thing standing in the way.
+ *
+ * A null byte separates the parts because it cannot occur in an email address
+ * or a Gmail thread id, so the key cannot be ambiguous.
+ */
+function key(viewer: string, threadId: string): string {
+  return `${viewer.toLowerCase()}\u0000${threadId}`;
+}
+
 export interface WorkingSetEntry {
   label: InstantLabel;
   threadId: string;
@@ -296,49 +313,54 @@ export class WorkingSet {
 
   constructor(private readonly state: InstantLabelState) {}
 
-  mark(threadId: string, labelKey: string, subject: string): { on: boolean; minutesLeft: number | null } {
+  mark(viewer: string, threadId: string, labelKey: string, subject: string): { on: boolean; minutesLeft: number | null } {
     // Toggle. Pressing the same button again is how a user turns one off before
     // it expires, which has to be the same button or it is not a toggle.
-    if (this.state.isOn(threadId, labelKey)) {
-      this.state.turnOff(threadId, labelKey);
-      if (!this.state.active().some((a) => a.threadId === threadId)) this.subjects.delete(threadId);
+    const k = key(viewer, threadId);
+    if (this.state.isOn(k, labelKey)) {
+      this.state.turnOff(k, labelKey);
+      if (!this.state.active().some((a) => a.threadId === k)) this.subjects.delete(k);
       return { on: false, minutesLeft: null };
     }
-    this.state.turnOn(threadId, labelKey);
-    if (subject.trim()) this.subjects.set(threadId, subject.trim());
-    return { on: true, minutesLeft: this.state.minutesLeft(threadId, labelKey) };
+    this.state.turnOn(k, labelKey);
+    if (subject.trim()) this.subjects.set(k, subject.trim());
+    return { on: true, minutesLeft: this.state.minutesLeft(k, labelKey) };
   }
 
-  isOn(threadId: string, labelKey: string): boolean {
-    return this.state.isOn(threadId, labelKey);
+  isOn(viewer: string, threadId: string, labelKey: string): boolean {
+    return this.state.isOn(key(viewer, threadId), labelKey);
   }
 
   /** Set on, without toggling — used when Gmail has already decided the state. */
-  turnOnFor(threadId: string, labelKey: string, subject: string): void {
-    this.state.turnOn(threadId, labelKey);
-    if (subject.trim()) this.subjects.set(threadId, subject.trim());
+  turnOnFor(viewer: string, threadId: string, labelKey: string, subject: string): void {
+    const k = key(viewer, threadId);
+    this.state.turnOn(k, labelKey);
+    if (subject.trim()) this.subjects.set(k, subject.trim());
   }
 
   /** Set off, without toggling. */
-  turnOffFor(threadId: string, labelKey: string): void {
-    this.state.turnOff(threadId, labelKey);
-    if (!this.state.active().some((a) => a.threadId === threadId)) this.subjects.delete(threadId);
+  turnOffFor(viewer: string, threadId: string, labelKey: string): void {
+    const k = key(viewer, threadId);
+    this.state.turnOff(k, labelKey);
+    if (!this.state.active().some((a) => a.threadId === k)) this.subjects.delete(k);
   }
 
-  minutesLeftFor(threadId: string, labelKey: string): number | null {
-    return this.state.minutesLeft(threadId, labelKey);
+  minutesLeftFor(viewer: string, threadId: string, labelKey: string): number | null {
+    return this.state.minutesLeft(key(viewer, threadId), labelKey);
   }
 
-  /** Everything still live, ordered by label so the list reads as groups. */
-  entries(): WorkingSetEntry[] {
+  /** Everything still live FOR THIS VIEWER, ordered by label. */
+  entries(viewer: string): WorkingSetEntry[] {
     const out: WorkingSetEntry[] = [];
+    const prefix = `${viewer.toLowerCase()}\u0000`;
     for (const a of this.state.active()) {
+      if (!a.threadId.startsWith(prefix)) continue;
       const label = instantLabelByKey(a.labelKey);
       const minutesLeft = this.state.minutesLeft(a.threadId, a.labelKey);
       if (!label || minutesLeft === null) continue;
       out.push({
         label,
-        threadId: a.threadId,
+        threadId: a.threadId.slice(prefix.length),
         subject: this.subjects.get(a.threadId) ?? '(no subject)',
         minutesLeft,
       });

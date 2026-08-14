@@ -69,8 +69,11 @@ export async function verifyRequest(
   for (const tok of candidates) {
     try {
       const payload = await verifyToken(tok, env.ADDON_AUDIENCE);
+      // The email is deliberately NOT logged. Cloud Logging is readable by
+      // every project owner, and a log of which mailbox opened which panel is
+      // a record of behaviour the user never agreed to share with colleagues.
       logger.info(
-        { aud: payload?.aud, iss: payload?.iss, email: payload?.email },
+        { aud: payload?.aud, iss: payload?.iss },
         'add-on request: Google token verified',
       );
       originOk = true;
