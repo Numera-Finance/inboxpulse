@@ -28,14 +28,45 @@ export interface EmailStats {
   analyzed: number;
 }
 
+/**
+ * Every call to the InboxPulse API, with a deadline.
+ *
+ * There were nine fetches here and not one of them could time out. When
+ * SERVICE_API_URL pointed at a service that had stopped answering, the panel
+ * hung on a spinner until Gmail gave up — no error, no card, no log line saying
+ * what it was waiting for.
+ *
+ * The card must render without account context rather than not render at all.
+ * Everything this client returns is enrichment: history, stats, the customer
+ * name. The thread reading does not depend on any of it, so a slow API should
+ * cost the user a smaller card, never the whole panel.
+ *
+ * Two seconds because this runs inside a request a human is watching. An
+ * internal service that has not answered in two seconds is not about to.
+ */
+const API_TIMEOUT_MS = 2000;
+
+async function apiFetch(url: string, init?: RequestInit): Promise<Response | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    logger.warn({ err: String(err), url: url.split('?')[0] }, 'internal API call failed or timed out');
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function getEmailStats(tenantId: string, userId?: string): Promise<EmailStats | null> {
   const env = getEnv();
   try {
-    const res = await fetch(`${env.SERVICE_API_URL}/api/internal/emails/stats`, {
+    const res = await apiFetch(`${env.SERVICE_API_URL}/api/internal/emails/stats`, {
       headers: internalHeaders(tenantId, userId),
     });
-    if (!res.ok) {
-      logger.warn({ status: res.status }, 'GET /api/internal/emails/stats non-OK');
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status }, 'GET /api/internal/emails/stats non-OK');
       return null;
     }
     const d = unwrap<Partial<EmailStats>>(await res.json());
@@ -55,9 +86,9 @@ export async function resolveTenantByEmail(email: string): Promise<string | null
   const env = getEnv();
   try {
     const url = `${env.SERVICE_API_URL}/api/internal/integrations/lookup/by-email?email=${encodeURIComponent(email)}&source=gmail`;
-    const res = await fetch(url, { headers: internalHeaders() });
-    if (!res.ok) {
-      logger.info({ status: res.status, email }, 'lookup/by-email: no tenant for user');
+    const res = await apiFetch(url, { headers: internalHeaders() });
+    if (!res || !res.ok) {
+      logger.info({ status: res?.status, email }, 'lookup/by-email: no tenant for user');
       return null;
     }
     const d = unwrap<{ tenantId?: string }>(await res.json());
@@ -85,7 +116,7 @@ export async function resolveThreadByMessage(
 ): Promise<ResolvedMessage | null> {
   const env = getEnv();
   try {
-    const res = await fetch(`${env.SERVICE_API_URL}/api/internal/emails/resolve-by-messages`, {
+    const res = await apiFetch(`${env.SERVICE_API_URL}/api/internal/emails/resolve-by-messages`, {
       method: 'POST',
       headers: internalHeaders(tenantId),
       body: JSON.stringify({
@@ -96,8 +127,8 @@ export async function resolveThreadByMessage(
         provider: 'gmail',
       }),
     });
-    if (!res.ok) {
-      logger.warn({ status: res.status }, 'resolve-by-messages non-OK');
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status }, 'resolve-by-messages non-OK');
       return null;
     }
     const d = unwrap<{ emails?: Record<string, any>[] }>(await res.json());
@@ -128,11 +159,11 @@ export async function resolveThreadIdByProvider(
 ): Promise<string | null> {
   const env = getEnv();
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `${env.SERVICE_API_URL}/api/internal/emails/thread/by-provider/${encodeURIComponent(providerThreadId)}`,
       { headers: internalHeaders(tenantId) },
     );
-    if (!res.ok) return null;
+    if (!res || !res.ok) return null;
     const d = unwrap<{ threadId?: string | null }>(await res.json());
     return d.threadId ?? null;
   } catch (err) {
@@ -160,12 +191,12 @@ export async function getThreadTrend(
 ): Promise<ThreadTrendPoint[]> {
   const env = getEnv();
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `${env.SERVICE_API_URL}/api/internal/emails/thread/${threadId}/trend`,
       { headers: internalHeaders(tenantId) },
     );
-    if (!res.ok) {
-      logger.warn({ status: res.status }, 'thread/:id/trend non-OK');
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status }, 'thread/:id/trend non-OK');
       return [];
     }
     const d = unwrap<{ points?: ThreadTrendPoint[] }>(await res.json());
@@ -203,12 +234,12 @@ export async function getThreadFlagged(
 ): Promise<FlaggedMessage[]> {
   const env = getEnv();
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `${env.SERVICE_API_URL}/api/internal/emails/thread/${threadId}/flagged`,
       { headers: internalHeaders(tenantId) },
     );
-    if (!res.ok) {
-      logger.warn({ status: res.status }, 'thread/:id/flagged non-OK');
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status }, 'thread/:id/flagged non-OK');
       return [];
     }
     const d = unwrap<{ messages?: FlaggedMessage[] }>(await res.json());
@@ -241,11 +272,11 @@ export async function getAnalyzedEmail(
 ): Promise<AnalyzedEmail | null> {
   const env = getEnv();
   try {
-    const res = await fetch(`${env.SERVICE_API_URL}/api/internal/emails/analyzed/${emailId}`, {
+    const res = await apiFetch(`${env.SERVICE_API_URL}/api/internal/emails/analyzed/${emailId}`, {
       headers: internalHeaders(tenantId),
     });
-    if (!res.ok) {
-      logger.warn({ status: res.status }, 'analyzed/:id non-OK');
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status }, 'analyzed/:id non-OK');
       return null;
     }
     const it = unwrap<Record<string, any>>(await res.json());
@@ -316,9 +347,9 @@ export async function getAccountContext(
       `&userId=${encodeURIComponent(viewer.userId)}` +
       `&isAdmin=${viewer.isAdmin ? 'true' : 'false'}` +
       (viewer.email ? `&email=${encodeURIComponent(viewer.email)}` : '');
-    const res = await fetch(url, { headers: internalHeaders() });
-    if (!res.ok) {
-      logger.warn({ status: res.status, domain }, 'account-context non-OK');
+    const res = await apiFetch(url, { headers: internalHeaders() });
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status, domain }, 'account-context non-OK');
       return null;
     }
     const json = (await res.json()) as { data?: AccountContext };
@@ -340,13 +371,13 @@ export async function createTask(input: {
   const env = getEnv();
   if (!env.SERVICE_API_KEY) return false;
   try {
-    const res = await fetch(`${env.SERVICE_API_URL}/api/internal/addon/task`, {
+    const res = await apiFetch(`${env.SERVICE_API_URL}/api/internal/addon/task`, {
       method: 'POST',
       headers: { ...internalHeaders(), 'content-type': 'application/json' },
       body: JSON.stringify(input),
     });
-    if (!res.ok) {
-      logger.warn({ status: res.status }, 'createTask non-OK');
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status }, 'createTask non-OK');
       return false;
     }
     const json = (await res.json()) as { data?: { created?: boolean } };
