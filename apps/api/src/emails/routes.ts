@@ -5,7 +5,6 @@ import { EmailService } from './service';
 import { EmailAnalysisService } from './analysis-service';
 import { RunService } from '../runs/service';
 import { dbEmailToEmail } from './converter';
-import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
 import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError } from '@crm/shared';
 import { analyzedEmailSearchRequestSchema, firstReplyMarkersRequestSchema } from '@crm/clients';
@@ -476,9 +475,6 @@ app.post('/:emailId/analyze', async (c) => {
   // Get thread emails for context
   const threadResult = await emailService.findByThread(tenantId, dbEmail.threadId);
 
-  // Build thread context (same logic as Inngest function)
-  const threadContext = buildThreadContext(threadResult.emails, dbEmail.messageId);
-
   // Convert DB email to shared Email type
   const email = dbEmailToEmail(dbEmail);
 
@@ -487,15 +483,14 @@ app.post('/:emailId/analyze', async (c) => {
     'Starting on-demand email analysis'
   );
 
-  // Execute analysis using shared service.
-  // Note: threadContext is built from raw emails; the service will prefer
-  // thread summaries when available.
+  // Execute analysis using shared service. Raw thread messages go in; the
+  // service resolves participant roles and builds the thread context from them.
   const result = await analysisService.executeAnalysis({
     tenantId,
     emailId,
     email,
     threadId: dbEmail.threadId,
-    threadContext: threadContext.threadContext,
+    threadEmails: threadResult.emails,
     persist,
     analysisTypes,
     useThreadSummaries: false, // Disabled - thread summaries not used in UI yet

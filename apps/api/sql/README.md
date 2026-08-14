@@ -98,6 +98,12 @@ psql $DATABASE_URL -f apps/api/sql/migrations/014_threads_tenant_provider_thread
 # (tenant, source, mailbox). Reconnecting a mailbox must revive the existing row,
 # never insert a second one — duplicates fragment email_threads (ADR-006).
 psql $DATABASE_URL -f apps/api/sql/migrations/015_integrations_unique_connected_mailbox.sql
+
+# Add email_analyses.sentiment_target ('us' | 'third_party' | 'none') so a
+# sentiment verdict records WHO it is aimed at, not just what it is. Ships with
+# the participant-roster prompt change. NULL means "not attributed" (historical
+# rows and keyword-matched sentiment), never "aimed at us".
+psql $DATABASE_URL -f apps/api/sql/migrations/016_email_analyses_sentiment_target.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

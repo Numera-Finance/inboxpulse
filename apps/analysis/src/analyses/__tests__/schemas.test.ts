@@ -17,17 +17,20 @@ describe('Analysis Schemas', () => {
       const result = {
         value: 'positive',
         confidence: 0.9,
+        target: 'us',
       };
 
       const parsed = sentimentSchema.parse(result);
       expect(parsed.value).toBe('positive');
       expect(parsed.confidence).toBe(0.9);
+      expect(parsed.target).toBe('us');
     });
 
     it('should reject invalid sentiment value', () => {
       const result = {
         value: 'happy', // Invalid
         confidence: 0.9,
+        target: 'us',
       };
 
       expect(() => sentimentSchema.parse(result)).toThrow();
@@ -37,9 +40,49 @@ describe('Analysis Schemas', () => {
       const result = {
         value: 'positive',
         confidence: 1.5, // Invalid
+        target: 'us',
       };
 
       expect(() => sentimentSchema.parse(result)).toThrow();
+    });
+
+    // `target` is required so the model must commit to WHO the sentiment is
+    // aimed at. A verdict that silently omits it is exactly the ambiguity this
+    // field exists to remove, so it must not validate.
+    it('should reject a result with no target', () => {
+      const result = {
+        value: 'negative',
+        confidence: 0.9,
+      };
+
+      expect(() => sentimentSchema.parse(result)).toThrow();
+    });
+
+    it('should reject an unrecognised target', () => {
+      const result = {
+        value: 'negative',
+        confidence: 0.9,
+        target: 'the_vendor', // Invalid
+      };
+
+      expect(() => sentimentSchema.parse(result)).toThrow();
+    });
+
+    it.each(['us', 'third_party', 'none'])('should accept target "%s"', (target) => {
+      const parsed = sentimentSchema.parse({ value: 'neutral', confidence: 0.5, target });
+      expect(parsed.target).toBe(target);
+    });
+
+    it('should carry the reason alongside the target', () => {
+      const parsed = sentimentSchema.parse({
+        value: 'neutral',
+        confidence: 0.8,
+        target: 'third_party',
+        reason: 'Vendor is chasing the client for payment; we are only copied.',
+      });
+
+      expect(parsed.target).toBe('third_party');
+      expect(parsed.reason).toContain('only copied');
     });
   });
 

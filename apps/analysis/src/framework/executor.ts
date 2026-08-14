@@ -6,7 +6,15 @@ import { AIService, type ModelConfig as AIServiceModelConfig } from '../services
 import type { PromptMessage } from '../services/ai-types';
 import { AnalysisRegistry } from './registry';
 import type { AnalysisDefinition, AnalysisResult, BatchAnalysisResult, ThreadContext } from './types';
+import type { ParticipantRole, RosterEntry } from '@crm/clients';
 import { logger } from '../utils/logger';
+
+/** Prompt-facing labels for participant roles. */
+const ROLE_LABELS: Record<ParticipantRole, string> = {
+  us: 'US',
+  customer: 'CUSTOMER',
+  unknown_external: 'UNKNOWN_EXTERNAL',
+};
 
 /**
  * Analysis Executor
@@ -28,7 +36,8 @@ export class AnalysisExecutor {
     email: Email,
     tenantId: string,
     config: AnalysisConfig,
-    threadContext?: ThreadContext
+    threadContext?: ThreadContext,
+    participants?: RosterEntry[]
   ): Promise<AnalysisResult> {
     const definition = this.registry.get(type);
     if (!definition) {
@@ -43,7 +52,7 @@ export class AnalysisExecutor {
     // Build prompt
     const prompt = definition.buildPrompt
       ? definition.buildPrompt(email, threadContext)
-      : this.buildSinglePrompt(definition, email, threadContext);
+      : this.buildSinglePrompt(definition, email, threadContext, participants);
 
     // Convert model config to AI service format
     const modelConfig = this.convertModelConfig(primaryModel, fallbackModel);
@@ -108,7 +117,8 @@ export class AnalysisExecutor {
   buildBatchedPrompt(
     definitions: AnalysisDefinition[],
     email: Email,
-    threadContext?: ThreadContext
+    threadContext?: ThreadContext,
+    participants?: RosterEntry[]
   ): string | PromptMessage[] {
     // Combine all module instructions
     const instructions = definitions
@@ -116,7 +126,7 @@ export class AnalysisExecutor {
       .join('\n\n');
 
     // Build email context
-    const emailContext = this.buildEmailContext(email, threadContext);
+    const emailContext = this.buildEmailContext(email, threadContext, participants);
 
     // Combine into final prompt
     const prompt = `${instructions}\n\n${emailContext}`;
@@ -132,7 +142,8 @@ export class AnalysisExecutor {
     email: Email,
     tenantId: string,
     config: AnalysisConfig,
-    threadContext?: ThreadContext
+    threadContext?: ThreadContext,
+    participants?: RosterEntry[]
   ): Promise<BatchAnalysisResult> {
     if (definitions.length === 0) {
       return new Map();
@@ -148,7 +159,7 @@ export class AnalysisExecutor {
 
     // Build batched schema and prompt
     const batchedSchema = this.buildBatchedSchema(definitions);
-    const batchedPrompt = this.buildBatchedPrompt(definitions, email, threadContext);
+    const batchedPrompt = this.buildBatchedPrompt(definitions, email, threadContext, participants);
 
     logger.debug(
       {
@@ -234,7 +245,8 @@ export class AnalysisExecutor {
     email: Email,
     tenantId: string,
     config: AnalysisConfig,
-    threadContext?: ThreadContext
+    threadContext?: ThreadContext,
+    participants?: RosterEntry[]
   ): Promise<BatchAnalysisResult> {
     logger.debug(
       {
@@ -247,7 +259,7 @@ export class AnalysisExecutor {
 
     // Execute all analyses in parallel
     const promises = definitions.map((definition) =>
-      this.executeSingle(definition.type, email, tenantId, config, threadContext).catch((error: any) => {
+      this.executeSingle(definition.type, email, tenantId, config, threadContext, participants).catch((error: any) => {
         logger.error(
           { error: error.message, type: definition.type, emailId: email.messageId, tenantId },
           'Individual analysis call failed'
@@ -291,7 +303,8 @@ export class AnalysisExecutor {
     email: Email,
     tenantId: string,
     config: AnalysisConfig,
-    threadContext?: ThreadContext
+    threadContext?: ThreadContext,
+    participants?: RosterEntry[]
   ): Promise<BatchAnalysisResult> {
     // Get definitions for requested types. Schema validation at the route
     // boundary should already reject unknown types — this fallback exists as
@@ -323,7 +336,7 @@ export class AnalysisExecutor {
     // Try batch first (only if more than one analysis)
     if (validDefinitions.length > 1) {
       try {
-        return await this.executeBatchCall(validDefinitions, email, tenantId, config, threadContext);
+        return await this.executeBatchCall(validDefinitions, email, tenantId, config, threadContext, participants);
       } catch (error: any) {
         logger.debug(
           { error: error.message, tenantId, emailId: email.messageId },
@@ -334,7 +347,7 @@ export class AnalysisExecutor {
     }
 
     // Fallback to individual calls
-    return await this.executeIndividualCalls(validDefinitions, email, tenantId, config, threadContext);
+    return await this.executeIndividualCalls(validDefinitions, email, tenantId, config, threadContext, participants);
   }
 
   /**
@@ -343,31 +356,51 @@ export class AnalysisExecutor {
   private buildSinglePrompt(
     definition: AnalysisDefinition,
     email: Email,
-    threadContext?: ThreadContext
+    threadContext?: ThreadContext,
+    participants?: RosterEntry[]
   ): string {
-    const emailContext = this.buildEmailContext(email, threadContext);
+    const emailContext = this.buildEmailContext(email, threadContext, participants);
     return `${definition.module.instructions}\n\n${emailContext}`;
   }
 
   /**
    * Helper: Build email context string
-   * - From: sender identity (used by signature-extraction's ownership rule, harmless to others)
+   * - Participants: roster of every address on this email and its thread, each
+   *                labelled US / CUSTOMER / UNKNOWN_EXTERNAL. Analyses written
+   *                in terms of "us" and "the customer" cannot resolve either
+   *                from raw addresses; the roster is how they find out.
+   * - From/To/Cc: addressing structure of THIS message, role-labelled. Whether
+   *              we are addressed directly or merely copied is the difference
+   *              between a complaint aimed at us and one we are observing.
    * - Body: dequoted reply content
    * - Signature: dequoted reply with signature attached, for signature-extraction to find
    *             the signature within
-   * - Thread Context: optional prior-thread summary
+   * - Thread Context: optional prior-thread history, already role-labelled by
+   *                  apps/api
    */
-  private buildEmailContext(email: Email, threadContext?: ThreadContext): string {
-    const fromName = email.from?.name?.trim();
-    const fromEmail = email.from?.email?.trim();
-    const fromLine = fromEmail
-      ? fromName
-        ? `From: ${fromName} <${fromEmail}>`
-        : `From: ${fromEmail}`
-      : '';
-
+  private buildEmailContext(
+    email: Email,
+    threadContext?: ThreadContext,
+    participants?: RosterEntry[]
+  ): string {
     let context = '';
-    if (fromLine) context += `${fromLine}\n`;
+
+    const rosterBlock = this.formatRoster(participants);
+    if (rosterBlock) context += `${rosterBlock}\n\n`;
+
+    const roles = new Map(
+      (participants || []).map((p) => [p.email.toLowerCase().trim(), p.role])
+    );
+
+    const fromLine = this.formatAddress(email.from, roles);
+    if (fromLine) context += `From: ${fromLine}\n`;
+
+    const toLine = this.formatAddressList(email.tos, roles);
+    if (toLine) context += `To: ${toLine}\n`;
+
+    const ccLine = this.formatAddressList(email.ccs, roles);
+    if (ccLine) context += `Cc: ${ccLine}\n`;
+
     context += `Email Subject: ${email.subject}\n\n`;
     context += `Email Body:\n${email.body || ''}\n\n`;
 
@@ -380,6 +413,46 @@ export class AnalysisExecutor {
     }
 
     return context;
+  }
+
+  /** Render the roster block. Empty string when there is no roster. */
+  private formatRoster(participants?: RosterEntry[]): string {
+    if (!participants?.length) return '';
+
+    const lines = participants.map((p) => {
+      const name = p.name ? ` ${p.name}` : '';
+      return `  ${p.email}${name} [${ROLE_LABELS[p.role]}]`;
+    });
+
+    return `Participants:\n${lines.join('\n')}`;
+  }
+
+  /** Render one address as `Name <email> [ROLE]`. */
+  private formatAddress(
+    addr: { email?: string; name?: string } | undefined,
+    roles: ReadonlyMap<string, ParticipantRole>
+  ): string {
+    const address = addr?.email?.trim().toLowerCase();
+    if (!address) return '';
+
+    const role = roles.get(address);
+    const label = role ? ` [${ROLE_LABELS[role]}]` : '';
+    const name = addr?.name?.trim();
+
+    return name ? `${name} <${address}>${label}` : `${address}${label}`;
+  }
+
+  /** Render a comma-separated address list. Empty string when the list is empty. */
+  private formatAddressList(
+    addrs: Array<{ email?: string; name?: string }> | undefined,
+    roles: ReadonlyMap<string, ParticipantRole>
+  ): string {
+    if (!addrs?.length) return '';
+
+    return addrs
+      .map((addr) => this.formatAddress(addr, roles))
+      .filter((line) => line !== '')
+      .join(', ');
   }
 
   /**

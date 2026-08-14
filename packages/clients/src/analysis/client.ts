@@ -43,6 +43,29 @@ export const extractedPayloadSchema = z.object({
   contacts: z.array(extractedContactSchema),
 });
 
+/**
+ * Role of an email participant relative to the tenant, resolved by apps/api
+ * (which owns tenant domains and customer records) and consumed by
+ * apps/analysis when rendering the prompt.
+ *
+ * `unknown_external` covers external addresses that are not confirmed
+ * customers — including the auto-created customer shells the ingestion
+ * pipeline mints for every participant domain.
+ */
+export const participantRoleSchema = z.enum(['us', 'customer', 'unknown_external']);
+export type ParticipantRole = z.infer<typeof participantRoleSchema>;
+
+/**
+ * One entry in the participant roster. The roster covers exactly the addresses
+ * appearing on the analysed email and its accompanying thread messages.
+ */
+export const rosterEntrySchema = z.object({
+  email: z.string(),
+  name: z.string().optional(),
+  role: participantRoleSchema,
+});
+export type RosterEntry = z.infer<typeof rosterEntrySchema>;
+
 export type ExtractedDomain = z.infer<typeof extractedDomainSchema>;
 export type ExtractedContact = z.infer<typeof extractedContactSchema>;
 export type ExtractedPayload = z.infer<typeof extractedPayloadSchema>;
@@ -87,6 +110,12 @@ export class AnalysisClient extends BaseClient {
     email: Email,
     options?: {
       threadContext?: string;
+      /**
+       * Role-labelled roster for the addresses on this email and its thread.
+       * Lets attribution-sensitive analyses (sentiment) tell who is speaking
+       * and who is being addressed instead of inferring it from raw domains.
+       */
+      participants?: RosterEntry[];
       analysisTypes?: AnalysisType[];
       config?: Partial<AnalysisConfig>;
       filter?: FilterOptions;
@@ -98,6 +127,7 @@ export class AnalysisClient extends BaseClient {
         tenantId,
         email,
         threadContext: options?.threadContext,
+        participants: options?.participants,
         analysisTypes: options?.analysisTypes,
         config: options?.config,
         filter: options?.filter,

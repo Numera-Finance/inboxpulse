@@ -20,9 +20,75 @@ export const sentimentModule: AnalysisModule = {
 Analyze the emotional tone of this email from a customer relationship perspective.
 
 Return:
+- target: us|third_party|none — WHO the sentiment is aimed at. Decide this FIRST.
 - value: positive|negative|neutral
 - confidence: 0-1 (how confident you are in the sentiment classification)
 - reason: one short sentence (max ~160 characters) justifying the classification, quoting or paraphrasing the specific phrase that drove it. Always provide this.
+
+## Reading the participants
+
+The prompt carries a "Participants:" roster, plus From / To / Cc lines on the
+current message and on every message in Thread Context. Each address is
+labelled with its role:
+
+- **[US]** — our own firm. This is what "we", "us" and "our work" mean below.
+- **[CUSTOMER]** — a confirmed client of ours.
+- **[UNKNOWN_EXTERNAL]** — any other external address: vendors, banks, the
+  client's own counterparties, prior providers, prospects, partners. Some are
+  clients we simply have not confirmed yet, so weigh their messages as if they
+  could be a customer — but never assume a complaint from them concerns us
+  unless they say so.
+
+Use ONLY these labels to decide who is who. Never infer a role from the domain
+name, the signature block, the display name, or the tone of the message. If no
+roster is present, fall back to reasoning from the message content alone.
+
+## Step 1 — decide \`target\` before \`value\`
+
+- **us** — the emotional content is aimed at our firm, our people, or work WE
+  performed.
+- **third_party** — aimed at anyone else: a vendor, a bank, the IRS, a prior
+  provider, the client's own counterparty, or one external party addressing
+  another. This includes strong dissatisfaction, as long as it is not about us.
+- **none** — no directed sentiment (routine operational mail). This is the norm.
+
+\`value\` must agree with \`target\`:
+- **negative REQUIRES target = us.** Dissatisfaction aimed at anyone else is
+  \`target: third_party\` with \`value: neutral\`.
+- **positive REQUIRES target = us.** Praise for a third party is
+  \`target: third_party\` with \`value: neutral\`.
+- If \`target\` is \`none\`, \`value\` is \`neutral\`.
+
+## Step 2 — is this message even addressed to us?
+
+- If the **sender is [US]**, we are the ones writing. Set \`target: none\`,
+  \`value: neutral\`.
+- If **no [US] address appears in To** — we are only on Cc, or not on the
+  message at all — we are observers, not the addressee. Set
+  \`target: third_party\` and \`value: neutral\` UNLESS the body explicitly names
+  us or our work. A vendor chasing our client for payment while copying us is
+  the archetypal case: it is about the client and the vendor, not about us.
+- If an **[US] address is in To**, we are being addressed. Continue to the
+  classification rules below.
+
+## Step 3 — whose work is being criticised?
+
+A complaint stated TO us is not automatically ABOUT us. Customers routinely
+raise errors made by a prior provider, another vendor, or themselves.
+
+- Use Thread Context to establish who performed the work in question.
+- If the thread shows [US] participants performing or owning that work →
+  \`target: us\`.
+- If the work predates our involvement, or the thread attributes it to another
+  party or to the customer themselves → \`target: third_party\`,
+  \`value: neutral\`.
+- When genuinely ambiguous, choose \`target: us\` ONLY if the thread shows [US]
+  participants doing the work being criticised. Otherwise choose
+  \`target: third_party\`.
+
+Mentioning, evaluating, consulting, or planning to engage another vendor is NOT
+dissatisfaction with us. Neither is discussing a workaround another provider
+offers.
 
 CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) are NEUTRAL. Only classify as POSITIVE when the PRIMARY PURPOSE of the email is to express genuine satisfaction, praise, or heartfelt gratitude — not as a side effect of politeness.
 
@@ -51,7 +117,7 @@ CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) a
 - Testimonials or recommendations
 - Expressed relief or satisfaction after problem resolution ("So glad this is finally working, you guys nailed it")
 
-**NEGATIVE** — The customer is genuinely dissatisfied with US, and that dissatisfaction is the PRIMARY PURPOSE of the email.
+**NEGATIVE** — The customer is genuinely dissatisfied with US, and that dissatisfaction is the PRIMARY PURPOSE of the email. Requires \`target: us\`.
 
 Classify as NEGATIVE only when the customer ASSERTS that we did something wrong, failed them, or caused them harm — not when they merely ask, request, or rush us. The complaint must be aimed at our firm and be the main point of the email, not a passing remark in an otherwise operational message.
 
@@ -71,16 +137,26 @@ NEUTRAL even when worded strongly or with time-pressure (NOT EXHAUSTIVE — reas
 - A request to send, prepare, fix, update, process, or grant access to something — even if marked urgent or carrying a deadline ("please share the W9 by tomorrow", "give KK QBO access on priority")
 - A question, clarification, status check, or request for confirmation — even if it voices mild uncertainty ("can you confirm the fee?", "I'm not sure I see the confirmation", "is this right?", "any update on the open items?")
 - A price, fee, quote, or scope discussion ("we don't want to pay for that twice")
-- Frustration aimed at a third party (a bank, the IRS, a vendor, another provider) — even if forwarded to us — UNLESS the customer explicitly blames US or asks us to fix OUR OWN failure
+- Frustration aimed at a third party (a bank, the IRS, a vendor, another provider) — even if forwarded to us — UNLESS the customer explicitly blames US or asks us to fix OUR OWN failure. Set \`target: third_party\` for these.
+- A dispute between two external parties that we are merely copied on (e.g. a vendor pressing our client over an overdue invoice, with an [US] address on Cc). Set \`target: third_party\`.
+- The customer reporting an error in work done by a PRIOR provider, another vendor, or themselves — even when stated firmly and addressed to us. Set \`target: third_party\`.
 - The customer explaining or apologizing for their OWN delay, mistake, or missing information ("sorry I couldn't get to it earlier", "I don't have the 2022 W-2")
 - The customer disagreeing with a correction we proposed, or saying a change is not needed — this is a discussion, not dissatisfaction
 - An informational or operational notice — a company winding down, a routine AR/AP review, providing documents we requested, or looping in a colleague to coordinate
 
-DOUBLE-CHECK before finalizing your classification. Re-read the email and ask:
-"Is the customer ASSERTING that WE did something wrong, failed them, or caused harm — as the MAIN point of this email?"
-- If YES → NEGATIVE.
-- If they are only requesting, asking, clarifying, confirming, negotiating price, venting about a third party, owning their own delay, or applying time-pressure without a complaint about us → NEUTRAL.
+DOUBLE-CHECK before finalizing your classification. Re-read the email and ask, in order:
+1. "Is an [US] address in the To line of this message?" If not, and the body does not name us → \`target: third_party\`, NEUTRAL.
+2. "Whose work is being criticised?" If it is not work the thread shows [US] participants performing → \`target: third_party\`, NEUTRAL.
+3. "Is the customer ASSERTING that WE did something wrong, failed them, or caused harm — as the MAIN point of this email?"
+   - If YES → \`target: us\`, NEGATIVE.
+   - If they are only requesting, asking, clarifying, confirming, negotiating price, venting about a third party, mentioning another vendor, owning their own delay, or applying time-pressure without a complaint about us → NEUTRAL.
 Revise your initial classification if this check disagrees with it.
+
+EXAMPLES — target and value together:
+- Vendor <vendor@acme.com> [UNKNOWN_EXTERNAL] → To: client [CUSTOMER], Cc: us [US]: "Please settle the overdue balance before month end, otherwise we escalate to Credit Committee." → \`target: third_party\`, NEUTRAL (a vendor pressing our client; we are only copied)
+- Client [CUSTOMER] → To: us [US]: "The prior firm marked Stewards as final and that's wrong." → \`target: third_party\`, NEUTRAL (criticises a prior provider's work, not ours)
+- Client [CUSTOMER] → To: us [US]: "I'll talk to VCorp too, they may have a workaround for the SSN issue." → \`target: third_party\`, NEUTRAL (mentions another vendor; no complaint about us)
+- Client [CUSTOMER] → To: us [US]: "You booked this to the wrong account again and I've flagged it twice." → \`target: us\`, NEGATIVE (asserts our error, repeated)
 
 EXAMPLES - Classify as NEUTRAL (NOT positive):
 - "Yes, that works. Thank you." → NEUTRAL (simple acknowledgment)
@@ -104,7 +180,7 @@ KEY TEST: Ask yourself — "Is the primary purpose of this email to express posi
 
 Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
-  version: 'v1.5',
+  version: 'v1.6',
 };
 
 /**

@@ -1,4 +1,4 @@
-import { eq, and, sql, SQL } from 'drizzle-orm';
+import { eq, and, inArray, sql, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository, affectedRows } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
@@ -74,6 +74,42 @@ export class CustomerRepository extends ScopedRepository {
       .limit(1);
 
     return result[0];
+  }
+
+  /**
+   * Of the given customer-domain keys, return those that map to a *curated*
+   * customer — active, and not auto-created by the ingestion pipeline.
+   *
+   * The email pipeline mints an auto-created customer for every participant
+   * domain it sees, so simply having a customer row proves nothing about who
+   * the client is. `is_auto_created = false` is the only signal in the schema
+   * that a human confirmed the record, which makes it the basis for the
+   * `customer` participant role (see participant-roles.ts).
+   *
+   * Domains are matched lowercased on both sides. Returns an empty set for an
+   * empty input without hitting the database.
+   */
+  async findCuratedDomains(tenantId: string, domains: string[]): Promise<Set<string>> {
+    if (domains.length === 0) {
+      return new Set();
+    }
+
+    const normalized = [...new Set(domains.map((d) => d.toLowerCase()))];
+
+    const rows = await this.db
+      .select({ domain: customerDomains.domain })
+      .from(customerDomains)
+      .innerJoin(customers, eq(customers.id, customerDomains.customerId))
+      .where(
+        and(
+          eq(customerDomains.tenantId, tenantId),
+          inArray(customerDomains.domain, normalized),
+          eq(customers.isAutoCreated, false),
+          eq(customers.rowStatus, CustomerRowStatus.ACTIVE)
+        )
+      );
+
+    return new Set(rows.map((r) => r.domain));
   }
 
   async findById(id: string): Promise<Customer | undefined> {
@@ -470,21 +506,33 @@ export class CustomerRepository extends ScopedRepository {
   /**
    * Replace all domains for a customer (delete existing, add new)
    * Used during import to fully replace domain list
+   *
+   * Accepts an optional transaction so the caller can keep the domain swap and
+   * the matching contact reassignment atomic.
+   *
+   * Note the insert has no ON CONFLICT: (tenant_id, domain) is unique, so this
+   * cannot take a domain off another customer — it raises 23505 instead. It
+   * only ever drops this customer's own domains or claims unowned ones.
    */
-  async replaceDomains(customerId: string, tenantId: string, domains: string[]): Promise<void> {
+  async replaceDomains(
+    customerId: string,
+    tenantId: string,
+    domains: string[],
+    tx?: Transaction
+  ): Promise<void> {
     if (domains.length === 0) {
       throw new Error('At least one domain is required');
     }
 
-    await this.db.transaction(async (tx) => {
+    const runner = async (innerTx: Transaction): Promise<void> => {
       // Delete all existing domains for this customer
-      await tx
+      await innerTx
         .delete(customerDomains)
         .where(eq(customerDomains.customerId, customerId));
 
       // Insert new domains
       for (const domain of domains) {
-        await tx.insert(customerDomains).values({
+        await innerTx.insert(customerDomains).values({
           customerId,
           tenantId,
           domain: domain.toLowerCase(),
@@ -493,7 +541,13 @@ export class CustomerRepository extends ScopedRepository {
       }
 
       logger.debug({ customerId, domainCount: domains.length }, 'Replaced customer domains');
-    });
+    };
+
+    if (tx) {
+      await runner(tx);
+      return;
+    }
+    await this.db.transaction(runner);
   }
 
   /**
@@ -627,6 +681,35 @@ export class CustomerRepository extends ScopedRepository {
       WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
     `);
     return affectedRows(result);
+  }
+
+  /**
+   * Point a single domain at `targetCustomerId`, whoever owned it before.
+   *
+   * Used by manual contact assignment to take a domain off the placeholder
+   * customer the pipeline auto-created for it. Upserts on the
+   * (tenant_id, domain) unique index, so it both claims an unowned domain and
+   * moves an owned one. Callers are responsible for deciding whether the
+   * current owner may be displaced — see ContactService.assignCustomer.
+   */
+  async moveDomain(
+    tenantId: string,
+    domain: string,
+    targetCustomerId: string,
+    tx?: Transaction
+  ): Promise<void> {
+    const db = tx ?? this.db;
+    const normalizedDomain = domain.toLowerCase();
+    await db.execute(sql`
+      INSERT INTO customer_domains (customer_id, tenant_id, domain, verified)
+      VALUES (${targetCustomerId}, ${tenantId}, ${normalizedDomain}, FALSE)
+      ON CONFLICT (tenant_id, domain)
+      DO UPDATE SET customer_id = ${targetCustomerId}, updated_at = NOW()
+    `);
+    logger.info(
+      { tenantId, domain: normalizedDomain, targetCustomerId, logType: 'DOMAIN_MOVED' },
+      'Moved domain to customer'
+    );
   }
 
   /**

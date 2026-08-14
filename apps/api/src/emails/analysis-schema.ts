@@ -24,6 +24,12 @@ export type AnalysisResult =
       // Sentiment
       value: 'positive' | 'negative' | 'neutral';
       confidence: number;
+      reason?: string;
+      /**
+       * Who the sentiment is aimed at. Absent on keyword-matched results,
+       * which assert a sentiment value without establishing a target.
+       */
+      target?: 'us' | 'third_party' | 'none';
     }
   | {
       // Escalation
@@ -106,6 +112,10 @@ export const emailAnalyses = pgTable(
     riskLevel: varchar('risk_level', { length: 20 }), // For churn: 'low' | 'medium' | 'high' | 'critical' (NULL for others)
     urgency: varchar('urgency', { length: 20 }), // For escalation: 'low' | 'medium' | 'high' | 'critical' (NULL for others)
     sentimentValue: varchar('sentiment_value', { length: 20 }), // For sentiment: 'positive' | 'negative' | 'neutral' (NULL for others)
+    // For sentiment: 'us' | 'third_party' | 'none' — who the sentiment is aimed
+    // at. NULL for other analysis types, and for keyword-matched sentiment
+    // (which sets a value without establishing a target).
+    sentimentTarget: varchar('sentiment_target', { length: 20 }),
 
     // Metadata
     modelUsed: varchar('model_used', { length: 100 }), // Which model was used (primary or fallback)
@@ -136,6 +146,12 @@ export const emailAnalyses = pgTable(
     index('idx_email_analyses_risk_level').on(table.riskLevel), // For churn
     index('idx_email_analyses_urgency').on(table.urgency), // For escalation
     index('idx_email_analyses_sentiment_value').on(table.sentimentValue), // For sentiment
+    // Sentiment attribution: filtering "negative AND aimed at us" is the main
+    // consumer (escalation creation, dashboards), so index the pair.
+    index('idx_email_analyses_sentiment_value_target').on(
+      table.sentimentValue,
+      table.sentimentTarget
+    ),
     index('idx_email_analyses_tenant_type').on(table.tenantId, table.analysisType),
     index('idx_email_analyses_tenant_type_detected').on(
       table.tenantId,

@@ -7,16 +7,6 @@ import { logger } from '../../utils/logger';
 import { EmailAnalysisStatus } from '../schema';
 
 /**
- * Maximum number of emails to include in thread context
- * Limits token usage and memory for large threads
- * 
- * Phase 1: Includes limited recent emails (MAX_THREAD_CONTEXT_EMAILS)
- * Phase 2: LLM will query for additional thread context via tools when needed
- */
-const MAX_THREAD_CONTEXT_EMAILS = 5;
-const MAX_BODY_PREVIEW_LENGTH = 300;
-
-/**
  * Inngest function to analyze emails after insertion
  * Triggered by 'email/inserted' event from EmailService
  * 
@@ -137,9 +127,6 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
           'Inngest: EXECUTING ANALYSIS - LLM calls will be made (cost incurred)'
         );
 
-        // Build limited thread context (avoids memory issues with large threads)
-        const threadContext = buildThreadContext(threadEmails, dbEmail.messageId);
-
         // Convert DB email to shared Email type for analysis service
         const email = dbEmailToEmail(dbEmail);
 
@@ -163,7 +150,9 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
           emailId,
           email,
           threadId,
-          threadContext: threadContext.threadContext, // Fallback if no summaries exist
+          // Raw thread messages: the service builds the participant roster and
+          // the role-labelled thread context from these.
+          threadEmails,
           persist: true, // Always persist in Inngest
           useThreadSummaries: false, // Disabled - thread summaries not used in UI yet
         });
@@ -235,69 +224,3 @@ export const createAnalyzeEmailFunction = (inngest: Inngest) => {
   );
 };
 
-/**
- * Build thread context string for analyses that require it
- * Limits context size to reduce token usage and prevent memory issues with large threads
- *
- * Phase 1: Includes limited recent emails (MAX_THREAD_CONTEXT_EMAILS)
- * Phase 2: LLM will query for additional thread context via tools when needed
- *
- * Performance optimizations:
- * 1. Limits to MAX_THREAD_CONTEXT_EMAILS most recent emails
- * 2. Truncates body previews to MAX_BODY_PREVIEW_LENGTH
- * 3. Prioritizes emails around the current email
- */
-function buildThreadContext(threadEmails: any[], currentMessageId: string): { threadContext: string } {
-  if (!threadEmails || threadEmails.length === 0) {
-    return { threadContext: 'No thread history available' };
-  }
-
-  // Sort by received date
-  const sortedEmails = [...threadEmails].sort((a, b) => {
-    const dateA = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
-    const dateB = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
-    return dateA - dateB;
-  });
-
-  // Select emails to include (limit to MAX_THREAD_CONTEXT_EMAILS)
-  let emailsToInclude: any[];
-  if (sortedEmails.length <= MAX_THREAD_CONTEXT_EMAILS) {
-    emailsToInclude = sortedEmails;
-  } else {
-    // Take the most recent MAX_THREAD_CONTEXT_EMAILS emails
-    emailsToInclude = sortedEmails.slice(-MAX_THREAD_CONTEXT_EMAILS);
-  }
-
-  const contextParts: string[] = [];
-  if (sortedEmails.length > emailsToInclude.length) {
-    contextParts.push(
-      `Thread History (showing ${emailsToInclude.length} of ${sortedEmails.length} messages, most recent):\n`
-    );
-  } else {
-    contextParts.push(`Thread History (${sortedEmails.length} messages):\n`);
-  }
-
-  for (const dbEmail of emailsToInclude) {
-    const isCurrent = dbEmail.messageId === currentMessageId;
-    const marker = isCurrent ? '[CURRENT]' : '';
-
-    contextParts.push(`${marker} From: ${dbEmail.fromName || dbEmail.fromEmail} (${dbEmail.fromEmail})`);
-    contextParts.push(`Subject: ${dbEmail.subject}`);
-    if (dbEmail.receivedAt) {
-      contextParts.push(`Date: ${new Date(dbEmail.receivedAt).toISOString()}`);
-    }
-
-    if (dbEmail.body) {
-      const bodyPreview = dbEmail.body.length > MAX_BODY_PREVIEW_LENGTH
-        ? dbEmail.body.substring(0, MAX_BODY_PREVIEW_LENGTH) + '...'
-        : dbEmail.body;
-      contextParts.push(`Body: ${bodyPreview}`);
-    }
-
-    contextParts.push('---');
-  }
-
-  return {
-    threadContext: contextParts.join('\n'),
-  };
-}

@@ -8,6 +8,7 @@ import { AIService, type ModelConfig } from '../services/ai-service';
 import { analysisRegistry } from '../framework/registry';
 import { analysisCacheService } from '../services/cache-service';
 import { emailSchema, analysisTypeSchema, DEFAULT_LLM_MODEL } from '@crm/shared';
+import { rosterEntrySchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 import { z } from 'zod';
 import type { ApiResponse } from '@crm/shared';
@@ -59,6 +60,11 @@ const analyzeRequestSchema = z.object({
   tenantId: z.uuid(),
   email: emailSchema,
   threadContext: z.string().optional(),
+  // Role-labelled roster for the addresses on this email and its thread,
+  // resolved by apps/api (which owns tenant domains and customer records).
+  // Optional so callers predating the roster still work — analyses then fall
+  // back to reasoning without participant roles.
+  participants: z.array(rosterEntrySchema).optional(),
   // Strict — unknown / removed types fail at the boundary with a 400
   // instead of being silently filtered out by the executor.
   analysisTypes: z.array(analysisTypeSchema).optional(),
@@ -228,7 +234,8 @@ app.post('/analyze', async (c) => {
     validated.email,
     validated.tenantId,
     config,
-    threadContext
+    threadContext,
+    validated.participants
   );
 
   const resultsObject: Record<string, any> = {};

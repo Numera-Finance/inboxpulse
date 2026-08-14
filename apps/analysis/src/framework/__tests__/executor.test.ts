@@ -125,9 +125,78 @@ describe('AnalysisExecutor', () => {
       };
 
       const prompt = executor.buildBatchedPrompt(definitions, mockEmail, threadContext);
-      
+
       expect(prompt).toContain('Thread Context');
       expect(prompt).toContain('Previous thread messages');
+    });
+
+    // Analyses are written in terms of "us" and "the customer". Without the
+    // roster the model has no way to resolve either from raw addresses, which
+    // is what made third-party complaints read as negative sentiment about us.
+    describe('participant roster', () => {
+      const definitions = [allAnalysisDefinitions.find((d) => d.type === 'sentiment')!];
+
+      const ccEmail: Email = {
+        ...mockEmail,
+        from: { email: 'regina@talapparel.com', name: 'Regina Cheung' },
+        tos: [{ email: 'jonathan@acme-client.com', name: 'Jonathan Tang' }],
+        ccs: [{ email: 'mbala@mystartupcfo.com', name: 'Manju Bala' }],
+      };
+
+      const participants = [
+        { email: 'regina@talapparel.com', name: 'Regina Cheung', role: 'unknown_external' as const },
+        { email: 'jonathan@acme-client.com', name: 'Jonathan Tang', role: 'customer' as const },
+        { email: 'mbala@mystartupcfo.com', name: 'Manju Bala', role: 'us' as const },
+      ];
+
+      it('renders the roster with a role label per address', () => {
+        const prompt = executor.buildBatchedPrompt(definitions, ccEmail, undefined, participants);
+
+        expect(prompt).toContain('Participants:');
+        expect(prompt).toContain('  mbala@mystartupcfo.com Manju Bala [US]');
+        expect(prompt).toContain('  jonathan@acme-client.com Jonathan Tang [CUSTOMER]');
+        expect(prompt).toContain('  regina@talapparel.com Regina Cheung [UNKNOWN_EXTERNAL]');
+      });
+
+      // To vs Cc is the signal that separates "addressed to us" from "copied".
+      it('renders From, To and Cc for the current message with roles', () => {
+        const prompt = executor.buildBatchedPrompt(definitions, ccEmail, undefined, participants);
+
+        expect(prompt).toContain('From: Regina Cheung <regina@talapparel.com> [UNKNOWN_EXTERNAL]');
+        expect(prompt).toContain('To: Jonathan Tang <jonathan@acme-client.com> [CUSTOMER]');
+        expect(prompt).toContain('Cc: Manju Bala <mbala@mystartupcfo.com> [US]');
+      });
+
+      // Assertions target the rendered address lines rather than bare tokens
+      // like "[US]" or "Cc:", which also appear in the sentiment instructions
+      // (they document the roster format for the model).
+      it('omits the roster and role labels when no participants are supplied', () => {
+        const prompt = executor.buildBatchedPrompt(definitions, ccEmail);
+
+        expect(prompt).not.toContain('  mbala@mystartupcfo.com Manju Bala [US]');
+        expect(prompt).not.toContain('<regina@talapparel.com> [UNKNOWN_EXTERNAL]');
+        expect(prompt).toContain('From: Regina Cheung <regina@talapparel.com>\n');
+      });
+
+      it('leaves an address unlabelled when it is missing from the roster', () => {
+        const prompt = executor.buildBatchedPrompt(definitions, ccEmail, undefined, [
+          participants[0],
+        ]);
+
+        expect(prompt).toContain('To: Jonathan Tang <jonathan@acme-client.com>\n');
+        expect(prompt).not.toContain('<jonathan@acme-client.com> [CUSTOMER]');
+      });
+
+      it('omits the Cc line when the message has no Cc', () => {
+        const prompt = executor.buildBatchedPrompt(
+          definitions,
+          { ...ccEmail, ccs: [] },
+          undefined,
+          participants
+        );
+
+        expect(prompt).not.toContain('Cc: Manju Bala');
+      });
     });
   });
 
