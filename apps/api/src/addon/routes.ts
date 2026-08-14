@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { InvalidInputError } from '@crm/shared';
-import { AccountContextService } from './account-context';
+import { AccountContextService, WaitingClientsService } from './account-context';
 
 export const addonRoutes = new Hono();
 
@@ -84,4 +84,40 @@ addonRoutes.post('/task', async (c) => {
   });
 
   return c.json({ success: true, data: created });
+});
+
+/**
+ * GET /api/internal/addon/waiting?tenantId=&userId=&isAdmin=&days=
+ *
+ * Angry clients nobody has answered — the team-lead question, asked directly.
+ *
+ * Viewer-scoped like everything else on this router: admins see the tenant,
+ * everyone else sees only customers in `user_accessible_customers`. A view of
+ * "who is unhappy" must not become a way to read accounts the viewer cannot
+ * otherwise open.
+ */
+addonRoutes.get('/waiting', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  const userId = c.req.query('userId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  if (!userId) throw new InvalidInputError('userId is required');
+
+  const days = Math.min(90, Math.max(1, Number(c.req.query('days') ?? 30)));
+  const isAdmin = c.req.query('isAdmin') === 'true';
+
+  const service = container.resolve(WaitingClientsService);
+  return c.json({
+    success: true,
+    data: await service.find(
+      tenantId,
+      { userId, isAdmin },
+      {
+        days,
+        limit: 8,
+        // Our own company appears as a customer in email_participants, so
+        // without this the list is topped by us being unhappy with ourselves.
+        ownDomains: ['mystartupcfo.com', 'numerafinance.com'],
+      },
+    ),
+  });
 });

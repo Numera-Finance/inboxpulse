@@ -283,3 +283,100 @@ export class AccountContextService {
     return { total: all.length, recent };
   }
 }
+
+export interface WaitingClient {
+  customerId: string | null;
+  customer: string;
+  subject: string;
+  from: string;
+  daysWaiting: number;
+  reason: string;
+}
+
+/**
+ * Angry clients nobody has answered.
+ *
+ * The team-lead question, asked directly: *is there an angry client that is not
+ * being answered to?* Every dashboard in this codebase answers a version of it
+ * indirectly — sentiment distributions, escalation counts, turnaround charts —
+ * and a lead reading those still has to do the join in their head.
+ *
+ * Three conditions, all necessary:
+ *   negative sentiment  — they are unhappy
+ *   first_reply_at NULL — nobody has replied
+ *   inbound             — it is their message, not ours
+ *
+ * DISTINCT ON the thread, because a naive join returns one row per message and
+ * per participant: the same complaint appeared six times in the first draft of
+ * this query, which would have made one unhappy client look like a crisis.
+ *
+ * Own-domain customers are excluded. `email_participants` links internal
+ * senders to a customer record for our own company, so without this the list is
+ * topped by "Mystartupcfo" being unhappy with itself.
+ */
+export interface WaitingOptions {
+  days: number;
+  limit: number;
+  /** Domains that are US, not a client. */
+  ownDomains: string[];
+}
+
+@injectable()
+export class WaitingClientsService {
+  constructor(@inject('Database') private readonly db: Database) {}
+
+  async find(
+    tenantId: string,
+    viewer: { userId: string; isAdmin: boolean },
+    opts: WaitingOptions,
+  ): Promise<WaitingClient[]> {
+    // Same entitlement rule as everything else: admins see the tenant, everyone
+    // else sees only customers they are assigned. A lead's view of "who is
+    // angry" must not become a way to read accounts they cannot otherwise open.
+    const scope = viewer.isAdmin
+      ? sql``
+      : sql`AND p.customer_id IN (
+              SELECT customer_id FROM user_accessible_customers WHERE user_id = ${viewer.userId}
+            )`;
+
+    const own = opts.ownDomains.length
+      ? sql`AND lower(c.name) <> ALL(${opts.ownDomains.map((d) => d.split('.')[0].toLowerCase())})`
+      : sql``;
+
+    const rows = await this.db.execute(sql`
+      SELECT DISTINCT ON (e.thread_id)
+        c.id::text            AS customer_id,
+        COALESCE(c.name, '(unknown)') AS customer,
+        e.subject,
+        COALESCE(e.from_name, e.from_email) AS from_who,
+        GREATEST(0, EXTRACT(EPOCH FROM (now() - e.received_at)) / 86400)::int AS days_waiting,
+        COALESCE(a.reasoning, '') AS reason
+      FROM emails e
+      JOIN email_analyses a
+        ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+      LEFT JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
+      LEFT JOIN customers c ON c.id = p.customer_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.first_reply_at IS NULL
+        AND e.is_customer_email
+        AND e.received_at > now() - (${opts.days} || ' days')::interval
+        ${own}
+        ${scope}
+      ORDER BY e.thread_id, e.received_at DESC
+      LIMIT ${opts.limit}
+    `);
+
+    return (rows as unknown as Array<Record<string, unknown>>)
+      .map((r) => ({
+        customerId: (r.customer_id as string | null) ?? null,
+        customer: String(r.customer ?? '(unknown)'),
+        subject: String(r.subject ?? '(no subject)'),
+        from: String(r.from_who ?? ''),
+        daysWaiting: Number(r.days_waiting ?? 0),
+        reason: String(r.reason ?? '').slice(0, 140),
+      }))
+      // Longest wait first: the one that has been ignored longest is the one
+      // most likely to have been forgotten, which is the whole question.
+      .sort((a, b) => b.daysWaiting - a.daysWaiting);
+  }
+}

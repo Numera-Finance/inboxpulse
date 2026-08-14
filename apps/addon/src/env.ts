@@ -149,6 +149,21 @@ const envSchema = z.object({
    * Rotating it breaks correlation with older log lines. That is the intended
    * trade, not a bug.
    */
+  /**
+   * The web dashboard, for deep links out of the panel.
+   *
+   * The card summarises; the charts live here. CardService has no canvas and no
+   * SVG, so a sentiment trend cannot be drawn in the panel — and a second copy
+   * of the dashboard in a 400px column would be the same mistake as summarising
+   * a thread Gemini already summarises.
+   *
+   * Points at the WEB APP, not the Chrome extension's manager sections. That is
+   * forced rather than preferred: a card button can only open a URL, and the
+   * extension's manager UI is reached through a localhost gcloud proxy. There
+   * is nothing to link to.
+   */
+  WEB_URL: z.string().default('https://inboxpulse.mystartupcfo.com'),
+
   LOG_SALT: z.string().default(''),
 
   ADDON_CACHE_DIR: z.string().default(''),

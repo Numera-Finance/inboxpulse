@@ -22,15 +22,17 @@ import { getGmail, getActionParameters, type AddonEvent } from './gmail/event';
 import { fetchMessageHeaders, fetchMessageBody, fetchThreadMessages, normalizeGmailMessageId } from './gmail/gmail-api';
 import { verifyRequest } from './auth/verify';
 import {
+  createTask,
+  getAccountContext,
+  getAnalyzedEmail,
   getEmailStats,
+  getThreadFlagged,
+  getThreadTrend,
+  getWaitingClients,
   resolveTenantByEmail,
   resolveThreadByMessage,
-  getAnalyzedEmail,
-  getThreadTrend,
-  getThreadFlagged,
   resolveThreadIdByProvider,
-  getAccountContext,
-  createTask,
+  resolveViewer,
 } from './services/api-client';
 import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled, THREAD_MODES } from './services/live-analysis';
 import type { ReplyOption, ThreadMode } from './services/live-analysis';
@@ -269,6 +271,10 @@ app.post('/gmail/analyse', async (c) => {
   // the thread's participants rather than the open message's From: on a reply
   // the sender is often internal, and the customer is the point.
   const tenantId = tenantIdEarly;
+  // The REAL viewer, not a pinned dev id. ADDON_DEV_USER_ID is unset in
+  // production, so every account-context call was short-circuiting on an empty
+  // userId and the history section silently never rendered.
+  const viewer = tenantId && viewerEmail ? await resolveViewer(tenantId, viewerEmail) : null;
   const externalDomain = participants.find((p) => p.external)?.address.split('@')[1];
 
   // Account history FIRST, then the reading — the reading needs the history as
@@ -278,8 +284,10 @@ app.post('/gmail/analyse', async (c) => {
   const account =
     externalDomain && tenantId
       ? await getAccountContext(externalDomain, tenantId, {
-          userId: getEnv().ADDON_DEV_USER_ID ?? '',
-          isAdmin: false,
+          userId: viewer?.userId ?? '',
+          // From the user's actual permissions. Hardcoding false denied admins
+          // their own tenant's history.
+          isAdmin: viewer?.isAdmin ?? false,
           email: viewerEmail,
         })
       : null;
@@ -485,6 +493,7 @@ app.post('/gmail/analyse', async (c) => {
         // rather than queried -- a per-render round trip for a fact that
         // changes about once a quarter is not worth it.
         connectedSources: ['gmail'],
+        webUrl: getEnv().WEB_URL,
         live: { sentiment: reading.sentiment, reason: reading.reason, ephemeral: true },
         digest: { commitments: reading.commitments, openQuestions: reading.openQuestions },
         draft: reading.draft || null,
@@ -893,6 +902,10 @@ app.post('/homepage', async (c) => {
   if (!verified.ok) return c.json(pushCard(buildHomepageCard(null)));
   const tenantId = await resolveTenant(verified.email);
   const stats = tenantId ? await getEmailStats(tenantId) : null;
+  // Resolve the real viewer before asking — the query is entitlement-scoped and
+  // "who is unhappy" must not become a way to read accounts they cannot open.
+  const who = tenantId && verified.email ? await resolveViewer(tenantId, verified.email) : null;
+  const waiting = tenantId && who ? await getWaitingClients(tenantId, who.userId, who.isAdmin) : [];
   // The working set is the reason to open the panel without a message: it is
   // the only view of what the user marked, since nothing was written to Gmail.
   workingSet.prune();
@@ -908,6 +921,7 @@ app.post('/homepage', async (c) => {
           threadUrl: gmailThreadUrl,
         },
         getEnv().ADDON_BASE_URL,
+        { clients: waiting, webUrl: getEnv().WEB_URL },
       ),
     ),
   );

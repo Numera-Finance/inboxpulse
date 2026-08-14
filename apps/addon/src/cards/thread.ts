@@ -84,6 +84,8 @@ export interface ThreadCardInput {
   now?: Date;
   /** integrations.source values with rows — never suggest connecting what is on. */
   connectedSources?: string[];
+  /** Base URL of the web dashboard, for deep links out of the panel. */
+  webUrl?: string;
   /** Offer a full read anyway — the user disagreeing that nothing is needed. */
   fyiEscape?: boolean;
   /** Demo only: offer to re-render this thread in each of the five modes. */
@@ -783,6 +785,39 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       // with four real attendees on it: the participants travelled and the
       // subject did not, which looks more broken than either failing alone.
       const crossSubject = input.headers?.subject ?? input.subject;
+      // Deep link into the web dashboard, scoped to THIS customer.
+      //
+      // The panel deliberately does not carry the manager view: charts need a
+      // canvas, CardService has none, and a second copy of the dashboard in a
+      // 400px column is the same mistake as summarising a thread Gemini already
+      // summarises. What it can do is hand the manager a link that arrives
+      // already filtered — the tab next door opens ON this customer's open
+      // escalations, not on a landing page they then have to search.
+      //
+      // Params are the ones apps/web/app/escalations/page.tsx actually reads:
+      // customer (id), status, assigned, signal, from, to. Verified against the
+      // route rather than guessed, because a deep link that silently ignores its
+      // query string looks identical to one that works.
+      if (input.account?.customerId && input.webUrl) {
+        doNext.push(
+          deco({
+            text: '<b>See the full picture</b>',
+            bottomLabel: `Open escalations for ${input.account.name ?? 'this customer'}`,
+            wrapText: true,
+            button: {
+              text: 'Open',
+              onClick: {
+                openLink: {
+                  url: `${input.webUrl}/escalations?customer=${encodeURIComponent(
+                    input.account.customerId,
+                  )}&status=open`,
+                },
+              },
+            },
+          }),
+        );
+      }
+
       const cross = nextActionsFor({
         mode: input.mode,
         subject: crossSubject,

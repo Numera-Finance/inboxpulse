@@ -425,3 +425,89 @@ export async function createTask(input: {
     return false;
   }
 }
+
+export interface WaitingClient {
+  customerId: string | null;
+  customer: string;
+  subject: string;
+  from: string;
+  daysWaiting: number;
+  reason: string;
+}
+
+/**
+ * Angry clients nobody has answered.
+ *
+ * The team-lead question stated plainly: negative sentiment, no first reply,
+ * inbound. Every dashboard answers a version of it indirectly — sentiment
+ * distributions, escalation counts, turnaround charts — and the lead reading
+ * those still has to do the join in their head.
+ *
+ * Viewer-scoped server-side: admins see the tenant, everyone else sees only
+ * customers they are assigned. A view of who is unhappy must not become a way
+ * to read accounts the viewer cannot otherwise open.
+ */
+export async function getWaitingClients(
+  tenantId: string,
+  userId: string,
+  isAdmin: boolean,
+  days = 30,
+): Promise<WaitingClient[]> {
+  const env = getEnv();
+  const url =
+    `${env.SERVICE_API_URL}/api/internal/addon/waiting` +
+    `?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}` +
+    `&isAdmin=${isAdmin}&days=${days}`;
+  const res = await apiFetch(url, { headers: internalHeaders(tenantId, userId) });
+  if (!res || !res.ok) return [];
+  try {
+    const d = unwrap<WaitingClient[]>(await res.json());
+    return Array.isArray(d) ? d : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface Viewer {
+  userId: string;
+  isAdmin: boolean;
+  accessibleCustomers: number;
+}
+
+/**
+ * Resolve the signed-in Gmail address to the InboxPulse user behind it.
+ *
+ * This existed on the API (`/api/internal/addon/viewer`) and was never called.
+ * The add-on passed `ADDON_DEV_USER_ID` instead — a pinned id for local work —
+ * and that variable is UNSET in production, so `viewer.userId` was the empty
+ * string, `getAccountContext` returned null on the guard, and **account history
+ * never rendered in production at all**. Silently: no error, no log, just a
+ * card missing the one section whose whole argument is that Gemini cannot
+ * produce it.
+ *
+ * Resolving the real viewer also fixes the scoping. Admin status now comes from
+ * the user's actual permissions rather than a hardcoded `isAdmin: false`, which
+ * was quietly denying admins their own tenant's history.
+ */
+export async function resolveViewer(tenantId: string, email: string): Promise<Viewer | null> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY || !email) return null;
+  const url =
+    `${env.SERVICE_API_URL}/api/internal/addon/viewer` +
+    `?tenantId=${encodeURIComponent(tenantId)}&email=${encodeURIComponent(email)}`;
+  const res = await apiFetch(url, { headers: internalHeaders(tenantId) });
+  if (!res || !res.ok) return null;
+  try {
+    const d = unwrap<{ found?: boolean; userId?: string; isAdmin?: boolean; accessibleCustomers?: number }>(
+      await res.json(),
+    );
+    if (!d?.found || !d.userId) return null;
+    return {
+      userId: d.userId,
+      isAdmin: Boolean(d.isAdmin),
+      accessibleCustomers: Number(d.accessibleCustomers ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}

@@ -33,10 +33,21 @@ export interface WorkingSetView {
   threadUrl: (threadId: string, viewerEmail?: string) => string;
 }
 
+export interface WaitingView {
+  clients: Array<{
+    customerId: string | null;
+    customer: string;
+    subject: string;
+    daysWaiting: number;
+  }>;
+  webUrl: string;
+}
+
 export function buildHomepageCard(
   stats: EmailStats | null,
   working?: WorkingSetView,
   baseUrl?: string,
+  waiting?: WaitingView,
 ): Card {
   const sections: CardSection[] = [
     {
@@ -53,6 +64,47 @@ export function buildHomepageCard(
       ],
     },
   ];
+  // The team-lead question, answered directly and put first.
+  //
+  // "Is there an angry client nobody is answering?" is the thing a lead opens a
+  // dashboard to work out, and every existing surface answers it INDIRECTLY —
+  // sentiment distributions, escalation counts, turnaround charts — leaving the
+  // reader to do the join. Three conditions do it outright: negative sentiment,
+  // no first reply, inbound.
+  //
+  // Longest wait first: the one ignored longest is the one most likely to have
+  // been forgotten, which is the whole question.
+  if (waiting?.clients.length) {
+    sections.unshift({
+      header: heading(`Angry and unanswered — ${waiting.clients.length}`),
+      widgets: waiting.clients.map((w) =>
+        deco({
+          topLabel: `${w.daysWaiting}d waiting`,
+          text: `<b>${escapeText(w.customer)}</b> — ${escapeText(
+            w.subject.length > 52 ? `${w.subject.slice(0, 49)}…` : w.subject,
+          )}`,
+          wrapText: false,
+          ...(w.customerId
+            ? {
+                button: {
+                  text: 'Open',
+                  onClick: {
+                    openLink: {
+                      // Deep link, so the tab next door opens ON this customer
+                      // rather than on a landing page they then have to search.
+                      url: `${waiting.webUrl}/escalations?customer=${encodeURIComponent(
+                        w.customerId,
+                      )}&status=open`,
+                    },
+                  },
+                },
+              }
+            : {}),
+        }),
+      ),
+    });
+  }
+
   // The one button worth pressing from the inbox, so it leads.
   //
   // Gmail add-ons cannot see which rows you selected — there are two triggers,
