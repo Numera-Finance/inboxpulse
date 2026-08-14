@@ -491,56 +491,71 @@ export interface OwnerLoad {
 }
 
 /**
- * Who is carrying the unanswered angry mail.
+ * Who is carrying the unanswered angry mail, by ROLE.
  *
- * The management-review question, and getting the ATTRIBUTION right is most of
- * the work. Three candidate sources, only one of which holds up:
+ * Getting attribution right was most of the work here, and three sources had to
+ * be tried before one held up:
  *
- *   first_reply_by_id — 7% populated on negative mail. Replies are never
- *     stored (see emails/service.ts: they are matched for a timestamp and
- *     discarded), so there is usually no row to attribute. A ranking on 7%
- *     coverage ranks who happens to be attributable.
+ *   first_reply_by_id — 7% populated. Replies are never stored (see
+ *     emails/service.ts: matched for a timestamp, then discarded), so there is
+ *     usually no row to attribute. A ranking on 7% coverage ranks whoever
+ *     happens to be attributable.
  *
- *   user_customers — 100% for assigned customers, but a customer carries FOUR
- *     TO FIVE owners and `role_id` is null on all 4,111 mappings, so nothing
- *     distinguishes the accountable one. Counting per owner turns 188 threads
- *     into 379 person-thread pairs: the same complaint charged to five people.
+ *   user_customers — 100% coverage but FOUR TO FIVE owners per client and
+ *     role_id null on all 4,111 mappings. Counting per owner charged one
+ *     complaint to five people.
  *
- *   tasks.assigned_to_id — ONE assignee per task. No double counting, and it is
- *     the same field the manager UI already calls "Assigned To". 57% coverage
- *     on this population, and the 43% with no assignee is not a gap to hide —
- *     it is the largest single group and the most useful thing on the list.
+ *   customer_allocations — the firm's own allocation sheet: one person per role
+ *     per client, six roles, 857 clients, 181 people. 90% of rows match a
+ *     customer by normalised name. THIS is the accountable owner.
  *
- * So: task assignment, with unassigned reported as its own row rather than
- * dropped. A review that silently omits the biggest bucket is worse than no
- * review.
+ * Own entities and auto-created customers are excluded. Without that the list
+ * is topped by "Mystartupcfo" (46 threads) being unhappy with itself, and by
+ * customers the ingester invented from a sender domain. Excluding them takes
+ * the population from 188 threads to 30 — the 188 was almost entirely noise,
+ * and reporting it would have been a management review of our own mail.
  */
+
+/** Client records that are us, or that the ingester invented from a domain. */
+const NOT_CLIENTS = ['mystartupcfo', 'numerafinance', 'blueoceanps', 'mytaxfiler', 'bill'];
+
 @injectable()
 export class OwnerLoadService {
   constructor(@inject('Database') private readonly db: Database) {}
 
-  async get(tenantId: string, days = 30, limit = 8): Promise<OwnerLoad[]> {
+  async get(
+    tenantId: string,
+    days = 30,
+    role = 'Account manager',
+    limit = 8,
+  ): Promise<OwnerLoad[]> {
     const rows = await this.db.execute(sql`
-      SELECT
-        COALESCE(u.first_name || ' ' || u.last_name, '(unassigned)') AS who,
-        (t.assigned_to_id IS NULL) AS is_unassigned,
-        count(*)::int AS threads,
-        MAX(EXTRACT(EPOCH FROM (now() - x.received_at)) / 86400)::int AS oldest_days
-      FROM (
-        -- One row per THREAD, newest message. Without this a single complaint
-        -- counts once per message and once per participant.
-        SELECT DISTINCT ON (e.thread_id) e.id, e.thread_id, e.received_at
+      WITH t AS (
+        -- One row per THREAD. Without this a complaint counts once per message
+        -- and once per participant.
+        SELECT DISTINCT ON (e.thread_id) e.thread_id, e.received_at, p.customer_id
         FROM emails e
         JOIN email_analyses a
           ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+        JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
         WHERE e.tenant_id = ${tenantId}
           AND e.first_reply_at IS NULL
           AND e.is_customer_email
           AND e.received_at > now() - (${days} || ' days')::interval
         ORDER BY e.thread_id, e.received_at DESC
-      ) x
-      LEFT JOIN tasks t ON t.email_id = x.id
-      LEFT JOIN users u ON u.id = t.assigned_to_id
+      )
+      SELECT
+        COALESCE(u.first_name || ' ' || u.last_name, al.email, '(not allocated)') AS who,
+        (al.id IS NULL) AS is_unassigned,
+        count(DISTINCT t.thread_id)::int AS threads,
+        MAX(EXTRACT(EPOCH FROM (now() - t.received_at)) / 86400)::int AS oldest_days
+      FROM t
+      JOIN customers c ON c.id = t.customer_id
+      LEFT JOIN customer_allocations al
+        ON al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = ${role}
+      LEFT JOIN users u ON u.id = al.user_id
+      WHERE NOT c.is_auto_created
+        AND lower(c.name) <> ALL(${NOT_CLIENTS})
       GROUP BY 1, 2
       ORDER BY 3 DESC
       LIMIT ${limit}

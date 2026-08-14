@@ -213,12 +213,12 @@ export function buildHomepageCard(
   // owner and stays quiet about the work that has none.
   if (ownerLoad?.owners.length) {
     sections.unshift({
-      header: heading('Who is carrying it'),
+      header: heading('Account managers carrying it'),
       widgets: ownerLoad.owners.map((o) =>
         deco({
           topLabel: `${o.threads} thread${o.threads === 1 ? '' : 's'} · oldest ${o.oldestDays}d`,
           text: o.unassigned
-            ? `<b><font color="#c5221f">Nobody assigned</font></b>`
+            ? `<b><font color="#c5221f">No account manager allocated</font></b>`
             : `<b>${escapeText(o.name)}</b>`,
           wrapText: false,
           ...(o.unassigned

@@ -157,8 +157,12 @@ addonRoutes.get('/owner-load', async (c) => {
   const tenantId = c.req.query('tenantId');
   if (!tenantId) throw new InvalidInputError('tenantId is required');
   const days = Math.min(90, Math.max(1, Number(c.req.query('days') ?? 30)));
+  // Six roles exist; the default is the one a management review asks about.
+  const ROLES = ['Account manager', 'Controller', 'Sr. Controller', 'Accountant', 'Bookkeeper', 'Sales rep'];
+  const requested = c.req.query('role') ?? 'Account manager';
+  const role = ROLES.includes(requested) ? requested : 'Account manager';
   return c.json({
     success: true,
-    data: await container.resolve(OwnerLoadService).get(tenantId, days),
+    data: await container.resolve(OwnerLoadService).get(tenantId, days, role),
   });
 });
