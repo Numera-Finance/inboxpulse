@@ -35,6 +35,22 @@ import {
 import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled, THREAD_MODES } from './services/live-analysis';
 import type { ReplyOption, ThreadMode } from './services/live-analysis';
 import { AnalysisCache } from './services/analysis-cache';
+import {
+  InstantLabelState,
+  WorkingSet,
+  INSTANT_LABELS,
+  instantLabelByKey,
+  gmailThreadUrl,
+} from './services/instant-labels';
+
+/**
+ * The user's working set — threads they marked, and when each mark expires.
+ *
+ * Process-local by design: the contract is that these do not outlive the
+ * session, so persisting them would recreate exactly the accretion the expiry
+ * exists to prevent. See services/instant-labels.ts.
+ */
+const workingSet = new WorkingSet(new InstantLabelState());
 
 /**
  * Analysed threads, in memory, for as long as the thread has not changed.
@@ -540,6 +556,35 @@ app.post('/gmail/stance', async (c) => {
   );
 });
 
+/**
+ * Toggle an instant label on the open thread.
+ *
+ * No Gmail write, and therefore no scope: the mark lives in the panel. Pressing
+ * the same button again clears it, which has to be the same button or it is not
+ * a toggle.
+ */
+app.post('/gmail/mark', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const p = getActionParameters(event);
+  const label = p.labelKey ? instantLabelByKey(p.labelKey) : null;
+  const threadId = normalizeGmailMessageId(p.threadId);
+  if (!label || !threadId) return c.json(notify('Could not mark this thread.'));
+
+  const res = workingSet.mark(threadId, label.key, p.subject ?? '');
+  const short = label.name.split('/')[1];
+  return c.json(
+    notify(res.on ? `${short} — clears in ${res.minutesLeft} min` : `${short} cleared`),
+  );
+});
+
 // Homepage trigger — opened without a message context.
 app.post('/homepage', async (c) => {
   const env = getEnv();
@@ -554,7 +599,18 @@ app.post('/homepage', async (c) => {
   if (!verified.ok) return c.json(pushCard(buildHomepageCard(null)));
   const tenantId = await resolveTenant(verified.email);
   const stats = tenantId ? await getEmailStats(tenantId) : null;
-  return c.json(pushCard(buildHomepageCard(stats)));
+  // The working set is the reason to open the panel without a message: it is
+  // the only view of what the user marked, since nothing was written to Gmail.
+  workingSet.prune();
+  return c.json(
+    pushCard(
+      buildHomepageCard(stats, {
+        entries: workingSet.entries(),
+        viewerEmail: verified.email ?? undefined,
+        threadUrl: gmailThreadUrl,
+      }),
+    ),
+  );
 });
 
 // Gmail contextual trigger — a message is open.

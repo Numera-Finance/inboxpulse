@@ -5,6 +5,7 @@ import type { MessageHeaders } from '../gmail/gmail-api';
 import { resolveWhen, calendarUrl } from '../services/when';
 import { suggestConnector } from '../services/connectors';
 import { nextActionsFor } from '../services/next-actions';
+import { INSTANT_LABELS } from '../services/instant-labels';
 import type { LiveAnalysis, ThreadDigest, ThreadMode, ReplyOption } from '../services/live-analysis';
 import { THREAD_MODES } from '../services/live-analysis';
 
@@ -87,6 +88,8 @@ export interface ThreadCardInput {
   fyiEscape?: boolean;
   /** Demo only: offer to re-render this thread in each of the five modes. */
   demoModes?: boolean;
+  /** Instant-label keys currently on this thread, with minutes left. */
+  marks?: Array<{ key: string; minutesLeft: number }>;
   /**
    * Nothing has been analysed yet — render instantly with what is free and
    * offer analysis as an action. See buildThreadCard.
@@ -825,6 +828,43 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             deco({
               topLabel: `${suggestion.name} · not connected`,
               text: escapeText(suggestion.changesTheReply),
+              wrapText: true,
+            }),
+          ],
+        });
+      }
+
+      // The working set. Four buttons, each a statement about what the USER is
+      // doing rather than about the mail — which is why none of them can be
+      // wrong, and why none of them need the volume budget the analysis labels
+      // live under.
+      //
+      // In the panel, not the mailbox: a real Gmail label needs gmail.modify,
+      // whose consent screen asks for the whole mailbox. See ADDON_SCOPES.md.
+      if (input.baseUrl && input.providerThreadId) {
+        const marked = new Map((input.marks ?? []).map((m) => [m.key, m.minutesLeft]));
+        sections.push({
+          header: heading('Working set'),
+          widgets: [
+            buttons(
+              ...INSTANT_LABELS.map((l) => {
+                const left = marked.get(l.key);
+                return actionButton(
+                  left === undefined ? l.name.split('/')[1] : `${l.name.split('/')[1]} · ${left}m`,
+                  `${input.baseUrl}/gmail/mark`,
+                  {
+                    threadId: input.providerThreadId ?? '',
+                    messageId: input.messageId ?? '',
+                    subject: input.headers?.subject ?? input.subject ?? '',
+                    labelKey: l.key,
+                  },
+                );
+              }),
+            ),
+            deco({
+              text: marked.size
+                ? `<font color="#5f6368">Clears itself in 30 minutes. Press again to clear now. Open InboxPulse from the rail to see everything marked.</font>`
+                : `<font color="#5f6368">${INSTANT_LABELS.map((l) => l.means.toLowerCase()).join(' · ')}</font>`,
               wrapText: true,
             }),
           ],

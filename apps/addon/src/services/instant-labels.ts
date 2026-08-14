@@ -1,6 +1,21 @@
 /**
  * Instant labels — a working set the user turns on, that turns itself off.
  *
+ * LIVES IN THE PANEL, NOT THE MAILBOX.
+ *
+ * Putting a real Gmail label on a thread needs `users.threads.modify`, which
+ * needs `gmail.modify` — a RESTRICTED scope whose consent screen reads "Read,
+ * compose, send, and permanently delete all your email". Asking every user to
+ * approve that, at install, for a coloured tag that disappears in thirty
+ * minutes, trades the one constraint that decides whether anyone adopts this at
+ * all. See docs/ADDON_SCOPES.md.
+ *
+ * So the working set is held here and rendered in the panel's homepage. The
+ * user marks a thread, and every thread they have marked is one click away,
+ * with the time remaining. What is lost is visibility in the inbox LIST, which
+ * is real — but the discipline of a self-expiring working set survives, and it
+ * survives without asking anyone for their whole mailbox.
+ *
  * Every other label in this codebase is a CLAIM ABOUT THE MESSAGE: this is
  * churn risk, this is an upsell. Those can be wrong, and today's audit showed
  * how wrong — 32,241 "Churn risk" labels where 4,015 qualified. The whole
@@ -178,5 +193,84 @@ export class InstantLabelState {
   active(): InstantApplication[] {
     this.takeExpired();
     return [...this.live.values()];
+  }
+}
+
+/**
+ * A link back to the thread in Gmail.
+ *
+ * This is what makes an in-panel working set usable at all. Without it the
+ * homepage would be a list of subjects the user then has to go and find, which
+ * is worse than no list — the point of a working set is that the next thread is
+ * one click away.
+ */
+export function gmailThreadUrl(threadId: string, viewerEmail?: string): string {
+  const auth = viewerEmail ? `?authuser=${encodeURIComponent(viewerEmail)}` : '';
+  return `https://mail.google.com/mail/u/0/${auth}#all/${threadId}`;
+}
+
+export interface WorkingSetEntry {
+  label: InstantLabel;
+  threadId: string;
+  subject: string;
+  minutesLeft: number;
+}
+
+/**
+ * Thread subjects, remembered only for as long as a label is on them.
+ *
+ * The homepage has no message context — it is opened from the Gmail rail with no
+ * thread — so it cannot look a subject up. Storing it alongside the label is the
+ * only way the list can say anything more useful than a thread id, and it is
+ * discarded on the same schedule as the label itself.
+ */
+export class WorkingSet {
+  private readonly subjects = new Map<string, string>();
+
+  constructor(private readonly state: InstantLabelState) {}
+
+  mark(threadId: string, labelKey: string, subject: string): { on: boolean; minutesLeft: number | null } {
+    // Toggle. Pressing the same button again is how a user turns one off before
+    // it expires, which has to be the same button or it is not a toggle.
+    if (this.state.isOn(threadId, labelKey)) {
+      this.state.turnOff(threadId, labelKey);
+      if (!this.state.active().some((a) => a.threadId === threadId)) this.subjects.delete(threadId);
+      return { on: false, minutesLeft: null };
+    }
+    this.state.turnOn(threadId, labelKey);
+    if (subject.trim()) this.subjects.set(threadId, subject.trim());
+    return { on: true, minutesLeft: this.state.minutesLeft(threadId, labelKey) };
+  }
+
+  isOn(threadId: string, labelKey: string): boolean {
+    return this.state.isOn(threadId, labelKey);
+  }
+
+  /** Everything still live, ordered by label so the list reads as groups. */
+  entries(): WorkingSetEntry[] {
+    const out: WorkingSetEntry[] = [];
+    for (const a of this.state.active()) {
+      const label = instantLabelByKey(a.labelKey);
+      const minutesLeft = this.state.minutesLeft(a.threadId, a.labelKey);
+      if (!label || minutesLeft === null) continue;
+      out.push({
+        label,
+        threadId: a.threadId,
+        subject: this.subjects.get(a.threadId) ?? '(no subject)',
+        minutesLeft,
+      });
+    }
+    const order = INSTANT_LABELS.map((l) => l.key);
+    return out.sort(
+      (x, y) => order.indexOf(x.label.key) - order.indexOf(y.label.key) || x.minutesLeft - y.minutesLeft,
+    );
+  }
+
+  /** Drop the subjects of anything that has expired, so nothing lingers. */
+  prune(): void {
+    const liveThreads = new Set(this.state.active().map((a) => a.threadId));
+    for (const id of [...this.subjects.keys()]) {
+      if (!liveThreads.has(id)) this.subjects.delete(id);
+    }
   }
 }

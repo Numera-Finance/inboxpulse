@@ -2,8 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   InstantLabelState, INSTANT_LABELS, INSTANT_TTL_MS,
   instantLabelByKey, isInstantLabelName,
-} from './instant';
-import { allLabelNames } from './policy';
+} from './instant-labels';
 
 describe('instant labels', () => {
   it('turns on and reports minutes left', () => {
@@ -68,13 +67,15 @@ describe('instant labels', () => {
   });
 
   it('never collides with the analysis labels a sweep might delete', () => {
-    // The analysis set uses `InboxPulse/`; these use `InboxPulse ⚡/`. A sweep
-    // of one must never remove the other.
+    // The analysis set (apps/api/src/labels/policy.ts) uses `InboxPulse/`;
+    // these use `InboxPulse ⚡/`. remove-gmail-labels.ts deletes by prefix, so a
+    // sweep of one must never take the other with it.
+    const analysisNames = ['InboxPulse/Churn risk', 'InboxPulse/Upsell', 'InboxPulse/Negative'];
     for (const l of INSTANT_LABELS) {
       expect(isInstantLabelName(l.name)).toBe(true);
-      expect(allLabelNames()).not.toContain(l.name);
+      expect(analysisNames).not.toContain(l.name);
     }
-    for (const n of allLabelNames()) {
+    for (const n of analysisNames) {
       expect(isInstantLabelName(n)).toBe(false);
     }
   });

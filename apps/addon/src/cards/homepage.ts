@@ -8,7 +8,32 @@ import type { EmailStats } from '../services/api-client';
  * toolbar already says "InboxPulse" directly above, and repeating it two more
  * times just pushes the actual content down the panel.
  */
-export function buildHomepageCard(stats: EmailStats | null): Card {
+/**
+ * The working set is the reason to open this panel without a message.
+ *
+ * Nothing was written to Gmail — a real label needs gmail.modify, whose consent
+ * screen asks for the whole mailbox — so this list is the ONLY place a marked
+ * thread is visible. That makes the thread link load-bearing rather than a
+ * convenience: without one click back to the conversation, a working set is a
+ * list of things to go and find.
+ */
+/** Card text is an HTML subset, so subjects taken from mail must be escaped. */
+function escapeText(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export interface WorkingSetView {
+  entries: Array<{
+    label: { key: string; name: string; means: string };
+    threadId: string;
+    subject: string;
+    minutesLeft: number;
+  }>;
+  viewerEmail?: string;
+  threadUrl: (threadId: string, viewerEmail?: string) => string;
+}
+
+export function buildHomepageCard(stats: EmailStats | null, working?: WorkingSetView): Card {
   const sections: CardSection[] = [
     {
       widgets: [
@@ -24,6 +49,25 @@ export function buildHomepageCard(stats: EmailStats | null): Card {
       ],
     },
   ];
+  // Leads the card when present. Someone opening the panel with no message
+  // open is almost always coming back to what they marked.
+  if (working?.entries.length) {
+    sections.unshift({
+      header: heading('Working set'),
+      widgets: working.entries.map((e) =>
+        deco({
+          topLabel: `${e.label.name.split('/')[1]} · ${e.minutesLeft}m left`,
+          text: escapeText(e.subject),
+          wrapText: true,
+          button: {
+            text: 'Open',
+            onClick: { openLink: { url: working.threadUrl(e.threadId, working.viewerEmail) } },
+          },
+        }),
+      ),
+    });
+  }
+
 
   if (stats) {
     sections.push({
