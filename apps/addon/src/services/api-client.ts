@@ -546,6 +546,14 @@ export interface OwnerLoad {
   threads: number;
   oldestDays: number;
   unassigned: boolean;
+  /**
+   * Present on the unallocated row only: the customers behind it.
+   *
+   * The bucket mixes real clients missing from the allocation sheet with our
+   * own vendors and counterparties, which need opposite responses. A count
+   * cannot separate them; the names can.
+   */
+  customers?: Array<{ name: string; threads: number }>;
 }
 
 /** Who is carrying the unanswered angry mail, by task assignee. */

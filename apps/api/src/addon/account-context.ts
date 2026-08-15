@@ -552,6 +552,23 @@ export interface OwnerLoad {
   threads: number;
   oldestDays: number;
   unassigned: boolean;
+  /**
+   * For the unallocated row only: which customers it is made of.
+   *
+   * An aggregate count here changes nothing a reader can act on, because the
+   * bucket is not one kind of thing. Measured on the live data it is 16 threads
+   * across 12 customers, and roughly half of them are our own vendors and
+   * counterparties rather than clients — SVB, Rippling, Bill, Countsy, a law
+   * firm. The other half are real clients simply missing from the allocation
+   * sheet: Truefoundry, Minerra Health, Elemind, Goicon.
+   *
+   * Those two need opposite responses — one is a customer record that should
+   * not be in a client review at all, the other is a client nobody has been
+   * assigned to. "16 unallocated" cannot tell them apart, so it prompts
+   * nothing. The names can: a reader who sees Truefoundry adds an owner, and a
+   * reader who sees SVB knows the list is picking up vendors.
+   */
+  customers?: Array<{ name: string; threads: number }>;
 }
 
 /**
@@ -653,11 +670,65 @@ export class OwnerLoadService {
       LIMIT ${limit}
     `);
 
-    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+    const owners = (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
       name: String(r.who),
       threads: Number(r.threads ?? 0),
       oldestDays: Number(r.oldest_days ?? 0),
       unassigned: Boolean(r.is_unassigned),
     }));
+
+    // Nothing more to fetch if every thread has an owner.
+    if (!owners.some((o) => o.unassigned)) return owners;
+
+    // The same population, grouped by customer instead of by person. Run as a
+    // second query rather than folded into the first: the main one groups by
+    // owner, and adding the customer to that GROUP BY would split a real
+    // manager's row into one line per account, which is the opposite of what
+    // the section is for.
+    const nameRows = await this.db.execute(sql`
+      WITH t AS (
+        SELECT DISTINCT ON (e.thread_id) e.thread_id, p.customer_id
+        FROM emails e
+        JOIN email_analyses a
+          ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+        JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
+        WHERE e.tenant_id = ${tenantId}
+          AND e.first_reply_at IS NULL
+          AND e.is_customer_email
+          AND e.received_at > now() - (${days} || ' days')::interval
+          ${weAreOnTheThread()}
+        ORDER BY e.thread_id, e.received_at DESC
+      )
+      SELECT COALESCE(c.name, '(unknown)') AS customer,
+             count(DISTINCT t.thread_id)::int AS threads
+      FROM t
+      JOIN customers c ON c.id = t.customer_id
+      WHERE NOT c.is_auto_created
+        AND NOT EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = c.id
+            AND lower(cd.domain) IN (
+              SELECT split_part(lower(u2.email), '@', 2)
+              FROM users u2
+              WHERE u2.tenant_id = ${tenantId} AND u2.email LIKE '%@%'
+              GROUP BY 1
+              HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
+            )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM customer_allocations al
+          WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = ${role}
+        )
+      GROUP BY 1
+      ORDER BY 2 DESC, 1
+      LIMIT ${limit}
+    `);
+
+    const customers = (nameRows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      name: String(r.customer ?? '(unknown)'),
+      threads: Number(r.threads ?? 0),
+    }));
+
+    return owners.map((o) => (o.unassigned ? { ...o, customers } : o));
   }
 }

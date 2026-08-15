@@ -80,7 +80,14 @@ function sparkline(values: number[]): string {
 }
 
 export interface OwnerLoadView {
-  owners: Array<{ name: string; threads: number; oldestDays: number; unassigned: boolean }>;
+  owners: Array<{
+    name: string;
+    threads: number;
+    oldestDays: number;
+    unassigned: boolean;
+    /** Which customers the unallocated row is made of — see below. */
+    customers?: Array<{ name: string; threads: number }>;
+  }>;
   webUrl: string;
 }
 
@@ -211,6 +218,25 @@ export function buildHomepageCard(
   // group at 43%, and a management review that silently omits its biggest
   // bucket is worse than no review — it reports on the work that already has an
   // owner and stays quiet about the work that has none.
+  //
+  // NAMED, not just counted. The bucket is not one kind of thing: on the live
+  // data it is 16 threads across 12 customers, about half of them our own
+  // vendors and counterparties rather than clients — SVB, Rippling, Bill, a law
+  // firm — and the rest real clients simply absent from the allocation sheet.
+  // Those want opposite responses, and a bare "16" cannot distinguish them, so
+  // it prompts nothing. Seeing "Truefoundry" gets an owner assigned; seeing
+  // "SVB" tells the reader the list is picking up vendors. Same bar as the
+  // labels policy: would this change what the reader does?
+  //
+  // Three names, each clipped to 18 characters, on the row's second line.
+  //
+  // Measured rather than guessed: the untruncated top four render as
+  // "Truefoundry, Minerra Health Inc (Twenty30 Health Inc.), Rippling, Bank" —
+  // 70 characters. bottomLabel is plain single-line text that Gmail CLIPS
+  // rather than wraps in a panel this narrow, so one long legal name would eat
+  // the rest and the vendor entries that make the list worth reading would
+  // never appear. Clipping our own way keeps the third and fourth visible,
+  // which is where the signal is. The full list belongs behind the Open link.
   if (ownerLoad?.owners.length) {
     sections.unshift({
       header: heading('Account managers carrying it'),
@@ -220,6 +246,16 @@ export function buildHomepageCard(
           text: o.unassigned
             ? `<b><font color="#c5221f">No account manager allocated</font></b>`
             : `<b>${escapeText(o.name)}</b>`,
+          // bottomLabel is plain text and single-line — Gmail clips it rather
+          // than wrapping, so this stays short by construction.
+          ...(o.unassigned && o.customers?.length
+            ? {
+                bottomLabel: o.customers
+                  .slice(0, 3)
+                  .map((c) => (c.name.length > 18 ? `${c.name.slice(0, 17)}…` : c.name))
+                  .join(', '),
+              }
+            : {}),
           wrapText: false,
           ...(o.unassigned
             ? {

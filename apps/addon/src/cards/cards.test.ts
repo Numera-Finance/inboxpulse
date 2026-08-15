@@ -175,3 +175,76 @@ describe('signalNames', () => {
     expect(signalNames([999])).toEqual([]);
   });
 });
+
+/**
+ * The unallocated row must NAME the customers behind it.
+ *
+ * A management review's biggest bucket being "16 threads, nobody allocated"
+ * prompts no action, because the bucket is not one kind of thing: measured on
+ * live data it mixes real clients absent from the allocation sheet
+ * (Truefoundry, Minerra, Elemind) with our own vendors and counterparties
+ * (SVB, Rippling, Bill). Those need opposite responses — assign an owner
+ * versus stop treating a vendor as a client — and only the names distinguish
+ * them. See ADR-020 for how this population is scoped.
+ */
+describe('unallocated account-manager row', () => {
+  const ownerLoad = {
+    webUrl: 'https://example.test',
+    owners: [
+      {
+        name: '(not allocated)',
+        threads: 16,
+        oldestDays: 12,
+        unassigned: true,
+        customers: [
+          { name: 'Truefoundry', threads: 3 },
+          // The real customer name, verbatim — the length is the point.
+          { name: 'Minerra Health Inc (Twenty30 Health Inc.)', threads: 2 },
+          { name: 'Rippling', threads: 2 },
+          { name: 'Svb', threads: 1 },
+          { name: 'Elemind', threads: 1 },
+        ],
+      },
+      { name: 'Amanda Tabb', threads: 2, oldestDays: 5, unassigned: false },
+    ],
+  };
+
+  const text = (): string =>
+    JSON.stringify(buildHomepageCard(null, undefined, undefined, undefined, undefined, ownerLoad));
+
+  it('names the customers rather than only counting them', () => {
+    expect(text()).toContain('Truefoundry');
+    expect(text()).toContain('Rippling');
+  });
+
+  it('caps the list, because bottomLabel is single-line and Gmail clips it', () => {
+    // Fourth and fifth names must not render — the cap is what keeps the row
+    // legible in a panel that clips rather than wraps.
+    expect(text()).not.toContain('Svb');
+    expect(text()).not.toContain('Elemind');
+  });
+
+  /**
+   * A long legal name must not eat the row.
+   *
+   * The real top four render as 70 characters, most of it one client's
+   * "... Inc (Twenty30 Health Inc.)". Gmail clips that mid-name and the later
+   * entries — the vendors, which are the reason to read the list at all —
+   * never appear. Clipping ourselves is what keeps them visible.
+   */
+  it('truncates a long customer name instead of letting Gmail clip the row', () => {
+    expect(text()).toContain('Minerra Health In…');
+    expect(text()).not.toContain('Minerra Health Inc');
+  });
+
+  it('does not attach customer names to a real manager row', () => {
+    const amanda = JSON.stringify(
+      (buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        ...ownerLoad,
+        owners: [ownerLoad.owners[1]],
+      }) as unknown as { sections: unknown[] }).sections,
+    );
+    expect(amanda).toContain('Amanda Tabb');
+    expect(amanda).not.toContain('Truefoundry');
+  });
+});
