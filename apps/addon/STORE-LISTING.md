@@ -21,13 +21,16 @@ accepts any Google-signed token, so tokens minted for this project's deployment
 verify against the existing service.
 
 **Set App Visibility to Private BEFORE the first save.** It cannot be changed
-afterwards, which is exactly how the first project became unusable. Every field below is required; the listing will
-not publish while any is blank.
+afterwards, which is exactly how the first project became unusable.
 
-Set **App Visibility → Unlisted** on the App Configuration tab first. Combined
-with the Internal OAuth user type, that keeps the listing out of Marketplace
-browse and search while remaining installable by anyone at `mystartupcfo.com`
-who has the direct link. The direct link is:
+Tick **Unlisted** as well. Private restricts installation to the domain;
+Unlisted additionally keeps the listing out of Marketplace browse and search,
+so it is reachable only by direct link. Also confirm the OAuth consent screen
+on this project is **Internal**.
+
+Every field below is required — the listing will not publish while any is blank.
+
+The direct link, once published:
 
     https://workspace.google.com/marketplace/app/inboxpulse/369372211306
 
