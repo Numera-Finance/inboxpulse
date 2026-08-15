@@ -119,7 +119,8 @@ app.post('/consent/grant', async (c) => {
   const event = await c.req.json<AddonEvent>().catch(() => ({}) as AddonEvent);
   const verified = await verifyRequest(c.req.header('authorization'), event);
   if (!verified.ok) return c.json(notify('Could not verify your account.'));
-  grantConsent(verified.email);
+  const { oauthToken: t } = getGmail(event);
+  if (!(await grantConsent(t))) return c.json(notify('Could not turn reading on — this install may not have permission to add a label.'));
   return c.json(notify('Reading is on. Open a thread to see the summary.'));
 });
 
@@ -127,7 +128,8 @@ app.post('/consent/revoke', async (c) => {
   const event = await c.req.json<AddonEvent>().catch(() => ({}) as AddonEvent);
   const verified = await verifyRequest(c.req.header('authorization'), event);
   if (!verified.ok) return c.json(notify('Could not verify your account.'));
-  revokeConsent(verified.email);
+  const { oauthToken: t } = getGmail(event);
+  await revokeConsent(t);
   return c.json(notify('Stopped. Nothing of yours will be read.'));
 });
 
@@ -416,7 +418,7 @@ app.post('/gmail/analyse', async (c) => {
   // The gate belongs here, not in the card: by the time a card is built the
   // thread has already been assembled and sent. This is the last point at
   // which "we have not read your mail" is still true.
-  const mayRead = hasConsent(verified.email);
+  const mayRead = await hasConsent(oauthToken);
 
   const [reading, replyOptions] = cached
     ? [cached.reading, cached.replyOptions]
@@ -1021,7 +1023,7 @@ app.post('/homepage', async (c) => {
         // canWrite tracks the SCOPE, not a preference: the label tools are only
         // shown where they can actually run, and the write is only disclosed
         // where it can actually happen.
-        { readingOn: hasConsent(verified.email), canWrite: Boolean(homeToken) },
+        { readingOn: await hasConsent(homeToken), canWrite: Boolean(homeToken) },
       ),
     ),
   );

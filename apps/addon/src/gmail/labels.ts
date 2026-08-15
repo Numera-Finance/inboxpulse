@@ -106,6 +106,24 @@ export async function ensureLabel(label: InstantLabel, token: string): Promise<s
   return id ?? null;
 }
 
+
+/**
+ * Does a label with this exact name exist in the mailbox?
+ *
+ * Used for the consent record (services/consent.ts), where the EXISTENCE of a
+ * label is the state — it is never attached to a thread. Reads rather than
+ * creates, so asking the question can never answer it by accident.
+ *
+ * Returns false when Gmail refuses. On the reduced-scope install this call has
+ * no permission, and false means "not consented", which is the safe direction:
+ * the panel reads nothing rather than assuming yes.
+ */
+export async function labelExists(name: string, token: string): Promise<boolean> {
+  const list = await gapi('/labels', token);
+  const labels = list?.labels as Array<{ name: string }> | undefined;
+  return Boolean(labels?.some((l) => l.name === name));
+}
+
 /** Put the label on the thread. */
 export async function addLabel(threadId: string, labelId: string, token: string): Promise<boolean> {
   const r = await gapi(`/threads/${threadId}/modify`, token, {

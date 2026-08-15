@@ -1,3 +1,6 @@
+import { ensureLabel, deleteLabelByName, labelExists } from '../gmail/labels';
+import type { InstantLabel } from './instant-labels';
+
 /**
  * Whether this viewer has agreed to have the open thread read.
  *
@@ -11,92 +14,71 @@
  * happen before it happens.
  *
  * ---------------------------------------------------------------------------
- * WHAT THE PROMISE ACTUALLY COVERS
+ * THE CONSENT RECORD IS A LABEL IN THE USER'S OWN MAILBOX
  * ---------------------------------------------------------------------------
  *
- * The three sentences the card shows have to be literally true, so each is tied
- * to something in the code rather than to intent:
+ * This was a Map in process memory, and that quietly broke the promise the card
+ * makes. Cloud Run runs up to ten instances, each with its own Map: "Stop
+ * reading my mail" cleared the instance that served the click, and the next
+ * thread could route to an instance that still held the grant — and read it.
+ * Pinning the service to one instance would have hidden the bug behind a
+ * deployment flag that anyone could change without knowing what it was load
+ * bearing for.
  *
- *   "Only if you turn it on"  — this module. No consent, no model call: the
- *                               thread text is never assembled.
- *   "Nothing is stored"       — analysis-cache.ts is in memory, and its disk
- *                               backing needs ADDON_CACHE_DIR, which is unset
- *                               in production. Cloud Run scaling to zero erases
- *                               it. No thread text reaches the database; the
- *                               add-on has no write path to it.
- *   "Only you see it"         — the card is rendered per request for the viewer
- *                               Google authenticated. Logs carry a salted,
- *                               namespaced hash instead of an address
- *                               (api-client.ts pseudo()), so not even a project
- *                               owner reading logs learns whose panel it was.
+ * The state now lives where it belongs: a label named `⚡/Reading on` in the
+ * person's own mailbox. Its mere existence IS the consent — no thread carries
+ * it, it is never attached to mail.
  *
- * The one thing it does NOT cover, and which the card therefore states plainly:
- * the thread is sent to Google's Gemini API to be summarized. That is a third
- * party, and burying it would make the rest of the promise worthless.
+ * That choice does several things at once, which is why it wins over a row in
+ * our database:
  *
- * ---------------------------------------------------------------------------
- * WHY MEMORY, AND WHY THAT IS THE HONEST CHOICE
- * ---------------------------------------------------------------------------
+ *   INSTANCE-INDEPENDENT. Any instance can ask Gmail, so ten of them agree.
+ *   VISIBLE. It appears in his label list. He can see the switch is on without
+ *     taking our word for it, which no server-side record can offer.
+ *   REMOVABLE BY HIM. Deleting the label in Gmail turns reading off, whether or
+ *     not our panel is working, whether or not we cooperate. A preference about
+ *     being read should be revocable without asking the people doing the
+ *     reading.
+ *   NOT OURS TO KEEP. It is in his mailbox, not our database. Nothing about his
+ *     preferences accumulates on our side for an admin to browse.
  *
- * Consent lives in this process and dies with it, so it is forgotten whenever
- * Cloud Run scales to zero. That is a worse experience than a row in a table —
- * he will be asked again — and it is the right trade twice over: a preference
- * about being read should not outlive the session in a database the person
- * cannot see, and "ephemeral" printed on the card stays true of the consent
- * record itself, not only of the analysis.
+ * The cost is honest: it needs `gmail.modify`, which the reduced-scope install
+ * does not have. There, `hasConsent` returns false and stays false — reading
+ * simply never happens, which is the safe direction.
+ *
+ * And it costs one `labels.list` call per render. That is the price of the
+ * switch being true from any instance, and it is not cached: a cache is exactly
+ * how the per-process Map went wrong.
  */
+
+/** The label whose existence means "you may read my open thread". */
+export const CONSENT_LABEL: InstantLabel = {
+  key: 'reading-on',
+  name: '⚡/Reading on',
+  means: 'InboxPulse may read the thread you have open',
+  // Grey rather than a signal color: this is a state, not a thing to act on.
+  bg: '#c2c2c2',
+  text: '#ffffff',
+};
+
+export async function hasConsent(token: string | undefined): Promise<boolean> {
+  if (!token) return false;
+  return labelExists(CONSENT_LABEL.name, token);
+}
+
+export async function grantConsent(token: string | undefined): Promise<boolean> {
+  if (!token) return false;
+  return (await ensureLabel(CONSENT_LABEL, token)) !== null;
+}
 
 /**
- * Viewer email → when they turned reading on.
+ * Deleting the label is what turns reading off.
  *
- * THIS MAP IS PER PROCESS, WHICH CONSTRAINS THE DEPLOYMENT.
- *
- * Cloud Run was configured maxScale=10. With ten instances there are ten of
- * these maps, and "Stop reading my mail" only clears the one belonging to the
- * instance that served that click. The next thread the person opens can route
- * to an instance that still holds their grant — and read. The card promises the
- * switch takes effect immediately, so that is not a scaling quirk, it is the
- * promise being false.
- *
- * The service must therefore run with maxScale=1 while consent lives here. That
- * is fine for a pilot of one or two people and is not a general answer: the
- * moment this needs to scale, consent needs a store both instances can see, and
- * the honest options are a row in the tenant database (durable, visible to
- * admins, contradicts "ephemeral") or a label in the person's own mailbox
- * (readable from any instance with their token, visible to them, removable by
- * them — but needs gmail.modify, which the reduced-scope install does not have).
- *
- * Whoever changes maxScale owns this decision. There is no runtime check that
- * can catch it, because an instance cannot tell how many siblings it has.
+ * Deliberately the same operation the user can perform by hand in Gmail, so the
+ * button and the manual route cannot diverge — there is no second switch of
+ * ours that could stay on after he has turned his off.
  */
-const granted = new Map<string, number>();
-
-/** Consent is per person, and the key is the address Google verified. */
-function key(viewer: string | undefined): string {
-  return (viewer ?? '').trim().toLowerCase();
-}
-
-export function hasConsent(viewer: string | undefined): boolean {
-  const k = key(viewer);
-  return k.length > 0 && granted.has(k);
-}
-
-export function grantConsent(viewer: string | undefined): void {
-  const k = key(viewer);
-  if (k) granted.set(k, Date.now());
-}
-
-export function revokeConsent(viewer: string | undefined): void {
-  granted.delete(key(viewer));
-}
-
-/** For the card's own status line — how long this has been on, in minutes. */
-export function consentAgeMinutes(viewer: string | undefined): number | null {
-  const at = granted.get(key(viewer));
-  return at === undefined ? null : Math.floor((Date.now() - at) / 60000);
-}
-
-/** Test seam. Nothing in the request path calls this. */
-export function __resetConsent(): void {
-  granted.clear();
+export async function revokeConsent(token: string | undefined): Promise<boolean> {
+  if (!token) return false;
+  return deleteLabelByName(CONSENT_LABEL.name, token);
 }
