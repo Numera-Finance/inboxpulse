@@ -78,7 +78,14 @@ mailbox. Same bar as the connector spec in `apps/addon/src/services/connectors.t
 
 Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer management, email sync (Gmail), AI-powered email analysis, task management, dashboards, and notifications.
 
-- **GCP Project**: `health-474623`
+- **GCP Project**: `project-y-email-sentiment` (region `us-central1`). All Cloud Run
+  services live here — `crm-api`, `crm-addon`, `crm-web`, `crm-gmail`, `crm-analysis`.
+  **`health-474623` is retired.** It is still named throughout
+  `docs/GMAIL-OAUTH-SETUP.md`, and the OAuth client id beginning `505023465535-`
+  belongs to it; the live client is `crm-oauth` (`203731638840-…`). Pointing
+  gcloud at the old project fails as a *permission* error, not a "no such
+  project" one — `grastogi@mystartupcfo.com` can only see the live project — so
+  the symptom reads like missing IAM rather than a wrong id.
 - **Runtime**: Bun (backend services), Vite (frontend dev), Nginx (frontend prod)
 - **Database**: PostgreSQL (Neon) with Drizzle ORM
 - **Auth**: Better-Auth with Google OAuth SSO
