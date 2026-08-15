@@ -217,3 +217,46 @@ describe('own-domain exclusion', () => {
     expect(sql()).not.toContain('ARRAY[');
   });
 });
+
+/**
+ * A table that appears mid-process must be picked up.
+ *
+ * Tables arrive by hand-applied migration and never disappear, so caching a
+ * NEGATIVE result pins an instance to the degraded path for its whole life.
+ * That happened: the migration was applied while crm-api was serving, every
+ * warm instance kept excluding nobody, and the partner firm seeded seconds
+ * earlier still ranked in the fires list — indistinguishable from the seed
+ * having failed.
+ */
+describe('relationships-table probe', () => {
+  it('re-probes after a miss, and stops probing once found', async () => {
+    __resetRelationshipsTableCache();
+    let exists = false;
+    let probes = 0;
+    const db = {
+      execute: (q: unknown): Promise<unknown[]> => {
+        if (JSON.stringify(q).includes('to_regclass')) {
+          probes += 1;
+          return Promise.resolve([{ ok: exists }]);
+        }
+        return Promise.resolve([]);
+      },
+    } as unknown as Database;
+
+    await new OwnerLoadService(db).get(TENANT, 30);
+    expect(probes).toBe(1);
+
+    // Still missing — must ask again rather than trust the cached miss.
+    await new OwnerLoadService(db).get(TENANT, 30);
+    expect(probes).toBe(2);
+
+    // Migration lands.
+    exists = true;
+    await new OwnerLoadService(db).get(TENANT, 30);
+    expect(probes).toBe(3);
+
+    // Now cached: no further catalogue lookups.
+    await new OwnerLoadService(db).get(TENANT, 30);
+    expect(probes).toBe(3);
+  });
+});

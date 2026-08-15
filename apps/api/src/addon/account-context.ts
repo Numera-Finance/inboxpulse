@@ -432,18 +432,32 @@ export function __resetRelationshipsTableCache(): void {
 }
 
 async function hasRelationshipsTable(db: Database): Promise<boolean> {
-  if (relationshipsTable !== null) return relationshipsTable;
+  // ONLY A POSITIVE RESULT IS CACHED.
+  //
+  // A table can appear during a process's life — it arrives by hand-applied
+  // migration — but it never disappears. Caching `false` therefore pins an
+  // instance to the degraded path forever, and that is not hypothetical: the
+  // migration was applied while crm-api was serving, and every warm instance
+  // went on excluding nobody. The partner firm seeded seconds earlier still
+  // ranked in the fires list, which looks exactly like the seed silently
+  // failing.
+  //
+  // So a miss re-probes on the next call. That is one catalogue lookup on a
+  // path that already runs several queries, and it stops being paid the moment
+  // the table exists.
+  if (relationshipsTable === true) return true;
   try {
     const rows = await db.execute(
       sql`SELECT to_regclass('public.customer_relationships') IS NOT NULL AS ok`,
     );
-    relationshipsTable = Boolean((rows as unknown as Array<{ ok: boolean }>)[0]?.ok);
+    const ok = Boolean((rows as unknown as Array<{ ok: boolean }>)[0]?.ok);
+    if (ok) relationshipsTable = true;
+    return ok;
   } catch {
-    // Treat an unreadable catalogue as absent: the degraded behaviour is safe,
-    // and failing the whole section over a probe would defeat the point.
-    relationshipsTable = false;
+    // An unreadable catalogue is treated as absent: degrading is safe, and
+    // failing a whole section over a probe would defeat the point.
+    return false;
   }
-  return relationshipsTable;
 }
 
 /**
