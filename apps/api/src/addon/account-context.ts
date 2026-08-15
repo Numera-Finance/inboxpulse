@@ -1,5 +1,5 @@
 import { inject, injectable } from 'tsyringe';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import type { Database } from '@crm/database';
 
 /**
@@ -314,6 +314,68 @@ export interface WaitingClient {
  * senders to a customer record for our own company, so without this the list is
  * topped by "Mystartupcfo" being unhappy with itself.
  */
+/**
+ * The thread must have somebody from THIS FIRM on it.
+ *
+ * Not a refinement — without it these services answer a different question than
+ * the one the card asks, and answer it against our own staff.
+ *
+ * We watch OUR OWN mailboxes, not the client's. In practice that is
+ * `emailsentiment@mystartupcfo.com` (128,050 messages; `npradhan@` has 16), and
+ * it is a member of the per-client group ids the firm creates so a whole team
+ * can listen on one client — `callrevu@mystartupcfo.com` and the like. Mail a
+ * client sends to one of those groups therefore arrives carrying OUR address in
+ * `To:`. That is the intended corpus, and it is the half that this predicate
+ * keeps.
+ *
+ * The other half arrives a different way. Clients also auto-forward their own
+ * mail into the address we gave them so their bookkeeper sees the traffic, and
+ * a forwarded message KEEPS ITS ORIGINAL `To:` — no address of ours appears on
+ * it anywhere. Some clients forward selectively; some forward the lot. One
+ * pool-service client contributed 925 threads of which 786 name nobody of ours:
+ * homeowners writing about pool routes, Facebook lead alerts, QuickBooks
+ * receipts. Real business mail, correctly ingested, and never addressed to us.
+ *
+ * So the two cases are distinguishable by exactly one thing — whether anyone of
+ * ours is on the thread — and that is the whole of this predicate.
+ *
+ * "Unanswered angry client" over that corpus scores the CLIENT's own customer
+ * service and books the result against the account manager who was never on the
+ * thread. It moved the 90-day count from 380 to 297.
+ *
+ * `participant_type = 'user'` is the test: a participant resolved to a row in
+ * `users`. It agrees with a domain-matching check almost exactly (Cognition IP
+ * 25/25, MerQube 138/138, Blitzz 53/53) while staying on an index instead of
+ * unpacking the address JSON per row — 83ms on the waiting-clients shape.
+ *
+ * Checked across the THREAD, not the message. The flagged message is inbound
+ * from the client by construction, so a message-level test would exclude every
+ * thread it is supposed to keep.
+ *
+ * SAFE AGAINST GROUP INBOXES, which is the failure that would matter most: a
+ * group id is where a client's real mail lands, so dropping those would empty
+ * the sections of exactly the threads they exist for. Group ids are registered
+ * as `users` rows — `callrevu@mystartupcfo.com` is one — so they satisfy the
+ * predicate like any staff address. Verified on the case rather than argued
+ * from the schema: all 43 callrevu threads are kept, and no `@mystartupcfo.com`
+ * recipient anywhere in the corpus lacks a `users` row.
+ *
+ * That is the assumption to re-check first if a section goes quiet. If group
+ * addresses are ever created OUTSIDE `users` — a bare Google Group with no
+ * corresponding row — this predicate starts hiding real client threads, and it
+ * will do so silently, because the section renders empty rather than wrong.
+ */
+function weAreOnTheThread(): SQL {
+  return sql`
+    AND EXISTS (
+      SELECT 1 FROM emails e2
+      JOIN email_participants pp
+        ON pp.email_id = e2.id AND pp.participant_type = 'user'
+      WHERE e2.thread_id = e.thread_id AND e2.tenant_id = e.tenant_id
+    )
+  `;
+}
+
 export interface WaitingOptions {
   days: number;
   limit: number;
@@ -360,6 +422,7 @@ export class WaitingClientsService {
         AND e.first_reply_at IS NULL
         AND e.is_customer_email
         AND e.received_at > now() - (${opts.days} || ' days')::interval
+        ${weAreOnTheThread()}
         ${own}
         ${scope}
       ORDER BY e.thread_id, e.received_at DESC
@@ -429,6 +492,7 @@ export class DangerPulseService {
         AND e.first_reply_at IS NOT NULL
         AND e.first_reply_at > e.received_at
         AND e.received_at > now() - (${days} || ' days')::interval
+        ${weAreOnTheThread()}
     `;
 
     const rows = await this.db.execute(sql`
@@ -559,6 +623,7 @@ export class OwnerLoadService {
           AND e.first_reply_at IS NULL
           AND e.is_customer_email
           AND e.received_at > now() - (${days} || ' days')::interval
+          ${weAreOnTheThread()}
         ORDER BY e.thread_id, e.received_at DESC
       )
       SELECT

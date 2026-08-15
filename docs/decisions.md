@@ -843,3 +843,75 @@ Namespaced `InboxPulse ⚡/` — deliberately distinct from the analysis set's
   scope. The decision logic is built and tested; the Gmail write path is not.
 - Four labels, not a taxonomy. A longer list becomes something you maintain
   rather than use, at which point it is the filing system this replaces.
+
+### ADR-020: Management metrics require a firm participant on the thread (2026-08-14)
+
+**Status:** Accepted
+
+**Context:** The add-on's management sections (`WaitingClientsService`,
+`OwnerLoadService`, `DangerPulseService`) scored "unhappy client, nobody
+replied" over every ingested thread. Investigating one customer's implausible
+volume — Blue Ocean Pool Service, 45 flagged threads — showed the corpus was not
+what the metric assumed.
+
+We watch our own mailboxes, not clients'. In practice one:
+`emailsentiment@mystartupcfo.com` (128,050 messages; `npradhan@` has 16). It is
+a member of the per-client group ids the firm creates so a whole team can listen
+on one client — `callrevu@mystartupcfo.com` and the like. Client mail sent to
+one of those groups arrives carrying **our** address in `To:`. That is the
+corpus these metrics are meant to measure.
+
+Mail also arrives a second way. Clients auto-forward their own mail into the
+address we gave them so their bookkeeper sees the traffic, and **a forwarded
+message keeps its original `To:`** — no address of ours appears on it. Some
+clients forward selectively; some forward everything. Blue Ocean contributed 925
+threads of which **786 name no `mystartupcfo.com` or `mytaxfiler.com` address
+anywhere**: homeowners writing about pool routes, Facebook lead alerts,
+QuickBooks receipts. Real business mail, correctly ingested, never addressed to
+us. Corpus-wide the second kind is 6,210 of 61,621 threads.
+
+The two are separated by exactly one property — whether anyone of ours is on the
+thread — which is what the predicate tests.
+
+Corpus-wide this is **6,210 of 61,621 threads (10%)**, carrying 15,054 messages
+of which **9,328 have been through LLM analysis** — still running, 1,376 in
+August 2026 alone.
+
+Nothing in the pipeline tested for it. The only gate before analysis is the
+category classifier (`spam` / `marketing` / `transactional` / `automated`);
+genuine business mail passes, so a homeowner's "Re: Your pool has been cleaned -
+thank you!" received a full sentiment, churn and escalation pass.
+
+**Decision:** Every management metric requires a participant resolved to a row
+in `users` somewhere on the thread — `weAreOnTheThread()` in
+`apps/api/src/addon/account-context.ts`.
+
+`participant_type = 'user'` over a domain check: it agrees almost exactly
+(Cognition IP 25/25, MerQube 138/138, Blitzz 53/53) while staying on an index
+rather than unpacking address JSON per row — 83ms on the waiting-clients shape.
+It also survives the fact that `mytaxfiler.com` is absent from the tenant's
+configured domains. Applied at THREAD level; the flagged message is inbound from
+the client by construction, so a message-level test would exclude every thread
+it is meant to keep.
+
+**Consequences:**
+- Unanswered-angry threads, 90d: **380 → 297**. Two named account managers
+  (3 threads and 2 threads) leave the list entirely — every thread attributed to
+  them was forwarded mail they were never on.
+- Reply-time medians are unchanged (negative 12.9h, other 15.1h). Expected:
+  `first_reply_at IS NOT NULL` already self-selects threads we were on. The
+  distortion lives wherever ABSENCE of a reply is the signal.
+- Safe against group inboxes, the failure that would matter most — a group id is
+  where a client's real mail lands. Group ids are registered as `users` rows
+  (`callrevu@mystartupcfo.com` is one), so they pass the predicate like any
+  staff address. Verified on the case: **all 43 callrevu threads are kept**, and
+  no `@mystartupcfo.com` recipient in the corpus lacks a `users` row.
+  **If group addresses are ever created outside `users` — a bare Google Group
+  with no matching row — this predicate begins hiding real client threads, and
+  silently, because the section renders empty rather than wrong.** First thing
+  to re-check if a section goes quiet.
+- Not fixed here: the analysis pipeline still analyses these threads. The
+  metric no longer reports them, but the tokens are still spent and the data is
+  still stored. A gate belongs in `apps/api/src/emails/analysis-service.ts`
+  alongside the category filter — shared ingestion, so it is a decision for
+  whoever owns that pipeline, not a side effect of this change.
