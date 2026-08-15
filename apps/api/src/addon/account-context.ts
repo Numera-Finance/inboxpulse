@@ -784,8 +784,6 @@ export class DangerPulseService {
     const base = sql`
       FROM emails e
       JOIN email_analyses a ON a.email_id = e.id AND a.analysis_type = 'sentiment'
-      JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
-      JOIN customers c ON c.id = p.customer_id
       WHERE e.tenant_id = ${tenantId}
         AND e.is_customer_email
         AND e.first_reply_at IS NOT NULL
@@ -793,8 +791,25 @@ export class DangerPulseService {
         AND e.received_at > now() - (${days} || ' days')::interval
         ${weAreOnTheThread()}
         ${weWereAddressed()}
-        AND NOT c.is_auto_created
-        ${clientFilter}
+        -- EXISTS, NOT A JOIN.
+        --
+        -- Joining email_participants multiplies the row: an email with four
+        -- customer-linked participants counts four times. Adding that join here
+        -- took the headline from 501 replies to 2,089 and the ">5 days" count
+        -- from 56 to 227 -- a number that grew because of a change meant only
+        -- to narrow it. Every aggregate on this query is per-EMAIL, so the
+        -- customer test has to be a predicate, not another row source.
+        AND EXISTS (
+          SELECT 1 FROM email_participants pc
+          JOIN customers c ON c.id = pc.customer_id
+          WHERE pc.email_id = e.id
+            AND pc.customer_id IS NOT NULL
+            AND NOT c.is_auto_created
+            AND NOT EXISTS (
+              SELECT 1 FROM customer_relationships cr
+              WHERE cr.customer_id = c.id AND cr.tenant_id = ${tenantId}
+            )
+        )
         ${weAreOnTheThread()}
     `;
 

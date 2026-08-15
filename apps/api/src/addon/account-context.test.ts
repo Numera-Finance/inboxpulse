@@ -443,3 +443,23 @@ describe('population consistency', () => {
     expect(sql()).toContain("me.direction IN ('to', 'cc')");
   });
 });
+
+/**
+ * Per-email aggregates must not join a per-participant table.
+ *
+ * Adding a JOIN on email_participants to narrow DangerPulse to real clients
+ * multiplied the row instead: an email with four customer-linked participants
+ * counted four times, taking the headline from 501 replies to 2,089 and the
+ * ">5 days" count from 56 to 227. A number that GREW from a change meant only
+ * to narrow it is the signature of fan-out.
+ */
+describe('DangerPulse row multiplication', () => {
+  it('tests customers with EXISTS rather than joining participants', async () => {
+    const { db, sql } = recordingDb();
+    await new DangerPulseService(db).get(TENANT, 90);
+    const q = sql();
+    expect(q).toContain('FROM email_participants pc');
+    // A bare join on the participant table would fan the aggregate out.
+    expect(q).not.toMatch(/JOIN email_participants p ON p\.email_id = e\.id/);
+  });
+});
