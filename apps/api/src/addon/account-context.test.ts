@@ -84,3 +84,49 @@ describe('management metrics require a firm participant on the thread', () => {
     expect(sql()).toContain('e2.thread_id');
   });
 });
+
+/**
+ * Customers marked as non-clients must be excluded from client reviews.
+ *
+ * The own-domain rule counts staff accounts on a domain, which catches
+ * mystartupcfo.com and misses an outsourced delivery partner completely — from
+ * the mail alone, a CA practice doing our back-office work looks exactly like a
+ * client, and the allocation grid cannot distinguish it either (role-holders
+ * are 100% mystartupcfo.com). So the verdict is recorded in
+ * customer_relationships rather than derived, and rather than hardcoded: the
+ * previous attempt at hardcoding put `blueoceanps` in a constant and silently
+ * dropped a real customer with 45 threads from the review.
+ */
+describe('non-client customers are excluded', () => {
+  it('WaitingClientsService consults customer_relationships', async () => {
+    const { db, sql } = recordingDb();
+    await new WaitingClientsService(db).find(
+      TENANT,
+      { userId: 'u1', isAdmin: true },
+      { days: 90, limit: 10, ownDomains: [] },
+    );
+    expect(sql()).toContain('customer_relationships');
+  });
+
+  it('OwnerLoadService consults customer_relationships', async () => {
+    const { db, sql } = recordingDb();
+    await new OwnerLoadService(db).get(TENANT, 30);
+    expect(sql()).toContain('customer_relationships');
+  });
+
+  /**
+   * Absence must mean CLIENT, never the reverse.
+   *
+   * Only non-clients are ever inserted, so the filter has to be a NOT EXISTS. If
+   * it were ever inverted into a requirement that a row be present, every
+   * customer would vanish from every section at once — and silently, because an
+   * empty section looks like good news.
+   */
+  it('excludes on presence of a row, so an unlisted customer stays a client', async () => {
+    const { db, sql } = recordingDb();
+    await new OwnerLoadService(db).get(TENANT, 30);
+    const q = sql();
+    const at = q.indexOf('customer_relationships');
+    expect(q.slice(Math.max(0, at - 400), at)).toContain('NOT EXISTS');
+  });
+});

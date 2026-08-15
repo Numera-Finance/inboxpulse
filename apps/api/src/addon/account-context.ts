@@ -376,6 +376,40 @@ function weAreOnTheThread(): SQL {
   `;
 }
 
+/**
+ * Customers that are not clients, and so have no place in a client review.
+ *
+ * The own-domain rule catches our own entities by counting staff accounts on a
+ * domain, which works for `mystartupcfo.com` and misses everything else. Three
+ * kinds slip through: vendors we buy from (SVB, Rippling, Bill), our own
+ * entities too small to trip the staff threshold, and — the one that is
+ * genuinely undetectable — outsourced firms doing OUR delivery work.
+ * `chitrabatchuca.com` is a CA practice in India working for MyTaxFiler, five
+ * people sending from it, and from the mail alone it is indistinguishable from
+ * a client. Grid role-holders are 100% `mystartupcfo.com`, so the allocation
+ * sheet cannot identify it either. Nothing in the data can.
+ *
+ * Which is why it is a TABLE rather than a list in this file. This knowledge
+ * was once a constant, `blueoceanps` went into it on the assumption that it was
+ * our own domain, and Blue Ocean Pool Service — a real customer — was silently
+ * dropped from the review with 45 threads. A row can be read and corrected by
+ * whoever owns the client list; a constant can only be found by whoever reads
+ * this file.
+ *
+ * Absence means client. A customer added tomorrow is treated as a client by
+ * default, which is the safe direction: a missing row shows up as a vendor in a
+ * review, which someone notices, rather than a client vanishing from it, which
+ * nobody does.
+ */
+function isAClient(tenantId: string): SQL {
+  return sql`
+    AND NOT EXISTS (
+      SELECT 1 FROM customer_relationships cr
+      WHERE cr.customer_id = c.id AND cr.tenant_id = ${tenantId}
+    )
+  `;
+}
+
 export interface WaitingOptions {
   days: number;
   limit: number;
@@ -424,6 +458,7 @@ export class WaitingClientsService {
         AND e.received_at > now() - (${opts.days} || ' days')::interval
         ${weAreOnTheThread()}
         ${own}
+        ${isAClient(tenantId)}
         ${scope}
       ORDER BY e.thread_id, e.received_at DESC
       LIMIT ${opts.limit}
@@ -665,6 +700,7 @@ export class OwnerLoadService {
               HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
             )
         )
+        ${isAClient(tenantId)}
       GROUP BY 1, 2
       ORDER BY 3 DESC
       LIMIT ${limit}
@@ -715,6 +751,7 @@ export class OwnerLoadService {
               HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
             )
         )
+        ${isAClient(tenantId)}
         AND NOT EXISTS (
           SELECT 1 FROM customer_allocations al
           WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = ${role}

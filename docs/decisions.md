@@ -915,3 +915,49 @@ it is meant to keep.
   still stored. A gate belongs in `apps/api/src/emails/analysis-service.ts`
   alongside the category filter — shared ingestion, so it is a decision for
   whoever owns that pipeline, not a side effect of this change.
+
+### ADR-021: Non-client customers are recorded, not derived or hardcoded (2026-08-14)
+
+**Status:** Accepted
+
+**Context:** A customer record is not the same thing as a client, and the
+management sections rank "unhappy client, nobody replied" over customer records.
+Three kinds of counterparty sit in that table and none belongs in a client
+review: vendors we buy from (SVB, Rippling, Bill), our own entities too small to
+trip the staff-domain rule, and outsourced firms doing OUR delivery work.
+
+The last kind is the one that cannot be detected. `chitrabatchuca.com` is a CA
+practice in India working for MyTaxFiler — padmashree, pavithra, vaishali, payal
+and chitra all send from it, and Chitra also holds `cbatchu@mystartupcfo.com`.
+Their mail is our own back office. From the mail alone it is indistinguishable
+from a client, and the allocation grid cannot separate it either: **grid
+role-holders are 100% `mystartupcfo.com`**, so a partner firm has no
+representation there at all.
+
+**Decision:** A `customer_relationships` table records the verdict, one row per
+customer, with a `note` saying who said so. `isAClient()` in
+`apps/api/src/addon/account-context.ts` excludes them from `WaitingClientsService`
+and `OwnerLoadService`.
+
+**Not a constant in code.** That was tried: `blueoceanps` went into a hardcoded
+NOT_CLIENTS list on the assumption it was one of our own domains. Blue Ocean
+Pool Service is a real customer, and it was silently dropped from the management
+review along with 45 threads. A constant is invisible to the people who would
+catch the error immediately, needs a deploy to correct, and records no reason. A
+row can be read, questioned and fixed by whoever owns the client list.
+
+**Consequences:**
+- **Absence means client.** Only non-clients are inserted, so the filter is a
+  `NOT EXISTS`. A customer added tomorrow is a client by default — the safe
+  direction, because a missing row shows up as a vendor in a review (visible)
+  rather than a client vanishing from one (not). A test pins the polarity;
+  inverting it would empty every section at once and look like good news.
+- Seeded conservatively: **Chitrabatchuca only**, the one case confirmed.
+  Rippling, Svb, Bill, Bank, Countsy and White Summers look like vendors and are
+  deliberately NOT seeded — looking like one is not knowing. They stay visible in
+  the named unallocated row (ADR-020) so someone who knows can triage them.
+- The seed is separate from the table definition, so the mechanism can be applied
+  anywhere while the judgements stay reviewable.
+- `customer_allocations` and `customer_relationships` are raw-SQL tables with no
+  Drizzle definitions, following the precedent set by the former. If either grows
+  a write path beyond these migrations, that should be revisited.

@@ -149,6 +149,28 @@ Or in PostgreSQL interactive mode (from project root):
 \i apps/api/sql/login_history.sql
 ```
 
+## Incremental migrations (`migrations/`)
+
+Applied after the base schema above, in this order. All are idempotent and safe
+to re-run.
+
+```bash
+\i apps/api/sql/migrations/customer_allocations.sql
+\i apps/api/sql/migrations/customer_relationships.sql
+\i apps/api/sql/migrations/customer_relationships_seed.sql   # optional — see below
+```
+
+| File | What it adds | Depends on |
+|------|-------------|-----------|
+| `customer_allocations.sql` | The firm's role-based client allocation, loaded from the operations spreadsheet. Who is accountable for which client, six roles. | `customers`, `users` |
+| `customer_relationships.sql` | Marks a customer as NOT a client — vendor, delivery partner, or one of our own entities. Only non-clients are ever inserted; absence means client. | `customers` |
+| `customer_relationships_seed.sql` | Known non-clients for the MyStartupCFO tenant, one row each with the reason and who confirmed it. | the two above |
+
+The seed is **judgements about one firm's counterparties, not schema**, and is
+kept separate so it can be reviewed — or rejected — on its own. Applying the
+table without the seed is a valid state: every customer is then treated as a
+client, which is the safe default. See ADR-020 and ADR-021.
+
 ## Verification Queries
 
 Check all tables:
