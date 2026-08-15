@@ -463,3 +463,40 @@ describe('DangerPulse row multiplication', () => {
     expect(q).not.toMatch(/JOIN email_participants p ON p\.email_id = e\.id/);
   });
 });
+
+/**
+ * A client is a fire because of what they WROTE, not what they received.
+ *
+ * FiresService joined email_participants and took whichever row carried a
+ * customer_id, which credits a client for mail merely addressed to them. RN
+ * Chidakashi was reported as a fire because a collections agency wrote TO them
+ * — from william.oxner@abc-amega.com to four @miko.ai addresses. Of 1,484
+ * participant rows behind the population, only 275 had the customer as sender.
+ *
+ * The participant link was also frequently wrong: complaints from
+ * mike@plantprovisions.com and jayanth@datairis.io carried a customer_id
+ * pointing at our own company, so the own-domain exclusion deleted them.
+ * Attributing by the sender's domain resolves 446 of 451 correctly.
+ */
+describe('fires are attributed to the sender', () => {
+  it('joins customer_domains on the from address, not participants', async () => {
+    const { db, sql } = recordingDb();
+    await new FiresService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90);
+    const q = sql();
+    expect(q).toContain('customer_domains cd');
+    expect(q).toContain("split_part(lower(e.from_email), '@', 2)");
+  });
+
+  /**
+   * is_auto_created records how a customer ROW was made, not whether the company
+   * is real. For most clients the auto-created record is the only one carrying
+   * their domain — excluding it dropped WareIQ Logistics and its 15 unanswered
+   * threads.
+   */
+  it('does not exclude auto-created customers from the fires list', async () => {
+    const { db, sql } = recordingDb();
+    await new FiresService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90);
+    const cte = sql().split('SELECT DISTINCT ON (e.thread_id)')[1] ?? '';
+    expect(cte.split('GROUP BY')[0]).not.toContain('is_auto_created');
+  });
+});

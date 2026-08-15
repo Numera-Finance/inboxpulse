@@ -1127,20 +1127,44 @@ export class FiresService {
 
     const rows = await this.db.execute(sql`
       WITH t AS MATERIALIZED (
+        -- ATTRIBUTED BY WHO SENT IT, VIA THE SENDER'S DOMAIN.
+        --
+        -- This joined email_participants and took whichever row carried a
+        -- customer_id, which credits a client for mail they merely RECEIVED. RN
+        -- Chidakashi was reported as a fire on the strength of a collections
+        -- agency writing TO them: from william.oxner@abc-amega.com, to four
+        -- @miko.ai addresses. Of 1,484 participant rows behind this population,
+        -- only 275 were cases where the customer actually wrote.
+        --
+        -- Worse, the participant link is often simply wrong. Complaints from
+        -- mike@plantprovisions.com and jayanth@datairis.io carried a customer_id
+        -- pointing at OUR OWN company record, so the own-domain exclusion then
+        -- deleted them — real urgent client mail, silently dropped.
+        --
+        -- The sender's domain resolves 446 of 451 of these emails to the right
+        -- company. It is also the same path AccountContextService already uses,
+        -- so the panel now attributes history and fires the same way.
+        --
+        -- is_auto_created is deliberately NOT filtered here. That flag records
+        -- how a customer ROW was created, not whether the company is real, and
+        -- for most clients the auto-created record is the only one carrying
+        -- their domain. Excluding it dropped WareIQ Logistics, which has 15
+        -- unanswered threads and an 83-day-old one.
         SELECT DISTINCT ON (e.thread_id)
-          e.thread_id, e.received_at, e.first_reply_at, p.customer_id
+          e.thread_id, e.received_at, e.first_reply_at, cd.customer_id
         FROM emails e
         JOIN email_analyses a
           ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
-        JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
-        JOIN customers c ON c.id = p.customer_id
+        JOIN customer_domains cd
+          ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+         AND cd.tenant_id = e.tenant_id
+        JOIN customers c ON c.id = cd.customer_id
         WHERE e.tenant_id = ${tenantId}
           AND e.is_customer_email
           AND e.received_at > now() - (${days} || ' days')::interval
           ${weAreOnTheThread()}
           ${weWereAddressed()}
           ${notAlreadyResolved()}
-          AND NOT c.is_auto_created
           AND NOT EXISTS (
             SELECT 1 FROM customer_domains cd
             WHERE cd.customer_id = c.id
