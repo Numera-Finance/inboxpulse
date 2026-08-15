@@ -925,6 +925,10 @@ app.post('/homepage', async (c) => {
   const pulse = tenantId ? await getDangerPulse(tenantId) : null;
   // Both are management views: where the fires are, and who to ask about them.
   const fires = tenantId && who ? await getFires(tenantId, who.userId, who.isAdmin) : [];
+  // A viewer with no admin permission and no assigned customers sees nothing in
+  // the entitlement-scoped sections. That must be stated on the card, not left
+  // as an absent section that reads as "nothing is wrong".
+  const restricted = Boolean(who && !who.isAdmin && who.accessibleCustomers === 0);
   const slow = tenantId ? await getSlowResponders(tenantId) : [];
   // The working set is the reason to open the panel without a message: it is
   // the only view of what the user marked, since nothing was written to Gmail.
@@ -943,7 +947,7 @@ app.post('/homepage', async (c) => {
         getEnv().ADDON_BASE_URL,
         { clients: waiting, webUrl: getEnv().WEB_URL },
         pulse ?? undefined,
-        { fires, webUrl: getEnv().WEB_URL },
+        { fires, restricted, webUrl: getEnv().WEB_URL },
         { people: slow, firmMedianH: pulse?.negativeMedianH ?? null },
       ),
     ),

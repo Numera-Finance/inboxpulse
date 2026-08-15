@@ -82,6 +82,18 @@ function sparkline(values: number[]): string {
 }
 
 export interface FiresView {
+  /**
+   * The viewer can see no customers at all — not an admin, and nothing in
+   * user_accessible_customers.
+   *
+   * Without this the section simply does not render, and an absent section is
+   * indistinguishable from "nothing is on fire". That is the most reassuring
+   * possible reading of a permissions problem, and it is exactly what happened:
+   * the panel showed no fires and no waiting clients for a viewer with role
+   * `User` and zero accessible customers, while the tenant-wide sections beside
+   * them displayed real data. It looked like the feature was missing.
+   */
+  restricted?: boolean;
   fires: Array<{
     customerId: string | null;
     customer: string;
@@ -133,221 +145,6 @@ export function buildHomepageCard(
       ],
     },
   ];
-  // The number this product exists to move, and the comparison that gives it
-  // meaning.
-  //
-  // Reported ALONGSIDE the same figure for everything else, because the number
-  // alone says nothing. On the current data that comparison IS the finding:
-  // negative 12.9h against other 15.1h. Angry mail is answered barely faster
-  // than routine mail, so sentiment is not currently changing anyone's
-  // behaviour — and a lead reading "12.9h" by itself would conclude things were
-  // fine.
-  //
-  // p90 sits next to it because the median hides the cases that matter. Half of
-  // angry clients hear back inside 13 hours; a tenth wait nearly six days, and
-  // those are the ones that leave.
-  if (pulse?.negativeMedianH !== null && pulse !== undefined) {
-    const faster =
-      pulse.otherMedianH !== null && pulse.negativeMedianH !== null
-        ? pulse.otherMedianH - pulse.negativeMedianH
-        : null;
-    const verdict =
-      faster === null
-        ? ''
-        : faster < 2
-          ? `<font color="#c5221f">only ${hrs(Math.abs(faster))} faster than routine mail — sentiment is not changing behaviour</font>`
-          : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
-    const spark = sparkline(pulse.trend.map((t) => t.medianH));
-
-    // THE TAIL LEADS, the median follows.
-    //
-    // This opened with the median, and the median is the part that is already
-    // fine: 12.9h against 15.1h for routine mail, so half of unhappy clients
-    // hear back the same working day. A lead reading it concluded things were
-    // acceptable, which was true and useless — optimising an acceptable average
-    // changes nothing anyone would notice.
-    //
-    // The damage is entirely in the tail. 56 of 505 answered negative threads
-    // waited over five days, and those are the clients who leave. So the count
-    // of PEOPLE who waited too long is the headline, and the median moves below
-    // it as context.
-    //
-    // A count of people, not a percentile. Nobody can picture "p90", and a
-    // percentile shifts when the population changes, so it cannot be tracked
-    // month to month by a human. "56 clients waited more than five days" can be
-    // carried into a meeting and checked again next month, which is the only
-    // form in which a number gets acted on.
-    sections.unshift({
-      header: heading('Unhappy clients left waiting'),
-      widgets: [
-        deco({
-          topLabel: `of ${pulse.negativeCount} unhappy clients who got a reply`,
-          text:
-            `<b><font color="#c5221f">${pulse.overFiveDays}</font></b> waited more than <b>5 days</b> to hear back`,
-          wrapText: true,
-          ...(waiting?.webUrl
-            ? {
-                button: {
-                  text: 'See them',
-                  onClick: {
-                    openLink: {
-                      url:
-                        `${waiting.webUrl}/escalations?signal=negative&status=open` +
-                        `&from=${sinceDays(pulse.windowDays)}`,
-                    },
-                  },
-                },
-              }
-            : {}),
-        }),
-        deco({
-          topLabel: `median over ${pulse.negativeCount} replies`,
-          text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? ` — ${verdict}` : ''}`,
-          wrapText: true,
-          // Land on exactly the population the median was computed over:
-          // negative, still open, same window. A headline number you cannot
-          // click into is a number you have to take on trust — and the whole
-          // argument for the panel is that its claims are checkable.
-          //
-          // `signal` and `status` are what apps/web/app/escalations/page.tsx
-          // reads, and it already defaults to signal=negative; passing it
-          // explicitly means the link keeps working if that default changes.
-          ...(waiting?.webUrl
-            ? {
-                button: {
-                  text: 'See them',
-                  onClick: {
-                    openLink: {
-                      url:
-                        `${waiting.webUrl}/escalations?signal=negative&status=open` +
-                        `&from=${sinceDays(pulse.windowDays)}`,
-                    },
-                  },
-                },
-              }
-            : {}),
-        }),
-        // The p90 row is gone. It said the same thing as the headline in a
-        // form nobody can act on, and two ways of stating one fact reads as
-        // two facts.
-
-        ...(spark
-          ? [
-              deco({
-                topLabel: `by month · ${pulse.trend[0]?.month ?? ''} → ${pulse.trend[pulse.trend.length - 1]?.month ?? ''}`,
-                text: `<font color="#1a73e8">${spark}</font>  <font color="#5f6368">lower is faster</font>`,
-                wrapText: false,
-              }),
-            ]
-          : []),
-        // The apology that used to sit here — "Per-person breakdown needs reply
-        // attribution: 12% of replies currently identify who sent them" — is
-        // gone, because the per-person breakdown now exists. It was true about
-        // the route it assumed: first_reply_by_id is 7-12% populated, since
-        // replies are matched for a timestamp and then discarded, so nothing
-        // could be attributed by AUTHORSHIP.
-        //
-        // "Slowest to answer angry mail" answers the same question through the
-        // allocation sheet instead, which names one accountable person per
-        // client at ~100% coverage. Telling a reader a section is unavailable
-        // while rendering it two rows above is worse than saying nothing.
-      ],
-    });
-  }
-
-  // WHO TO INVESTIGATE WITH.
-  //
-  // DangerPulse gives the firm's median (12.9h) and its tail (p90 139h), which
-  // says something is wrong somewhere and not where. This resolves it to a
-  // person, which is the only form in which the number starts a conversation.
-  //
-  // The spread is the finding. Against a firm median of 12.9h the slowest
-  // account manager sits at 79.3h over ten threads and the next at 50.1h over
-  // twenty-two — six times and four times the firm. That is not a rounding
-  // difference in an average.
-  //
-  // The sample size is always shown beside the figure. A median over five
-  // threads is thin, the person it names cannot argue with a number they cannot
-  // see the basis of, and a panel pointing at a conversation owes the reader
-  // enough to discount it themselves.
-  if (slow?.people.length) {
-    sections.unshift({
-      header: heading('Slowest to answer angry mail'),
-      widgets: [
-        ...slow.people.map((p) =>
-          deco({
-            topLabel: `${p.threads} answered threads`,
-            text:
-              `<b>${escapeText(p.name)}</b> — <font color="#c5221f">${hrs(p.medianH)}</font>` +
-              (slow.firmMedianH
-                ? ` vs ${hrs(slow.firmMedianH)} firm-wide`
-                : ''),
-            wrapText: true,
-          }),
-        ),
-        // Stated, not buried. Only ANSWERED threads have a duration, so someone
-        // who never replies at all cannot appear here and looks better than
-        // someone who replies slowly. That case lives in the fires list above,
-        // and the two sections are only correct read together.
-        text(
-          '<font color="#5f6368">Answered threads only — mail nobody replied to has no ' +
-            'reply time. See the fires list for those.</font>',
-        ),
-      ],
-    });
-  }
-
-  // WHERE THE FIRES ARE — by client, not by thread.
-  //
-  // "Angry and unanswered" lists individual threads, which is right for someone
-  // about to reply and wrong for someone deciding where to spend an afternoon.
-  // A manager does not want twelve rows that turn out to be four clients; they
-  // want to know Deserve has eighteen unhappy threads and eight nobody touched.
-  //
-  // ONE ANGRY EMAIL IS NOISE. Over 90 days, 135 clients have exactly one
-  // negative thread and 51 have three or more. Ranking the tail alongside a
-  // client with nine open complaints is what makes a review unreadable.
-  //
-  // This REPLACED "Account managers carrying it", which counted threads per
-  // person and had stopped saying anything — its top real manager carried two.
-  // Every fact that section carried survives here in a more useful shape: the
-  // owner is named on each row, and an unallocated client shows as "no account
-  // manager" against its actual damage rather than pooled into one bucket.
-  if (fires?.fires.length) {
-    sections.unshift({
-      header: heading('Where the fires are'),
-      widgets: fires.fires.map((f) =>
-        deco({
-          topLabel: `${f.negative} unhappy · oldest ${f.oldestDays}d`,
-          text:
-            `<b>${escapeText(f.customer)}</b>` +
-            (f.unanswered > 0
-              ? ` — <font color="#c5221f">${f.unanswered} unanswered</font>`
-              : ''),
-          // Who to call. A fire without a name attached is an observation.
-          bottomLabel: f.owner ?? 'no account manager',
-          wrapText: true,
-          ...(f.customerId && fires.webUrl
-            ? {
-                button: {
-                  text: 'Open',
-                  onClick: {
-                    openLink: {
-                      // `customer`, NOT `customerId` — that is the param name
-                      // apps/web/app/escalations/page.tsx reads. A wrong name
-                      // does not error; the page just loads unfiltered, so the
-                      // link looks like it works and quietly shows everything.
-                      url: `${fires.webUrl}/escalations?signal=negative&status=open&customer=${encodeURIComponent(f.customerId)}`,
-                    },
-                  },
-                },
-              }
-            : {}),
-        }),
-      ),
-    });
-  }
-
   // The team-lead question, answered directly and put first.
   //
   // "Is there an angry client nobody is answering?" is the thing a lead opens a
@@ -409,6 +206,277 @@ export function buildHomepageCard(
       ],
     });
   }
+  // ORDER IS AN ARGUMENT, so it is set deliberately here rather than falling
+  // out of the sequence these blocks happen to be written in.
+  //
+  // Reading down the panel: what is on fire -> how bad is it overall -> who to
+  // ask about it. The people list came FIRST in the deployed build, which put
+  // four named colleagues at the top of the panel before the reader had seen a
+  // single client. That is both the wrong priority and a bad way to treat
+  // people: a name ranked above the problem it belongs to reads as an
+  // accusation. sections.unshift puts the LAST block on top, so fires is
+  // unshifted last.
+
+  // WHO TO INVESTIGATE WITH.
+  //
+  // DangerPulse gives the firm's median (12.9h) and its tail (p90 139h), which
+  // says something is wrong somewhere and not where. This resolves it to a
+  // person, which is the only form in which the number starts a conversation.
+  //
+  // The spread is the finding. Against a firm median of 12.9h the slowest
+  // account manager sits at 79.3h over ten threads and the next at 50.1h over
+  // twenty-two — six times and four times the firm. That is not a rounding
+  // difference in an average.
+  //
+  // The sample size is always shown beside the figure. A median over five
+  // threads is thin, the person it names cannot argue with a number they cannot
+  // see the basis of, and a panel pointing at a conversation owes the reader
+  // enough to discount it themselves.
+  if (slow?.people.length) {
+    sections.unshift({
+      header: heading('Slowest to answer angry mail'),
+      widgets: [
+        ...slow.people.map((p) => {
+          // A MULTIPLE, not two durations.
+          //
+          // This read "3d vs 12.9h firm-wide" and asked the reader to convert
+          // units mid-sentence to find out whether 3d was bad. "5x the firm"
+          // needs no arithmetic and no units at all, and it is the comparison
+          // that carries the meaning — the absolute number is context, so it
+          // moves to the small line underneath.
+          const mult =
+            slow.firmMedianH && slow.firmMedianH > 0
+              ? Math.round((p.medianH / slow.firmMedianH) * 10) / 10
+              : null;
+          return deco({
+            startIcon: { knownIcon: 'PERSON' },
+            topLabel: `${p.threads} answered threads`,
+            text: mult
+              ? `<b>${escapeText(p.name)}</b> — <font color="#c5221f"><b>${mult}×</b> the firm</font>`
+              : `<b>${escapeText(p.name)}</b> — <font color="#c5221f">${hrs(p.medianH)}</font>`,
+            bottomLabel: slow.firmMedianH
+              ? `${hrs(p.medianH)} median · firm ${hrs(slow.firmMedianH)}`
+              : `${hrs(p.medianH)} median`,
+            wrapText: true,
+          });
+        }),
+        // Stated, not buried. Only ANSWERED threads have a duration, so someone
+        // who never replies at all cannot appear here and looks better than
+        // someone who replies slowly. That case lives in the fires list above,
+        // and the two sections are only correct read together.
+        // Short enough to read, because a caveat nobody finishes is a caveat
+        // nobody has. The full reasoning lives in SlowRespondersService.
+        text('<font color="#5f6368">Answered mail only. Ignored mail has no reply time.</font>'),
+      ],
+    });
+  }
+
+  // The number this product exists to move, and the comparison that gives it
+  // meaning.
+  //
+  // Reported ALONGSIDE the same figure for everything else, because the number
+  // alone says nothing. On the current data that comparison IS the finding:
+  // negative 12.9h against other 15.1h. Angry mail is answered barely faster
+  // than routine mail, so sentiment is not currently changing anyone's
+  // behaviour — and a lead reading "12.9h" by itself would conclude things were
+  // fine.
+  //
+  // p90 sits next to it because the median hides the cases that matter. Half of
+  // angry clients hear back inside 13 hours; a tenth wait nearly six days, and
+  // those are the ones that leave.
+  if (pulse?.negativeMedianH !== null && pulse !== undefined) {
+    const faster =
+      pulse.otherMedianH !== null && pulse.negativeMedianH !== null
+        ? pulse.otherMedianH - pulse.negativeMedianH
+        : null;
+    const verdict =
+      faster === null
+        ? ''
+        : faster < 2
+          ? `<font color="#c5221f">only ${hrs(Math.abs(faster))} faster than routine mail — sentiment is not changing behaviour</font>`
+          : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
+    const spark = sparkline(pulse.trend.map((t) => t.medianH));
+
+    // THE TAIL LEADS, the median follows.
+    //
+    // This opened with the median, and the median is the part that is already
+    // fine: 12.9h against 15.1h for routine mail, so half of unhappy clients
+    // hear back the same working day. A lead reading it concluded things were
+    // acceptable, which was true and useless — optimising an acceptable average
+    // changes nothing anyone would notice.
+    //
+    // The damage is entirely in the tail. 56 of 505 answered negative threads
+    // waited over five days, and those are the clients who leave. So the count
+    // of PEOPLE who waited too long is the headline, and the median moves below
+    // it as context.
+    //
+    // A count of people, not a percentile. Nobody can picture "p90", and a
+    // percentile shifts when the population changes, so it cannot be tracked
+    // month to month by a human. "56 clients waited more than five days" can be
+    // carried into a meeting and checked again next month, which is the only
+    // form in which a number gets acted on.
+    sections.unshift({
+      header: heading('Unhappy clients left waiting'),
+      widgets: [
+        deco({
+          startIcon: { knownIcon: 'CLOCK' },
+          topLabel: `of ${pulse.negativeCount} unhappy clients who got a reply`,
+          text:
+            `<b><font color="#c5221f">${pulse.overFiveDays}</font></b> waited more than <b>5 days</b> to hear back`,
+          wrapText: true,
+          ...(waiting?.webUrl
+            ? {
+                button: {
+                  text: 'See them',
+                  onClick: {
+                    openLink: {
+                      url:
+                        `${waiting.webUrl}/escalations?signal=negative&status=open` +
+                        `&from=${sinceDays(pulse.windowDays)}`,
+                    },
+                  },
+                },
+              }
+            : {}),
+        }),
+        // No second button. Two identical "See them" accessories stacked on
+        // consecutive rows read as a rendering fault, not as two links — and
+        // they went to the same place. The headline keeps the action; this row
+        // is context for it.
+        deco({
+          topLabel: `median over ${pulse.negativeCount} replies`,
+          text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? ` — ${verdict}` : ''}`,
+          wrapText: true,
+          // Land on exactly the population the median was computed over:
+          // negative, still open, same window. A headline number you cannot
+          // click into is a number you have to take on trust — and the whole
+          // argument for the panel is that its claims are checkable.
+          //
+          // `signal` and `status` are what apps/web/app/escalations/page.tsx
+          // reads, and it already defaults to signal=negative; passing it
+          // explicitly means the link keeps working if that default changes.
+          ...(waiting?.webUrl
+            ? {
+                button: {
+                  text: 'See them',
+                  onClick: {
+                    openLink: {
+                      url:
+                        `${waiting.webUrl}/escalations?signal=negative&status=open` +
+                        `&from=${sinceDays(pulse.windowDays)}`,
+                    },
+                  },
+                },
+              }
+            : {}),
+        }),
+        // The p90 row is gone. It said the same thing as the headline in a
+        // form nobody can act on, and two ways of stating one fact reads as
+        // two facts.
+
+        ...(spark
+          ? [
+              deco({
+                topLabel: `by month · ${pulse.trend[0]?.month ?? ''} → ${pulse.trend[pulse.trend.length - 1]?.month ?? ''}`,
+                text: `<font color="#1a73e8">${spark}</font>  <font color="#5f6368">lower is faster</font>`,
+                wrapText: false,
+              }),
+            ]
+          : []),
+        // The apology that used to sit here — "Per-person breakdown needs reply
+        // attribution: 12% of replies currently identify who sent them" — is
+        // gone, because the per-person breakdown now exists. It was true about
+        // the route it assumed: first_reply_by_id is 7-12% populated, since
+        // replies are matched for a timestamp and then discarded, so nothing
+        // could be attributed by AUTHORSHIP.
+        //
+        // "Slowest to answer angry mail" answers the same question through the
+        // allocation sheet instead, which names one accountable person per
+        // client at ~100% coverage. Telling a reader a section is unavailable
+        // while rendering it two rows above is worse than saying nothing.
+      ],
+    });
+  }
+
+  // WHERE THE FIRES ARE — by client, not by thread.
+  //
+  // "Angry and unanswered" lists individual threads, which is right for someone
+  // about to reply and wrong for someone deciding where to spend an afternoon.
+  // A manager does not want twelve rows that turn out to be four clients; they
+  // want to know Deserve has eighteen unhappy threads and eight nobody touched.
+  //
+  // ONE ANGRY EMAIL IS NOISE. Over 90 days, 135 clients have exactly one
+  // negative thread and 51 have three or more. Ranking the tail alongside a
+  // client with nine open complaints is what makes a review unreadable.
+  //
+  // This REPLACED "Account managers carrying it", which counted threads per
+  // person and had stopped saying anything — its top real manager carried two.
+  // Every fact that section carried survives here in a more useful shape: the
+  // owner is named on each row, and an unallocated client shows as "no account
+  // manager" against its actual damage rather than pooled into one bucket.
+  // Say so, rather than rendering nothing.
+  //
+  // An empty section and a forbidden section look identical once they are both
+  // absent, and only one of them is good news. This is the same failure that
+  // hid a crashing /waiting endpoint for weeks — silence reading as "all
+  // clear".
+  if (fires && !fires.fires.length && fires.restricted) {
+    sections.unshift({
+      header: heading('Where the fires are'),
+      widgets: [
+        deco({
+          startIcon: { knownIcon: 'PERSON' },
+          text: '<b>No client access on your account</b>',
+          bottomLabel: 'Ask an admin to assign you customers',
+          wrapText: true,
+        }),
+        text(
+          '<font color="#5f6368">This section shows only clients you are assigned. ' +
+            'The figures below are firm-wide and are not restricted.</font>',
+        ),
+      ],
+    });
+  }
+
+  if (fires?.fires.length) {
+    sections.unshift({
+      header: heading('Where the fires are'),
+      widgets: fires.fires.map((f) =>
+        deco({
+          // PHONE, because the row's whole point is that someone should call
+          // them. An icon that restates the section adds nothing; one that
+          // names the action earns its space.
+          startIcon: { knownIcon: 'PHONE' },
+          topLabel: `${f.negative} unhappy · oldest ${f.oldestDays}d`,
+          text:
+            `<b>${escapeText(f.customer)}</b>` +
+            (f.unanswered > 0
+              ? ` — <font color="#c5221f">${f.unanswered} unanswered</font>`
+              : ''),
+          // Who to call. A fire without a name attached is an observation.
+          bottomLabel: f.owner ?? 'no account manager',
+          wrapText: true,
+          ...(f.customerId && fires.webUrl
+            ? {
+                button: {
+                  text: 'Open',
+                  onClick: {
+                    openLink: {
+                      // `customer`, NOT `customerId` — that is the param name
+                      // apps/web/app/escalations/page.tsx reads. A wrong name
+                      // does not error; the page just loads unfiltered, so the
+                      // link looks like it works and quietly shows everything.
+                      url: `${fires.webUrl}/escalations?signal=negative&status=open&customer=${encodeURIComponent(f.customerId)}`,
+                    },
+                  },
+                },
+              }
+            : {}),
+        }),
+      ),
+    });
+  }
+
 
   // Leads the card when present. Someone opening the panel with no message
   // open is almost always coming back to what they marked.

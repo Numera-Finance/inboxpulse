@@ -257,7 +257,10 @@ describe('slowest to answer angry mail', () => {
 
   it('names the person and compares them to the firm', () => {
     expect(card()).toContain('Ganesh Shankar');
-    expect(card()).toContain('12.9h firm-wide');
+    // A multiple, not two durations in different units — "3d vs 12.9h" made
+    // the reader convert mid-sentence to find out whether 3d was bad.
+    expect(card()).toContain('the firm');
+    expect(card()).toMatch(/[0-9.]+×/);
   });
 
   /**
@@ -274,7 +277,8 @@ describe('slowest to answer angry mail', () => {
    * limitation has to be on the card, not just in a comment.
    */
   it('states that unanswered mail is excluded', () => {
-    expect(card()).toContain('Answered threads only');
+    // Kept short: a caveat nobody finishes is a caveat nobody has.
+    expect(card()).toContain('Answered mail only');
   });
 });
 
@@ -393,5 +397,60 @@ describe('unhappy clients left waiting', () => {
   /** The header must name its own subject — "carrying it" left "it" undefined. */
   it('names what is being counted in the header', () => {
     expect(card()).toContain('Unhappy clients left waiting');
+  });
+});
+
+/**
+ * Design: the panel must not go quiet when it has nothing to say.
+ *
+ * An empty section and a forbidden section are indistinguishable once both are
+ * absent, and only one is good news. A viewer with role `User` and zero
+ * accessible customers saw no fires and no waiting clients, beside tenant-wide
+ * sections showing real data — it read as the feature being missing rather than
+ * as a permissions problem.
+ */
+describe('restricted viewer', () => {
+  it('says why the section is empty instead of omitting it', () => {
+    const flat = JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        restricted: true,
+        fires: [],
+        webUrl: 'https://web.test',
+      }),
+    );
+    expect(flat).toContain('Where the fires are');
+    expect(flat).toContain('No client access');
+  });
+
+  it('stays silent when there is genuinely nothing on fire', () => {
+    const flat = JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        restricted: false,
+        fires: [],
+        webUrl: 'https://web.test',
+      }),
+    );
+    expect(flat).not.toContain('No client access');
+  });
+});
+
+/**
+ * Design: a multiple, not two durations in different units.
+ *
+ * The row read "3d vs 12.9h firm-wide" and asked the reader to convert units
+ * mid-sentence to learn whether 3d was bad. The comparison carries the meaning,
+ * so it leads; the absolute number moves to the small line beneath.
+ */
+describe('slow responder rows', () => {
+  it('leads with a multiple of the firm median', () => {
+    const flat = JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, {
+        firmMedianH: 12.9,
+        people: [{ name: 'Ganesh Shankar', threads: 11, medianH: 60.8 }],
+      }),
+    );
+    expect(flat).toContain('4.7×');
+    expect(flat).toContain('the firm');
+    expect(flat).not.toContain('vs 12.9h firm-wide');
   });
 });
