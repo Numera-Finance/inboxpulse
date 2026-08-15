@@ -516,8 +516,25 @@ export interface OwnerLoad {
  * and reporting it would have been a management review of our own mail.
  */
 
-/** Client records that are us, or that the ingester invented from a domain. */
-const NOT_CLIENTS = ['mystartupcfo', 'numerafinance', 'blueoceanps', 'mytaxfiler', 'bill'];
+/**
+ * Customers that are actually US, derived rather than listed.
+ *
+ * This was a hardcoded array — and it contained 'blueoceanps', which is a real
+ * client (Blue Ocean Pool Service, blueoceanps.co). A hand-maintained "not a
+ * client" list silently removed a paying customer from the management review,
+ * which is the exact opposite of what this feature is for, and nothing would
+ * ever have surfaced it: an excluded row simply does not appear.
+ *
+ * So it is derived from where STAFF have accounts. A domain with three or more
+ * users in the `users` table is somewhere we work, not somewhere we sell to.
+ * That yields mystartupcfo.com, numerafinance.com and mytaxfiler.com — the
+ * three that are genuinely ours — and cannot accidentally capture a client,
+ * because clients do not have staff accounts here.
+ *
+ * The threshold is three rather than one so a single client contact who was
+ * given a login cannot hide their own company from the review.
+ */
+const OWN_DOMAIN_MIN_STAFF = 3;
 
 @injectable()
 export class OwnerLoadService {
@@ -555,7 +572,17 @@ export class OwnerLoadService {
         ON al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = ${role}
       LEFT JOIN users u ON u.id = al.user_id
       WHERE NOT c.is_auto_created
-        AND lower(c.name) <> ALL(${NOT_CLIENTS})
+        AND NOT EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = c.id
+            AND lower(cd.domain) IN (
+              SELECT split_part(lower(u2.email), '@', 2)
+              FROM users u2
+              WHERE u2.tenant_id = ${tenantId} AND u2.email LIKE '%@%'
+              GROUP BY 1
+              HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
+            )
+        )
       GROUP BY 1, 2
       ORDER BY 3 DESC
       LIMIT ${limit}
