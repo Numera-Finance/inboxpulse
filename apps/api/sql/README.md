@@ -187,3 +187,41 @@ Check all indexes:
 ```sql
 SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname;
 ```
+
+### Applying the add-on tables to a database that lacks them
+
+Symptom: `/api/internal/addon/fires`, `/slow-responders` and `/owner-load`
+return 500 while `/waiting` and `/pulse` return 200. Every failing endpoint
+joins `customer_allocations`; every working one does not. The table is missing.
+
+That failure is invisible in the panel — the add-on client swallows a non-OK
+response and returns `[]`, so the section renders empty, which reads as "nothing
+to report" rather than "this is broken". Check the endpoints directly, not the
+card.
+
+```bash
+psql "$DATABASE_URL" -f apps/api/sql/migrations/customer_allocations_data.sql
+psql "$DATABASE_URL" -f apps/api/sql/migrations/customer_relationships.sql
+psql "$DATABASE_URL" -f apps/api/sql/migrations/customer_relationships_seed.sql
+```
+
+`customer_allocations_data.sql` carries the schema AND the 4,724 grid rows, and
+resolves `customer_id`/`user_id` against the target database's own `customers`
+and `users` rather than copying ids from elsewhere — copied UUIDs would appear
+to work and join to nothing wherever two databases diverge.
+
+Expect `4724 rows | ~4270 matched_customer | ~4715 matched_user | 857 clients`.
+A much lower `matched_customer` means the customer names differ from the grid's
+normalised keys, not that the load failed.
+
+**Blast radius: none for existing users.** These files only CREATE TABLE IF NOT
+EXISTS, CREATE INDEX IF NOT EXISTS, INSERT into the two new tables, and UPDATE
+`customer_allocations` itself. There is no ALTER, DROP, TRUNCATE, foreign key or
+trigger touching any existing table; `customers`, `users` and `tenants` are read
+only. Nothing outside the add-on references either table, so no existing query
+can change behaviour. Both files are wrapped in a transaction and are safe to
+re-run — verified by running them twice against a clean database.
+
+Assumes a single-tenant deployment: the insert takes the OLDEST tenant
+(`ORDER BY created_at LIMIT 1`). Revisit before running on a multi-tenant
+database.
