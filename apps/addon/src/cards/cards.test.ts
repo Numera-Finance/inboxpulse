@@ -657,3 +657,42 @@ describe('card structure', () => {
     expect(second).toContain('Open web dashboard');
   });
 });
+
+/**
+ * The promise must appear before anything is read, and must not overclaim.
+ *
+ * Written for a reader who has said he is sensitive about his mail being read.
+ * Every line is tied to something the code enforces — see services/consent.ts —
+ * and the uncomfortable one is stated in the same weight as the reassuring
+ * ones. A privacy notice that omits the third party is worse than none: it
+ * teaches the reader that the rest was drafted to soothe.
+ */
+describe('privacy block', () => {
+  const card = (readingOn: boolean): string =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, 'https://addon.test', undefined, undefined,
+        undefined, undefined, { readingOn }),
+    );
+
+  it('says nothing is being read until it is turned on', () => {
+    expect(card(false)).toContain('Your mail is not being read');
+    expect(card(false)).toContain('Turn on reading');
+  });
+
+  it('names Gemini rather than hiding the third party', () => {
+    expect(card(false)).toContain('Gemini');
+  });
+
+  it('makes all three promises, not just the comfortable ones', () => {
+    const c = card(false);
+    expect(c).toContain('Only if you turn it on');
+    expect(c).toContain('Nothing is kept');
+    expect(c).toContain('Only you see it');
+  });
+
+  it('offers a way out once it is on', () => {
+    expect(card(true)).toContain('Reading is on');
+    expect(card(true)).toContain('Stop reading my mail');
+    expect(card(true)).not.toContain('Turn on reading');
+  });
+});

@@ -39,6 +39,7 @@ import {
 import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled, THREAD_MODES } from './services/live-analysis';
 import type { ReplyOption, ThreadMode } from './services/live-analysis';
 import { solidBarPng } from './assets/bar';
+import { hasConsent, grantConsent, revokeConsent } from './services/consent';
 import { LOGO_PNG_BASE64 } from './assets/logo';
 import { AnalysisCache } from './services/analysis-cache';
 import {
@@ -106,6 +107,30 @@ async function resolveTenant(email: string | undefined): Promise<string | null> 
  * be used to make the add-on render something arbitrary or allocate a large
  * buffer.
  */
+/**
+ * Turning reading on and off.
+ *
+ * Named for what it does to the mailbox rather than for the record it writes —
+ * someone pressing "Stop reading my mail" should not have to wonder whether
+ * that cleared a preference or stopped the behavior. It does both, because
+ * here the preference IS the behavior.
+ */
+app.post('/consent/grant', async (c) => {
+  const event = await c.req.json<AddonEvent>().catch(() => ({}) as AddonEvent);
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify your account.'));
+  grantConsent(verified.email);
+  return c.json(notify('Reading is on. Open a thread to see the summary.'));
+});
+
+app.post('/consent/revoke', async (c) => {
+  const event = await c.req.json<AddonEvent>().catch(() => ({}) as AddonEvent);
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify your account.'));
+  revokeConsent(verified.email);
+  return c.json(notify('Stopped. Nothing of yours will be read.'));
+});
+
 app.get('/bar.png', (c) => {
   const hex = (c.req.query('c') ?? '').replace(/[^0-9a-fA-F]/g, '').slice(0, 6);
   const h = Math.min(24, Math.max(2, Number(c.req.query('h') ?? 6) || 6));
@@ -386,9 +411,16 @@ app.post('/gmail/analyse', async (c) => {
   // So the wait is now max(extraction, prose) rather than one call doing both.
   // It also puts each job on the model suited to it: gemma3:12b is reliable at
   // shape, nemotron is 2.5x faster at prose and has no schema to get wrong.
+  // NO CONSENT, NO READ.
+  //
+  // The gate belongs here, not in the card: by the time a card is built the
+  // thread has already been assembled and sent. This is the last point at
+  // which "we have not read your mail" is still true.
+  const mayRead = hasConsent(verified.email);
+
   const [reading, replyOptions] = cached
     ? [cached.reading, cached.replyOptions]
-    : threadText && mode !== 'fyi'
+    : mayRead && threadText && mode !== 'fyi'
       ? await Promise.all([
           readThreadLive({ subject: headers?.subject, thread: threadText, history }),
           writeReplyOptions({
@@ -974,6 +1006,7 @@ app.post('/homepage', async (c) => {
         pulse ?? undefined,
         { fires, restricted, windowDays: 90, webUrl: getEnv().WEB_URL },
         { people: slow, firmMedianH: pulse?.negativeMedianH ?? null, webUrl: getEnv().WEB_URL, windowDays: 90 },
+        { readingOn: hasConsent(verified.email) },
       ),
     ),
   );

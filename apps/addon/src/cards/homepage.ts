@@ -1,4 +1,5 @@
 import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated, fold, image } from './widgets';
+import { privacyBlock } from './privacy';
 import type { EmailStats } from '../services/api-client';
 
 /**
@@ -165,6 +166,11 @@ export interface WaitingView {
   webUrl: string;
 }
 
+export interface PrivacyView {
+  /** Whether this viewer has turned reading on. */
+  readingOn: boolean;
+}
+
 export function buildHomepageCard(
   stats: EmailStats | null,
   working?: WorkingSetView,
@@ -173,6 +179,7 @@ export function buildHomepageCard(
   pulse?: PulseView,
   fires?: FiresView,
   slow?: SlowRespondersView,
+  privacy?: PrivacyView,
 ): Card {
   // No lead-in section.
   //
@@ -656,6 +663,15 @@ export function buildHomepageCard(
     firm.unshift({ widgets: [image(`${baseUrl}/bar.png?c=${FIRE}&h=6`, 'Clients')] });
   }
   if (firm.length) card.push(fold(firm));
+
+  // The promise sits in the reader's own half, directly above the tools that
+  // act on their mailbox — where someone asking "what does this do with my
+  // mail" is already looking. Not buried in a footer, and not at the top where
+  // it would push the clients below the fold for the eight people who never
+  // think about it.
+  if (privacy) {
+    personal.push({ widgets: privacyBlock({ on: privacy.readingOn, baseUrl }) });
+  }
 
   const below = [...personal, ...footer];
   if (below.length && baseUrl) {
