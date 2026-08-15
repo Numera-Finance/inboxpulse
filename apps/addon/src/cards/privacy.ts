@@ -25,7 +25,25 @@ import { type Widget, text, deco, buttons, actionButton } from './widgets';
  * viewer and logs carry a salted hash instead of an address. Neither is a
  * policy; both are properties. See services/consent.ts for the mapping.
  */
-export function privacyBlock(opts: { on: boolean; baseUrl?: string }): Widget[] {
+export function privacyBlock(opts: {
+  on: boolean;
+  baseUrl?: string;
+  /**
+   * Whether this install can write to the mailbox.
+   *
+   * True for the full deployment, which carries gmail.modify because the
+   * instant labels attach a label to a thread and `users.threads.modify` is the
+   * only API that does it — `gmail.labels` manages definitions, not
+   * attachments, so there is no narrower scope to ask for.
+   *
+   * That scope's consent screen reads "Read, compose, and send emails from your
+   * Gmail account", which is the broadest sentence Google shows for anything
+   * short of full access, and it is the first thing a new user sees. Nothing in
+   * the product can soften it, so the product has to earn it back immediately:
+   * name the single write, and show the undo in the same breath.
+   */
+  canWrite?: boolean;
+}): Widget[] {
   const lines: Widget[] = [
     deco({
       startIcon: { knownIcon: 'DESCRIPTION' },
@@ -40,6 +58,10 @@ export function privacyBlock(opts: { on: boolean; baseUrl?: string }): Widget[] 
         '<b>Nothing is kept.</b> The summary lives in memory for a few minutes and is gone. No message text is written to any database.<br>' +
         '<b>Only you see it.</b> This panel is rendered for your account alone. Logs record a one-way hash, not your address.<br>' +
         '<b>It uses Google Gemini.</b> The thread text is sent there to be summarized, and not used to train it.' +
+        (opts.canWrite
+          ? '<br><b>One thing gets written.</b> A label under ⚡/ on threads you mark yourself — never on mail you have not touched. ' +
+            '"Clear all my marks" removes every one of them in a single press.'
+          : '') +
         '</font>',
     ),
   ];

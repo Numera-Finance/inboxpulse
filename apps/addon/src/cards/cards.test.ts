@@ -696,3 +696,31 @@ describe('privacy block', () => {
     expect(card(true)).not.toContain('Turn on reading');
   });
 });
+
+/**
+ * An install that can write to the mailbox must say what it writes.
+ *
+ * The full deployment carries gmail.modify because attaching a label to a
+ * thread needs users.threads.modify — gmail.labels manages definitions, not
+ * attachments, so there is no narrower scope. Its consent screen reads "Read,
+ * compose, and send emails from your Gmail account", the broadest sentence
+ * Google shows short of full access. Nothing in the product can soften that, so
+ * the product names the single write and shows the undo beside it.
+ */
+describe('write disclosure', () => {
+  const card = (canWrite: boolean): string =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, 'https://addon.test', undefined, undefined,
+        undefined, undefined, { readingOn: false, canWrite }),
+    );
+
+  it('names the one thing written, and the undo, when the scope is present', () => {
+    expect(card(true)).toContain('One thing gets written');
+    expect(card(true)).toContain('never on mail you have not touched');
+    expect(card(true)).toContain('Clear all my marks');
+  });
+
+  it('claims no write on an install that cannot make one', () => {
+    expect(card(false)).not.toContain('One thing gets written');
+  });
+});

@@ -1018,7 +1018,10 @@ app.post('/homepage', async (c) => {
         pulse ?? undefined,
         { fires, restricted, windowDays: 90, webUrl: getEnv().WEB_URL },
         { people: slow, firmMedianH: pulse?.negativeMedianH ?? null, webUrl: getEnv().WEB_URL, windowDays: 90 },
-        { readingOn: hasConsent(verified.email) },
+        // canWrite tracks the SCOPE, not a preference: the label tools are only
+        // shown where they can actually run, and the write is only disclosed
+        // where it can actually happen.
+        { readingOn: hasConsent(verified.email), canWrite: Boolean(homeToken) },
       ),
     ),
   );

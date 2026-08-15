@@ -169,6 +169,8 @@ export interface WaitingView {
 export interface PrivacyView {
   /** Whether this viewer has turned reading on. */
   readingOn: boolean;
+  /** Whether this install holds gmail.modify — see privacy.ts. */
+  canWrite?: boolean;
 }
 
 export function buildHomepageCard(
@@ -670,7 +672,7 @@ export function buildHomepageCard(
   // it would push the clients below the fold for the eight people who never
   // think about it.
   if (privacy) {
-    personal.push({ widgets: privacyBlock({ on: privacy.readingOn, baseUrl }) });
+    personal.push({ widgets: privacyBlock({ on: privacy.readingOn, baseUrl, canWrite: privacy.canWrite }) });
   }
 
   const below = [...personal, ...footer];
