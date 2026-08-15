@@ -419,3 +419,27 @@ describe('slow responders floor', () => {
     expect(q).toContain('FROM emails e2');
   });
 });
+
+/**
+ * The headline number and the rows beneath it must count the same population.
+ *
+ * DangerPulse counted every negative thread in the tenant while the fires list
+ * counted a filtered subset, so the card's biggest number and the rows under it
+ * were measuring different things — a reader comparing them would draw a wrong
+ * conclusion from an internally inconsistent card.
+ */
+describe('population consistency', () => {
+  it('DangerPulseService applies the same client filters as the sections', async () => {
+    const { db, sql } = recordingDb();
+    await new DangerPulseService(db).get(TENANT, 90);
+    const q = sql();
+    expect(q).toContain('is_auto_created');
+    expect(q).toContain("me.direction IN ('to', 'cc')");
+  });
+
+  it('SlowRespondersService counts only mail addressed to us', async () => {
+    const { db, sql } = recordingDb();
+    await new SlowRespondersService(db).get(TENANT, 90);
+    expect(sql()).toContain("me.direction IN ('to', 'cc')");
+  });
+});

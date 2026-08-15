@@ -764,14 +764,37 @@ export class DangerPulseService {
   constructor(@inject('Database') private readonly db: Database) {}
 
   async get(tenantId: string, days = 90): Promise<DangerPulse> {
+    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
+
+    // The SAME POPULATION as the sections above it, or the headline lies.
+    //
+    // This counted every negative thread in the tenant while "Where the fires
+    // are" counted a filtered subset, so the card's biggest number and the rows
+    // under it were measuring different things. Three filters were missing:
+    //
+    //   weWereAddressed  — a client writing to their own payroll provider on a
+    //                      thread we appear on elsewhere is not mail we were
+    //                      asked to answer, and its duration is not our reply
+    //                      time.
+    //   is_auto_created  — customers the ingester invented from a sender domain.
+    //   clientFilter     — vendors and delivery partners.
+    //
+    // notAlreadyResolved is deliberately absent: this population requires
+    // first_reply_at IS NOT NULL, so every row here was answered by definition.
     const base = sql`
       FROM emails e
       JOIN email_analyses a ON a.email_id = e.id AND a.analysis_type = 'sentiment'
+      JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
+      JOIN customers c ON c.id = p.customer_id
       WHERE e.tenant_id = ${tenantId}
         AND e.is_customer_email
         AND e.first_reply_at IS NOT NULL
         AND e.first_reply_at > e.received_at
         AND e.received_at > now() - (${days} || ' days')::interval
+        ${weAreOnTheThread()}
+        ${weWereAddressed()}
+        AND NOT c.is_auto_created
+        ${clientFilter}
         ${weAreOnTheThread()}
     `;
 
@@ -1256,6 +1279,10 @@ export class SlowRespondersService {
         AND e.first_reply_at > e.received_at
         AND e.received_at > now() - (${days} || ' days')::interval
         ${weAreOnTheThread()}
+        -- Mail addressed elsewhere is not our reply time. Without this a
+        -- client's thread with their own vendor counts against the person who
+        -- owns the account here.
+        ${weWereAddressed()}
         AND NOT c.is_auto_created
         ${clientFilter}
       GROUP BY 1
