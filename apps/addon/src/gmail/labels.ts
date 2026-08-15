@@ -21,6 +21,20 @@ import type { InstantLabel } from '../services/instant-labels';
  *      taken off is exactly the accretion the expiry exists to prevent.
  */
 
+/**
+ * Raised when Gmail refuses for want of a scope rather than failing.
+ *
+ * Distinct from a null return so the caller can say "this install cannot do
+ * that" instead of "that did nothing", which are different sentences to a user
+ * and only one of them is true.
+ */
+export class MissingScopeError extends Error {
+  constructor() {
+    super('This install does not have permission to change labels');
+    this.name = 'MissingScopeError';
+  }
+}
+
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 async function gapi(
@@ -45,6 +59,14 @@ async function gapi(
     if (!res.ok) {
       const detail = await res.text().then((t) => t.slice(0, 180)).catch(() => '');
       logger.warn({ status: res.status, path, detail }, 'gmail label call non-OK');
+      // A missing scope is not a failure to fix, it is a fact to report.
+      //
+      // The reduced-scope install (deployment.live.json, for people who should
+      // not be asked for gmail.modify) can render these buttons and cannot
+      // perform them. Collapsing that into null made "Clear all my marks"
+      // answer "0 marks cleared" — indistinguishable from a clean mailbox, and
+      // the reader concludes the feature works and they had nothing to clear.
+      if (res.status === 401 || res.status === 403) throw new MissingScopeError();
       return null;
     }
     return (await res.json()) as Record<string, unknown>;

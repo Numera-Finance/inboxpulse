@@ -52,7 +52,7 @@ import {
   gmailThreadUrl,
   retiredLabelNames,
 } from './services/instant-labels';
-import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads, clearAllOfLabel, deleteLabelByName } from './gmail/labels';
+import { ensureLabel, addLabel, removeLabel, labelsOnThread, recentThreads, clearAllOfLabel, deleteLabelByName, MissingScopeError } from './gmail/labels';
 import { rankTriage, splitQuiet } from './services/triage';
 import { buildTriageCard } from './cards/triage';
 
@@ -875,8 +875,20 @@ app.post('/gmail/clear-marks', async (c) => {
   // permanently empty. Detaching leaves the definition behind; deleting removes
   // it AND takes it off every thread that carried it.
   let removedDefs = 0;
-  for (const name of retiredLabelNames()) {
-    if (await deleteLabelByName(name, oauthToken)) removedDefs += 1;
+  try {
+    for (const name of retiredLabelNames()) {
+      if (await deleteLabelByName(name, oauthToken)) removedDefs += 1;
+    }
+  } catch (err) {
+    // The reduced-scope install can show this button and cannot perform it.
+    // Saying so is the whole point: the previous behavior reported "0 marks
+    // cleared", which is what a clean mailbox looks like.
+    if (err instanceof MissingScopeError) {
+      return c.json(
+        notify('This version cannot change labels — it only reads the thread you have open.'),
+      );
+    }
+    throw err;
   }
 
   for (const label of [...INSTANT_LABELS, ...MODE_LABELS]) {
