@@ -8,6 +8,7 @@ import {
   DangerPulseService,
   OwnerLoadService,
   SlowRespondersService,
+  FiresService,
   __resetRelationshipsTableCache,
 } from './account-context';
 
