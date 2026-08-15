@@ -83,6 +83,9 @@ export class AccountContextService {
       FROM customer_domains cd
       JOIN customers c ON c.id = cd.customer_id
       WHERE cd.tenant_id = ${tenantId} AND lower(cd.domain) = ${clean}
+        -- Opening any Gmail thread showed WareIQ Logistics' history, because
+        -- they claim gmail.com in customer_domains.
+        ${ownableDomain()}
       LIMIT 1
     `);
     const customer = (rows as unknown as Array<{ id: string; name: string }>)[0];
@@ -556,6 +559,47 @@ function notAlreadyResolved(): SQL {
       WHERE k.email_id = e.id AND k.status = 1
     )
   `;
+}
+
+/**
+ * Domains no customer can own, however the database is configured.
+ *
+ * Five customers claim a free-mail domain in `customer_domains`: WareIQ
+ * Logistics owns `gmail.com`, OkTech owns `yahoo.com`, Foxlee `aol.com`,
+ * Travelart `hotmail.com`, Little Learners Lab `outlook.com`. Attribution by
+ * sender domain is the right rule — it fixed a worse mis-attribution — but with
+ * those rows present it credits WareIQ with every Gmail sender in the corpus:
+ * 589 distinct addresses. They arrived at the top of the fires list with "15
+ * unhappy, 8 unanswered", nearly all of it strangers.
+ *
+ * The same lookup backs account history, so opening any Gmail thread showed
+ * WareIQ's record.
+ *
+ * A list rather than a derived rule, and the distinction from the `blueoceanps`
+ * hardcoding mistake matters: that was a claim about which COMPANIES are ours,
+ * which is local knowledge that changes and belongs in data. This is the set of
+ * public mailbox providers, which is stable, universal, and true regardless of
+ * tenant. A derived signal was tried first — sender count per domain — and does
+ * not separate: gmail.com has 589 senders, but mystartupcfo.com has 276 and
+ * truefoundry.com 47, so any threshold either keeps gmail or discards real
+ * clients.
+ *
+ * The rows themselves should still be deleted from `customer_domains`; this
+ * guard means a stale row cannot silently poison a metric in the meantime.
+ */
+const PUBLIC_MAIL_DOMAINS = [
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'yahoo.co.in',
+  'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.com', 'msn.com',
+  'aol.com', 'icloud.com', 'me.com', 'mac.com', 'protonmail.com', 'proton.me',
+  'gmx.com', 'gmx.net', 'yandex.com', 'zoho.com', 'mail.com', 'rediffmail.com',
+];
+
+/** The sender's domain must be one a company can actually own. */
+function ownableDomain(): SQL {
+  return sql`AND lower(cd.domain) <> ALL(ARRAY[${sql.join(
+    PUBLIC_MAIL_DOMAINS.map((d) => sql`${d}`),
+    sql`, `,
+  )}]::text[])`;
 }
 
 export interface WaitingOptions {
@@ -1158,6 +1202,7 @@ export class FiresService {
         JOIN customer_domains cd
           ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
          AND cd.tenant_id = e.tenant_id
+         ${ownableDomain()}
         JOIN customers c ON c.id = cd.customer_id
         WHERE e.tenant_id = ${tenantId}
           AND e.is_customer_email

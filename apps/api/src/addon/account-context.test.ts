@@ -501,3 +501,38 @@ describe('fires are attributed to the sender', () => {
     expect(cte.split('GROUP BY')[0]).not.toContain('is_auto_created');
   });
 });
+
+/**
+ * No customer may own a public mailbox provider.
+ *
+ * Five customers claim one in customer_domains — WareIQ Logistics owns
+ * gmail.com, OkTech yahoo.com, Foxlee aol.com, Travelart hotmail.com, Little
+ * Learners Lab outlook.com. Since fires are attributed by the sender's domain,
+ * WareIQ was credited with every Gmail sender in the corpus (589 distinct
+ * addresses) and led the list with "15 unhappy, 8 unanswered". The same lookup
+ * backs account history, so opening any Gmail thread showed WareIQ's record.
+ */
+describe('public mail domains', () => {
+  it('excludes them when attributing fires by sender domain', async () => {
+    const { db, sql } = recordingDb();
+    await new FiresService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90);
+    const q = sql();
+    expect(q).toContain('gmail.com');
+    expect(q).toContain('<> ALL(ARRAY[');
+  });
+
+  it('excludes them when resolving account history by domain', async () => {
+    const { db, sql } = recordingDb();
+    await new AccountContextService(db).byDomain(TENANT, 'gmail.com', {
+      userId: 'u1', isAdmin: true, email: 'g@x.com',
+    });
+    expect(sql()).toContain('<> ALL(ARRAY[');
+  });
+
+  /** Free-mail providers must not be reachable through case differences. */
+  it('compares lowercased, so GMAIL.COM cannot slip through', async () => {
+    const { db, sql } = recordingDb();
+    await new FiresService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90);
+    expect(sql()).toContain('lower(cd.domain) <> ALL');
+  });
+});
