@@ -1,4 +1,4 @@
-import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated } from './widgets';
+import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated, fold } from './widgets';
 import type { EmailStats } from '../services/api-client';
 
 /**
@@ -154,7 +154,22 @@ export function buildHomepageCard(
   // says two inches above, and once that went the section was an empty widget
   // list rendering as a stray gap at the top of the panel. The card should open
   // on the most urgent client, not on furniture.
-  const sections: CardSection[] = [];
+  // TWO GROUPS, ONE RULE.
+  //
+  // Gmail draws a hairline between every card section and Cards v2 gives no
+  // control over it, so six sections meant six identical rules: the break
+  // between two client metrics looked exactly like the break between the firm's
+  // data and the reader's own mailbox. Every boundary shouting equally means
+  // none of them says anything.
+  //
+  // So the card is built as two groups and folded at the end. Everything about
+  // the FIRM'S CLIENTS collapses into one section; everything about THIS
+  // PERSON'S MAIL into another. One rule, at the only boundary that carries
+  // meaning. Inside each group the sub-headings stay bold and a blank line does
+  // the separating, which is the one typographic lever this surface has.
+  const firm: CardSection[] = [];
+  const personal: CardSection[] = [];
+  const footer: CardSection[] = [];
   // "Angry and unanswered" USED TO BE HERE, and it has been removed.
   //
   // It listed the same population as "Where the fires are" -- angry clients
@@ -183,7 +198,7 @@ export function buildHomepageCard(
   // see the basis of, and a panel pointing at a conversation owes the reader
   // enough to discount it themselves.
   if (slow?.people.length) {
-    sections.unshift({
+    firm.unshift({
       header: heading('Slowest to answer angry mail'),
       widgets: [
         ...slow.people.map((p) => {
@@ -291,7 +306,7 @@ export function buildHomepageCard(
     // month to month by a human. "56 clients waited more than five days" can be
     // carried into a meeting and checked again next month, which is the only
     // form in which a number gets acted on.
-    sections.unshift({
+    firm.unshift({
       header: heading('Unhappy clients left waiting'),
       widgets: [
         deco({
@@ -397,7 +412,7 @@ export function buildHomepageCard(
   // hid a crashing /waiting endpoint for weeks — silence reading as "all
   // clear".
   if (fires && !fires.fires.length && fires.restricted) {
-    sections.unshift({
+    firm.unshift({
       header: heading('Where the fires are'),
       widgets: [
         deco({
@@ -415,7 +430,7 @@ export function buildHomepageCard(
   }
 
   if (fires?.fires.length) {
-    sections.unshift({
+    firm.unshift({
       header: heading('Where the fires are'),
       widgets: fires.fires.map((f) =>
         deco({
@@ -501,8 +516,7 @@ export function buildHomepageCard(
   // is carried by one — "Your inbox" — and by putting every personal tool after
   // it rather than scattered through the data.
   if (baseUrl) {
-    sections.push({
-      header: heading('Your inbox'),
+    personal.push({
       widgets: [
         buttons(actionButton('Prioritise my inbox', `${baseUrl}/gmail/triage`, {})),
         deco({
@@ -518,7 +532,7 @@ export function buildHomepageCard(
   // It used to unshift to the very top, which put "what I marked in the last
   // thirty minutes" above every client in the firm who is waiting on an answer.
   if (working?.entries.length) {
-    sections.push({
+    personal.push({
       header: heading('Your marked threads'),
       widgets: [
         ...working.entries.map((e) =>
@@ -541,7 +555,7 @@ export function buildHomepageCard(
   // precisely the one where memory was lost and the list above is empty while
   // the mailbox still carries labels.
   if (baseUrl) {
-    sections.push({
+    personal.push({
       widgets: [
         buttons(actionButton('Clear all my marks', `${baseUrl}/gmail/clear-marks`, {})),
         deco({
@@ -580,7 +594,7 @@ export function buildHomepageCard(
     Boolean(waiting?.clients.length);
 
   if (!connected) {
-    sections.push({
+    footer.push({
       widgets: [
         text(
           'Preview mode — not connected to the InboxPulse API. Set SERVICE_API_KEY (and ADDON_DEV_TENANT_ID for local clone data) to show live stats.',
@@ -589,9 +603,22 @@ export function buildHomepageCard(
     });
   }
 
-  sections.push({
+  footer.push({
     widgets: [buttons(linkButton('Open web dashboard', 'https://emailsentiment.mystartupcfo.com'))],
   });
 
-  return { sections: separated(sections) };
+  // One section per GROUP, so Gmail draws one rule per real boundary. Empty
+  // groups are dropped rather than folded into an empty section, which would
+  // render as a rule with nothing under it.
+  // The footer folds into the personal group rather than standing alone. A
+  // dashboard link behind its own rule reads as a third kind of content; at the
+  // foot of the reader's own half it reads as what it is — the way out to the
+  // full view. That leaves exactly ONE rule on the card, at the only boundary
+  // that carries meaning.
+  const card: CardSection[] = [];
+  if (firm.length) card.push(fold(firm));
+  const below = [...personal, ...footer];
+  if (below.length) card.push(fold(below, heading('Your inbox')));
+
+  return { sections: separated(card) };
 }

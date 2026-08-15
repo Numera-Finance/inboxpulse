@@ -608,3 +608,52 @@ describe('slow responder link', () => {
     expect(card(null)).not.toContain('Their queue');
   });
 });
+
+/**
+ * One rule, at the boundary that means something.
+ *
+ * Gmail draws a hairline between every card section and Cards v2 exposes no
+ * control over it — no weight, no colour, no inset, no suppression. The only
+ * lever is how many SECTIONS exist. Six sections gave six identical rules, so
+ * the break between two client metrics looked exactly like the break between
+ * the firm's data and the reader's own mailbox: every boundary shouting
+ * equally, which means none of them says anything.
+ *
+ * This test is a design regression guard. Adding a section is adding a rule.
+ */
+describe('card structure', () => {
+  const full = () =>
+    buildHomepageCard(
+      null,
+      { entries: [{ label: { key: 'f', name: '⚡/Focus', means: 'x' }, threadId: 't', subject: 'S', minutesLeft: 20 }],
+        viewerEmail: 'g@x.com', threadUrl: () => 'https://m.test' },
+      'https://addon.test',
+      { clients: [{ customerId: 'c', customer: 'X', subject: 's', daysWaiting: 3 }], webUrl: 'https://w.test' },
+      { windowDays: 90, negativeMedianH: 12.9, otherMedianH: 15.1, negativeP90H: 143, negativeCount: 501,
+        overFiveDays: 56, trend: [{ month: '2026-05', medianH: 39 }, { month: '2026-08', medianH: 12 }], attributionPct: 13 },
+      { fires: [{ customerId: 'c1', customer: 'Truefoundry', negative: 2, unanswered: 2, oldestDays: 54, owner: null }],
+        windowDays: 90, webUrl: 'https://w.test' },
+      { firmMedianH: 12.9, webUrl: 'https://w.test', windowDays: 90,
+        people: [{ name: 'Ganesh Shankar', userId: 'u1', threads: 13, medianH: 115 }] },
+    );
+
+  it('renders two sections even when every block has data', () => {
+    expect(full().sections.length).toBe(2);
+  });
+
+  it('keeps the client blocks together, above the divide', () => {
+    const firstSection = JSON.stringify(full().sections[0]);
+    expect(firstSection).toContain('Where the fires are');
+    expect(firstSection).toContain('Unhappy clients left waiting');
+    expect(firstSection).toContain('Slowest to answer angry mail');
+    expect(firstSection).not.toContain('Prioritise my inbox');
+  });
+
+  it('keeps the reader\'s own tools together, below it', () => {
+    const second = JSON.stringify(full().sections[1]);
+    expect(second).toContain('Your inbox');
+    expect(second).toContain('Prioritise my inbox');
+    expect(second).toContain('Your marked threads');
+    expect(second).toContain('Open web dashboard');
+  });
+});

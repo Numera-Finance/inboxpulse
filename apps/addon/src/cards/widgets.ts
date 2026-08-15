@@ -129,6 +129,34 @@ export const spaced = (section: CardSection): CardSection => ({
 /** Space every section but the last — nothing follows the last one to separate from. */
 export const separated = (sections: CardSection[]): CardSection[] =>
   sections.map((s, i) => (i === sections.length - 1 ? s : spaced(s)));
+
+/**
+ * Fold several sections into one, so Gmail draws ONE rule instead of six.
+ *
+ * Gmail renders a hairline between every card section, and Cards v2 exposes no
+ * control over it — no weight, no colour, no inset, no way to suppress it. The
+ * only lever on how many rules appear is how many SECTIONS there are.
+ *
+ * A card with six sections gets six identical hairlines, so the break between
+ * two client metrics looks exactly like the break between the firm's data and
+ * the reader's own mailbox. Every boundary shouts equally, which means none of
+ * them says anything. Folding related sections into one leaves a single rule at
+ * the place where the meaning actually changes.
+ *
+ * The folded headers survive as bold text widgets, which is what a section
+ * header renders as anyway — the only thing lost is the rule, which is the
+ * point. A blank line separates the groups instead, and whitespace is the one
+ * typographic lever this surface has.
+ */
+export const fold = (sections: CardSection[], header?: string): CardSection => {
+  const widgets: Widget[] = [];
+  sections.forEach((s, i) => {
+    if (i > 0) widgets.push(spacer());
+    if (s.header) widgets.push(text(s.header));
+    widgets.push(...s.widgets);
+  });
+  return header ? { header, widgets } : { widgets };
+};
 export const image = (imageUrl: string, altText?: string): Widget => ({ image: { imageUrl, altText } });
 export const divider = (): Widget => ({ divider: {} });
 
