@@ -120,7 +120,11 @@ export interface FiresView {
 }
 
 export interface SlowRespondersView {
-  people: Array<{ name: string; threads: number; medianH: number }>;
+  people: Array<{ name: string; userId?: string | null; threads: number; medianH: number }>;
+  /** Where the escalations view lives, for the per-person link. */
+  webUrl?: string;
+  /** Window the medians cover, so the link cannot drift from the number. */
+  windowDays?: number;
   /** The firm's own median, so a person's number means something. */
   firmMedianH: number | null;
 }
@@ -204,6 +208,32 @@ export function buildHomepageCard(
               ? `${hrs(p.medianH)} median · firm ${hrs(slow.firmMedianH)}`
               : `${hrs(p.medianH)} median`,
             wrapText: true,
+            // "Their queue", NOT "see these N".
+            //
+            // The median is computed over threads on the clients they own by
+            // the allocation sheet; the escalations page can only filter by
+            // TASK ASSIGNEE, and the two disagree — Ganesh Shankar has 22
+            // negative threads on his clients and 12 with a task assigned to
+            // him. A button promising the row's own population would land on a
+            // smaller one, which is the contradiction the fires link just had.
+            //
+            // So the button names the destination instead of the number. A row
+            // with nowhere honest to go keeps no button at all.
+            ...(p.userId && slow.webUrl
+              ? {
+                  button: {
+                    text: 'Their queue',
+                    onClick: {
+                      openLink: {
+                        url:
+                          `${slow.webUrl}/escalations?signal=negative&status=all` +
+                          `&assigned=${encodeURIComponent(p.userId)}` +
+                          `&from=${sinceDays(slow.windowDays ?? 90)}`,
+                      },
+                    },
+                  },
+                }
+              : {}),
           });
         }),
         // Stated, not buried. Only ANSWERED threads have a duration, so someone

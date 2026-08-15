@@ -582,6 +582,7 @@ export async function getFires(
 
 export interface SlowResponder {
   name: string;
+  userId?: string | null;
   threads: number;
   medianH: number;
 }

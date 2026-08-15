@@ -1186,6 +1186,8 @@ export class FiresService {
 
 export interface SlowResponder {
   name: string;
+  /** For the deep link. Null when the sheet has an address we cannot resolve. */
+  userId: string | null;
   /** Negative threads answered — the sample behind the median. */
   threads: number;
   medianH: number;
@@ -1233,6 +1235,7 @@ export class SlowRespondersService {
     const rows = await this.db.execute(sql`
       SELECT
         COALESCE(u.first_name || ' ' || u.last_name, al.email) AS who,
+        MAX(u.id::text) AS user_id,
         count(*)::int AS threads,
         percentile_cont(0.5) WITHIN GROUP (
           ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
@@ -1263,6 +1266,7 @@ export class SlowRespondersService {
 
     return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
       name: String(r.who ?? '(unknown)'),
+      userId: (r.user_id as string | null) ?? null,
       threads: Number(r.threads ?? 0),
       medianH: Math.round(Number(r.median_h ?? 0) * 10) / 10,
     }));

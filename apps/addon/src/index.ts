@@ -948,7 +948,7 @@ app.post('/homepage', async (c) => {
         { clients: waiting, webUrl: getEnv().WEB_URL },
         pulse ?? undefined,
         { fires, restricted, windowDays: 90, webUrl: getEnv().WEB_URL },
-        { people: slow, firmMedianH: pulse?.negativeMedianH ?? null },
+        { people: slow, firmMedianH: pulse?.negativeMedianH ?? null, webUrl: getEnv().WEB_URL, windowDays: 90 },
       ),
     ),
   );

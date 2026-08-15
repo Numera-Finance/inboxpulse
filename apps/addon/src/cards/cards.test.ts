@@ -572,3 +572,39 @@ describe('shared roles', () => {
     expect(card(1)).not.toContain('+1');
   });
 });
+
+/**
+ * A person row needs somewhere to go, but not a dishonest one.
+ *
+ * The median is computed over threads on the clients they own by the allocation
+ * sheet; the escalations page can only filter by TASK ASSIGNEE, and the two
+ * disagree — Ganesh Shankar has 22 negative threads on his clients and 12 with
+ * a task assigned to him. A button promising the row's own population would
+ * land on a smaller one, which is the contradiction the fires link had.
+ */
+describe('slow responder link', () => {
+  const view = (userId: string | null) => ({
+    firmMedianH: 12.9,
+    webUrl: 'https://web.test',
+    windowDays: 90,
+    people: [{ name: 'Ganesh Shankar', userId, threads: 13, medianH: 115 }],
+  });
+  const card = (userId: string | null): string =>
+    JSON.stringify(buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, view(userId)));
+
+  it('names the destination rather than the number', () => {
+    expect(card('u-1')).toContain('Their queue');
+    expect(card('u-1')).not.toContain('See these');
+  });
+
+  it('filters by the person and matches the median window', () => {
+    expect(decodeURIComponent(card('u-1'))).toContain('assigned=u-1');
+    expect(card('u-1')).toContain('from=');
+  });
+
+  /** A row with nowhere honest to go keeps no button at all. */
+  it('omits the button when the person cannot be resolved', () => {
+    expect(card(null)).toContain('Ganesh Shankar');
+    expect(card(null)).not.toContain('Their queue');
+  });
+});
