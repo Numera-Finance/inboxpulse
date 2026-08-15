@@ -32,8 +32,6 @@
  */
 
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 export interface CacheStats {
   hits: number;
@@ -62,64 +60,15 @@ export class AnalysisCache<T> {
   private readonly map = new Map<string, Entry<T>>();
   private hits = 0;
   private misses = 0;
-  private restored = 0;
-  /**
-   * Optional disk backing. OFF unless a directory is given.
-   *
-   * The in-memory cache dies with the process, so a restart -- a code change, a
-   * tunnel reconnect, closing the laptop -- re-analyses every thread already
-   * read. On a personal mailbox that is the common case, not the rare one.
-   *
-   * This is a DELIBERATE relaxation of "nothing is stored", and it is only
-   * defensible under three conditions, all enforced below: the directory is
-   * local to the operator's own machine, it holds only threads that operator
-   * personally opened, and it is trivially destroyable. It must never point at
-   * shared or synced storage, and it is never wired to the tenant database --
-   * the whole reason a personal mailbox can be analysed at all is that its
-   * contents do not enter the shared system.
-   */
-  private readonly dir: string | null;
 
   constructor(
     private readonly ttlMs: number = TTL_MS,
     private readonly maxEntries: number = MAX_ENTRIES,
     private readonly now: () => number = Date.now,
-    dir?: string | null,
-  ) {
-    this.dir = dir?.trim() ? dir.trim() : null;
-    if (this.dir) this.restore();
-  }
+  ) {}
 
   /** sha256 of the key — the key itself contains an email address. */
-  private fileFor(key: string): string {
-    return join(this.dir!, `${createHash('sha256').update(key).digest('hex')}.json`);
-  }
 
-  private restore(): void {
-    try {
-      mkdirSync(this.dir!, { recursive: true });
-      for (const f of readdirSync(this.dir!)) {
-        if (!f.endsWith('.json')) continue;
-        try {
-          const raw = JSON.parse(readFileSync(join(this.dir!, f), 'utf8')) as {
-            key: string;
-            entry: Entry<T>;
-          };
-          // Expired on disk is expired. Drop rather than resurrect.
-          if (!raw?.key || raw.entry?.expires <= this.now()) {
-            rmSync(join(this.dir!, f), { force: true });
-            continue;
-          }
-          this.map.set(raw.key, raw.entry);
-          this.restored += 1;
-        } catch {
-          rmSync(join(this.dir!, f), { force: true });
-        }
-      }
-    } catch {
-      /* an unwritable cache directory must not stop the add-on serving cards */
-    }
-  }
 
   /**
    * Build a key from what the analysis actually depends on.
@@ -169,25 +118,10 @@ export class AnalysisCache<T> {
       if (oldest.done) break;
       this.evict(oldest.value);
     }
-    if (this.dir) {
-      try {
-        mkdirSync(this.dir, { recursive: true });
-        writeFileSync(this.fileFor(key), JSON.stringify({ key, entry }), { mode: 0o600 });
-      } catch {
-        /* disk is an optimisation; failing to write it is not an error */
-      }
-    }
   }
 
   private evict(key: string): void {
     this.map.delete(key);
-    if (this.dir) {
-      try {
-        rmSync(this.fileFor(key), { force: true });
-      } catch {
-        /* nothing to do */
-      }
-    }
   }
 
   stats(): CacheStats {
@@ -195,7 +129,6 @@ export class AnalysisCache<T> {
       hits: this.hits,
       misses: this.misses,
       entries: this.map.size,
-      ...(this.dir ? { restored: this.restored } : {}),
     };
   }
 
@@ -207,12 +140,5 @@ export class AnalysisCache<T> {
    */
   clear(): void {
     this.map.clear();
-    if (this.dir) {
-      try {
-        rmSync(this.dir, { recursive: true, force: true });
-      } catch {
-        /* nothing to do */
-      }
-    }
   }
 }

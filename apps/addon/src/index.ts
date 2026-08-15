@@ -77,7 +77,7 @@ const analysisCache = new AnalysisCache<{
   mode: Awaited<ReturnType<typeof classifyThreadMode>>;
   reading: Awaited<ReturnType<typeof readThreadLive>>;
   replyOptions: ReplyOption[];
-}>(undefined, undefined, undefined, getEnv().ADDON_CACHE_DIR || null);
+}>();
 import { shareToChat, isChatShareEnabled } from './services/chat';
 import { deriveParticipants, type Participant } from './services/participants';
 

@@ -166,7 +166,6 @@ const envSchema = z.object({
 
   LOG_SALT: z.string().default(''),
 
-  ADDON_CACHE_DIR: z.string().default(''),
 
   /**
    * Show a "Show as" row that re-renders the open thread in each of the five
