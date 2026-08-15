@@ -89,6 +89,24 @@ function hrs(h: number | null): string {
 }
 
 /**
+ * Two durations side by side, in ONE unit.
+ *
+ * `hrs` picks a unit per value, which is right in isolation and wrong for a
+ * comparison: the row rendered "5d median · firm 12.8h" and asked the reader to
+ * convert mid-line to see whether 5d was bad. It is the same defect the headline
+ * multiple was introduced to remove, left sitting directly underneath it.
+ *
+ * The larger value chooses the unit for both, so the pair is always legible at a
+ * glance — "5.0d median · firm 0.5d".
+ */
+function pair(a: number | null, b: number | null): { a: string; b: string } {
+  if (a === null || b === null) return { a: hrs(a), b: hrs(b) };
+  const days = Math.max(a, b) >= 48;
+  const fmt = (v: number): string => (days ? `${(v / 24).toFixed(1)}d` : `${v.toFixed(1)}h`);
+  return { a: fmt(a), b: fmt(b) };
+}
+
+/**
  * A trend drawn in block characters.
  *
  * CardService has no canvas and no SVG, so a chart is not available at any
@@ -254,9 +272,11 @@ export function buildHomepageCard(
             text: mult
               ? `<b>${escapeText(p.name)}</b> — <font color="#c5221f"><b>${mult}×</b> the firm</font>`
               : `<b>${escapeText(p.name)}</b> — <font color="#c5221f">${hrs(p.medianH)}</font>`,
-            bottomLabel: slow.firmMedianH
-              ? `${hrs(p.medianH)} median · firm ${hrs(slow.firmMedianH)}`
-              : `${hrs(p.medianH)} median`,
+            bottomLabel: (() => {
+              if (!slow.firmMedianH) return `${hrs(p.medianH)} median`;
+              const { a, b } = pair(p.medianH, slow.firmMedianH);
+              return `${a} median · firm ${b}`;
+            })(),
             wrapText: true,
             // "Their queue", NOT "see these N".
             //

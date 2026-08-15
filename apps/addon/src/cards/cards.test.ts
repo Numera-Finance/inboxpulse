@@ -724,3 +724,33 @@ describe('write disclosure', () => {
     expect(card(false)).not.toContain('One thing gets written');
   });
 });
+
+/**
+ * A comparison must not mix units.
+ *
+ * The row read "5d median · firm 12.8h" — days against hours, forcing the
+ * reader to convert mid-line to see whether 5d was bad. That is the same defect
+ * the headline multiple was introduced to remove, left sitting directly beneath
+ * it. The larger value now picks the unit for both.
+ */
+describe('slow responder sub-line units', () => {
+  const sub = (medianH: number, firmMedianH: number): string =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, {
+        firmMedianH,
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        people: [{ name: 'Ganesh Shankar', userId: 'u1', threads: 13, medianH }],
+      }),
+    );
+
+  it('renders both sides in days when the person is measured in days', () => {
+    const out = sub(120, 12.8);
+    expect(out).toContain('5.0d median · firm 0.5d');
+    expect(out).not.toContain('firm 12.8h');
+  });
+
+  it('renders both sides in hours when neither reaches a day', () => {
+    expect(sub(25.6, 12.8)).toContain('25.6h median · firm 12.8h');
+  });
+});
