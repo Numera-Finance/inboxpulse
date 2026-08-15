@@ -16,8 +16,9 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --external react",
     "dev": "tsup src/index.ts --format cjs,esm --dts --external react --watch",
-    "test": "vitest --passWithNoTests",
-    "lint": "tsc --noEmit"
+    "test": "vitest run --passWithNoTests",
+    "lint": "tsc --noEmit",
+    "test:watch": "vitest --passWithNoTests"
   },
   "dependencies": {
     "@crm/shared": "workspace:*",

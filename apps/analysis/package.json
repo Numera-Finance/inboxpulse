@@ -7,8 +7,9 @@
     "dev": "bun --watch src/index.ts",
     "build": "tsup --config tsup.config.ts",
     "start": "bun dist/index.js",
-    "test": "vitest",
-    "lint": "tsc --noEmit"
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@crm/clients": "workspace:*",

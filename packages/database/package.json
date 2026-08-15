@@ -19,8 +19,9 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "test": "vitest",
-    "lint": "tsc --noEmit"
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@crm/shared": "workspace:*",
