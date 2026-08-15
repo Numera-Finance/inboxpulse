@@ -1,3 +1,4 @@
+import { safeErrorDetail } from '../utils/api-error';
 import { getEnv } from '../env';
 import { logger } from '../utils/logger';
 
@@ -56,7 +57,7 @@ export async function shareToChat(share: ChatShare): Promise<boolean> {
       body: JSON.stringify({ text: lines.join('\n') }),
     });
     if (!res.ok) {
-      const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => '');
+      const detail = safeErrorDetail(await res.text().catch(() => ''));
       logger.warn({ status: res.status, detail }, 'chat share: non-OK');
       return false;
     }

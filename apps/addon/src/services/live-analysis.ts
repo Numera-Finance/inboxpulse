@@ -1,3 +1,4 @@
+import { safeErrorDetail } from '../utils/api-error';
 import { getEnv, type Env } from '../env';
 import { logger } from '../utils/logger';
 import { filterCommitments } from './commitments';
@@ -118,7 +119,7 @@ export async function analyseMessageLive(input: {
       // Log the endpoint's own error text. A bare status cannot distinguish an
       // unknown model from a rejected parameter from a wrong path, and all three
       // return 400.
-      const detail = await res.text().then((t) => t.slice(0, 300)).catch(() => '');
+      const detail = safeErrorDetail(await res.text().catch(() => ''));
       logger.warn(
         { status: res.status, provider: env.LIVE_ANALYSIS_PROVIDER, url, model: env.LIVE_ANALYSIS_MODEL, detail },
         'live analysis: non-OK response',
@@ -283,7 +284,7 @@ export async function draftReplyLive(input: {
     });
 
     if (!res.ok) {
-      const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => '');
+      const detail = safeErrorDetail(await res.text().catch(() => ''));
       logger.warn({ status: res.status, detail }, 'draft reply: non-OK');
       return null;
     }
@@ -399,7 +400,7 @@ export async function digestThreadLive(input: {
     });
 
     if (!res.ok) {
-      const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => '');
+      const detail = safeErrorDetail(await res.text().catch(() => ''));
       logger.warn({ status: res.status, detail }, 'thread digest: non-OK');
       return null;
     }
@@ -674,7 +675,7 @@ export async function readThreadLive(input: {
     });
 
     if (!res.ok) {
-      const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => '');
+      const detail = safeErrorDetail(await res.text().catch(() => ''));
       logger.warn({ status: res.status, detail }, 'thread reading: non-OK');
       return null;
     }

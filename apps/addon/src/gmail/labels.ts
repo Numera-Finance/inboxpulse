@@ -1,3 +1,4 @@
+import { safeErrorDetail } from '../utils/api-error';
 import { logger } from '../utils/logger';
 import type { InstantLabel } from '../services/instant-labels';
 
@@ -57,7 +58,7 @@ async function gapi(
       },
     });
     if (!res.ok) {
-      const detail = await res.text().then((t) => t.slice(0, 180)).catch(() => '');
+      const detail = safeErrorDetail(await res.text().catch(() => ''));
       logger.warn({ status: res.status, path, detail }, 'gmail label call non-OK');
       // A missing scope is not a failure to fix, it is a fact to report.
       //
