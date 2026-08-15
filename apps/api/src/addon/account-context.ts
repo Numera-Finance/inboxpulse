@@ -401,7 +401,78 @@ function weAreOnTheThread(): SQL {
  * review, which someone notices, rather than a client vanishing from it, which
  * nobody does.
  */
-function isAClient(tenantId: string): SQL {
+/**
+ * Whether the non-client table exists, asked once per process.
+ *
+ * The table arrives by migration and migrations are applied by hand — there is
+ * no startup migrator — so a deploy can reach production before the SQL does. A
+ * first attempt did exactly that and turned every management section into a
+ * 500.
+ *
+ * The check CANNOT be expressed in the query itself. `to_regclass(...) IS NOT
+ * NULL` inside the WHERE looks like it should guard the reference, but Postgres
+ * resolves relations while parsing, long before any condition is evaluated, so
+ * the statement fails to parse whatever the guard says. It has to be a separate
+ * round trip whose result decides which SQL is built.
+ *
+ * Cached because the answer changes at most once in a process's life, and this
+ * sits in a path a human is waiting on.
+ */
+let relationshipsTable: boolean | null = null;
+
+/**
+ * Clear the cached answer. Tests only.
+ *
+ * Exported because the degraded path — no table, no exclusion — is the whole
+ * reason the check exists, and a process-lifetime cache cannot otherwise be
+ * exercised twice in one suite. Nothing in the service path calls it.
+ */
+export function __resetRelationshipsTableCache(): void {
+  relationshipsTable = null;
+}
+
+async function hasRelationshipsTable(db: Database): Promise<boolean> {
+  if (relationshipsTable !== null) return relationshipsTable;
+  try {
+    const rows = await db.execute(
+      sql`SELECT to_regclass('public.customer_relationships') IS NOT NULL AS ok`,
+    );
+    relationshipsTable = Boolean((rows as unknown as Array<{ ok: boolean }>)[0]?.ok);
+  } catch {
+    // Treat an unreadable catalogue as absent: the degraded behaviour is safe,
+    // and failing the whole section over a probe would defeat the point.
+    relationshipsTable = false;
+  }
+  return relationshipsTable;
+}
+
+/**
+ * Customers that are not clients, and so have no place in a client review.
+ *
+ * The own-domain rule catches our own entities by counting staff accounts on a
+ * domain, which works for `mystartupcfo.com` and misses everything else. Three
+ * kinds slip through: vendors we buy from (SVB, Rippling, Bill), our own
+ * entities too small to trip the staff threshold, and — the one that is
+ * genuinely undetectable — outsourced firms doing OUR delivery work.
+ * `chitrabatchuca.com` is a CA practice in India working for MyTaxFiler, five
+ * people sending from it, and from the mail alone it is indistinguishable from
+ * a client. Grid role-holders are 100% `mystartupcfo.com`, so the allocation
+ * sheet cannot identify it either. Nothing in the data can.
+ *
+ * Which is why it is a TABLE rather than a list in this file. This knowledge
+ * was once a constant, `blueoceanps` went into it on the assumption that it was
+ * our own domain, and Blue Ocean Pool Service — a real customer — was silently
+ * dropped from the review with 45 threads. A row can be read and corrected by
+ * whoever owns the client list; a constant can only be found by whoever reads
+ * this file.
+ *
+ * Absence means client, at both levels. A customer with no row is a client, and
+ * a database with no TABLE excludes nobody — identical to the table being
+ * empty, which is the state it starts in. A partner firm reappearing in the
+ * review is visible; a client vanishing from it is not.
+ */
+function isAClient(tenantId: string, tableExists: boolean): SQL {
+  if (!tableExists) return sql``;
   return sql`
     AND NOT EXISTS (
       SELECT 1 FROM customer_relationships cr
@@ -435,32 +506,82 @@ export class WaitingClientsService {
               SELECT customer_id FROM user_accessible_customers WHERE user_id = ${viewer.userId}
             )`;
 
+    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
+
+    // ARRAY[...]::text[], built one parameter at a time.
+    //
+    // This read `<> ALL(${arrayOfStrings})`, and drizzle renders a bare JS array
+    // as a parenthesised list — `ALL(($3, $4))` — which Postgres parses as a ROW
+    // CONSTRUCTOR, not an array:
+    //
+    //   ERROR: op ANY/ALL (array) requires array on right side
+    //
+    // So the whole statement failed, and `/api/internal/addon/waiting` returned
+    // 500 for every request. In the panel that is invisible: the client fetch
+    // swallows a non-OK response, returns [], and the section simply does not
+    // render — which reads as "no angry clients waiting", the most reassuring
+    // possible result. It had been doing that in production, and the only
+    // reason it surfaced was going looking for a different bug.
+    //
+    // Anything that turns a failure into good news deserves the ugly explicit
+    // form. sql.join emits ARRAY[$3, $4] with each value still parameterised.
     const own = opts.ownDomains.length
-      ? sql`AND lower(c.name) <> ALL(${opts.ownDomains.map((d) => d.split('.')[0].toLowerCase())})`
+      ? sql`AND lower(c.name) <> ALL(ARRAY[${sql.join(
+          opts.ownDomains.map((d) => sql`${d.split('.')[0].toLowerCase()}`),
+          sql`, `,
+        )}]::text[])`
       : sql``;
 
+    // The qualifying set is built FIRST, and materialised on purpose.
+    //
+    // This query timed out in production — Cloud Run killed the request at its
+    // limit — while running in 92ms against a clone with the same shape. The
+    // difference is not the SQL, it is where the matching rows happen to fall.
+    //
+    // The filter is extremely sparse: 448 qualifying rows out of 113,049 emails
+    // in the window, 0.4%. Left to itself the planner satisfies
+    // `DISTINCT ON (thread_id) ... LIMIT 6` by walking the thread_id index and
+    // stopping once six distinct threads qualify. On the clone it found them
+    // after 448 rows and looked fast. That cost is pure luck: it is a function
+    // of how far into thread_id order the sixth match sits, and nothing bounds
+    // it. On a larger mailbox the same plan scans until it runs out of time.
+    //
+    // AS MATERIALIZED forces the sparse set to be computed once — a few hundred
+    // rows — before any ordering or limiting. Postgres 12+ inlines CTEs by
+    // default, so the keyword is doing real work here and removing it restores
+    // the unbounded plan.
+    //
+    // The participant and customer joins stay OUTSIDE, because the entitlement
+    // scope and the client filters are expressed against `p` and `c` and must
+    // apply after the set exists.
     const rows = await this.db.execute(sql`
-      SELECT DISTINCT ON (e.thread_id)
+      WITH q AS MATERIALIZED (
+        SELECT e.id, e.thread_id, e.subject, e.received_at,
+               e.from_name, e.from_email, a.reasoning
+        FROM emails e
+        JOIN email_analyses a
+          ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+        WHERE e.tenant_id = ${tenantId}
+          AND e.first_reply_at IS NULL
+          AND e.is_customer_email
+          AND e.received_at > now() - (${opts.days} || ' days')::interval
+          ${weAreOnTheThread()}
+      )
+      SELECT DISTINCT ON (q.thread_id)
         c.id::text            AS customer_id,
         COALESCE(c.name, '(unknown)') AS customer,
-        e.subject,
-        COALESCE(e.from_name, e.from_email) AS from_who,
-        GREATEST(0, EXTRACT(EPOCH FROM (now() - e.received_at)) / 86400)::int AS days_waiting,
-        COALESCE(a.reasoning, '') AS reason
-      FROM emails e
-      JOIN email_analyses a
-        ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
-      LEFT JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
+        q.subject,
+        COALESCE(q.from_name, q.from_email) AS from_who,
+        GREATEST(0, EXTRACT(EPOCH FROM (now() - q.received_at)) / 86400)::int AS days_waiting,
+        COALESCE(q.reasoning, '') AS reason
+      FROM q
+      LEFT JOIN email_participants p ON p.email_id = q.id AND p.customer_id IS NOT NULL
       LEFT JOIN customers c ON c.id = p.customer_id
-      WHERE e.tenant_id = ${tenantId}
-        AND e.first_reply_at IS NULL
-        AND e.is_customer_email
-        AND e.received_at > now() - (${opts.days} || ' days')::interval
-        ${weAreOnTheThread()}
+      WHERE TRUE
         ${own}
-        ${isAClient(tenantId)}
+        ${clientFilter}
         ${scope}
-      ORDER BY e.thread_id, e.received_at DESC
+      ORDER BY q.thread_id, q.received_at DESC
       LIMIT ${opts.limit}
     `);
 
@@ -662,8 +783,9 @@ export class OwnerLoadService {
     role = 'Account manager',
     limit = 8,
   ): Promise<OwnerLoad[]> {
+    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
     const rows = await this.db.execute(sql`
-      WITH t AS (
+      WITH t AS MATERIALIZED (
         -- One row per THREAD. Without this a complaint counts once per message
         -- and once per participant.
         SELECT DISTINCT ON (e.thread_id) e.thread_id, e.received_at, p.customer_id
@@ -700,7 +822,7 @@ export class OwnerLoadService {
               HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
             )
         )
-        ${isAClient(tenantId)}
+        ${clientFilter}
       GROUP BY 1, 2
       ORDER BY 3 DESC
       LIMIT ${limit}
@@ -722,7 +844,7 @@ export class OwnerLoadService {
     // manager's row into one line per account, which is the opposite of what
     // the section is for.
     const nameRows = await this.db.execute(sql`
-      WITH t AS (
+      WITH t AS MATERIALIZED (
         SELECT DISTINCT ON (e.thread_id) e.thread_id, p.customer_id
         FROM emails e
         JOIN email_analyses a
@@ -751,7 +873,7 @@ export class OwnerLoadService {
               HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
             )
         )
-        ${isAClient(tenantId)}
+        ${clientFilter}
         AND NOT EXISTS (
           SELECT 1 FROM customer_allocations al
           WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = ${role}
@@ -818,6 +940,8 @@ export class FiresService {
     days = 90,
     limit = 6,
   ): Promise<Fire[]> {
+    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
+
     // Same entitlement rule as the rest of the panel: a lead's view of "where
     // the fires are" must not become a way to read accounts they cannot open.
     const scope = viewer.isAdmin
@@ -827,7 +951,7 @@ export class FiresService {
             )`;
 
     const rows = await this.db.execute(sql`
-      WITH t AS (
+      WITH t AS MATERIALIZED (
         SELECT DISTINCT ON (e.thread_id)
           e.thread_id, e.received_at, e.first_reply_at, p.customer_id
         FROM emails e
@@ -851,7 +975,7 @@ export class FiresService {
                 HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
               )
           )
-          ${isAClient(tenantId)}
+          ${clientFilter}
           ${scope}
         ORDER BY e.thread_id, e.received_at DESC
       )
@@ -928,6 +1052,7 @@ export class SlowRespondersService {
   constructor(@inject('Database') private readonly db: Database) {}
 
   async get(tenantId: string, days = 90, minThreads = 5, limit = 4): Promise<SlowResponder[]> {
+    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
     const rows = await this.db.execute(sql`
       SELECT
         COALESCE(u.first_name || ' ' || u.last_name, al.email) AS who,
@@ -952,7 +1077,7 @@ export class SlowRespondersService {
         AND e.received_at > now() - (${days} || ' days')::interval
         ${weAreOnTheThread()}
         AND NOT c.is_auto_created
-        ${isAClient(tenantId)}
+        ${clientFilter}
       GROUP BY 1
       HAVING count(*) >= ${minThreads}
       ORDER BY 3 DESC

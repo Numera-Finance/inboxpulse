@@ -1,8 +1,13 @@
 // The services carry tsyringe decorators, which need the polyfill at load time.
 import 'reflect-metadata';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import type { Database } from '@crm/database';
-import { WaitingClientsService, DangerPulseService, OwnerLoadService } from './account-context';
+import {
+  WaitingClientsService,
+  DangerPulseService,
+  OwnerLoadService,
+  __resetRelationshipsTableCache,
+} from './account-context';
 
 /**
  * Every management metric must require somebody from this firm on the thread.
@@ -33,12 +38,19 @@ function recordingDb(): { db: Database; sql: () => string } {
       // Drizzle's SQL object carries its fragments on `queryChunks`. Stringify
       // the whole thing rather than reaching for internals by name: the test
       // only needs to know whether the predicate is present in what was built.
-      seen.push(JSON.stringify(query));
+      const text = JSON.stringify(query);
+      seen.push(text);
+      // Answer the catalogue probe, so the services build the SQL they would
+      // build against a migrated database. Returning [] here would silently
+      // exercise the DEGRADED path and make these assertions meaningless.
+      if (text.includes('to_regclass')) return Promise.resolve([{ ok: true }]);
       return Promise.resolve([]);
     },
   } as unknown as Database;
   return { db, sql: () => seen.join('\n') };
 }
+
+beforeEach(() => __resetRelationshipsTableCache());
 
 const TENANT = '00000000-0000-0000-0000-000000000001';
 
@@ -125,8 +137,83 @@ describe('non-client customers are excluded', () => {
   it('excludes on presence of a row, so an unlisted customer stays a client', async () => {
     const { db, sql } = recordingDb();
     await new OwnerLoadService(db).get(TENANT, 30);
-    const q = sql();
+    // Skip the to_regclass probe, which names the table without filtering on it.
+    const q = sql()
+      .split('\n')
+      .filter((line) => !line.includes('to_regclass'))
+      .join('\n');
     const at = q.indexOf('customer_relationships');
+    expect(at).toBeGreaterThan(-1);
     expect(q.slice(Math.max(0, at - 400), at)).toContain('NOT EXISTS');
+  });
+});
+
+/**
+ * A database without the migration must DEGRADE, not 500.
+ *
+ * The table arrives by hand-applied migration, so a deploy can reach production
+ * before the SQL does — a first attempt did exactly that and turned every
+ * management section into a 500. Degrading excludes nobody, which is identical
+ * to the table being empty and is the direction the whole design takes: a
+ * partner firm reappearing in the review is visible, a client vanishing is not.
+ */
+describe('missing customer_relationships table', () => {
+  it('omits the filter instead of failing', async () => {
+    const seen: string[] = [];
+    const db = {
+      execute: (q: unknown): Promise<unknown[]> => {
+        const text = JSON.stringify(q);
+        seen.push(text);
+        // to_regclass returns NULL for a missing relation.
+        if (text.includes('to_regclass')) return Promise.resolve([{ ok: false }]);
+        return Promise.resolve([]);
+      },
+    } as unknown as Database;
+
+    await new OwnerLoadService(db).get(TENANT, 30);
+    const queries = seen.filter((q) => !q.includes('to_regclass'));
+    expect(queries.length).toBeGreaterThan(0);
+    for (const q of queries) expect(q).not.toContain('customer_relationships');
+  });
+});
+
+/**
+ * The own-domain filter must emit a real ARRAY, not a row constructor.
+ *
+ * `<> ALL(${jsArray})` renders in drizzle as `ALL(($3, $4))`, which Postgres
+ * parses as a ROW CONSTRUCTOR:
+ *
+ *   ERROR: op ANY/ALL (array) requires array on right side
+ *
+ * The whole statement failed, so /api/internal/addon/waiting returned 500 for
+ * every request. That failure is invisible in the panel — the client swallows a
+ * non-OK response, returns [], and the section does not render, which reads as
+ * "no angry clients waiting". The most reassuring possible result, produced by a
+ * crash. It was live in production and only surfaced while chasing something
+ * else.
+ */
+describe('own-domain exclusion', () => {
+  it('emits ARRAY[...]::text[], not a parenthesised list', async () => {
+    const { db, sql } = recordingDb();
+    await new WaitingClientsService(db).find(
+      TENANT,
+      { userId: 'u1', isAdmin: true },
+      { days: 90, limit: 10, ownDomains: ['mystartupcfo.com', 'numerafinance.com'] },
+    );
+    const q = sql();
+    expect(q).toContain('ARRAY[');
+    expect(q).toContain('::text[]');
+    // The exact broken shape: ALL( immediately followed by an open paren.
+    expect(q).not.toMatch(/ALL\(\s*\(/);
+  });
+
+  it('omits the filter entirely when there are no own domains', async () => {
+    const { db, sql } = recordingDb();
+    await new WaitingClientsService(db).find(
+      TENANT,
+      { userId: 'u1', isAdmin: true },
+      { days: 90, limit: 10, ownDomains: [] },
+    );
+    expect(sql()).not.toContain('ARRAY[');
   });
 });
