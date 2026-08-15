@@ -79,16 +79,22 @@ function sparkline(values: number[]): string {
     .join('');
 }
 
-export interface OwnerLoadView {
-  owners: Array<{
-    name: string;
-    threads: number;
+export interface FiresView {
+  fires: Array<{
+    customerId: string | null;
+    customer: string;
+    negative: number;
+    unanswered: number;
     oldestDays: number;
-    unassigned: boolean;
-    /** Which customers the unallocated row is made of — see below. */
-    customers?: Array<{ name: string; threads: number }>;
+    owner: string | null;
   }>;
   webUrl: string;
+}
+
+export interface SlowRespondersView {
+  people: Array<{ name: string; threads: number; medianH: number }>;
+  /** The firm's own median, so a person's number means something. */
+  firmMedianH: number | null;
 }
 
 export interface WaitingView {
@@ -107,7 +113,8 @@ export function buildHomepageCard(
   baseUrl?: string,
   waiting?: WaitingView,
   pulse?: PulseView,
-  ownerLoad?: OwnerLoadView,
+  fires?: FiresView,
+  slow?: SlowRespondersView,
 ): Card {
   const sections: CardSection[] = [
     {
@@ -206,64 +213,89 @@ export function buildHomepageCard(
     });
   }
 
-  // Who is carrying it.
+  // WHO TO INVESTIGATE WITH.
   //
-  // Attributed by TASK ASSIGNEE — the only source with one owner per thread.
-  // Reply attribution covers 7% of this population because replies are never
-  // stored, and customer ownership assigns four to five people per account with
-  // no role to distinguish them, which turned 188 threads into 379
-  // person-thread pairs.
+  // DangerPulse gives the firm's median (12.9h) and its tail (p90 139h), which
+  // says something is wrong somewhere and not where. This resolves it to a
+  // person, which is the only form in which the number starts a conversation.
   //
-  // Unassigned is shown as a row rather than dropped. It is the largest single
-  // group at 43%, and a management review that silently omits its biggest
-  // bucket is worse than no review — it reports on the work that already has an
-  // owner and stays quiet about the work that has none.
+  // The spread is the finding. Against a firm median of 12.9h the slowest
+  // account manager sits at 79.3h over ten threads and the next at 50.1h over
+  // twenty-two — six times and four times the firm. That is not a rounding
+  // difference in an average.
   //
-  // NAMED, not just counted. The bucket is not one kind of thing: on the live
-  // data it is 16 threads across 12 customers, about half of them our own
-  // vendors and counterparties rather than clients — SVB, Rippling, Bill, a law
-  // firm — and the rest real clients simply absent from the allocation sheet.
-  // Those want opposite responses, and a bare "16" cannot distinguish them, so
-  // it prompts nothing. Seeing "Truefoundry" gets an owner assigned; seeing
-  // "SVB" tells the reader the list is picking up vendors. Same bar as the
-  // labels policy: would this change what the reader does?
-  //
-  // Three names, each clipped to 18 characters, on the row's second line.
-  //
-  // Measured rather than guessed: the untruncated top four render as
-  // "Truefoundry, Minerra Health Inc (Twenty30 Health Inc.), Rippling, Bank" —
-  // 70 characters. bottomLabel is plain single-line text that Gmail CLIPS
-  // rather than wraps in a panel this narrow, so one long legal name would eat
-  // the rest and the vendor entries that make the list worth reading would
-  // never appear. Clipping our own way keeps the third and fourth visible,
-  // which is where the signal is. The full list belongs behind the Open link.
-  if (ownerLoad?.owners.length) {
+  // The sample size is always shown beside the figure. A median over five
+  // threads is thin, the person it names cannot argue with a number they cannot
+  // see the basis of, and a panel pointing at a conversation owes the reader
+  // enough to discount it themselves.
+  if (slow?.people.length) {
     sections.unshift({
-      header: heading('Account managers carrying it'),
-      widgets: ownerLoad.owners.map((o) =>
+      header: heading('Slowest to answer angry mail'),
+      widgets: [
+        ...slow.people.map((p) =>
+          deco({
+            topLabel: `${p.threads} answered threads`,
+            text:
+              `<b>${escapeText(p.name)}</b> — <font color="#c5221f">${hrs(p.medianH)}</font>` +
+              (slow.firmMedianH
+                ? ` vs ${hrs(slow.firmMedianH)} firm-wide`
+                : ''),
+            wrapText: true,
+          }),
+        ),
+        // Stated, not buried. Only ANSWERED threads have a duration, so someone
+        // who never replies at all cannot appear here and looks better than
+        // someone who replies slowly. That case lives in the fires list above,
+        // and the two sections are only correct read together.
+        text(
+          '<font color="#5f6368">Answered threads only — mail nobody replied to has no ' +
+            'reply time. See the fires list for those.</font>',
+        ),
+      ],
+    });
+  }
+
+  // WHERE THE FIRES ARE — by client, not by thread.
+  //
+  // "Angry and unanswered" lists individual threads, which is right for someone
+  // about to reply and wrong for someone deciding where to spend an afternoon.
+  // A manager does not want twelve rows that turn out to be four clients; they
+  // want to know Deserve has eighteen unhappy threads and eight nobody touched.
+  //
+  // ONE ANGRY EMAIL IS NOISE. Over 90 days, 135 clients have exactly one
+  // negative thread and 51 have three or more. Ranking the tail alongside a
+  // client with nine open complaints is what makes a review unreadable.
+  //
+  // This REPLACED "Account managers carrying it", which counted threads per
+  // person and had stopped saying anything — its top real manager carried two.
+  // Every fact that section carried survives here in a more useful shape: the
+  // owner is named on each row, and an unallocated client shows as "no account
+  // manager" against its actual damage rather than pooled into one bucket.
+  if (fires?.fires.length) {
+    sections.unshift({
+      header: heading('Where the fires are'),
+      widgets: fires.fires.map((f) =>
         deco({
-          topLabel: `${o.threads} thread${o.threads === 1 ? '' : 's'} · oldest ${o.oldestDays}d`,
-          text: o.unassigned
-            ? `<b><font color="#c5221f">No account manager allocated</font></b>`
-            : `<b>${escapeText(o.name)}</b>`,
-          // bottomLabel is plain text and single-line — Gmail clips it rather
-          // than wrapping, so this stays short by construction.
-          ...(o.unassigned && o.customers?.length
-            ? {
-                bottomLabel: o.customers
-                  .slice(0, 3)
-                  .map((c) => (c.name.length > 18 ? `${c.name.slice(0, 17)}…` : c.name))
-                  .join(', '),
-              }
-            : {}),
-          wrapText: false,
-          ...(o.unassigned
+          topLabel: `${f.negative} unhappy · oldest ${f.oldestDays}d`,
+          text:
+            `<b>${escapeText(f.customer)}</b>` +
+            (f.unanswered > 0
+              ? ` — <font color="#c5221f">${f.unanswered} unanswered</font>`
+              : ''),
+          // Who to call. A fire without a name attached is an observation.
+          bottomLabel: f.owner ?? 'no account manager',
+          wrapText: true,
+          ...(f.customerId && fires.webUrl
             ? {
                 button: {
                   text: 'Open',
                   onClick: {
                     openLink: {
-                      url: `${ownerLoad.webUrl}/escalations?signal=negative&status=open&assigned=unassigned`,
+                      // `customer`, NOT `customerId` — that is the param name
+                      // apps/web/app/escalations/page.tsx reads. A wrong name
+                      // does not error; the page just loads unfiltered, so the
+                      // link looks like it works and quietly shows everything.
+                      url: `${fires.webUrl}/escalations?signal=negative&status=open&customer=${encodeURIComponent(f.customerId)}`,
                     },
                   },
                 },

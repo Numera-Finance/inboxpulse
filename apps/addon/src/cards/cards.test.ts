@@ -177,74 +177,103 @@ describe('signalNames', () => {
 });
 
 /**
- * The unallocated row must NAME the customers behind it.
+ * The management sections must name people and clients, not just count them.
  *
- * A management review's biggest bucket being "16 threads, nobody allocated"
- * prompts no action, because the bucket is not one kind of thing: measured on
- * live data it mixes real clients absent from the allocation sheet
- * (Truefoundry, Minerra, Elemind) with our own vendors and counterparties
- * (SVB, Rippling, Bill). Those need opposite responses — assign an owner
- * versus stop treating a vendor as a client — and only the names distinguish
- * them. See ADR-020 for how this population is scoped.
+ * "Account managers carrying it" was retired here. It counted unanswered angry
+ * threads per person and had stopped saying anything — its top real manager
+ * carried two. What a manager actually asks is where the damage is and who to
+ * call about it, so the same population is now shown by CLIENT with the owner
+ * named on the row, alongside a per-person reply-time median.
  */
-describe('unallocated account-manager row', () => {
-  const ownerLoad = {
+describe('where the fires are', () => {
+  const fires = {
     webUrl: 'https://example.test',
-    owners: [
+    fires: [
       {
-        name: '(not allocated)',
-        threads: 16,
-        oldestDays: 12,
-        unassigned: true,
-        customers: [
-          { name: 'Truefoundry', threads: 3 },
-          // The real customer name, verbatim — the length is the point.
-          { name: 'Minerra Health Inc (Twenty30 Health Inc.)', threads: 2 },
-          { name: 'Rippling', threads: 2 },
-          { name: 'Svb', threads: 1 },
-          { name: 'Elemind', threads: 1 },
-        ],
+        customerId: 'c1',
+        customer: 'Deserve, Inc.',
+        negative: 18,
+        unanswered: 8,
+        oldestDays: 74,
+        owner: 'Sukrati Gupta',
       },
-      { name: 'Amanda Tabb', threads: 2, oldestDays: 5, unassigned: false },
+      {
+        customerId: 'c2',
+        customer: 'Truefoundry',
+        negative: 9,
+        unanswered: 6,
+        oldestDays: 59,
+        owner: null,
+      },
     ],
   };
+  const card = (): string =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, fires),
+    );
 
-  const text = (): string =>
-    JSON.stringify(buildHomepageCard(null, undefined, undefined, undefined, undefined, ownerLoad));
-
-  it('names the customers rather than only counting them', () => {
-    expect(text()).toContain('Truefoundry');
-    expect(text()).toContain('Rippling');
+  it('names the client and the damage', () => {
+    expect(card()).toContain('Deserve, Inc.');
+    expect(card()).toContain('8 unanswered');
   });
 
-  it('caps the list, because bottomLabel is single-line and Gmail clips it', () => {
-    // Fourth and fifth names must not render — the cap is what keeps the row
-    // legible in a panel that clips rather than wraps.
-    expect(text()).not.toContain('Svb');
-    expect(text()).not.toContain('Elemind');
+  /** A fire without a name attached is an observation, not an action. */
+  it('names the account manager to call', () => {
+    expect(card()).toContain('Sukrati Gupta');
   });
 
   /**
-   * A long legal name must not eat the row.
-   *
-   * The real top four render as 70 characters, most of it one client's
-   * "... Inc (Twenty30 Health Inc.)". Gmail clips that mid-name and the later
-   * entries — the vendors, which are the reason to read the list at all —
-   * never appear. Clipping ourselves is what keeps them visible.
+   * An unallocated client with six unanswered complaints is a WORSE finding
+   * than an allocated one. Hiding the null would hide the worst cases.
    */
-  it('truncates a long customer name instead of letting Gmail clip the row', () => {
-    expect(text()).toContain('Minerra Health In…');
-    expect(text()).not.toContain('Minerra Health Inc');
+  it('says so when nobody owns the client, rather than omitting the row', () => {
+    expect(card()).toContain('Truefoundry');
+    expect(card()).toContain('no account manager');
   });
 
-  it('does not attach customer names to a real manager row', () => {
-    const amanda = JSON.stringify(
-      (buildHomepageCard(null, undefined, undefined, undefined, undefined, {
-        ...ownerLoad,
-        owners: [ownerLoad.owners[1]],
-      }) as unknown as { sections: unknown[] }).sections,
+  /**
+   * The escalations page reads `customer`, not `customerId`. A wrong param does
+   * not error — the page loads unfiltered — so the link would look like it
+   * worked while showing everything.
+   */
+  it('deep-links with the param name the escalations route reads', () => {
+    expect(card()).toContain('customer=c1');
+    expect(card()).not.toContain('customerId=');
+  });
+});
+
+describe('slowest to answer angry mail', () => {
+  const slow = {
+    firmMedianH: 12.9,
+    people: [
+      { name: 'Ganesh Shankar', threads: 10, medianH: 79.3 },
+      { name: 'Meghana Muralidhar Murthy', threads: 22, medianH: 50.1 },
+    ],
+  };
+  const card = (): string =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, slow),
     );
-    expect(amanda).toContain('Amanda Tabb');
-    expect(amanda).not.toContain('Truefoundry');
+
+  it('names the person and compares them to the firm', () => {
+    expect(card()).toContain('Ganesh Shankar');
+    expect(card()).toContain('12.9h firm-wide');
+  });
+
+  /**
+   * The sample size is not optional. A median over ten threads is thin, and a
+   * person named as slowest cannot argue with a number whose basis is hidden.
+   */
+  it('shows the sample the median rests on', () => {
+    expect(card()).toContain('10 answered threads');
+  });
+
+  /**
+   * Only ANSWERED threads have a duration, so someone who never replies at all
+   * cannot appear here and looks better than someone who replies slowly. That
+   * limitation has to be on the card, not just in a comment.
+   */
+  it('states that unanswered mail is excluded', () => {
+    expect(card()).toContain('Answered threads only');
   });
 });

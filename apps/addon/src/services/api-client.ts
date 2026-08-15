@@ -541,32 +541,55 @@ export async function getDangerPulse(tenantId: string, days = 90): Promise<Dange
   }
 }
 
-export interface OwnerLoad {
-  name: string;
-  threads: number;
+export interface Fire {
+  customerId: string | null;
+  customer: string;
+  negative: number;
+  unanswered: number;
   oldestDays: number;
-  unassigned: boolean;
-  /**
-   * Present on the unallocated row only: the customers behind it.
-   *
-   * The bucket mixes real clients missing from the allocation sheet with our
-   * own vendors and counterparties, which need opposite responses. A count
-   * cannot separate them; the names can.
-   */
-  customers?: Array<{ name: string; threads: number }>;
+  owner: string | null;
 }
 
-/** Who is carrying the unanswered angry mail, by task assignee. */
-export async function getOwnerLoad(tenantId: string, days = 30): Promise<OwnerLoad[]> {
+/** Where the fires are, by client, with the account manager to call. */
+export async function getFires(
+  tenantId: string,
+  userId: string,
+  isAdmin: boolean,
+  days = 90,
+): Promise<Fire[]> {
   const env = getEnv();
   if (!env.SERVICE_API_KEY) return [];
   const res = await apiFetch(
-    `${env.SERVICE_API_URL}/api/internal/addon/owner-load?tenantId=${encodeURIComponent(tenantId)}&days=${days}`,
+    `${env.SERVICE_API_URL}/api/internal/addon/fires?tenantId=${encodeURIComponent(tenantId)}` +
+      `&userId=${encodeURIComponent(userId)}&isAdmin=${isAdmin}&days=${days}`,
     { headers: internalHeaders(tenantId) },
   );
   if (!res || !res.ok) return [];
   try {
-    const d = unwrap<OwnerLoad[]>(await res.json());
+    const d = unwrap<Fire[]>(await res.json());
+    return Array.isArray(d) ? d : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface SlowResponder {
+  name: string;
+  threads: number;
+  medianH: number;
+}
+
+/** Median hours to first reply on negative mail, per account manager. */
+export async function getSlowResponders(tenantId: string, days = 90): Promise<SlowResponder[]> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return [];
+  const res = await apiFetch(
+    `${env.SERVICE_API_URL}/api/internal/addon/slow-responders?tenantId=${encodeURIComponent(tenantId)}&days=${days}`,
+    { headers: internalHeaders(tenantId) },
+  );
+  if (!res || !res.ok) return [];
+  try {
+    const d = unwrap<SlowResponder[]>(await res.json());
     return Array.isArray(d) ? d : [];
   } catch {
     return [];

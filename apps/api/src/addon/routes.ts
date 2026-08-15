@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { InvalidInputError } from '@crm/shared';
-import { AccountContextService, WaitingClientsService, DangerPulseService, OwnerLoadService } from './account-context';
+import { AccountContextService, WaitingClientsService, DangerPulseService, OwnerLoadService, FiresService, SlowRespondersService } from './account-context';
 
 export const addonRoutes = new Hono();
 
@@ -164,5 +164,47 @@ addonRoutes.get('/owner-load', async (c) => {
   return c.json({
     success: true,
     data: await container.resolve(OwnerLoadService).get(tenantId, days, role),
+  });
+});
+
+/**
+ * GET /api/internal/addon/fires?tenantId=&userId=&isAdmin=&days=
+ *
+ * Where the fires are, by CLIENT — negative threads, how many are unanswered,
+ * how old the oldest is, and the account manager to call.
+ *
+ * Entitlement-scoped like /waiting: it names customers, so a non-admin sees
+ * only accounts they can already open.
+ */
+addonRoutes.get('/fires', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  const userId = c.req.query('userId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  if (!userId) throw new InvalidInputError('userId is required');
+  const days = Math.min(180, Math.max(1, Number(c.req.query('days') ?? 90)));
+  return c.json({
+    success: true,
+    data: await container
+      .resolve(FiresService)
+      .get(tenantId, { userId, isAdmin: c.req.query('isAdmin') === 'true' }, days),
+  });
+});
+
+/**
+ * GET /api/internal/addon/slow-responders?tenantId=&days=
+ *
+ * Median hours to first reply on negative mail, per account manager.
+ *
+ * Tenant-wide aggregate of people and durations, with no customer or message
+ * detail, so it discloses nothing about an account the viewer cannot open —
+ * the same disclosure basis as /owner-load and /pulse.
+ */
+addonRoutes.get('/slow-responders', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  const days = Math.min(180, Math.max(1, Number(c.req.query('days') ?? 90)));
+  return c.json({
+    success: true,
+    data: await container.resolve(SlowRespondersService).get(tenantId, days),
   });
 });

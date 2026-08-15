@@ -769,3 +769,200 @@ export class OwnerLoadService {
     return owners.map((o) => (o.unassigned ? { ...o, customers } : o));
   }
 }
+
+export interface Fire {
+  customerId: string | null;
+  customer: string;
+  /** Negative threads in the window. */
+  negative: number;
+  /** How many of those nobody has answered. */
+  unanswered: number;
+  oldestDays: number;
+  /** The account manager to call, or null when the client is not allocated. */
+  owner: string | null;
+}
+
+/**
+ * Where the fires are — by CLIENT, not by thread.
+ *
+ * "Angry and unanswered" lists individual threads, which is the right shape for
+ * someone about to reply and the wrong shape for someone deciding where to
+ * spend their afternoon. A manager does not want twelve rows that turn out to
+ * be four clients; they want to know that Deserve has eighteen unhappy threads
+ * and eight of them nobody has touched.
+ *
+ * ONE ANGRY EMAIL IS NOISE. Measured over 90 days: 135 clients have exactly one
+ * negative thread, 40 have two, and 51 have three or more. The long tail is
+ * ordinary friction — a late document, a disputed line item — and ranking it
+ * alongside a client with nine open complaints is what makes a management
+ * review unreadable. So this ranks by weight of evidence and shows the count,
+ * which lets the reader make the same judgement themselves.
+ *
+ * Ordered by unanswered first, then total. Unanswered is the part the firm
+ * controls: eighteen complaints all answered is a difficult client, eight
+ * unanswered is a failure of ours, and only the second is a reason to call
+ * someone today.
+ *
+ * THE OWNER IS THE POINT. A fire without a name attached is an observation; the
+ * question a manager actually has is who to call. Nulls are shown rather than
+ * hidden — an unallocated client with six unanswered complaints is a worse
+ * finding than an allocated one, and suppressing it would hide the worst cases.
+ */
+@injectable()
+export class FiresService {
+  constructor(@inject('Database') private readonly db: Database) {}
+
+  async get(
+    tenantId: string,
+    viewer: { userId: string; isAdmin: boolean },
+    days = 90,
+    limit = 6,
+  ): Promise<Fire[]> {
+    // Same entitlement rule as the rest of the panel: a lead's view of "where
+    // the fires are" must not become a way to read accounts they cannot open.
+    const scope = viewer.isAdmin
+      ? sql``
+      : sql`AND p.customer_id IN (
+              SELECT customer_id FROM user_accessible_customers WHERE user_id = ${viewer.userId}
+            )`;
+
+    const rows = await this.db.execute(sql`
+      WITH t AS (
+        SELECT DISTINCT ON (e.thread_id)
+          e.thread_id, e.received_at, e.first_reply_at, p.customer_id
+        FROM emails e
+        JOIN email_analyses a
+          ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+        JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
+        JOIN customers c ON c.id = p.customer_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.is_customer_email
+          AND e.received_at > now() - (${days} || ' days')::interval
+          ${weAreOnTheThread()}
+          AND NOT c.is_auto_created
+          AND NOT EXISTS (
+            SELECT 1 FROM customer_domains cd
+            WHERE cd.customer_id = c.id
+              AND lower(cd.domain) IN (
+                SELECT split_part(lower(u2.email), '@', 2)
+                FROM users u2
+                WHERE u2.tenant_id = ${tenantId} AND u2.email LIKE '%@%'
+                GROUP BY 1
+                HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
+              )
+          )
+          ${isAClient(tenantId)}
+          ${scope}
+        ORDER BY e.thread_id, e.received_at DESC
+      )
+      SELECT
+        c.id::text AS customer_id,
+        COALESCE(c.name, '(unknown)') AS customer,
+        count(*)::int AS negative,
+        count(*) FILTER (WHERE t.first_reply_at IS NULL)::int AS unanswered,
+        MAX(EXTRACT(EPOCH FROM (now() - t.received_at)) / 86400)::int AS oldest_days,
+        MAX(u.first_name || ' ' || u.last_name) AS owner
+      FROM t
+      JOIN customers c ON c.id = t.customer_id
+      LEFT JOIN customer_allocations al
+        ON al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = 'Account manager'
+      LEFT JOIN users u ON u.id = al.user_id
+      GROUP BY c.id, c.name
+      ORDER BY 4 DESC, 3 DESC
+      LIMIT ${limit}
+    `);
+
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      customerId: (r.customer_id as string | null) ?? null,
+      customer: String(r.customer ?? '(unknown)'),
+      negative: Number(r.negative ?? 0),
+      unanswered: Number(r.unanswered ?? 0),
+      oldestDays: Number(r.oldest_days ?? 0),
+      owner: (r.owner as string | null) ?? null,
+    }));
+  }
+}
+
+export interface SlowResponder {
+  name: string;
+  /** Negative threads answered — the sample behind the median. */
+  threads: number;
+  medianH: number;
+}
+
+/**
+ * Who is slowest to answer angry mail — the people to investigate with.
+ *
+ * `DangerPulseService` gives the firm's median (12.9h) and its tail (p90 139h),
+ * which says something is wrong somewhere but not where. This resolves it to a
+ * person, which is the only form in which the number leads to a conversation.
+ *
+ * The spread is the finding. Against a firm median of 12.9 hours, the slowest
+ * account manager sits at 79.3h over ten threads and the next at 50.1h over
+ * twenty-two — six times and four times the firm. That is not a rounding
+ * difference in an average; it is a small number of people whose angry clients
+ * wait days, and a manager who knows their names can ask why.
+ *
+ * ATTRIBUTED BY ALLOCATION, NOT BY WHO REPLIED. `first_reply_by_id` is 7%
+ * populated because replies are never stored, so ranking on it ranks whoever
+ * happens to be attributable. The allocation sheet names one accountable person
+ * per client, and the question here is accountability rather than authorship:
+ * if a client's angry mail waits three days, that is their account manager's
+ * problem whoever eventually typed the reply.
+ *
+ * MINIMUM SAMPLE. A median over two threads is an anecdote with a decimal
+ * point, and the person it names has no way to argue with it. Five is low but
+ * defensible for a panel that is pointing at a conversation rather than
+ * concluding one, and the count is always shown beside the figure so the reader
+ * can discount it themselves. Forty account managers clear it, carrying ~12
+ * negative threads each.
+ *
+ * Only ANSWERED threads count, which is deliberate and is the limitation to
+ * state plainly: a thread nobody ever replied to has no duration and cannot
+ * enter a median. Someone who ignores angry mail entirely looks better here
+ * than someone who answers slowly. That case is what `FiresService` and the
+ * unanswered counts are for — the two sections have to be read together.
+ */
+@injectable()
+export class SlowRespondersService {
+  constructor(@inject('Database') private readonly db: Database) {}
+
+  async get(tenantId: string, days = 90, minThreads = 5, limit = 4): Promise<SlowResponder[]> {
+    const rows = await this.db.execute(sql`
+      SELECT
+        COALESCE(u.first_name || ' ' || u.last_name, al.email) AS who,
+        count(*)::int AS threads,
+        percentile_cont(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
+        ) AS median_h
+      FROM emails e
+      JOIN email_analyses a
+        ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+      JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
+      JOIN customers c ON c.id = p.customer_id
+      JOIN customer_allocations al
+        ON al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = 'Account manager'
+      LEFT JOIN users u ON u.id = al.user_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.is_customer_email
+        AND e.first_reply_at IS NOT NULL
+        -- Same guard as DangerPulse: the reply matcher can mis-associate, and a
+        -- negative duration would drag a median toward a number nobody can act on.
+        AND e.first_reply_at > e.received_at
+        AND e.received_at > now() - (${days} || ' days')::interval
+        ${weAreOnTheThread()}
+        AND NOT c.is_auto_created
+        ${isAClient(tenantId)}
+      GROUP BY 1
+      HAVING count(*) >= ${minThreads}
+      ORDER BY 3 DESC
+      LIMIT ${limit}
+    `);
+
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      name: String(r.who ?? '(unknown)'),
+      threads: Number(r.threads ?? 0),
+      medianH: Math.round(Number(r.median_h ?? 0) * 10) / 10,
+    }));
+  }
+}

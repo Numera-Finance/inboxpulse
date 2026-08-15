@@ -27,7 +27,8 @@ import {
   getAnalyzedEmail,
   getDangerPulse,
   getEmailStats,
-  getOwnerLoad,
+  getFires,
+  getSlowResponders,
   getThreadFlagged,
   getThreadTrend,
   getWaitingClients,
@@ -918,7 +919,9 @@ app.post('/homepage', async (c) => {
   const who = tenantId && verified.email ? await resolveViewer(tenantId, verified.email) : null;
   const waiting = tenantId && who ? await getWaitingClients(tenantId, who.userId, who.isAdmin) : [];
   const pulse = tenantId ? await getDangerPulse(tenantId) : null;
-  const owners = tenantId ? await getOwnerLoad(tenantId) : [];
+  // Both are management views: where the fires are, and who to ask about them.
+  const fires = tenantId && who ? await getFires(tenantId, who.userId, who.isAdmin) : [];
+  const slow = tenantId ? await getSlowResponders(tenantId) : [];
   // The working set is the reason to open the panel without a message: it is
   // the only view of what the user marked, since nothing was written to Gmail.
   workingSet.prune();
@@ -936,7 +939,8 @@ app.post('/homepage', async (c) => {
         getEnv().ADDON_BASE_URL,
         { clients: waiting, webUrl: getEnv().WEB_URL },
         pulse ?? undefined,
-        { owners, webUrl: getEnv().WEB_URL },
+        { fires, webUrl: getEnv().WEB_URL },
+        { people: slow, firmMedianH: pulse?.negativeMedianH ?? null },
       ),
     ),
   );

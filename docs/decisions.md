@@ -961,3 +961,54 @@ row can be read, questioned and fixed by whoever owns the client list.
 - `customer_allocations` and `customer_relationships` are raw-SQL tables with no
   Drizzle definitions, following the precedent set by the former. If either grows
   a write path beyond these migrations, that should be revisited.
+
+### ADR-022: Management sections name clients and people, not counts (2026-08-14)
+
+**Status:** Accepted — retires the card section from ADR-020's follow-up
+
+**Context:** The panel could say the firm's median reply to angry mail was 12.9h
+and that N threads were unanswered. Neither tells a manager where to spend an
+afternoon or who to call. "Account managers carrying it" counted unanswered
+angry threads per person and, once the corpus was scoped correctly (ADR-020,
+ADR-021), its top real manager carried **two** — a section occupying prime panel
+space to report noise.
+
+**Decision:** Two sections replace it.
+
+**Where the fires are** — by CLIENT: negative threads in 90 days, how many are
+unanswered, age of the oldest, and the account manager to call.
+`Deserve, Inc. — 18 unhappy, 8 unanswered, oldest 74d, Sukrati Gupta`.
+
+Ranked by unanswered first, then total. Unanswered is the part the firm
+controls: eighteen complaints all answered is a difficult client; eight
+unanswered is our failure, and only the second is a reason to call someone
+today.
+
+One angry email is noise. Measured over 90 days: **135 clients have exactly one
+negative thread, 40 have two, 51 have three or more.** Ranking that tail beside
+a client with nine open complaints is what makes a review unreadable.
+
+**Slowest to answer angry mail** — median hours to first reply per account
+manager, against the firm's own median. The spread is the finding: **79.3h over
+10 threads and 50.1h over 22, against 12.9h firm-wide** — six and four times.
+Attributed by ALLOCATION, not by who replied: `first_reply_by_id` is 7%
+populated, and the question is accountability rather than authorship.
+
+**Consequences:**
+- Every fact the retired section carried survives in a better shape. The owner
+  is named per row, and an unallocated client shows as "no account manager"
+  against its actual damage instead of pooled into one bucket. The customer
+  naming added to `OwnerLoadService` is no longer read by the panel; the service
+  and `/owner-load` remain as a role-parameterised API surface.
+- `OwnerLoadView`, the `ownerLoad` card parameter and `getOwnerLoad` were
+  deleted rather than left as a type with no renderer.
+- **The two sections are only correct read together.** Only ANSWERED threads have
+  a duration, so someone who ignores angry mail entirely cannot appear in the
+  slow list and looks better than someone who answers slowly. That limitation is
+  printed on the card, not just recorded here.
+- Minimum sample of 5 threads, and the count is shown beside every median. A
+  person named as slowest cannot argue with a number whose basis is hidden.
+- The fires deep link uses `customer=`, **not** `customerId=` — the param
+  `apps/web/app/escalations/page.tsx` actually reads. A wrong name does not
+  error; the page loads unfiltered, so the link looks like it works while
+  showing everything. Caught by `deeplink.test.ts`, which exists for this.
