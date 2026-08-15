@@ -1,7 +1,27 @@
 # Google Workspace Marketplace — store listing copy
 
 Paste into **APIs & Services → Google Workspace Marketplace SDK → Store Listing**
-for `project-y-email-sentiment`. Every field below is required; the listing will
+for **`inboxpulse-addon-listing`** — NOT `project-y-email-sentiment`.
+
+`project-y-email-sentiment` cannot host this listing. Its App Visibility was
+saved as **Public** and that setting is permanent, so publishing there requires
+full OAuth verification and a CASA security assessment for
+`gmail.addons.current.message.readonly` and `gmail.modify` — weeks of process
+for an app only staff will install. A **Private** listing is exempt.
+
+So the listing lives in a second project, created for this purpose:
+
+    project id     inboxpulse-addon-listing
+    project number 369372211306
+    deployment     inboxpulse (already created, points at the same Cloud Run URLs)
+
+Nothing else moves. The add-on service, the database and both original
+deployments stay where they are — `ADDON_AUDIENCE` is blank and `verifyRequest`
+accepts any Google-signed token, so tokens minted for this project's deployment
+verify against the existing service.
+
+**Set App Visibility to Private BEFORE the first save.** It cannot be changed
+afterwards, which is exactly how the first project became unusable. Every field below is required; the listing will
 not publish while any is blank.
 
 Set **App Visibility → Unlisted** on the App Configuration tab first. Combined
@@ -9,7 +29,7 @@ with the Internal OAuth user type, that keeps the listing out of Marketplace
 browse and search while remaining installable by anyone at `mystartupcfo.com`
 who has the direct link. The direct link is:
 
-    https://workspace.google.com/marketplace/app/inboxpulse/203731638840
+    https://workspace.google.com/marketplace/app/inboxpulse/369372211306
 
 ---
 
