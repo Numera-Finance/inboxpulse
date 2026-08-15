@@ -1,4 +1,4 @@
-import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated, fold } from './widgets';
+import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated, fold, image } from './widgets';
 import type { EmailStats } from '../services/api-client';
 
 /**
@@ -17,6 +17,32 @@ import type { EmailStats } from '../services/api-client';
  * convenience: without one click back to the conversation, a working set is a
  * list of things to go and find.
  */
+/**
+ * The card's palette, and the reasoning behind each entry.
+ *
+ * Cards v2 gives no background, no border, no box. Two devices carry color: the
+ * `<font color>` tag inside text, and an IMAGE, which renders whatever we serve
+ * — so a colored band is a picture of one (see assets/bar.ts).
+ *
+ * Three colors, each earning its place:
+ *
+ *   FIRE   #d93025  A client waiting. The only red on the card, so red always
+ *                   means the same thing: somebody outside the firm is unhappy
+ *                   and nobody has answered. Used on the band above the client
+ *                   group and on the unanswered counts.
+ *   MINE   #1a73e8  The reader's own mailbox. Blue is inert here — it marks
+ *                   territory rather than urgency, which is exactly right for a
+ *                   half of the card containing no client at all.
+ *   QUIET  #5f6368  Caveats, sample sizes, the sentence explaining what a
+ *                   number excludes. Deliberately recessive: these must be
+ *                   readable when looked for and invisible when scanning.
+ *
+ * Gmail's own hairline is left to do nothing. It cannot be styled, so the bands
+ * carry the structure and the rule is simply what remains between two sections.
+ */
+const FIRE = 'd93025';
+const MINE = '1a73e8';
+
 /** Card text is an HTML subset, so subjects taken from mail must be escaped. */
 function escapeText(v: string): string {
   return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -615,9 +641,26 @@ export function buildHomepageCard(
   // foot of the reader's own half it reads as what it is — the way out to the
   // full view. That leaves exactly ONE rule on the card, at the only boundary
   // that carries meaning.
+  // A BAND, not a heavier rule.
+  //
+  // Gmail's hairline is fixed and identical everywhere, so it cannot say which
+  // boundary matters. A colored band can: red above the clients, blue above the
+  // reader's own tools. It reads instantly at a glance, survives both Gmail
+  // themes, and needs no typography — which this surface does not have.
+  //
+  // The band sits INSIDE the group it introduces, directly above its first
+  // heading, so it reads as a label for what follows rather than as a gap
+  // between two things.
   const card: CardSection[] = [];
+  if (firm.length && baseUrl) {
+    firm.unshift({ widgets: [image(`${baseUrl}/bar.png?c=${FIRE}&h=6`, 'Clients')] });
+  }
   if (firm.length) card.push(fold(firm));
+
   const below = [...personal, ...footer];
+  if (below.length && baseUrl) {
+    below.unshift({ widgets: [image(`${baseUrl}/bar.png?c=${MINE}&h=6`, 'Your inbox')] });
+  }
   if (below.length) card.push(fold(below, heading('Your inbox')));
 
   return { sections: separated(card) };

@@ -38,6 +38,7 @@ import {
 } from './services/api-client';
 import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled, THREAD_MODES } from './services/live-analysis';
 import type { ReplyOption, ThreadMode } from './services/live-analysis';
+import { solidBarPng } from './assets/bar';
 import { LOGO_PNG_BASE64 } from './assets/logo';
 import { AnalysisCache } from './services/analysis-cache';
 import {
@@ -92,6 +93,30 @@ async function resolveTenant(email: string | undefined): Promise<string | null> 
   }
   return getEnv().ADDON_DEV_TENANT_ID ?? null;
 }
+
+/**
+ * A solid color band, for separating groups on the card.
+ *
+ * Public and unauthenticated like /logo.png, and safe to be: the response is a
+ * rectangle of one color and the request carries nothing but that color. The
+ * chart endpoint deleted in ADR-004 was neither — its query string held a
+ * customer's sentiment sequence.
+ *
+ * Color is validated to six hex digits and height clamped, so the URL cannot
+ * be used to make the add-on render something arbitrary or allocate a large
+ * buffer.
+ */
+app.get('/bar.png', (c) => {
+  const hex = (c.req.query('c') ?? '').replace(/[^0-9a-fA-F]/g, '').slice(0, 6);
+  const h = Math.min(24, Math.max(2, Number(c.req.query('h') ?? 6) || 6));
+  return new Response(solidBarPng(hex, 600, h), {
+    headers: {
+      'content-type': 'image/png',
+      // Immutable: the bytes are a pure function of the query string.
+      'cache-control': 'public, max-age=31536000, immutable',
+    },
+  });
+});
 
 app.get('/logo.png', (c) => {
   // Served by the add-on itself so the icon cannot outlive its host. See
@@ -682,7 +707,7 @@ async function sweepExpired(oauthToken: string): Promise<void> {
 }
 
 /**
- * Prioritise the inbox: one press, an ordered list of what to do next.
+ * Prioritize the inbox: one press, an ordered list of what to do next.
  *
  * The panel cannot see which rows the user has selected — Gmail gives add-ons
  * two triggers, compose and message-open, and neither carries a selection. So
@@ -708,7 +733,7 @@ app.post('/gmail/triage', async (c) => {
   if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
 
   const threads = await recentThreads(oauthToken, 'in:inbox -category:promotions', 12);
-  if (!threads.length) return c.json(notify('Nothing in the inbox to prioritise.'));
+  if (!threads.length) return c.json(notify('Nothing in the inbox to prioritize.'));
 
   const classified = await Promise.all(
     threads.map(async (t) => ({
@@ -841,7 +866,7 @@ app.post('/gmail/clear-marks', async (c) => {
 });
 
 /**
- * Colour the inbox by what each thread needs.
+ * Color the inbox by what each thread needs.
  *
  * The triage already classified every thread; this writes that classification
  * back so it is visible while scanning rather than only inside the panel.
