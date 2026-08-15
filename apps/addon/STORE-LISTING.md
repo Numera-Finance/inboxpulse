@@ -20,8 +20,14 @@ deployments stay where they are — `ADDON_AUDIENCE` is blank and `verifyRequest
 accepts any Google-signed token, so tokens minted for this project's deployment
 verify against the existing service.
 
-**Set App Visibility to Private BEFORE the first save.** It cannot be changed
-afterwards, which is exactly how the first project became unusable.
+**DONE (2026-08-15):** App Visibility is saved as **Private + Unlisted** on
+`inboxpulse-addon-listing`, and both radios are now greyed out — locked, and
+locked to the right value. App Integrations points at deployment `inboxpulse`
+and all five scopes are entered.
+
+That setting is irreversible per project. It is why `project-y-email-sentiment`
+can never host this listing, and it is the one field to check before saving on
+any future project.
 
 Tick **Unlisted** as well. Private restricts installation to the domain;
 Unlisted additionally keeps the listing out of Marketplace browse and search,
