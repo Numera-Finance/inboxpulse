@@ -84,12 +84,28 @@ The direct link, once published:
 
 ## Graphics
 
-  * **Application icon** — 128×128 PNG, no transparency, no rounded corners
-    (Google rounds them). Use the existing rail icon:
-    `apps/addon/src/assets/logo.ts` (base64 PNG) — decode and resize to 128×128.
-  * **Screenshot** — 1280×800 PNG, at least one required. The Gmail window with
-    the panel open on "Where the fires are" is the right frame: it shows the
-    product doing its job in its actual context.
+All three are generated and sitting on the Desktop, sized exactly as Google
+requires — a wrong dimension is a rejected listing.
+
+    ~/Desktop/inboxpulse-icon.png                  128x128   app icon
+    ~/Desktop/inboxpulse-banner-220x140.png        220x140   listing banner
+    ~/Desktop/inboxpulse-screenshot-1280x800.png   1280x800  screenshot
+
+The icon and banner are the same mark: a white bolt on deep blue, matching the
+`⚡/` namespace the add-on writes into the mailbox, so the listing art and the
+labels a user sees in Gmail agree. Neither carries a wordmark — Google renders
+the app name beside them, and text inside would print it twice.
+
+**The screenshot contains no real data.** Every client and colleague in it is
+invented: Harbourline Group, Vantage Robotics, Meridian Labs, Brightfold Inc,
+and staff named Priya Raghavan, Daniel Okafor, Aiko Tanaka. The layout, bands
+and copy are the shipped card. Real client names cannot go in a listing image —
+it leaves the building, and a screenshot is the sort of thing that gets pasted
+into a deck a year later.
+
+Source for the render: `scratchpad/listing-shot.html`, rasterized with headless
+Chrome at exactly 1280x800.
+
 
 ## Support links
 
