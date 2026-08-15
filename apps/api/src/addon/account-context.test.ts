@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Database } from '@crm/database';
 import {
+  AccountContextService,
   WaitingClientsService,
   DangerPulseService,
   OwnerLoadService,
@@ -326,5 +327,56 @@ describe('the angry message must address us', () => {
       { days: 90, limit: 10, ownDomains: [] },
     );
     expect(sql()).not.toContain("me.direction IN ('from')");
+  });
+});
+
+/**
+ * A thread a human already closed is not unanswered.
+ *
+ * "Unanswered" was first_reply_at IS NULL alone, and that column is only as
+ * good as the reply matcher — replies are matched for a timestamp then
+ * discarded, so it is null far more often than a client is really waiting.
+ * Truefoundry showed 7 unanswered while the web view showed 4 of 6 resolved;
+ * tenant-wide the count falls from 379 to 83.
+ *
+ * TaskStatus.DONE is 1 and OPEN is 0, which reads backwards to most people —
+ * getting it the wrong way round silently inverts the metric.
+ */
+describe('already-resolved threads', () => {
+  it('WaitingClientsService excludes threads with a DONE task', async () => {
+    const { db, sql } = recordingDb();
+    await new WaitingClientsService(db).find(
+      TENANT,
+      { userId: 'u1', isAdmin: true },
+      { days: 90, limit: 10, ownDomains: [] },
+    );
+    expect(sql()).toContain('FROM tasks k');
+    expect(sql()).toContain('k.status = 1');
+  });
+
+  /** Excluding status 0 instead would drop the OPEN ones and keep the closed. */
+  it('excludes DONE (1), not OPEN (0)', async () => {
+    const { db, sql } = recordingDb();
+    await new WaitingClientsService(db).find(
+      TENANT,
+      { userId: 'u1', isAdmin: true },
+      { days: 90, limit: 10, ownDomains: [] },
+    );
+    expect(sql()).not.toContain('k.status = 0');
+  });
+
+  /**
+   * Tasks the panel creates must be born OPEN.
+   *
+   * This inserted status 1 — DONE — so every task created from the add-on was
+   * resolved on arrival and never reached anyone's open list.
+   */
+  it('creates tasks as OPEN', async () => {
+    const { db, sql } = recordingDb();
+    await new AccountContextService(db).createTaskForViewer(
+      TENANT, 'cust-1', 'Follow up', { userId: 'u1', isAdmin: true },
+    );
+    const insert = sql().split('\n').find((q) => q.includes('INSERT INTO tasks')) ?? '';
+    expect(insert).not.toMatch(/\$\{title\},\s*1,/);
   });
 });

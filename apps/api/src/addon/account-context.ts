@@ -147,8 +147,11 @@ export class AccountContextService {
     if (!entitled) return { created: false };
 
     const rows = await this.db.execute(sql`
+      -- status 0 = OPEN. It was 1, which is DONE (apps/api/src/tasks/schema.ts:
+      -- TaskStatus = { OPEN: 0, DONE: 1 }), so every task the panel created was
+      -- born already resolved and never appeared in anyone's open list.
       INSERT INTO tasks (id, tenant_id, customer_id, title, status, assigned_to_id, created_by_system)
-      VALUES (gen_random_uuid(), ${tenantId}, ${customerId}, ${title}, 1, ${viewer.userId}, false)
+      VALUES (gen_random_uuid(), ${tenantId}, ${customerId}, ${title}, 0, ${viewer.userId}, false)
       RETURNING id
     `);
     const id = (rows as unknown as Array<{ id: string }>)[0]?.id;
@@ -527,6 +530,34 @@ function weWereAddressed(): SQL {
   `;
 }
 
+/**
+ * A thread somebody already closed is not unanswered.
+ *
+ * "Unanswered" was `first_reply_at IS NULL` alone, and that column is only as
+ * good as the reply matcher — replies are matched for a timestamp and then
+ * discarded, so it is null far more often than a client is actually waiting.
+ * The human signal is more reliable and was being ignored: someone opened the
+ * escalation, dealt with it, and marked the task DONE.
+ *
+ * The gap is not a rounding error. Truefoundry showed 7 unanswered while the
+ * web view showed 4 of 6 resolved; tenant-wide the count falls from 379 to 83.
+ * Four fifths of what the panel called an unanswered angry client had already
+ * been handled, which is the difference between a section a manager acts on and
+ * one they learn to ignore.
+ *
+ * TaskStatus.DONE is 1 and OPEN is 0 (apps/api/src/tasks/schema.ts) — worth
+ * stating because the enum reads backwards to most people, and getting it the
+ * wrong way round silently inverts the whole metric.
+ */
+function notAlreadyResolved(): SQL {
+  return sql`
+    AND NOT EXISTS (
+      SELECT 1 FROM tasks k
+      WHERE k.email_id = e.id AND k.status = 1
+    )
+  `;
+}
+
 export interface WaitingOptions {
   days: number;
   limit: number;
@@ -613,6 +644,7 @@ export class WaitingClientsService {
           AND e.received_at > now() - (${opts.days} || ' days')::interval
           ${weAreOnTheThread()}
           ${weWereAddressed()}
+          ${notAlreadyResolved()}
       )
       SELECT DISTINCT ON (q.thread_id)
         c.id::text            AS customer_id,
@@ -1069,6 +1101,7 @@ export class FiresService {
           AND e.received_at > now() - (${days} || ' days')::interval
           ${weAreOnTheThread()}
           ${weWereAddressed()}
+          ${notAlreadyResolved()}
           AND NOT c.is_auto_created
           AND NOT EXISTS (
             SELECT 1 FROM customer_domains cd
