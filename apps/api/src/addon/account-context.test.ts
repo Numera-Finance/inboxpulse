@@ -7,6 +7,7 @@ import {
   WaitingClientsService,
   DangerPulseService,
   OwnerLoadService,
+  SlowRespondersService,
   __resetRelationshipsTableCache,
 } from './account-context';
 
@@ -378,5 +379,43 @@ describe('already-resolved threads', () => {
     );
     const insert = sql().split('\n').find((q) => q.includes('INSERT INTO tasks')) ?? '';
     expect(insert).not.toMatch(/\$\{title\},\s*1,/);
+  });
+});
+
+/**
+ * "Slowest" must be ordered by the median, not by whatever column 3 is.
+ *
+ * The query used ORDER BY 3 DESC. Adding user_id as column 2 for the deep link
+ * shifted column 3 from the median to the thread count, so the section ranked
+ * by VOLUME and led with a person at 0.7x the firm — faster than average, at
+ * the top of a list of the slowest. Positional ordering breaks silently.
+ */
+describe('slow responders ordering', () => {
+  it('orders by the median column by name', async () => {
+    const { db, sql } = recordingDb();
+    await new SlowRespondersService(db).get(TENANT, 90);
+    expect(sql()).toContain('ORDER BY median_h DESC');
+    expect(sql()).not.toContain('ORDER BY 3 DESC');
+  });
+});
+
+/**
+ * Nobody faster than the firm may be named as slow.
+ *
+ * The query had no floor — it took the top N by median, so whoever sat at the
+ * top appeared under "Slowest to answer angry mail" however fast they were.
+ * Piyush Garg answers angry clients in 54 minutes, a tenth of the firm median,
+ * and was named in a list whose whole force is that the people on it are
+ * failing. A section that names individuals has to earn the right to name each
+ * of them.
+ */
+describe('slow responders floor', () => {
+  it('requires a median worse than the firm median', async () => {
+    const { db, sql } = recordingDb();
+    await new SlowRespondersService(db).get(TENANT, 90);
+    const q = sql();
+    // The HAVING compares the person's median against a firm-wide subquery.
+    expect(q).toContain('HAVING');
+    expect(q).toContain('FROM emails e2');
   });
 });

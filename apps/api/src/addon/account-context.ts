@@ -1260,7 +1260,46 @@ export class SlowRespondersService {
         ${clientFilter}
       GROUP BY 1
       HAVING count(*) >= ${minThreads}
-      ORDER BY 3 DESC
+        -- SLOWER THAN THE FIRM, or not on this list at all.
+        --
+        -- There was no floor: the query took the top N by median, so whoever
+        -- happened to be at the top appeared under the heading "Slowest to
+        -- answer angry mail" however fast they were. Piyush Garg answers angry
+        -- clients in 54 MINUTES -- a tenth of the firm median -- and was named
+        -- in a list whose whole rhetorical force is that the people on it are
+        -- failing.
+        --
+        -- That is not a ranking error, it is an unfair one. A section that
+        -- names individuals has to earn the right to name each of them, and the
+        -- bar is being genuinely worse than the firm they are measured against.
+        -- If nobody clears it the section renders empty, which is the correct
+        -- outcome: nobody is slow.
+        AND percentile_cont(0.5) WITHIN GROUP (
+              ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
+            ) > (
+              SELECT percentile_cont(0.5) WITHIN GROUP (
+                       ORDER BY EXTRACT(EPOCH FROM (e2.first_reply_at - e2.received_at)) / 3600
+                     )
+              FROM emails e2
+              JOIN email_analyses a2
+                ON a2.email_id = e2.id AND a2.analysis_type = 'sentiment'
+               AND a2.sentiment_value = 'negative'
+              WHERE e2.tenant_id = ${tenantId}
+                AND e2.is_customer_email
+                AND e2.first_reply_at IS NOT NULL
+                AND e2.first_reply_at > e2.received_at
+                AND e2.received_at > now() - (${days} || ' days')::interval
+            )
+      -- BY NAME, not by position.
+      --
+      -- This ordered by column position. Adding user_id as the second column
+      -- for the per-person deep link silently shifted the third column from the
+      -- median to the thread count, so a section titled "Slowest to answer
+      -- angry mail" ranked people by VOLUME and led with someone at 0.7x the
+      -- firm -- faster than average, at the top of a slowest list. Positional
+      -- ordering breaks with no compile error and no test failure; a named
+      -- column cannot.
+      ORDER BY median_h DESC
       LIMIT ${limit}
     `);
 
