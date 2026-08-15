@@ -46,7 +46,29 @@
  * record itself, not only of the analysis.
  */
 
-/** Viewer email → when they turned reading on. */
+/**
+ * Viewer email → when they turned reading on.
+ *
+ * THIS MAP IS PER PROCESS, WHICH CONSTRAINS THE DEPLOYMENT.
+ *
+ * Cloud Run was configured maxScale=10. With ten instances there are ten of
+ * these maps, and "Stop reading my mail" only clears the one belonging to the
+ * instance that served that click. The next thread the person opens can route
+ * to an instance that still holds their grant — and read. The card promises the
+ * switch takes effect immediately, so that is not a scaling quirk, it is the
+ * promise being false.
+ *
+ * The service must therefore run with maxScale=1 while consent lives here. That
+ * is fine for a pilot of one or two people and is not a general answer: the
+ * moment this needs to scale, consent needs a store both instances can see, and
+ * the honest options are a row in the tenant database (durable, visible to
+ * admins, contradicts "ephemeral") or a label in the person's own mailbox
+ * (readable from any instance with their token, visible to them, removable by
+ * them — but needs gmail.modify, which the reduced-scope install does not have).
+ *
+ * Whoever changes maxScale owns this decision. There is no runtime check that
+ * can catch it, because an instance cannot tell how many siblings it has.
+ */
 const granted = new Map<string, number>();
 
 /** Consent is per person, and the key is the address Google verified. */
