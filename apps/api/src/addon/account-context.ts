@@ -495,6 +495,38 @@ function isAClient(tenantId: string, tableExists: boolean): SQL {
   `;
 }
 
+/**
+ * The angry message must have been ADDRESSED TO US.
+ *
+ * weAreOnTheThread asks whether anyone from the firm appears anywhere on the
+ * thread, which is the right test for "is this our conversation at all". It is
+ * too loose for "did we fail to reply", because a thread can contain us on one
+ * message and be a conversation between other parties on the next.
+ *
+ * The case that exposed it: a client wrote to their own payroll provider —
+ * elle@thesis.inc to support@justworks.com, "Assistance with Third-Party Admin
+ * Access and Invoicing" — on a thread we are on elsewhere. Negative, no reply
+ * from us, and correctly so: nobody asked us anything. It ranked as an angry
+ * client we had ignored.
+ *
+ * So the flagged message itself must carry a staff recipient. Recipient, not
+ * sender: the message is inbound from the client by construction, so testing
+ * for a staff SENDER would exclude every row the section exists to show.
+ *
+ * Cheap in practice — 296 threads to 294 on production. It removes a specific
+ * false accusation rather than trimming the population.
+ */
+function weWereAddressed(): SQL {
+  return sql`
+    AND EXISTS (
+      SELECT 1 FROM email_participants me
+      WHERE me.email_id = e.id
+        AND me.participant_type = 'user'
+        AND me.direction IN ('to', 'cc')
+    )
+  `;
+}
+
 export interface WaitingOptions {
   days: number;
   limit: number;
@@ -580,6 +612,7 @@ export class WaitingClientsService {
           AND e.is_customer_email
           AND e.received_at > now() - (${opts.days} || ' days')::interval
           ${weAreOnTheThread()}
+          ${weWereAddressed()}
       )
       SELECT DISTINCT ON (q.thread_id)
         c.id::text            AS customer_id,
@@ -592,6 +625,32 @@ export class WaitingClientsService {
       LEFT JOIN email_participants p ON p.email_id = q.id AND p.customer_id IS NOT NULL
       LEFT JOIN customers c ON c.id = p.customer_id
       WHERE TRUE
+        -- The same three exclusions the other management services apply.
+        --
+        -- This section had only the own-domain name list and the client filter,
+        -- which made it the odd one out: it listed customers the INGESTER
+        -- INVENTED from a sender domain. Justworks (Auto) is a payroll provider
+        -- -- our vendor, never our client -- and it appeared as an angry client
+        -- nobody had answered. Clicking through found nothing, because there
+        -- was nothing: the row was an artefact of weaker filtering.
+        --
+        -- Own entities go too. The name-based list covers mystartupcfo
+        -- and numerafinance but not mytaxfiler, so "Mytaxfiler" ranked as a
+        -- client unhappy with us. The staff-domain rule below is derived from
+        -- the users table and catches every domain the firm actually staffs,
+        -- which is why the other services use it instead of a list.
+        AND NOT c.is_auto_created
+        AND NOT EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = c.id
+            AND lower(cd.domain) IN (
+              SELECT split_part(lower(u2.email), '@', 2)
+              FROM users u2
+              WHERE u2.tenant_id = ${tenantId} AND u2.email LIKE '%@%'
+              GROUP BY 1
+              HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
+            )
+        )
         ${own}
         ${clientFilter}
         ${scope}
@@ -1000,6 +1059,7 @@ export class FiresService {
           AND e.is_customer_email
           AND e.received_at > now() - (${days} || ' days')::interval
           ${weAreOnTheThread()}
+          ${weWereAddressed()}
           AND NOT c.is_auto_created
           AND NOT EXISTS (
             SELECT 1 FROM customer_domains cd

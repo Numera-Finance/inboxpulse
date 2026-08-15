@@ -260,3 +260,71 @@ describe('relationships-table probe', () => {
     expect(probes).toBe(3);
   });
 });
+
+/**
+ * Every management service must apply the same exclusions.
+ *
+ * WaitingClientsService was the odd one out: no is_auto_created filter, so it
+ * listed customers the ingester invented from a sender domain. "Justworks
+ * (Auto)" — a payroll provider, our vendor and never our client — appeared as
+ * an angry client nobody had answered, and clicking through found nothing,
+ * because there was nothing. The row was an artefact of weaker filtering than
+ * the section beside it.
+ */
+describe('exclusions are consistent across services', () => {
+  const services: Array<[string, (db: Database) => Promise<unknown>]> = [
+    ['WaitingClientsService', (db) =>
+      new WaitingClientsService(db).find(TENANT, { userId: 'u1', isAdmin: true }, { days: 90, limit: 10, ownDomains: [] })],
+    ['OwnerLoadService', (db) => new OwnerLoadService(db).get(TENANT, 30)],
+  ];
+
+  for (const [name, run] of services) {
+    it(`${name} excludes auto-created customers`, async () => {
+      const { db, sql } = recordingDb();
+      await run(db);
+      expect(sql()).toContain('is_auto_created');
+    });
+
+    it(`${name} excludes domains the firm staffs`, async () => {
+      const { db, sql } = recordingDb();
+      await run(db);
+      expect(sql()).toContain('customer_domains');
+    });
+  }
+});
+
+/**
+ * "Unanswered" must mean we were asked and did not reply.
+ *
+ * A client wrote to their own payroll provider — elle@thesis.inc to
+ * support@justworks.com — on a thread we appear on elsewhere. Negative, no
+ * reply from us, and correctly so: nobody asked us anything. It ranked as an
+ * angry client we had ignored, which is a false accusation rather than a
+ * miscount.
+ */
+describe('the angry message must address us', () => {
+  it('WaitingClientsService requires a staff recipient on the flagged message', async () => {
+    const { db, sql } = recordingDb();
+    await new WaitingClientsService(db).find(
+      TENANT,
+      { userId: 'u1', isAdmin: true },
+      { days: 90, limit: 10, ownDomains: [] },
+    );
+    expect(sql()).toContain("me.direction IN ('to', 'cc')");
+  });
+
+  /**
+   * Recipient, not sender. The flagged message is inbound FROM the client by
+   * construction, so testing for a staff sender would exclude every row the
+   * section exists to show.
+   */
+  it('tests recipients, not senders', async () => {
+    const { db, sql } = recordingDb();
+    await new WaitingClientsService(db).find(
+      TENANT,
+      { userId: 'u1', isAdmin: true },
+      { days: 90, limit: 10, ownDomains: [] },
+    );
+    expect(sql()).not.toContain("me.direction IN ('from')");
+  });
+});

@@ -83,6 +83,16 @@ function sparkline(values: number[]): string {
 
 export interface FiresView {
   /**
+   * The window the fires were counted over, so the deep link can match it.
+   *
+   * Not a detail. The escalations page defaults to `subDays(new Date(), 30)`,
+   * and this section counts 90 days — so a link that omitted the range landed
+   * on a filter that excluded most of what the row had just claimed. Falconx
+   * showed "5 unanswered, oldest 50d" and the page said "No analyzed emails
+   * found", which reads as the panel making things up.
+   */
+  windowDays: number;
+  /**
    * The viewer can see no customers at all — not an admin, and nothing in
    * user_accessible_customers.
    *
@@ -462,11 +472,29 @@ export function buildHomepageCard(
                   text: 'Open',
                   onClick: {
                     openLink: {
+                      // Every filter here must match what the ROW claims, or
+                      // the destination contradicts the panel.
+                      //
                       // `customer`, NOT `customerId` — that is the param name
                       // apps/web/app/escalations/page.tsx reads. A wrong name
                       // does not error; the page just loads unfiltered, so the
                       // link looks like it works and quietly shows everything.
-                      url: `${fires.webUrl}/escalations?signal=negative&status=open&customer=${encodeURIComponent(f.customerId)}`,
+                      //
+                      // `from` is required, not optional: the page defaults to
+                      // 30 days and this section counts 90, so without it the
+                      // link dropped every thread older than a month. Falconx
+                      // read "5 unanswered, oldest 50d" and the page answered
+                      // "No analyzed emails found".
+                      //
+                      // `status=all`, not `open`. On that page "open" means an
+                      // open TASK; this section means "nobody replied". They
+                      // are different populations, and asserting the wrong one
+                      // hides rows the row itself counted. Showing all negative
+                      // mail for the client is a superset the reader can scan.
+                      url:
+                        `${fires.webUrl}/escalations?signal=negative&status=all` +
+                        `&customer=${encodeURIComponent(f.customerId)}` +
+                        `&from=${sinceDays(fires.windowDays)}`,
                     },
                   },
                 },

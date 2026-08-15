@@ -947,7 +947,7 @@ app.post('/homepage', async (c) => {
         getEnv().ADDON_BASE_URL,
         { clients: waiting, webUrl: getEnv().WEB_URL },
         pulse ?? undefined,
-        { fires, restricted, webUrl: getEnv().WEB_URL },
+        { fires, restricted, windowDays: 90, webUrl: getEnv().WEB_URL },
         { people: slow, firmMedianH: pulse?.negativeMedianH ?? null },
       ),
     ),

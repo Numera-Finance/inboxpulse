@@ -188,6 +188,7 @@ describe('signalNames', () => {
 describe('where the fires are', () => {
   const fires = {
     webUrl: 'https://example.test',
+    windowDays: 90,
     fires: [
       {
         customerId: 'c1',
@@ -340,6 +341,7 @@ describe('preview-mode banner', () => {
     const flat = JSON.stringify(
       buildHomepageCard(null, undefined, undefined, undefined, undefined, {
         webUrl: 'https://web.test',
+        windowDays: 90,
         fires: [{ customerId: 'c1', customer: 'Deserve, Inc.', negative: 18, unanswered: 8, oldestDays: 74, owner: 'S G' }],
       }),
     );
@@ -414,6 +416,7 @@ describe('restricted viewer', () => {
     const flat = JSON.stringify(
       buildHomepageCard(null, undefined, undefined, undefined, undefined, {
         restricted: true,
+        windowDays: 90,
         fires: [],
         webUrl: 'https://web.test',
       }),
@@ -426,6 +429,7 @@ describe('restricted viewer', () => {
     const flat = JSON.stringify(
       buildHomepageCard(null, undefined, undefined, undefined, undefined, {
         restricted: false,
+        windowDays: 90,
         fires: [],
         webUrl: 'https://web.test',
       }),
@@ -452,5 +456,46 @@ describe('slow responder rows', () => {
     expect(flat).toContain('4.7×');
     expect(flat).toContain('the firm');
     expect(flat).not.toContain('vs 12.9h firm-wide');
+  });
+});
+
+/**
+ * A deep link must land on the population its row just claimed.
+ *
+ * The escalations page defaults to subDays(new Date(), 30) while this section
+ * counts 90 days, so a link without a range dropped everything older than a
+ * month: Falconx read "5 unanswered, oldest 50d" and the page answered "No
+ * analyzed emails found" — which reads as the panel inventing numbers.
+ *
+ * And on that page `status=open` means an open TASK, while the section means
+ * "nobody replied". Different populations; asserting the wrong one hides rows
+ * the row itself counted.
+ */
+describe('fires deep link', () => {
+  const url = (): string => {
+    const flat = JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        fires: [
+          { customerId: 'c1', customer: 'Falconx', negative: 6, unanswered: 5, oldestDays: 50, owner: null },
+        ],
+      }),
+    );
+    return decodeURIComponent(flat);
+  };
+
+  it('carries a date range matching the window the row was counted over', () => {
+    expect(url()).toContain('from=');
+    const m = url().match(/from=(\d{4}-\d{2}-\d{2})/);
+    expect(m).not.toBeNull();
+    const days = Math.round((Date.now() - new Date(m![1]).getTime()) / 86400000);
+    expect(days).toBeGreaterThanOrEqual(89);
+    expect(days).toBeLessThanOrEqual(91);
+  });
+
+  it('does not assert status=open, which means an open task, not an unanswered thread', () => {
+    expect(url()).toContain('status=all');
+    expect(url()).not.toContain('status=open&customer');
   });
 });
