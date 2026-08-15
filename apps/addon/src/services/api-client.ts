@@ -553,6 +553,8 @@ export interface Fire {
   unanswered: number;
   oldestDays: number;
   owner: string | null;
+  ownerRole?: string | null;
+  ownerPeers?: number;
 }
 
 /** Where the fires are, by client, with the account manager to call. */

@@ -229,7 +229,10 @@ describe('where the fires are', () => {
    */
   it('says so when nobody owns the client, rather than omitting the row', () => {
     expect(card()).toContain('Truefoundry');
-    expect(card()).toContain('no account manager');
+    // A blank owner always means the client is absent from the allocation
+    // sheet, never "assigned to someone else" — every matched client has an
+    // Account manager. Saying so points the reader at the real fix.
+    expect(card()).toContain('not on the allocation sheet');
   });
 
   /**
@@ -497,5 +500,75 @@ describe('fires deep link', () => {
   it('does not assert status=open, which means an open task, not an unanswered thread', () => {
     expect(url()).toContain('status=all');
     expect(url()).not.toContain('status=open&customer');
+  });
+});
+
+/**
+ * Name the role, and say what is actually wrong when there is nobody.
+ *
+ * The row read only role = 'Account manager', so a client with a Controller, an
+ * Accountant and two Bookkeepers on the sheet still rendered "no account
+ * manager" — true, and useless to someone deciding who to call.
+ *
+ * And a blank owner never means "assigned to someone else": measured on
+ * production, every matched client has an Account manager, so it always means
+ * the client is absent from the allocation sheet. That is a different
+ * instruction to the reader — go add them, not go find them.
+ */
+describe('fire row ownership', () => {
+  const card = (owner: string | null, ownerRole: string | null): string =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        fires: [{ customerId: 'c1', customer: 'Falconx', negative: 6, unanswered: 5, oldestDays: 50, owner, ownerRole }],
+      }),
+    );
+
+  it('names a non-manager role, so the reader knows who they are getting', () => {
+    expect(card('Manpreet Kaur Saini', 'Accountant')).toContain('Manpreet Kaur Saini · Accountant');
+  });
+
+  it('does not clutter the row when the person is the account manager', () => {
+    expect(card('Ganesh Shankar', 'Account manager')).toContain('Ganesh Shankar');
+    expect(card('Ganesh Shankar', 'Account manager')).not.toContain('· Account manager');
+  });
+
+  it('says the client is off the sheet rather than blaming a missing manager', () => {
+    expect(card(null, null)).toContain('not on the allocation sheet');
+    expect(card(null, null)).not.toContain('no account manager');
+  });
+});
+
+/**
+ * When two people share a role, say so instead of picking one.
+ *
+ * 61 client/role pairs on the sheet have two people. Deserve, Inc. has two
+ * account managers, and with no tiebreak the row showed Sukrati Gupta on one
+ * render and Neeraja Suryadevara on the next — a name that changes between
+ * refreshes is worse than either name. The query is now deterministic, and the
+ * row admits the co-holder rather than presenting one of two as THE owner.
+ */
+describe('shared roles', () => {
+  const card = (peers: number): string =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        fires: [{
+          customerId: 'c1', customer: 'Deserve, Inc.', negative: 16, unanswered: 6,
+          oldestDays: 74, owner: 'Neeraja Suryadevara', ownerRole: 'Account manager', ownerPeers: peers,
+        }],
+      }),
+    );
+
+  it('marks that another person holds the same role', () => {
+    expect(card(2)).toContain('Neeraja Suryadevara +1');
+  });
+
+  it('stays clean when the person is the only holder', () => {
+    expect(card(1)).toContain('Neeraja Suryadevara');
+    expect(card(1)).not.toContain('+0');
+    expect(card(1)).not.toContain('+1');
   });
 });

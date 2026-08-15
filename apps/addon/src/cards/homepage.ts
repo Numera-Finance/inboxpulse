@@ -111,6 +111,10 @@ export interface FiresView {
     unanswered: number;
     oldestDays: number;
     owner: string | null;
+    /** Their role — an Accountant is a different call than an Account manager. */
+    ownerRole?: string | null;
+    /** People sharing that role here; 2+ means this row names one of several. */
+    ownerPeers?: number;
   }>;
   webUrl: string;
 }
@@ -140,92 +144,24 @@ export function buildHomepageCard(
   fires?: FiresView,
   slow?: SlowRespondersView,
 ): Card {
-  const sections: CardSection[] = [
-    {
-      widgets: [
-        text('Client-email sentiment, escalations, and account context — right inside Gmail.'),
-        // The compute-provenance row used to read "Gemini 2.5 Flash". It was
-        // removed because we cannot evidence it: across 139,642 rows in
-        // email_analyses, exactly 6 record a model_used, and NONE of the 34,600
-        // sentiment rows do. Naming a model there asserted provenance for
-        // classifications whose provenance was never written.
-        //
-        // Restore this only once model + prompt version are stamped at analysis
-        // write time, and read it from the data rather than hard-coding it.
-      ],
-    },
-  ];
-  // The team-lead question, answered directly and put first.
+  // No lead-in section.
   //
-  // "Is there an angry client nobody is answering?" is the thing a lead opens a
-  // dashboard to work out, and every existing surface answers it INDIRECTLY —
-  // sentiment distributions, escalation counts, turnaround charts — leaving the
-  // reader to do the join. Three conditions do it outright: negative sentiment,
-  // no first reply, inbound.
+  // It held a one-line product description, which the add-on toolbar already
+  // says two inches above, and once that went the section was an empty widget
+  // list rendering as a stray gap at the top of the panel. The card should open
+  // on the most urgent client, not on furniture.
+  const sections: CardSection[] = [];
+  // "Angry and unanswered" USED TO BE HERE, and it has been removed.
   //
-  // Longest wait first: the one ignored longest is the one most likely to have
-  // been forgotten, which is the whole question.
-  if (waiting?.clients.length) {
-    sections.unshift({
-      header: heading(`Angry and unanswered — ${waiting.clients.length}`),
-      widgets: waiting.clients.map((w) =>
-        deco({
-          topLabel: `${w.daysWaiting}d waiting`,
-          text: `<b>${escapeText(w.customer)}</b> — ${escapeText(
-            w.subject.length > 52 ? `${w.subject.slice(0, 49)}…` : w.subject,
-          )}`,
-          wrapText: false,
-          ...(w.customerId
-            ? {
-                button: {
-                  text: 'Open',
-                  onClick: {
-                    openLink: {
-                      // Deep link, so the tab next door opens ON this customer
-                      // rather than on a landing page they then have to search.
-                      url: `${waiting.webUrl}/escalations?customer=${encodeURIComponent(
-                        w.customerId,
-                      )}&status=open`,
-                    },
-                  },
-                },
-              }
-            : {}),
-        }),
-      ),
-    });
-  }
-
-  // The one button worth pressing from the inbox, so it leads.
+  // It listed the same population as "Where the fires are" -- angry clients
+  // nobody has answered -- one row per THREAD instead of one per client. Two
+  // renderings of one fact read as two facts, and in a 300px panel they cost
+  // fifteen rows to say one thing. The per-client version wins because it
+  // carries what a manager acts on: how many are waiting, how old the oldest
+  // is, and who owns the account.
   //
-  // Gmail add-ons cannot see which rows you selected — there are two triggers,
-  // compose and message-open, and neither carries a selection. So instead of
-  // acting on threads the user ticks, this reads the top of the inbox and puts
-  // it in order. Better shape anyway: the value is that the DEFAULT order is
-  // good, not that the reordering tools are.
-  if (baseUrl) {
-    sections.unshift({
-      widgets: [
-        buttons(
-          actionButton('Prioritise my inbox', `${baseUrl}/gmail/triage`, {}),
-        ),
-        deco({
-          text: '<font color="#5f6368">Reads the top of your inbox and orders it by what each thread costs you to leave.</font>',
-          wrapText: true,
-        }),
-      ],
-    });
-  }
-  // ORDER IS AN ARGUMENT, so it is set deliberately here rather than falling
-  // out of the sequence these blocks happen to be written in.
-  //
-  // Reading down the panel: what is on fire -> how bad is it overall -> who to
-  // ask about it. The people list came FIRST in the deployed build, which put
-  // four named colleagues at the top of the panel before the reader had seen a
-  // single client. That is both the wrong priority and a bad way to treat
-  // people: a name ranked above the problem it belongs to reads as an
-  // accusation. sections.unshift puts the LAST block on top, so fires is
-  // unshifted last.
+  // WaitingClientsService still backs the deep links and the "See them" button,
+  // so nothing was deleted server-side; only the duplicate rendering is gone.
 
   // WHO TO INVESTIGATE WITH.
   //
@@ -464,7 +400,19 @@ export function buildHomepageCard(
               ? ` — <font color="#c5221f">${f.unanswered} unanswered</font>`
               : ''),
           // Who to call. A fire without a name attached is an observation.
-          bottomLabel: f.owner ?? 'no account manager',
+          // Name the role, because the fallback changes who you are calling.
+          // And when there is nobody, say what is actually wrong: the client is
+          // not on the allocation sheet. "No account manager" sent the reader
+          // looking for an owner who was never recorded — measured, every
+          // matched client has an Account manager, so a blank here always means
+          // "absent from the sheet", never "assigned to someone else".
+          bottomLabel: f.owner
+            ? (f.ownerRole && f.ownerRole !== 'Account manager'
+                ? `${f.owner} · ${f.ownerRole}`
+                : f.owner) +
+              // Admit the others rather than presenting one of two as THE owner.
+              (f.ownerPeers && f.ownerPeers > 1 ? ` +${f.ownerPeers - 1}` : '')
+            : 'not on the allocation sheet',
           wrapText: true,
           ...(f.customerId && fires.webUrl
             ? {
@@ -506,11 +454,42 @@ export function buildHomepageCard(
   }
 
 
-  // Leads the card when present. Someone opening the panel with no message
-  // open is almost always coming back to what they marked.
+  // ---------------------------------------------------------------------
+  // YOUR INBOX — everything below is about the reader's own mailbox.
+  // ---------------------------------------------------------------------
+  //
+  // The panel was two products interleaved with no boundary. Above this line
+  // the sections are about THE FIRM'S CLIENTS: who is angry, who is waiting,
+  // who is slow. Below it they are about THIS PERSON'S MAIL: order my inbox,
+  // clear my marks. They answer different questions for different reasons, and
+  // rendered at equal weight in one column they read as one undifferentiated
+  // list — a manager scanning for a client hit a button that relabels their own
+  // mailbox.
+  //
+  // Cards v2 gives no grouping primitive: no nesting, no background, no rule
+  // with a label. A section header is the only device available, so the split
+  // is carried by one — "Your inbox" — and by putting every personal tool after
+  // it rather than scattered through the data.
+  if (baseUrl) {
+    sections.push({
+      header: heading('Your inbox'),
+      widgets: [
+        buttons(actionButton('Prioritise my inbox', `${baseUrl}/gmail/triage`, {})),
+        deco({
+          text: '<font color="#5f6368">Reads the top of your inbox and orders it by what each thread costs you to leave.</font>',
+          wrapText: true,
+        }),
+      ],
+    });
+  }
+
+  // A personal tool, so it sits below the divide rather than leading the card.
+  //
+  // It used to unshift to the very top, which put "what I marked in the last
+  // thirty minutes" above every client in the firm who is waiting on an answer.
   if (working?.entries.length) {
-    sections.unshift({
-      header: heading('Working set'),
+    sections.push({
+      header: heading('Your marked threads'),
       widgets: [
         ...working.entries.map((e) =>
         deco({

@@ -996,8 +996,17 @@ export interface Fire {
   /** How many of those nobody has answered. */
   unanswered: number;
   oldestDays: number;
-  /** The account manager to call, or null when the client is not allocated. */
+  /** Who to call, or null when the client is not on the allocation sheet. */
   owner: string | null;
+  /**
+   * Which role that person holds.
+   *
+   * Named because the fallback changes who you are being sent to. An Account
+   * manager is the default answer; an Accountant or Bookkeeper is the person
+   * who does the work when no manager is assigned, and a reader about to make a
+   * call needs to know which they are getting.
+   */
+  ownerRole: string | null;
 }
 
 /**
@@ -1082,12 +1091,48 @@ export class FiresService {
         count(*)::int AS negative,
         count(*) FILTER (WHERE t.first_reply_at IS NULL)::int AS unanswered,
         MAX(EXTRACT(EPOCH FROM (now() - t.received_at)) / 86400)::int AS oldest_days,
-        MAX(u.first_name || ' ' || u.last_name) AS owner
+        MAX(al.who) AS owner,
+        MAX(al.role) AS owner_role,
+        MAX(al.peers) AS owner_peers
       FROM t
       JOIN customers c ON c.id = t.customer_id
-      LEFT JOIN customer_allocations al
-        ON al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = 'Account manager'
-      LEFT JOIN users u ON u.id = al.user_id
+      -- The best available role, not only Account manager.
+      --
+      -- Reading only role = 'Account manager' meant a client with a
+      -- Controller, an Accountant and two Bookkeepers on the sheet still
+      -- rendered "no account manager" — technically true, and useless to
+      -- someone deciding who to call. Manpreet Kaur Saini is an Accountant on
+      -- nine clients and could never appear.
+      --
+      -- Ordered by who is accountable for the relationship first and who does
+      -- the work last, so the answer degrades gracefully instead of vanishing.
+      LEFT JOIN LATERAL (
+        SELECT al.role,
+               COALESCE(u.first_name || ' ' || u.last_name, al.email) AS who,
+               -- How many people share that role on this client. 61 client/role
+               -- pairs have two, which the row has to admit rather than pick a
+               -- winner from silently.
+               count(*) OVER (PARTITION BY al.role)::int AS peers
+        FROM customer_allocations al
+        LEFT JOIN users u ON u.id = al.user_id
+        WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId}
+        ORDER BY CASE al.role
+                   WHEN 'Account manager' THEN 1
+                   WHEN 'Sr. Controller'  THEN 2
+                   WHEN 'Controller'      THEN 3
+                   WHEN 'Accountant'      THEN 4
+                   WHEN 'Bookkeeper'      THEN 5
+                   WHEN 'Sales rep'       THEN 6
+                   ELSE 7
+                 END,
+                 -- Deterministic tiebreak. Without it LIMIT 1 picks whichever
+                 -- row the plan reaches first: Deserve has two account managers
+                 -- and the panel showed Sukrati Gupta on one render and Neeraja
+                 -- Suryadevara on the next. A name that changes between
+                 -- refreshes is worse than either name.
+                 who
+        LIMIT 1
+      ) al ON TRUE
       GROUP BY c.id, c.name
       ORDER BY 4 DESC, 3 DESC
       LIMIT ${limit}
@@ -1100,6 +1145,8 @@ export class FiresService {
       unanswered: Number(r.unanswered ?? 0),
       oldestDays: Number(r.oldest_days ?? 0),
       owner: (r.owner as string | null) ?? null,
+      ownerRole: (r.owner_role as string | null) ?? null,
+      ownerPeers: Number(r.owner_peers ?? 1),
     }));
   }
 }
