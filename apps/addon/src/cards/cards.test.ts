@@ -277,3 +277,31 @@ describe('slowest to answer angry mail', () => {
     expect(card()).toContain('Answered threads only');
   });
 });
+
+/**
+ * The panel must not apologise for a section it is rendering.
+ *
+ * "Per-person breakdown needs reply attribution: 12% of replies currently
+ * identify who sent them" was true about the route it assumed — first_reply_by_id
+ * is 7-12% populated, because replies are matched for a timestamp and then
+ * discarded, so nothing can be attributed by AUTHORSHIP. "Slowest to answer
+ * angry mail" answers the same question through the allocation sheet, which
+ * names one accountable person per client. See ADR-022.
+ */
+describe('no stale unavailability notice', () => {
+  it('does not claim a per-person breakdown is unavailable', () => {
+    const flat = JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, {
+        windowDays: 90,
+        negativeMedianH: 12.9,
+        otherMedianH: 15.1,
+        negativeP90H: 139,
+        negativeCount: 505,
+        trend: [{ month: '2026-05', medianH: 14 }, { month: '2026-08', medianH: 12 }],
+        attributionPct: 12,
+      }),
+    );
+    expect(flat).toContain('to first reply');
+    expect(flat).not.toContain('Per-person breakdown needs');
+  });
+});

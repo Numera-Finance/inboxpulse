@@ -201,14 +201,17 @@ export function buildHomepageCard(
               }),
             ]
           : []),
-        ...(pulse.attributionPct < 50
-          ? [
-              deco({
-                text: `<font color="#5f6368">Per-person breakdown needs reply attribution: ${pulse.attributionPct}% of replies currently identify who sent them.</font>`,
-                wrapText: true,
-              }),
-            ]
-          : []),
+        // The apology that used to sit here — "Per-person breakdown needs reply
+        // attribution: 12% of replies currently identify who sent them" — is
+        // gone, because the per-person breakdown now exists. It was true about
+        // the route it assumed: first_reply_by_id is 7-12% populated, since
+        // replies are matched for a timestamp and then discarded, so nothing
+        // could be attributed by AUTHORSHIP.
+        //
+        // "Slowest to answer angry mail" answers the same question through the
+        // allocation sheet instead, which names one accountable person per
+        // client at ~100% coverage. Telling a reader a section is unavailable
+        // while rendering it two rows above is worse than saying nothing.
       ],
     });
   }
