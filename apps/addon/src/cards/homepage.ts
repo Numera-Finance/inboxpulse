@@ -40,6 +40,8 @@ export interface PulseView {
   otherMedianH: number | null;
   negativeP90H: number | null;
   negativeCount: number;
+  /** Angry clients who waited more than five days for a first reply. */
+  overFiveDays: number;
   trend: Array<{ month: string; medianH: number }>;
   attributionPct: number;
 }
@@ -157,9 +159,47 @@ export function buildHomepageCard(
           : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
     const spark = sparkline(pulse.trend.map((t) => t.medianH));
 
+    // THE TAIL LEADS, the median follows.
+    //
+    // This opened with the median, and the median is the part that is already
+    // fine: 12.9h against 15.1h for routine mail, so half of unhappy clients
+    // hear back the same working day. A lead reading it concluded things were
+    // acceptable, which was true and useless — optimising an acceptable average
+    // changes nothing anyone would notice.
+    //
+    // The damage is entirely in the tail. 56 of 505 answered negative threads
+    // waited over five days, and those are the clients who leave. So the count
+    // of PEOPLE who waited too long is the headline, and the median moves below
+    // it as context.
+    //
+    // A count of people, not a percentile. Nobody can picture "p90", and a
+    // percentile shifts when the population changes, so it cannot be tracked
+    // month to month by a human. "56 clients waited more than five days" can be
+    // carried into a meeting and checked again next month, which is the only
+    // form in which a number gets acted on.
     sections.unshift({
-      header: heading('Reply time to unhappy clients'),
+      header: heading('Unhappy clients left waiting'),
       widgets: [
+        deco({
+          topLabel: `of ${pulse.negativeCount} unhappy clients who got a reply`,
+          text:
+            `<b><font color="#c5221f">${pulse.overFiveDays}</font></b> waited more than <b>5 days</b> to hear back`,
+          wrapText: true,
+          ...(waiting?.webUrl
+            ? {
+                button: {
+                  text: 'See them',
+                  onClick: {
+                    openLink: {
+                      url:
+                        `${waiting.webUrl}/escalations?signal=negative&status=open` +
+                        `&from=${sinceDays(pulse.windowDays)}`,
+                    },
+                  },
+                },
+              }
+            : {}),
+        }),
         deco({
           topLabel: `median over ${pulse.negativeCount} replies`,
           text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? ` — ${verdict}` : ''}`,
@@ -187,11 +227,10 @@ export function buildHomepageCard(
               }
             : {}),
         }),
-        deco({
-          topLabel: 'the tail',
-          text: `1 in 10 waits <b>${hrs(pulse.negativeP90H)}</b> or more`,
-          wrapText: true,
-        }),
+        // The p90 row is gone. It said the same thing as the headline in a
+        // form nobody can act on, and two ways of stating one fact reads as
+        // two facts.
+
         ...(spark
           ? [
               deco({

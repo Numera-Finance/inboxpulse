@@ -518,6 +518,8 @@ export interface DangerPulse {
   otherMedianH: number | null;
   negativeP90H: number | null;
   negativeCount: number;
+  /** Angry clients who waited more than five days for a first reply. */
+  overFiveDays: number;
   trend: Array<{ month: string; medianH: number }>;
   attributionPct: number;
 }
@@ -535,7 +537,10 @@ export async function getDangerPulse(tenantId: string, days = 90): Promise<Dange
     const d = unwrap<DangerPulse>(await res.json());
     // Carry the window so the deep link lands on the same population the
     // median was computed over, rather than a different default.
-    return d ? { ...d, windowDays: days } : null;
+    // Default overFiveDays, so a card built against an older crm-api renders a
+    // zero rather than "undefined waited more than 5 days". The two services
+    // deploy independently and the addon has shipped ahead of the API before.
+    return d ? { ...d, overFiveDays: Number(d.overFiveDays ?? 0), windowDays: days } : null;
   } catch {
     return null;
   }

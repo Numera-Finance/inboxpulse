@@ -622,6 +622,25 @@ export interface DangerPulse {
   /** The tail: 10% of angry clients wait at least this long. */
   negativeP90H: number | null;
   negativeCount: number;
+  /**
+   * Angry clients who waited MORE THAN FIVE DAYS for a first reply.
+   *
+   * The number this product exists to move, and it is deliberately a COUNT of
+   * people rather than a duration. Measured on production: the median is 12.9h
+   * against 15.1h for routine mail — half of unhappy clients hear back the same
+   * working day, so the median is already acceptable and optimising it changes
+   * nothing anyone would notice.
+   *
+   * The damage is entirely in the tail. 56 of 505 answered negative threads
+   * waited over five days, and those are the ones that leave. A median can
+   * drift two hours and mean nothing; moving 56 to 20 is a business outcome.
+   *
+   * Five days rather than p90 because a percentile moves when the population
+   * changes and cannot be acted on — nobody can picture "the 90th percentile".
+   * "Fifty-six clients waited more than five days" is a number a lead can carry
+   * into a meeting and check again next month.
+   */
+  overFiveDays: number;
   /** Median per month, oldest first, for a text sparkline. */
   trend: Array<{ month: string; medianH: number }>;
   /** Share of replies attributable to a person — caveats the per-person view. */
@@ -674,7 +693,10 @@ export class DangerPulseService {
         ) AS median_h,
         percentile_cont(0.9) WITHIN GROUP (
           ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
-        ) AS p90_h
+        ) AS p90_h,
+        count(*) FILTER (
+          WHERE EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600 > 120
+        )::int AS over_five_days
       ${base}
       GROUP BY 1
     `);
@@ -708,6 +730,7 @@ export class DangerPulseService {
       otherMedianH: num(oth?.median_h),
       negativeP90H: num(neg?.p90_h),
       negativeCount: Number(neg?.n ?? 0),
+      overFiveDays: Number(neg?.over_five_days ?? 0),
       trend: (trendRows as unknown as Array<{ month: string; median_h: unknown }>).map((r) => ({
         month: r.month,
         medianH: Number(num(r.median_h) ?? 0),

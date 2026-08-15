@@ -346,3 +346,52 @@ describe('preview-mode banner', () => {
     expect(JSON.stringify(buildHomepageCard(null))).toContain('Preview mode');
   });
 });
+
+/**
+ * The tail leads; the median is context.
+ *
+ * The section opened with the median, and the median is the part that is
+ * already fine — 12.9h against 15.1h for routine mail, so half of unhappy
+ * clients hear back the same working day. A lead reading that concluded things
+ * were acceptable, which was true and useless.
+ *
+ * The damage is in the tail: 56 of 505 answered negative threads waited over
+ * five days, and those are the clients who leave. A COUNT OF PEOPLE, not a
+ * percentile — nobody can picture "p90", and a percentile shifts when the
+ * population changes, so it cannot be tracked month to month by a human.
+ */
+describe('unhappy clients left waiting', () => {
+  const PULSE = {
+    windowDays: 90,
+    negativeMedianH: 12.9,
+    otherMedianH: 15.1,
+    negativeP90H: 143.3,
+    negativeCount: 505,
+    overFiveDays: 56,
+    trend: [{ month: '2026-05', medianH: 39.3 }, { month: '2026-08', medianH: 12 }],
+    attributionPct: 13,
+  };
+  const card = (): string =>
+    JSON.stringify(buildHomepageCard(null, undefined, undefined, undefined, PULSE));
+
+  it('leads with the count of clients who waited too long', () => {
+    expect(card()).toContain('56');
+    expect(card()).toContain('waited more than');
+    expect(card()).toContain('5 days');
+  });
+
+  it('still shows the median, below, with its comparison', () => {
+    expect(card()).toContain('12.9h');
+    expect(card()).toContain('faster than routine mail');
+  });
+
+  /** Two statements of one fact read as two facts. */
+  it('drops the p90 row, which said the same thing unactionably', () => {
+    expect(card()).not.toContain('1 in 10 waits');
+  });
+
+  /** The header must name its own subject — "carrying it" left "it" undefined. */
+  it('names what is being counted in the header', () => {
+    expect(card()).toContain('Unhappy clients left waiting');
+  });
+});
