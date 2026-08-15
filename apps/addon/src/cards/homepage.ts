@@ -414,7 +414,28 @@ export function buildHomepageCard(
   // panel to learn how much mail we have processed, and it cannot change what
   // anyone does next — the same test the label policy applies. It was also
   // taking the space directly under the numbers that CAN be acted on.
-  if (!stats) {
+  // "Not connected" must mean NOTHING came back, not that one call failed.
+  //
+  // This keyed off `stats` alone — the result of /api/internal/emails/stats,
+  // whose display block was removed above. So the only thing that call still
+  // decided was whether to tell the reader the panel was disconnected, and when
+  // it failed on its own the panel printed "not connected to the InboxPulse
+  // API" directly above a live median of 12.9h over 505 real replies. Seen in
+  // production, and it undermines every number on the card: a reader who is
+  // told the panel is in preview mode has no reason to trust the figures beside
+  // the message.
+  //
+  // Connected is therefore decided by whether ANY live view arrived. Each of
+  // these comes from a different endpoint, so the banner now appears only when
+  // the whole internal API is unreachable — which is the state it describes.
+  const connected =
+    Boolean(stats) ||
+    pulse !== undefined ||
+    Boolean(fires?.fires.length) ||
+    Boolean(slow?.people.length) ||
+    Boolean(waiting?.clients.length);
+
+  if (!connected) {
     sections.push({
       widgets: [
         text(

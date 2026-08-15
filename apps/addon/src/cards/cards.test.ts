@@ -305,3 +305,44 @@ describe('no stale unavailability notice', () => {
     expect(flat).not.toContain('Per-person breakdown needs');
   });
 });
+
+/**
+ * "Preview mode" must mean nothing came back, not that one call failed.
+ *
+ * Seen in production: the banner keyed off getEmailStats alone, whose display
+ * block had been removed, so a failing stats call printed "not connected to the
+ * InboxPulse API" directly above a live median of 12.9h over 505 real replies.
+ * That undermines every number on the card — a reader told the panel is in
+ * preview mode has no reason to trust the figures beside the message.
+ */
+describe('preview-mode banner', () => {
+  const PULSE = {
+    windowDays: 90,
+    negativeMedianH: 12.9,
+    otherMedianH: 15.1,
+    negativeP90H: 139,
+    negativeCount: 505,
+    trend: [{ month: '2026-05', medianH: 14 }, { month: '2026-08', medianH: 12 }],
+    attributionPct: 12,
+  };
+
+  it('is absent when live data arrived, even with no stats', () => {
+    const flat = JSON.stringify(buildHomepageCard(null, undefined, undefined, undefined, PULSE));
+    expect(flat).toContain('to first reply');
+    expect(flat).not.toContain('Preview mode');
+  });
+
+  it('is absent when only the fires list arrived', () => {
+    const flat = JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        fires: [{ customerId: 'c1', customer: 'Deserve, Inc.', negative: 18, unanswered: 8, oldestDays: 74, owner: 'S G' }],
+      }),
+    );
+    expect(flat).not.toContain('Preview mode');
+  });
+
+  it('still appears when the whole internal API is unreachable', () => {
+    expect(JSON.stringify(buildHomepageCard(null))).toContain('Preview mode');
+  });
+});

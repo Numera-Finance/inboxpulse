@@ -26,7 +26,6 @@ import {
   getAccountContext,
   getAnalyzedEmail,
   getDangerPulse,
-  getEmailStats,
   getFires,
   getSlowResponders,
   getThreadFlagged,
@@ -913,7 +912,12 @@ app.post('/homepage', async (c) => {
   const verified = await verifyRequest(c.req.header('authorization'), event);
   if (!verified.ok) return c.json(pushCard(buildHomepageCard(null)));
   const tenantId = await resolveTenant(verified.email);
-  const stats = tenantId ? await getEmailStats(tenantId) : null;
+  // Not fetched any more. The only thing /api/internal/emails/stats fed was the
+  // "Emails ingested / Analyzed" block, which was removed as a fact about our
+  // pipeline rather than the reader's day. What remained was a serial round-trip
+  // on every homepage render — up to the 2s API deadline — for a number nothing
+  // displays, whose failure was the sole trigger for the "not connected" banner.
+  const stats = null;
   // Resolve the real viewer before asking — the query is entitlement-scoped and
   // "who is unhappy" must not become a way to read accounts they cannot open.
   const who = tenantId && verified.email ? await resolveViewer(tenantId, verified.email) : null;
