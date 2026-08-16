@@ -72,6 +72,12 @@ async function gapi(
     }
     return (await res.json()) as Record<string, unknown>;
   } catch (err) {
+    // MissingScopeError is raised inside this try, so without this line the
+    // catch-all swallows it and returns null — defeating the throw four lines
+    // above and restoring exactly the bug it was written to fix. A denied
+    // permission then reaches the panel as an empty list, and "Prioritise my
+    // inbox" answers "Nothing in the inbox to prioritize" to a full mailbox.
+    if (err instanceof MissingScopeError) throw err;
     logger.warn({ err: String(err), path }, 'gmail label call failed');
     return null;
   } finally {

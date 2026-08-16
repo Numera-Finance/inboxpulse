@@ -770,7 +770,21 @@ app.post('/gmail/triage', async (c) => {
   const { oauthToken } = getGmail(event);
   if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
 
-  const threads = await recentThreads(oauthToken, 'in:inbox -category:promotions', 12);
+  let threads;
+  try {
+    threads = await recentThreads(oauthToken, 'in:inbox -category:promotions', 12);
+  } catch (err) {
+    // Gmail answers 403 when the install was approved without the mailbox
+    // permission — the consent screen ticks nothing by default. Reporting that
+    // as "nothing to prioritize" tells someone with 356 unread messages that
+    // their inbox is clear.
+    if (err instanceof MissingScopeError) {
+      return c.json(
+        notify('Gmail did not allow this. Re-install and accept the Gmail permission to prioritize your inbox.'),
+      );
+    }
+    throw err;
+  }
   if (!threads.length) return c.json(notify('Nothing in the inbox to prioritize.'));
 
   const classified = await Promise.all(

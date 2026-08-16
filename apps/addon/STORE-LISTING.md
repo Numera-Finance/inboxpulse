@@ -211,6 +211,31 @@ from your Gmail account". It is required only for attaching labels to threads �
 `users.threads.modify` is the only API that does it, and `gmail.labels` manages
 label definitions rather than attachments. There is no narrower option.
 
+## Enable the Gmail API on the listing project
+
+**`gmail.googleapis.com` must be enabled on `inboxpulse-addon-listing`, not only
+on `project-y-email-sentiment`.**
+
+Moving the listing to a second project moved the OAuth client with it
+(`369372211306-…`). A Gmail call authenticated with a token that client minted
+is checked against *that client's* project, so with the API off there, every
+call returns:
+
+    403 PERMISSION_DENIED
+
+regardless of which scopes the user approved. Reinstalling and ticking "Select
+all" does not help, because consent was never the problem.
+
+The symptom points the wrong way twice. The management panel keeps working —
+it reads the database, not the mailbox — so the add-on looks healthy. And the
+failure surfaced as *"Nothing in the inbox to prioritize"* on a 356-message
+inbox, because a denied call and an empty inbox both arrived as an empty list.
+
+    gcloud services enable gmail.googleapis.com --project inboxpulse-addon-listing
+
+Enabling `gsuiteaddons.googleapis.com` and the Marketplace SDK is not enough;
+those let the add-on *run*, not read mail.
+
 ## App Configuration → HTTP deployment
 
 Point the listing at whichever deployment matches the scopes above:
