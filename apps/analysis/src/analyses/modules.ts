@@ -80,11 +80,58 @@ NEUTRAL even when worded strongly or with time-pressure (NOT EXHAUSTIVE — reas
 - The customer disagreeing with a correction we proposed, or saying a change is not needed — this is a discussion, not dissatisfaction
 - An informational or operational notice — a company winding down, a routine AR/AP review, providing documents we requested, or looping in a colleague to coordinate
 
-DOUBLE-CHECK before finalizing your classification. Re-read the email and ask:
-"Is the customer ASSERTING that WE did something wrong, failed them, or caused harm — as the MAIN point of this email?"
-- If YES → NEGATIVE.
-- If they are only requesting, asking, clarifying, confirming, negotiating price, venting about a third party, owning their own delay, or applying time-pressure without a complaint about us → NEUTRAL.
-Revise your initial classification if this check disagrees with it.
+THE ONE QUESTION. Everything above is detail; this is the decision:
+
+"Does the client state or imply that WE did something wrong, failed to deliver,
+missed something, were too slow, or caused them a problem?"
+
+- YES → NEGATIVE. This holds even when they are polite, even when it is phrased
+  as a question ("why is this missing?", "I don't see the return"), and even
+  when they are chasing us again about something still outstanding.
+- NO → NEUTRAL.
+
+A REQUEST CAN BE A COMPLAINT. This is the single most common mistake: the
+client wraps a failure in a polite ask, and the classifier reads the grammar
+instead of the content. Look at WHAT is being asked for, not how.
+
+- "Please send me the reports" → NEUTRAL. New work.
+- "No vendor bills entered. Please send me the reports" → NEGATIVE. Work we
+  already owed is missing, and they are telling us so.
+- "Can you set up the payroll account?" → NEUTRAL. New work.
+- "Please reconcile and FIX the LiveARR row" → NEGATIVE. Fixing implies we got
+  it wrong.
+- "Can you share a timeline?" → NEUTRAL.
+- "Can you share a timeline for what Drew asked for last week?" → NEGATIVE.
+  They are chasing something already promised.
+- "Please check why the balance is off" → NEGATIVE. They found a discrepancy in
+  our work.
+- "It was accidentally enabled and we incurred big fees" → NEGATIVE. We caused
+  a cost, however calmly they describe it.
+
+The test: does the request point at work we ALREADY owed, delivered wrongly, or
+left incomplete? Then it is NEGATIVE, no matter how courteous the wording. Only
+a request for genuinely NEW work is NEUTRAL.
+
+Four cases are commonly mistaken for YES. Each is NEUTRAL *on its own* — but
+each becomes NEGATIVE the moment the client also alleges a failure on our side.
+Do not stop at the first match; ask whether we are blamed as well.
+
+- Frustration aimed at a THIRD PARTY (Gusto, Deel, a bank, the IRS, a state
+  agency, their own auditor or team). NEUTRAL — unless they say we caused it,
+  or that we failed to handle it.
+- A fee, price, quote or scope discussion. NEUTRAL — unless the complaint is
+  that we billed for work we did not do, or delivered less than we charged for.
+- Time-pressure alone: "ASAP", "by Friday", "please prioritise". NEUTRAL —
+  unless the urgency exists because we already missed something.
+- Not about our firm: forwarded notices, portal alerts, feedback forms about
+  someone else's business. NEUTRAL — no exception; this one really is not ours.
+
+Measured on 120 production negatives, the classifier is right about 72% of the
+time and over-fires on the rest, concentrated in exactly these four cases. It
+does not under-fire: a search of mail labelled neutral found the complaint
+language there belongs to third parties and automated notices, not to missed
+complaints. Correct the over-firing WITHOUT becoming reluctant — a missed
+complaint costs more than a false one.
 
 EXAMPLES - Classify as NEUTRAL (NOT positive):
 - "Yes, that works. Thank you." → NEUTRAL (simple acknowledgment)
@@ -108,7 +155,7 @@ KEY TEST: Ask yourself — "Is the primary purpose of this email to express posi
 
 Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
-  version: 'v1.5',
+  version: 'v1.6',
 };
 
 /**
