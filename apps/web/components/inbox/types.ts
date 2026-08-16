@@ -1,3 +1,4 @@
+import type { EmailThread } from '@crm/clients';
 /**
  * Abstracted Inbox Component Types
  *
@@ -174,6 +175,12 @@ export interface InboxItemContent {
   to?: InboxParticipant[];
   cc?: InboxParticipant[];
   bcc?: InboxParticipant[];
+
+  /**
+   * Every message on the conversation, oldest first, with the gap between each.
+   * Present only when the caller fetched it — the list view does not need it.
+   */
+  thread?: EmailThread;
 
   /** Attachments */
   attachments?: InboxAttachment[];

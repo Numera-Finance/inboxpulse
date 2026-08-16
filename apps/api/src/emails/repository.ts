@@ -129,6 +129,72 @@ export class EmailRepository extends ScopedRepository {
    * Note: tenantId will be extracted from the email record
    * Future: tenant isolation will be handled via requestHeader middleware
    */
+  /**
+   * Every message on the thread that holds `emailId`, with everyone addressed
+   * on each one.
+   *
+   * Two round trips rather than one join: joining a per-participant table onto
+   * a per-message query fans out — one message with four recipients returns
+   * four rows, and the counts downstream are silently wrong. That mistake has
+   * already been made once in this codebase (501 threads became 2,089), so the
+   * participants are fetched separately and grouped in memory.
+   *
+   * Tenant-scoped on the emails query. Participants are then constrained to the
+   * ids that query returned, so they inherit the same scope.
+   */
+  async findThreadWithParticipants(tenantId: string, emailId: string) {
+    const focused = await this.db
+      .select({ threadId: emails.threadId })
+      .from(emails)
+      .where(and(eq(emails.id, emailId), eq(emails.tenantId, tenantId)))
+      .limit(1);
+
+    const threadId = focused[0]?.threadId ?? null;
+
+    // A message with no thread_id is its own thread of one. Falling back to the
+    // email id keeps the panel working rather than rendering an empty rail.
+    const messages = await this.db
+      .select({
+        id: emails.id,
+        subject: emails.subject,
+        body: emails.body,
+        fromEmail: emails.fromEmail,
+        fromName: emails.fromName,
+        receivedAt: emails.receivedAt,
+      })
+      .from(emails)
+      .where(
+        and(
+          eq(emails.tenantId, tenantId),
+          threadId ? eq(emails.threadId, threadId) : eq(emails.id, emailId)
+        )
+      )
+      .orderBy(asc(emails.receivedAt));
+
+    if (messages.length === 0) return { threadId, messages: [], participants: [] };
+
+    const participants = await this.db
+      .select({
+        emailId: emailParticipants.emailId,
+        email: emailParticipants.email,
+        name: emailParticipants.name,
+        direction: emailParticipants.direction,
+        participantType: emailParticipants.participantType,
+      })
+      .from(emailParticipants)
+      .where(
+        and(
+          eq(emailParticipants.tenantId, tenantId),
+          inArray(
+            emailParticipants.emailId,
+            messages.map((m) => m.id)
+          )
+        )
+      );
+
+    return { threadId, messages, participants };
+  }
+
   async findById(emailId: string) {
     const result = await this.db
       .select()

@@ -311,6 +311,24 @@ app.post('/analyzed/export', async (c) => {
 /**
  * GET /api/emails/analyzed/:emailId - Get single analyzed email with task overlay
  */
+/**
+ * GET /api/emails/:emailId/thread - the whole conversation, for triage.
+ *
+ * Separate from /analyzed/:emailId rather than folded into it: the search
+ * endpoint returns many rows, and attaching every thread's participants to each
+ * would multiply the payload for a panel that only ever shows one at a time.
+ */
+app.get('/:emailId/thread', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ emailId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      return service.getEmailThread(requestHeader, params.emailId);
+    }
+  );
+});
+
 app.get('/analyzed/:emailId', async (c) => {
   return handleGetRequestWithParams(
     c,

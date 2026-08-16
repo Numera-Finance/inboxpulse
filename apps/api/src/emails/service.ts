@@ -13,6 +13,9 @@ import type {
   AnalyzedEmailSearchResponse,
   AnalyzedEmail,
   AnalyzedEmailExportItem,
+  EmailThread,
+  ThreadMessage,
+  ThreadParticipant,
   FirstReplyMarker,
   SubmitTagSuggestionRequest,
   SubmitTagSuggestionResponse,
@@ -1623,6 +1626,82 @@ export class EmailService {
    * `id` may be an email id or a task id (task→email is resolved in the repo),
    * so escalation links that carry a task id still open the right email.
    */
+  
+  /**
+   * The whole conversation around one message, shaped for triage.
+   *
+   * The question a reader has in front of an escalation is never "what does
+   * this message say" — it is "whose turn is it and how long has it been".
+   * So each message carries the gap since the one before it, and every address
+   * is marked staff or not. A four-day gap with a client's name on the last
+   * message is the finding; the body text is supporting evidence.
+   */
+  async getEmailThread(requestHeader: RequestHeader, emailId: string): Promise<EmailThread> {
+    const { threadId, messages, participants } = await this.emailRepo.findThreadWithParticipants(
+      requestHeader.tenantId,
+      emailId
+    );
+
+    const byEmail = new Map<string, typeof participants>();
+    for (const p of participants) {
+      const list = byEmail.get(p.emailId) ?? [];
+      list.push(p);
+      byEmail.set(p.emailId, list);
+    }
+
+    const pick = (id: string, direction: 'to' | 'cc'): ThreadParticipant[] =>
+      (byEmail.get(id) ?? [])
+        .filter((p) => p.direction === direction)
+        .map((p) => ({
+          email: p.email,
+          name: p.name ?? null,
+          isStaff: p.participantType === 'user',
+        }));
+
+    let previousAt: Date | null = null;
+
+    const out: ThreadMessage[] = messages.map((m) => {
+      const senders = (byEmail.get(m.id) ?? []).filter((p) => p.direction === 'from');
+      // participant_type on the sender row is the authority on whether the firm
+      // wrote this. Guessing from the domain breaks for the shared mailboxes
+      // clients are cc'd into.
+      const senderIsStaff = senders.some((p) => p.participantType === 'user');
+
+      const receivedAt = m.receivedAt as Date;
+      const hoursSincePrevious =
+        previousAt === null
+          ? null
+          : Math.round(((receivedAt.getTime() - previousAt.getTime()) / 3_600_000) * 10) / 10;
+      previousAt = receivedAt;
+
+      return {
+        id: m.id,
+        subject: m.subject,
+        receivedAt,
+        from: {
+          email: m.fromEmail,
+          name: m.fromName ?? senders[0]?.name ?? null,
+          isStaff: senderIsStaff,
+        },
+        to: pick(m.id, 'to'),
+        cc: pick(m.id, 'cc'),
+        // previewBody reuses the extraction pipeline (htmlToText +
+        // extractLatestReply) that the add-on sidebar already relies on.
+        // Slicing e.body directly put `<div dir="ltr">` and
+        // `class="gmail_quote"` on the rail as if they were prose.
+        snippet: (previewBody(m.body ?? null)?.text ?? '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 200),
+        isFocused: m.id === emailId,
+        inbound: !senderIsStaff,
+        hoursSincePrevious,
+      };
+    });
+
+    return { threadId, messages: out };
+  }
+
   async getAnalyzedEmailById(
     requestHeader: RequestHeader,
     id: string

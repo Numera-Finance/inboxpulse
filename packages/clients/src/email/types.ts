@@ -175,3 +175,55 @@ export const submitTagSuggestionResponseSchema = z.object({
 });
 
 export type SubmitTagSuggestionResponse = z.infer<typeof submitTagSuggestionResponseSchema>;
+
+/* ------------------------------------------------------------------------- *
+ * Thread view — the whole conversation, so a reader can triage it
+ *
+ * A single message with no recipients answers none of the questions triage
+ * actually asks: who is on this, whose turn is it, and how long has it sat.
+ * `analyzedEmailSchema` carries only `fromEmail`, which is why the detail
+ * panel's "To:" line rendered empty — there was never a field behind it.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One address on a message.
+ *
+ * `isStaff` mirrors `email_participants.participant_type = 'user'`. It is the
+ * single most useful bit on this object: "who is us and who is them" is the
+ * first thing a reader needs and the slowest thing to work out by squinting at
+ * domains.
+ */
+export const threadParticipantSchema = z.object({
+  email: z.string(),
+  name: z.string().nullable(),
+  isStaff: z.boolean(),
+});
+
+export type ThreadParticipant = z.infer<typeof threadParticipantSchema>;
+
+/** One message in the conversation, with everyone it was addressed to. */
+export const threadMessageSchema = z.object({
+  id: z.string().uuid(),
+  subject: z.string(),
+  receivedAt: z.coerce.date(),
+  from: threadParticipantSchema,
+  to: z.array(threadParticipantSchema).default([]),
+  cc: z.array(threadParticipantSchema).default([]),
+  /** First ~200 chars of the body, for the timeline rail. */
+  snippet: z.string(),
+  /** True for the message the reader opened, so the rail can mark it. */
+  isFocused: z.boolean(),
+  /** True when nobody from the firm is on `from` — i.e. they wrote, not us. */
+  inbound: z.boolean(),
+  /** Hours since the previous message. Null on the first. The gap is the story. */
+  hoursSincePrevious: z.number().nullable(),
+});
+
+export type ThreadMessage = z.infer<typeof threadMessageSchema>;
+
+export const emailThreadSchema = z.object({
+  threadId: z.string().nullable(),
+  messages: z.array(threadMessageSchema),
+});
+
+export type EmailThread = z.infer<typeof emailThreadSchema>;

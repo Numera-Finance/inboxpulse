@@ -7,7 +7,7 @@
 
 import type { Email as FrontendEmail } from "@/lib/types"
 import type { Escalation } from "@/lib/data"
-import type { Task, TaskComment, AnalyzedEmail } from "@crm/clients"
+import type { Task, TaskComment, AnalyzedEmail, EmailThread } from "@crm/clients"
 import { Signal, hasSignal } from "@crm/shared"
 import type {
   InboxItem,
@@ -587,9 +587,11 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
  */
 export const analyzedEmailToInboxContent = (
   email: AnalyzedEmail,
-  comments?: TaskComment[]
+  comments?: TaskComment[],
+  thread?: EmailThread | null
 ): InboxItemContent => {
   const timestamp = new Date(email.receivedAt)
+  const focused = thread?.messages.find((m) => m.isFocused) ?? null
 
   const inboxComments = comments?.map((comment) => ({
     id: comment.id,
@@ -608,9 +610,12 @@ export const analyzedEmailToInboxContent = (
       name: email.fromName || extractNameFromEmail(email.fromEmail),
       email: email.fromEmail,
     },
-    to: email.assignedToName
-      ? [{ name: email.assignedToName, id: email.assignedToId || undefined }]
-      : [],
+    // Real recipients off the thread. This used to be the task's assignee,
+    // which has no address at all — so the panel rendered "To:" followed by
+    // nothing, and a reader could not tell who the mail had actually gone to.
+    to: focused?.to.map((p) => ({ name: p.name ?? p.email, email: p.email })) ?? [],
+    cc: focused?.cc.map((p) => ({ name: p.name ?? p.email, email: p.email })) ?? [],
+    thread: thread ?? undefined,
     timestamp,
     comments: inboxComments,
     metadata: {
