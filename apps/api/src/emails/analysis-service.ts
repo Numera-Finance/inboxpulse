@@ -937,8 +937,13 @@ export class EmailAnalysisService {
     }
 
     // Churn
+    //
+    // 'none' carries no signal. Before the enum had it, the lowest value the
+    // model could return was 'low', so 87% of all mail arrived here carrying
+    // CHURN_LOW — a risk level on seven messages in eight is a field, not a
+    // finding. The switch falls through for 'none' and nothing is pushed.
     const churnResult = analysisResults['churn'];
-    if (churnResult?.riskLevel) {
+    if (churnResult?.riskLevel && churnResult.riskLevel !== 'none') {
       switch (churnResult.riskLevel) {
         case 'low':
           signals.push(Signal.CHURN_LOW);

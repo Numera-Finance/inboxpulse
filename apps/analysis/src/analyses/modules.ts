@@ -209,23 +209,39 @@ export const churnModule: AnalysisModule = {
   name: 'churn',
   description: 'Assess customer churn risk',
   instructions: `## Churn Risk Assessment
-Assess the risk level that this customer will churn.
+Assess whether this email carries evidence that the customer may leave.
 
 Return:
-- riskLevel: low|medium|high|critical
+- riskLevel: none|low|medium|high|critical
 - confidence: 0-1
-- indicators: array of specific phrases or behaviors indicating churn risk
+- indicators: array of the specific phrases that drove the level. MUST be empty when riskLevel is none.
 - reason: summary explanation (optional)
 
-Churn risk indicators:
-- Threats to cancel or switch providers
-- Mentioning competitors positively
-- Repeated complaints or unresolved issues
-- Loss of trust or confidence
-- Price sensitivity concerns
-- Feature gaps compared to competitors`,
+CRITICAL RULE: Default to NONE. The overwhelming majority of business email
+carries no churn signal at all. Return NONE unless the email contains at least
+one of the indicators below — an ordinary request, invoice, scheduling note or
+status update is NONE, not low.
+
+Do not treat routine operational friction as churn risk. A client asking where
+something is, correcting a figure, or chasing a deadline is doing business with
+us, not leaving us.
+
+Churn risk indicators — return a level above NONE only if one is present:
+- Threats to cancel, switch providers, or not renew
+- Mentioning competitors positively, or saying they are evaluating alternatives
+- Repeated complaints about the same unresolved issue
+- Explicit loss of trust or confidence in us
+- Disputing our fees as poor value, or asking to reduce scope to cut cost
+- Naming a capability gap as a reason to look elsewhere
+
+Level guide:
+- none: no indicator present. This is the default and the most common answer.
+- low: one indicator, stated mildly and in passing
+- medium: an indicator stated directly, or more than one present
+- high: explicit dissatisfaction with our value, or an alternative being considered
+- critical: a stated intention to leave, cancel, or escalate to termination`,
   schema: churnSchema,
-  version: 'v1.0',
+  version: 'v1.1',
 };
 
 /**

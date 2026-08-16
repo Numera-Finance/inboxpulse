@@ -70,7 +70,16 @@ export type UpsellResult = z.infer<typeof upsellSchema>;
  * Churn Risk Schema
  */
 export const churnSchema = z.object({
-  riskLevel: z.enum(['low', 'medium', 'high', 'critical']),
+  /**
+   * 'none' exists because its absence made this field meaningless.
+   *
+   * The enum was low|medium|high|critical, so the model had no way to say "no
+   * churn risk in this email" — the floor was 'low'. It duly returned 'low' for
+   * 29,312 of 33,497 assessments, 87% of all mail, including invoice reminders
+   * and scheduling notes. That was not a judgement about the customer; it was
+   * the shape of the enum.
+   */
+  riskLevel: z.enum(['none', 'low', 'medium', 'high', 'critical']),
   confidence: z.number().min(0).max(1),
   indicators: z.array(z.string()).describe('Specific phrases or behaviors indicating churn risk'),
   reason: llmOptional(z.string()),
