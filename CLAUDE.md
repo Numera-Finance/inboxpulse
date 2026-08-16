@@ -64,6 +64,25 @@ mailbox. Same bar as the connector spec in `apps/addon/src/services/connectors.t
   only system values. Writes via `users.messages.modify` never touch it. Check
   Gmail, not the mirror.
 
+## Two Email-Reduction Paths, Not One
+
+Trimming an email before it reaches a model is implemented **twice, in two code
+paths that never meet**. Attribute costs and credit to the right one.
+
+| Path | Code | Used by |
+|------|------|---------|
+| `extractor.ts` | `apps/api/src/emails/extraction/` | the corpus analysis pipeline |
+| `htmlToText` + `stripQuotedReply` | `apps/addon/src/gmail/gmail-api.ts` | the Gmail add-on |
+
+The add-on fetches bodies from Gmail directly and never calls the API's
+extractor, so **add-on token costs are governed entirely by
+`gmail-api.ts`**. Measured over 400 real messages, its stripping cuts billed
+characters by **51%** — median body 17,274 chars raw, 1,232 stripped — and
+leaves only 16% of messages reaching the 4,000-char cap.
+
+Estimating add-on cost from `emails.body` overstates it roughly 2x: that column
+holds the raw HTML and the full quoted chain, neither of which is ever sent.
+
 ## Export Rules
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.
