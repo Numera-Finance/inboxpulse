@@ -610,14 +610,13 @@
   <h2><span class="num">08</span>The risk that is actually yours</h2>
   <p class="lede">
     Your mail already lives on Google’s servers and Gemini is already in your Gmail toolbar. That
-    is not the same as this: your Workspace agreement
-    with Google is not the same legal object as thread text posted to a Gemini endpoint under an
-    API key held by a project four colleagues own. Google’s Gemini API writes the summary. We call
-    it from our own Google Cloud project at <code>generativelanguage.googleapis.com</code>, model
-    <code>gemini-3.1-flash-lite</code>, using an API key we keep in Secret Manager.
-    <strong>This is the Gemini API, not Vertex AI.</strong> A Vertex deployment inside our own
-    project would carry contractual zero-retention and no-training terms. The Gemini API's
-    paid-tier terms apply instead.
+    is not the same as this: your Workspace agreement with Google is not the same legal object as
+    thread text posted to a Gemini endpoint under an API key held by a project four colleagues own.
+    Google’s Gemini API writes the summary. We call it from our own Google Cloud project at
+    <code>generativelanguage.googleapis.com</code>, model <code>gemini-3.1-flash-lite</code>, using
+    an API key we keep in Secret Manager.
+    <strong>We pay for those calls, which puts them on the paid tier.</strong> Google does not
+    train on paid-tier prompts. The free tier does, and we are not on it.
   </p>
   <p>
     The exposure this add-on genuinely adds is different, and it is not technical. Granting the
