@@ -151,7 +151,11 @@ app.get('/logo.png', (c) => {
   // empty circle.
   const png = Buffer.from(LOGO_PNG_BASE64, 'base64');
   return new Response(png, {
-    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' },
+    // One hour, not one day. Google's image proxy caches this, so a wrong icon
+    // shipped with max-age=86400 stays wrong in the Gmail rail for a day — the
+    // only fix being a new URL. An icon is fetched once per user per session;
+    // the bandwidth saved by a long TTL was never worth that.
+    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=3600' },
   });
 });
 
