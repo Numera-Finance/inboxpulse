@@ -378,7 +378,28 @@ individually. Four survived, and none of them earns a place:
 no lesson to attach to them — "they said something did not happen" teaches
 nobody anything, and adding them would dilute the section into noise.
 
-**The 6% is a property of the mail, not of the pattern list.** Explicit register
+**Measured on real production mail:** 99 of 1,015 flagged complaints carry a
+lesson — 1 in 10 — counted on the new message only, after the quoted chain is
+stripped. (A count against raw bodies says 117, but those extra matches sit in
+text somebody quoted from an earlier email, which teaches nothing about what the
+sender just wrote.)
+
+| class | fires on 1,015 real complaints |
+|---|---|
+| **counterfactual** — mined, not invented | **28** |
+| repetition | 25 |
+| litotes | 19 |
+| non-delivery | 19 |
+| challenge | 15 |
+| colloquial failure | 5 |
+| understatement | 4 |
+| small error | 1 |
+
+The class mined from the corpus is the largest single contributor, ahead of every
+hand-written one. Every invented Silicon Valley pattern still fires **zero**
+times across 1,015 real complaints. Mine the register; do not imagine it.
+
+**The remaining 9 in 10 is a property of the mail, not of the pattern list.** Explicit register
 devices are simply rare; the remaining complaints are carried by structure and
 context that no phrase list reaches. Extending coverage would need the embedding
 to find paraphrases the regex cannot enumerate — but an embedding can only say
