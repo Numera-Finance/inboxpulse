@@ -1012,3 +1012,159 @@ populated, and the question is accountability rather than authorship.
   `apps/web/app/escalations/page.tsx` actually reads. A wrong name does not
   error; the page loads unfiltered, so the link looks like it works while
   showing everything. Caught by `deeplink.test.ts`, which exists for this.
+
+### ADR-023: Training labels come from a panel with opposed priors (2026-08-16)
+
+**Status:** Accepted
+
+**Context:** The embedding gate is trained on 1,058 positives that
+`gemini-2.5-flash` produced under sentiment prompt v1.5 — the version that scored
+a request as neutral even when the request implied we had failed. v1.7 fixed the
+prompt, but the training labels still carry the old reading, in both directions:
+complaints filed as neutral, and neutral mail filed as complaints. A single
+judge's errors are systematic rather than random, so they arrive in the training
+set as a consistent, learnable, wrong pattern, and more rows of it do not help.
+
+Voting across several judges corrects less than it appears to. Three cloud models
+given identical instructions agreed unanimously on three non-complaints in a
+49-email hand-coded sample. Two local models turned out to be nested rather than
+independent — `qwen2.5:32b`'s YES set was a strict subset of `gemma3:27b`'s, so
+their agreement carried nothing their disagreement didn't.
+
+Asking each judge a different question is worse, and the failure is worth
+recording. A panel judging stance, consequence, and repetition separately scored
+**33% precision** where all three agreed — below every individual judge. Votes
+combine only when they are votes on one proposition; three answers to three
+questions are three facts, and unanimity across them is an accident.
+
+**Decision:** Hold the question fixed and oppose the **prior**. The same model,
+asked the same thing, told once that missing a quiet grievance is the
+unforgivable error and once that crying wolf is, moves across the whole operating
+range:
+
+| judge | recall | precision |
+|---|---|---|
+| `gemma3:27b` as advocate | 100% | 43% |
+| `gemma3:27b` as defender | 70% | 88% |
+| `qwen2.5:32b` as advocate | 90% | 69% |
+| `qwen2.5:32b` as defender | 60% | 92% |
+
+One model spans 43–88% precision on identical inputs, which makes the prior a
+stronger lever than the choice of model. Labelling rule, in
+`apps/api/scripts/label-panel.py`:
+
+- both **defenders** say yes → positive label (92% clean)
+- both **advocates** say no → negative label (0 complaints lost)
+- anything else → **discarded, unlabelled**
+
+**Consequences:**
+- About a third of mail comes back unlabelled at high prevalence, and that is the
+  product rather than a shortfall. The discarded band is where the judges
+  disagree, and a label there would be a guess written into the training set as a
+  fact.
+- Two ends, two uses: the defender end builds positives that are clean enough to
+  train on, the advocate end builds negatives that are safe to assume contain
+  nothing. A single threshold cannot be both.
+- The panel is local (`ollama`) and runs once per corpus, not per message. The
+  same text is judged four times, tens of thousands of times over, and nothing
+  leaves the machine.
+- `nemotron-3.5-lightning:30b-mlx` is excluded. It returns its answer only inside
+  a thinking block, and scored 15% recall even when that block was read. A judge
+  that will not answer the question counts as NO, which is safe but useless.
+- Calibrate before trusting any run: `label-panel.py calibrate` scores the panel
+  against the hand-coded set. The 92%/0% figures are measured on 49 emails at 41%
+  prevalence and will move on a corpus at 3%.
+
+### ADR-024: The gate ratchets, and the encoder stays frozen (2026-08-16)
+
+**Status:** Accepted
+
+**Context:** The pre-filter is meant to improve as it runs — every message the LLM
+judges becomes another training row. The obvious objection is that the loop is
+closed: the gate picks what gets labelled, so it learns from its own choices,
+gets better at what it already ranks highly, and goes blind to what it buries.
+Worse, its measured recall would climb while true recall fell, because the only
+mail available to measure is mail the gate chose. This is the standard failure of
+a deployed ranker trained on its own logs.
+
+Simulated over the corpus: 1,500 seed labels, then 12 rounds of new mail where
+anything the gate dropped is recorded as "not a complaint" — the poison this
+objection predicts. True recall measured on held-out mail the loop never touched.
+
+| gate sends | start | after 12 closed rounds | with 10% random exploration |
+|---|---|---|---|
+| 40% | 79% | **88%** | 90% |
+| 20% | 58% | **66%** | 69% |
+| 10% | 42% | **47%** | 47% |
+| 2% | 14% | **17%** | 16% |
+
+It does not rot. It improves at every operating point, and exploration adds
+nothing beyond noise.
+
+**Decision:** Ratchet the classifier, never the encoder. `nomic-embed-text` stays
+frozen; retraining fits only the logistic layer over vectors that never move.
+Keep a small random exploration slice regardless of the result above.
+
+**Consequences:**
+- **The frozen encoder is what makes the loop safe, and is therefore
+  load-bearing rather than a convenience.** A buried complaint sits near the
+  caught ones in a space that does not shift, so learning from what was caught
+  drags the boundary toward what was missed. Fine-tuning the embedder would let
+  the map itself drift toward whatever the gate kept feeding it, and the loop
+  would close for real.
+- Fine-tuning is ruled out twice over: it would also invalidate every vector in
+  `emails.embedding`, and `berne-whiskers.ts` would correctly fail open on the
+  model-name mismatch until 135k rows were recomputed.
+- **The random slice is a thermometer, not a corrective.** It is the only mail
+  not selected by the thing being measured, so it is the only way to notice rot
+  if it ever starts. Measuring the gate solely on mail the gate chose is the
+  exact error made against the shipped coefficients this same day.
+- No cost argument survives for a tight gate: full LLM coverage of every client
+  email is roughly $7/month at current volume. The gate earns its place on
+  latency and on ordering the queue, not on the bill.
+- The simulation grades against v1.5 LLM labels, so it demonstrates the loop
+  recovering *that judge's* opinions. A blind spot shared by the judge and the
+  gate is invisible to it, which is a further argument for the random slice.
+
+### ADR-025: Synthetic mail is a cold start, not a supplement (2026-08-16)
+
+**Status:** Accepted
+
+**Context:** LLM-generated client/firm correspondence is free and unlimited, so it
+is a standing temptation for enlarging the training set. Tested properly: 3,000
+messages from `gemini-3.1-flash-lite` across 30 scenarios and 8 registers, in two
+shapes — standalone emails, and the final client message of a generated
+three-turn thread — embedded with the same `nomic-embed-text` and added to the
+real training half.
+
+| synthetic rows added | catch@20% | gain | 90% CI |
+|---|---|---|---|
+| 500 | 71% | +1.7 | [-1.7, +5.1] |
+| 1,000 | 70% | +1.9 | [-1.5, +5.4] |
+| 2,000 | 71% | +1.3 | [-2.8, +5.3] |
+| 3,000 | 70% | **+0.6** | [-3.5, +4.8] |
+
+**Decision:** Do not add synthetic mail to a model that has real labels. Keep it
+for cold start only — trained on synthetic alone, with no real emails at all, the
+gate reaches 54% catch@20%, which is a working day-one filter for a new tenant.
+
+**Consequences:**
+- **The gain shrinking with volume is the finding**, not the small numbers. A
+  real effect narrows toward a stable value as rows are added; this decayed
+  toward zero with an interval as wide as it started. An early +3.3 from 480 rows
+  was noise, and six times the data disproved it. Any future synthetic
+  experiment should be judged on whether the interval tightens, never on a point
+  estimate from a small batch.
+- **Thread-generated messages were the worst, at -1.3 points and winning 27% of
+  resamples.** Instructing a generator to write understated complaints makes them
+  resemble its neutral mail, and the class separation the model needs disappears.
+  Realism and learnability pull in opposite directions here.
+- **Reading the samples predicts nothing.** The thread messages were judged
+  markedly more realistic by eye and sit at 0.725 cosine from real mail —
+  identical to the crude standalone emails, to three decimals, with both 100%
+  separable from real mail by a trivial classifier. Do not accept "it reads like
+  real email" as evidence for any synthetic corpus.
+- The 100% separability is the ceiling. Whatever the generator leaves on the
+  text, the embedding sees it, so past some volume the model learns
+  synthetic-ness rather than complaint-ness. That is consistent with the decay
+  above.

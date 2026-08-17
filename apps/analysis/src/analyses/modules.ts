@@ -59,7 +59,9 @@ CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) a
 
 Classify as NEGATIVE only when the customer ASSERTS that we did something wrong, failed them, or caused them harm — not when they merely ask, request, or rush us. The complaint must be aimed at our firm and be the main point of the email, not a passing remark in an otherwise operational message.
 
-The key test is ASSERTION vs. INQUIRY. Saying "this is wrong / this is missing / you never did X" is dissatisfaction. Asking "is this right? / can you confirm X? / any update on X?" is NOT — it is a neutral question even if it voices mild doubt.
+The key test is ASSERTION vs. INQUIRY. Saying "this is wrong / this is missing / you never did X" is dissatisfaction. Asking "is this right? / can you confirm X?" is NOT — it is a neutral question even if it voices mild doubt.
+
+ONE EXCEPTION, and it is the most common complaint we receive: "any update on X?" where X is work ALREADY OURS. That is not an inquiry, it is a chase. See ASKING WHEN below.
 
 NEGATIVE signals — the customer ASSERTS a problem with us (NOT EXHAUSTIVE — reason about cases not listed here):
 - States our work is wrong or does not match reality ("this is incorrect", "the numbers don't match", "you booked this to the wrong account")
@@ -73,7 +75,7 @@ URGENCY IS NOT ESCALATION. A deadline, due date, or a request to prioritize or e
 
 NEUTRAL even when worded strongly or with time-pressure (NOT EXHAUSTIVE — reason about cases not listed here):
 - A request to send, prepare, fix, update, process, or grant access to something — even if marked urgent or carrying a deadline ("please share the W9 by tomorrow", "give KK QBO access on priority")
-- A question, clarification, status check, or request for confirmation — even if it voices mild uncertainty ("can you confirm the fee?", "I'm not sure I see the confirmation", "is this right?", "any update on the open items?")
+- A question, clarification, or request for confirmation — even if it voices mild uncertainty ("can you confirm the fee?", "I'm not sure I see the confirmation", "is this right?"). NOT a status check on work we already hold — see ASKING WHEN below.
 - A price, fee, quote, or scope discussion ("we don't want to pay for that twice")
 - Frustration aimed at a third party (a bank, the IRS, a vendor, another provider) — even if forwarded to us — UNLESS the customer explicitly blames US or asks us to fix OUR OWN failure
 - The customer explaining or apologizing for their OWN delay, mistake, or missing information ("sorry I couldn't get to it earlier", "I don't have the 2022 W-2")
@@ -100,9 +102,22 @@ instead of the content. Look at WHAT is being asked for, not how.
 - "Can you set up the payroll account?" → NEUTRAL. New work.
 - "Please reconcile and FIX the LiveARR row" → NEGATIVE. Fixing implies we got
   it wrong.
-- "Can you share a timeline?" → NEUTRAL.
+- "Can you share a timeline?" → NEUTRAL, but ONLY for work that has not started.
 - "Can you share a timeline for what Drew asked for last week?" → NEGATIVE.
   They are chasing something already promised.
+- "Could you provide an UPDATE on the expected timeline for the FY2025-26
+  financials?" → NEGATIVE, even though nothing is named as late and the tone is
+  courteous. An update can only be asked for on work already underway, so the
+  word presupposes waiting. Nobody asks how long something will take unless they
+  have started minding.
+
+ASKING WHEN IS A COMPLAINT WHEN THE WORK IS ALREADY OURS. Distinguish by what is
+being asked about, not by whether a previous request is mentioned:
+- timeline for work not yet started → NEUTRAL, they are planning.
+- timeline, status, or "any update" on work we already hold → NEGATIVE, they are
+  waiting and have decided to say so.
+This is the politest form a complaint takes, and the easiest to miss: no failure
+is named, no one is blamed, and every word is courteous.
 - "Please check why the balance is off" → NEGATIVE. They found a discrepancy in
   our work.
 - "It was accidentally enabled and we incurred big fees" → NEGATIVE. We caused
@@ -155,7 +170,12 @@ KEY TEST: Ask yourself — "Is the primary purpose of this email to express posi
 
 Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
-  version: 'v1.6',
+  // v1.7 added "a request can be a complaint". v1.8 added the chase: asking WHEN
+  // about work we already hold, which v1.7 explicitly taught was neutral. The
+  // version is written onto every stored analysis, so changing the prompt
+  // without bumping it makes two different classifiers indistinguishable in the
+  // data.
+  version: 'v1.8',
 };
 
 /**

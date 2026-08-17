@@ -83,6 +83,46 @@ leaves only 16% of messages reaching the 4,000-char cap.
 Estimating add-on cost from `emails.body` overstates it roughly 2x: that column
 holds the raw HTML and the full quoted chain, neither of which is ever sent.
 
+## Judging With More Than One Model
+
+When several models vote on a label, **oppose their priors, never their
+questions** (ADR-023). Judges given the same instructions make the same mistakes,
+so unanimity understates how often they are jointly wrong; judges asked
+*different* questions cannot vote at all, and a panel scoring stance, consequence
+and repetition separately hit 33% precision where all three agreed — below every
+judge alone. Votes combine only when they are votes on one proposition.
+
+The same model told "missing a quiet grievance is the unforgivable error" and
+told "crying wolf is" spans 43–88% precision on identical inputs, which is a
+bigger lever than swapping models. Use both ends: defenders agreeing builds
+positives, advocates agreeing on nothing builds negatives, and the disagreement
+band stays **unlabelled** rather than guessed.
+
+Check independence before combining. `qwen2.5:32b`'s YES set was a strict subset
+of `gemma3:27b`'s — their AND was just qwen and their OR was just gemma, so the
+panel was one judge wearing two hats.
+
+## Measuring a Shipped Model
+
+**A model refit on all rows before shipping cannot be scored against any of
+them.** `berne-whiskers.json` carries coefficients fit on the whole corpus —
+correct for deployment, and fatal to measure. Scoring them back over that corpus
+reports 91% on the train portion and 89% on the "held-out" portion, and a flat
+line across the split reads like strong generalisation when it is memorisation.
+An honest fit that never saw the test mail catches **69%** at the same send
+fraction, not 89%.
+
+So: quote `metrics`, which comes from a separate held-out fit, and never a number
+you produced by scoring the shipped coefficients. To re-derive, refit on the
+first 75% by date and score the rest. The file records `coefficientsFitOn` and
+`metricsMeasuredOn` for exactly this reason.
+
+Two related traps in this corpus:
+- **Split temporally, never randomly.** A random split put halves of the same
+  thread — same client, same dispute — on both sides and flattered PR-AUC by 45%.
+- **Mine features on the training half only.** Phrases mined over everything
+  score well and mean nothing.
+
 ## Export Rules
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.

@@ -55,9 +55,22 @@ function findPart(payload: GmailPayload | undefined, mimeType: string): GmailPay
   return undefined;
 }
 
-/** Crude but adequate HTML → text for the card: drop markup, keep the words. */
+/**
+ * Crude but adequate HTML → text for the card: drop markup, keep the words.
+ *
+ * Comments are stripped before tags because Outlook wraps its CSS in them, and
+ * an unclosed `<style><!--` otherwise leaks `@font-face` declarations through as
+ * "text". Note the comment rule is deliberately the only addition here: matching
+ * an unclosed `<style>` to end-of-document was tried and is WRONG — on a body
+ * whose closing tags are missing it deletes the entire message.
+ *
+ * This does not rescue mail whose body was truncated before the prose began; see
+ * the note on Outlook truncation in the sync path. Nothing this function does
+ * can recover text that was never stored.
+ */
 function htmlToText(html: string): string {
   return html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
