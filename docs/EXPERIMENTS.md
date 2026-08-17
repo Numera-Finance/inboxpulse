@@ -385,6 +385,19 @@ category, take the answer only if it appears verbatim in the source, and then
 validate on mail nobody looked at. Two of those three steps exist because the
 alternative already failed here.
 
+**The phrase layer has a ceiling, and it is reached.** The quoting method was
+then run at scale: 450 complaints the lexicon says nothing about, 442 verbatim
+quotes returned. Across all 442, the most common recurring shape appears **eight
+times** — and it is *"do not"*. The rest of the top ten are *"i am"*, *"have
+not"*, *"can you"*, *"not sure"*. There is no concentrated device left to name;
+442 clients phrased their displeasure 442 different ways.
+
+That closes the branch. **113 of 1,015 complaints (11%) is the ceiling for
+anything phrase-based**, and the limit is the mail, not the effort. The other 89%
+carry displeasure through structure, context and history that no list of
+expressions reaches — which is precisely why the embedding beat the words, and
+why the embedding cannot explain itself.
+
 **Widening it further by n-gram mining is exhausted.** 637 phrases at ≥3× lift were mined from
 the training half; 19 made a checkable claim about what happened rather than an
 inference about mood; each was then validated on the 250 held-out emails
