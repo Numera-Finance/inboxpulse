@@ -75,25 +75,41 @@ def deployed_prompt() -> str:
     return src[i:j].rsplit('`', 1)[0]
 
 
-# The service's query, minus the self/thread exclusion — these 49 emails are not
-# in the pool, so there is nothing of their own to exclude. Class balance and the
-# customer-traffic filter are kept, because they change which examples appear.
+# Mirrors retrieval.ts, minus the self/thread exclusion — these 49 emails are not
+# in the pool, so there is nothing of their own to exclude.
+#
+# Two plain ORDER BY ... LIMIT queries rather than one window function, matching
+# the service. The window-function form cannot use the HNSW index and takes 18
+# seconds against 35,653 vectors; this shape takes 2.8. Keep the two in step: a
+# measurement run against a different query than production runs is measuring
+# nothing production will do.
 SQL = """
-WITH candidates AS (
+WITH complaints AS (
   SELECT e.subject, e.body, ea.sentiment_value,
-         (e.embedding <=> %s::halfvec) AS distance,
-         ROW_NUMBER() OVER (PARTITION BY (ea.sentiment_value = 'negative')
-                            ORDER BY e.embedding <=> %s::halfvec) AS rank_in_class
+         (e.embedding <=> %(v)s::halfvec) AS distance
   FROM emails e
   JOIN email_analyses ea
     ON ea.email_id = e.id AND ea.analysis_type = 'sentiment' AND ea.tenant_id = e.tenant_id
   WHERE e.embedding IS NOT NULL
-    AND ea.sentiment_value IS NOT NULL
+    AND ea.sentiment_value = 'negative'
     AND length(e.body) >= 200
-    AND e.body NOT LIKE '%%poolbrain.com%%'
+    AND e.body NOT LIKE %(pool)s
+  ORDER BY e.embedding <=> %(v)s::halfvec
+  LIMIT %(half)s
+), ordinary AS (
+  SELECT e.subject, e.body, ea.sentiment_value,
+         (e.embedding <=> %(v)s::halfvec) AS distance
+  FROM emails e
+  JOIN email_analyses ea
+    ON ea.email_id = e.id AND ea.analysis_type = 'sentiment' AND ea.tenant_id = e.tenant_id
+  WHERE e.embedding IS NOT NULL
+    AND ea.sentiment_value IS NOT NULL AND ea.sentiment_value <> 'negative'
+    AND length(e.body) >= 200
+    AND e.body NOT LIKE %(pool)s
+  ORDER BY e.embedding <=> %(v)s::halfvec
+  LIMIT %(half)s
 )
-SELECT subject, body, sentiment_value FROM candidates
-WHERE rank_in_class <= %s ORDER BY distance LIMIT %s
+SELECT * FROM complaints UNION ALL SELECT * FROM ordinary ORDER BY distance
 """
 
 
@@ -133,7 +149,7 @@ def main() -> None:
     def examples_for(vec):
         v = f'[{",".join(map(repr, vec))}]'
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(SQL, (v, v, (LIMIT + 1) // 2, LIMIT))
+            cur.execute(SQL, {'v': v, 'pool': '%poolbrain.com%', 'half': (LIMIT + 1) // 2})
             found = cur.fetchall()
         shots = [f"EMAIL: {prepare(r['subject'], r['body'])}\nVERDICT: {r['sentiment_value']}"
                  for r in found if len(prepare(r['subject'], r['body'])) >= 50]
