@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { findIdioms, IDIOMS } from './idioms';
+import { findIdioms, IDIOMS } from '@crm/shared';
 
 interface Row {
   id: string;

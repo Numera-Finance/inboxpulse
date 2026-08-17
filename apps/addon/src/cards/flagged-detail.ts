@@ -10,6 +10,7 @@ import {
   separated,
 } from './widgets';
 import { gmailMessageUrl, type FlaggedMessage } from './flagged';
+import { explain } from '@crm/shared';
 
 /**
  * The expanded view of one flagged message, pushed onto the add-on's own card
@@ -53,6 +54,39 @@ export function buildFlaggedDetailCard(input: FlaggedDetailInput): Card {
       )
     : [text('No signals recorded on this message.')];
   sections.push({ header: heading('Why this was flagged'), widgets: flagWidgets });
+
+  // What the WORDING means, which is a different question from why it was
+  // flagged and the one that outlasts this email.
+  //
+  // The reader is fluent in English and not in American business register. Of 20
+  // complaints a native reader identified, only 5 used explicit failure wording;
+  // the rest arrived as understatement, a repeated ask, or a courteous question
+  // that is really a challenge. Telling someone "this is a complaint" moves one
+  // email. Telling them "'not good to have so many iterations' is understatement
+  // — read it as 'this is bad'" moves every future email, including the ones we
+  // never flag.
+  //
+  // `explain()` renders only patterns that name something literally written; on
+  // 250 held-out emails those fired 11 times and were right 11 times. Patterns
+  // that infer what the writer MEANT scored 6 of 10 and are deliberately silent
+  // here — a confident wrong explanation teaches the wrong lesson, which is
+  // worse than saying nothing.
+  //
+  // Absent on most mail, by design. Roughly 6% of emails carry one.
+  const lessons = body ? explain(body).slice(0, 3) : [];
+  if (lessons.length) {
+    sections.push({
+      header: heading('What the wording means'),
+      widgets: lessons.map((l) =>
+        deco({
+          topLabel: `"${l.quote}"`,
+          text: l.means,
+          bottomLabel: `reads as: ${l.readsAs}`,
+          wrapText: true,
+        }),
+      ),
+    });
+  }
 
   sections.push({
     header: heading('Message'),

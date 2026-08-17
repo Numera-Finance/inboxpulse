@@ -109,3 +109,59 @@ describe('extractBodyText', () => {
     expect(extractBodyText({ mimeType: 'text/plain' })).toBe('');
   });
 });
+
+describe('what the wording means', () => {
+  const base = {
+    messageId: 'm1',
+    subject: 'Re: March close',
+    fromEmail: 'cfo@client.com',
+    receivedAt: '2026-08-01T09:00:00Z',
+    flags: [],
+  } as never;
+
+  it('teaches the register when a reliable pattern is present', () => {
+    const card = buildFlaggedDetailCard({
+      message: base,
+      body: 'Not good to have so many iterations on this.',
+    });
+    const json = JSON.stringify(card);
+    expect(json).toContain('What the wording means');
+    expect(json).toContain('Understatement used as criticism');
+    // The quote anchors the lesson to the text the reader is looking at.
+    expect(json).toContain('Not good');
+  });
+
+  it('stays silent rather than guessing on ordinary mail', () => {
+    const card = buildFlaggedDetailCard({
+      message: base,
+      body: 'Attaching the March bank statements as requested. Thanks!',
+    });
+    expect(JSON.stringify(card)).not.toContain('What the wording means');
+  });
+
+  it('never shows a pattern that infers what the writer meant', () => {
+    // "holding up" and "get on a call" both match the lexicon but scored 6 of 10
+    // held out. A confident wrong lesson is worse than no lesson.
+    const card = buildFlaggedDetailCard({
+      message: base,
+      body: 'This is holding up our KYC — can we get on a call today?',
+    });
+    expect(JSON.stringify(card)).not.toContain('What the wording means');
+  });
+
+  it('shows at most three, so the section stays readable on a phone', () => {
+    const card = buildFlaggedDetailCard({
+      message: base,
+      body:
+        'Not good. As I mentioned last week this is wrong. I thought we agreed. ' +
+        'Why would you need that? We have not received the file. Sorry, but this is a mess.',
+    });
+    const section = JSON.stringify(card).split('What the wording means')[1] ?? '';
+    expect((section.match(/reads as:/g) ?? []).length).toBeLessThanOrEqual(3);
+  });
+
+  it('says nothing when the body could not be fetched', () => {
+    const card = buildFlaggedDetailCard({ message: base });
+    expect(JSON.stringify(card)).not.toContain('What the wording means');
+  });
+});
