@@ -362,7 +362,30 @@ bookkeeper to misread the next email.
 They fire on ~6% of mail. That is not coverage — it is a correct lesson when one
 is available, instead of a plausible guess on everything.
 
-**Widening it by mining is exhausted.** 637 phrases at ≥3× lift were mined from
+**Asking the model to QUOTE, not to categorise.** Sixty real complaints the
+lexicon said nothing about were given to a local model twice. Asked to *name the
+device*, it returned only the eight examples the prompt had supplied — a leading
+question, and the same mistake that produced the invented Silicon Valley
+register. Asked instead to *quote the phrase carrying the displeasure*, 59 of 60
+answers were verbatim from the email, and four devices surfaced:
+
+| device | held-out fires | correct |
+|---|---|---|
+| broader why-questions (*any reason why*, *is a mystery*) | 4 | **4 — added** |
+| a named emotion (*getting a little nervous*) | 0 | — |
+| stated intention to leave (*look for a new accountant*) | 0 | — |
+| flat disagreement (*I don't agree*) | 0 | — |
+
+Three of the four are real in one sample and **absent from the next**. Only the
+why-questions survived, folded into `challenge`: production coverage 99 → 113
+complaints, held-out shown precision **14 fires, 14 correct**.
+
+The method that works is narrow and worth stating: ask for a quote rather than a
+category, take the answer only if it appears verbatim in the source, and then
+validate on mail nobody looked at. Two of those three steps exist because the
+alternative already failed here.
+
+**Widening it further by n-gram mining is exhausted.** 637 phrases at ≥3× lift were mined from
 the training half; 19 made a checkable claim about what happened rather than an
 inference about mood; each was then validated on the 250 held-out emails
 individually. Four survived, and none of them earns a place:

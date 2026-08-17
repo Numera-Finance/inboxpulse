@@ -130,7 +130,18 @@ export const IDIOMS: Idiom[] = [
   },
   {
     id: 'challenge',
-    pattern: /\b(i (don'?t|do not) know what you mean|why (would|do|did) you (need|think|say|do)|where (or how )?do you (find|get)|what makes you|help me understand|walk me through|explain (to me )?(why|how))\b/i,
+    // The "any reason why / why is / is a mystery" forms were added after asking
+    // a local model to QUOTE the phrase carrying displeasure in 60 real
+    // complaints the lexicon said nothing about — rather than to name the device,
+    // which merely echoed back the examples in the question. They fired 4 times
+    // on held-out mail and were right 4 times.
+    //
+    // Three other devices surfaced the same way — a named emotion ("getting a
+    // little nervous"), a stated intention to leave ("look for a new tax
+    // accountant"), and flat disagreement — and all three fired ZERO times on
+    // held-out mail. They are real in one sample and absent from the next, which
+    // is the same trap as the invented Silicon Valley register. Not added.
+    pattern: /\b(i (don'?t|do not) know what you mean|why (would|do|did) you (need|think|say|do)|any reason why|is a mystery|why (is|are|was|were|did|do|does) (the|we|this|that|he|she|they|it) |where (or how )?do you (find|get)|what makes you|help me understand|walk me through|explain (to me )?(why|how))\b/i,
     readsAs: 'a genuine question',
     means: 'A challenge to our judgement dressed as a question. They want justification, not information.',
     weight: 0.85,
