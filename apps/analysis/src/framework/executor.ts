@@ -7,6 +7,7 @@ import type { PromptMessage } from '../services/ai-types';
 import { AnalysisRegistry } from './registry';
 import type { AnalysisDefinition, AnalysisResult, BatchAnalysisResult, ThreadContext } from './types';
 import { logger } from '../utils/logger';
+import { retrieveExamplesForEmail, formatExamples } from '../analyses/retrieval';
 
 /**
  * Render a recipient list as one prompt line: `Nina Patel <nina@acme.com>, ops@acme.com`.
@@ -131,7 +132,8 @@ export class AnalysisExecutor {
   buildBatchedPrompt(
     definitions: AnalysisDefinition[],
     email: Email,
-    threadContext?: ThreadContext
+    threadContext?: ThreadContext,
+    examples?: string
   ): string | PromptMessage[] {
     // Combine all module instructions
     const instructions = definitions
@@ -141,10 +143,61 @@ export class AnalysisExecutor {
     // Build email context
     const emailContext = this.buildEmailContext(email, threadContext);
 
-    // Combine into final prompt
-    const prompt = `${instructions}\n\n${emailContext}`;
+    // Worked examples sit AFTER the instructions and BEFORE the email, so the
+    // model reads the rule, then how the rule was actually applied in this
+    // mailbox, then the message. They are added rather than substituted: on 49
+    // human-judged emails the instructions and the examples score the same, so
+    // there is no evidence for dropping the instructions, and doing it in the
+    // same change would make a regression impossible to attribute.
+    const prompt = examples
+      ? `${instructions}\n\n${examples}\n\n${emailContext}`
+      : `${instructions}\n\n${emailContext}`;
 
     return prompt;
+  }
+
+  /**
+   * Already-judged emails from this mailbox, or undefined.
+   *
+   * Returns undefined for every reason that is not a working set of examples:
+   * the flag is off, sentiment is not among the analyses being run, the email
+   * has no stored vector yet, the tenant has no judged history, or the query
+   * failed. Each of those means "use the written instructions", which is what
+   * production does today, so the fallback is the current behaviour rather than
+   * a degraded one.
+   *
+   * Never throws. An analysis that would have succeeded must not fail because a
+   * retrieval meant to improve it did.
+   */
+  private async buildExamples(
+    definitions: AnalysisDefinition[],
+    email: Email,
+    tenantId: string
+  ): Promise<string | undefined> {
+    // Read straight from process.env rather than through getEnv(). getEnv()
+    // validates the WHOLE environment and calls process.exit(1) when anything
+    // required is missing — it does not throw, so no try/catch can contain it.
+    // Routing an optional feature flag through that would give this feature the
+    // power to kill the service on a cold path, which is the opposite of the
+    // guarantee below.
+    if (process.env.SENTIMENT_EXAMPLES_ENABLED !== 'true') return undefined;
+    if (!definitions.some((d) => d.module.name === 'sentiment')) return undefined;
+    if (!email.messageId) return undefined;
+
+    const count = Number(process.env.SENTIMENT_EXAMPLES_COUNT) || 10;
+
+    try {
+      const found = await retrieveExamplesForEmail(tenantId, email.messageId, count);
+      const rendered = formatExamples(found);
+      logger.debug(
+        { tenantId, emailId: email.messageId, retrieved: found.length, used: rendered.length > 0 },
+        'sentiment examples'
+      );
+      return rendered || undefined;
+    } catch (error) {
+      logger.warn({ err: error, tenantId }, 'example lookup failed; using written instructions');
+      return undefined;
+    }
   }
 
   /**
@@ -171,7 +224,8 @@ export class AnalysisExecutor {
 
     // Build batched schema and prompt
     const batchedSchema = this.buildBatchedSchema(definitions);
-    const batchedPrompt = this.buildBatchedPrompt(definitions, email, threadContext);
+    const examples = await this.buildExamples(definitions, email, tenantId);
+    const batchedPrompt = this.buildBatchedPrompt(definitions, email, threadContext, examples);
 
     logger.debug(
       {
