@@ -26,7 +26,13 @@ Analyze the emotional tone of this email from a customer relationship perspectiv
 Return:
 - value: positive|negative|neutral
 - confidence: 0-1 (how confident you are in the sentiment classification)
-- reason: one short sentence (max ~160 characters) justifying the classification, quoting or paraphrasing the specific phrase that drove it. Always provide this.
+- reason: one short sentence (max ~160 characters) justifying the classification, naming the specific phrase that drove it. Always provide this.
+
+QUOTATION MARKS MEAN VERBATIM. If you put text in quotes it must appear in the email
+character for character. If you are summarising or paraphrasing, write it without
+quotation marks. A reader is shown this sentence to learn how displeasure is worded in
+American business English, so a phrase they study and memorise must be one the client
+actually wrote.
 
 CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) are NEUTRAL. Only classify as POSITIVE when the PRIMARY PURPOSE of the email is to express genuine satisfaction, praise, or heartfelt gratitude — not as a side effect of politeness.
 
@@ -171,11 +177,25 @@ KEY TEST: Ask yourself — "Is the primary purpose of this email to express posi
 Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
   // v1.7 added "a request can be a complaint". v1.8 added the chase: asking WHEN
-  // about work we already hold, which v1.7 explicitly taught was neutral. The
-  // version is written onto every stored analysis, so changing the prompt
-  // without bumping it makes two different classifiers indistinguishable in the
-  // data.
-  version: 'v1.8',
+  // about work we already hold, which v1.7 explicitly taught was neutral. v1.9
+  // stopped inviting the model to put paraphrases inside quotation marks.
+  //
+  // v1.9 is NOT backed by a measurement. An attempt to A/B it against v1.8 was
+  // abandoned as unsound: reproducing the prompt outside the structured-output
+  // path required bolting a "return JSON" instruction onto it, which changed
+  // behaviour enough that a third of responses failed to parse and the OLD
+  // prompt appeared to quote nothing at all — against production data showing it
+  // quotes in 83% of complaints. The harness was measuring itself.
+  //
+  // The change is kept because it is better specified, not because it was shown
+  // to work: v1.8 literally said "quoting or paraphrasing", so a paraphrase in
+  // quotation marks was compliance. What actually protects the reader is
+  // checkQuotes() at display time, which verifies against the body regardless of
+  // what the model does.
+  //
+  // The version is written onto every stored analysis, so changing the prompt
+  // without bumping it makes two different classifiers indistinguishable.
+  version: 'v1.9',
 };
 
 /**
