@@ -315,3 +315,49 @@ panels of judges asked different questions.
 **What actually moved the needle:** embeddings over words · opposed priors over
 model diversity · non-native prompt framing · and reading real output instead of
 trusting tests.
+
+---
+
+## The synthesis: the dead ends are the explanation layer
+
+Every branch above failed as a *detector*. None failed as an *explanation*, and
+that is where they combine.
+
+| component | as a detector | what it is actually for |
+|---|---|---|
+| ego state | adds **zero** recall | 11x lift — *they have left Adult* |
+| idioms | 13% recall | names the device |
+| mined phrases | +0 on the embedding | quotes the receipt |
+| embedding | poor verdict | free instant ranking, 50% precision at top 1% |
+| advocate prior | 43% precision | **100% recall** — misses nothing |
+| defender prior | 60% recall | **92% precision** — the confident tier |
+| the LLM | 68% precision | **95% recall** — the verdict |
+
+Each is bad at being the system and good at exactly one job. The mistake was
+asking each to be the detector and discarding it when it wasn't.
+
+**The annotation layer is the telos more than the flag is.** A flag says *this
+one*. An explanation teaches the register, so the reader catches the next one
+themselves — including mail we never flagged. Raising the floor means the person
+improves, not just the queue.
+
+But only if the explanations are true. Measured on 250 held-out emails, the
+lexicon splits by what each pattern CLAIMS:
+
+| | fires | correct |
+|---|---|---|
+| names something literally written | 15 | **15** |
+| infers what the writer meant | 10 | 6 |
+
+*Repetition*, *non-delivery*, *litotes*, *challenge* and the mined
+*counterfactual* point at words on the page. *Consequence*, *resignation* and
+*escalation* claim to know that stakes rose or that someone gave up — and carry
+every error between them.
+
+`explain()` renders only the literal ones: **11 fires on 250 held-out emails, 11
+correct.** The inferential patterns keep their weight as scoring features and are
+never shown. A wrong score costs one bad flag; a wrong explanation teaches a
+bookkeeper to misread the next email.
+
+They fire on ~6% of mail. That is not coverage — it is a correct lesson when one
+is available, instead of a plausible guess on everything.
