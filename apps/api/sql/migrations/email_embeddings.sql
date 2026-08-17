@@ -35,11 +35,32 @@ CREATE INDEX IF NOT EXISTS emails_embedding_pending_idx
   WHERE embedding IS NULL;
 
 -- Similarity search over the same vector — "other threads that read like this
--- one". Not needed by the gate, which only ever does a dot product against its
--- own coefficients, so create it when something actually queries by similarity.
--- Left here as the intended shape rather than built now: an HNSW index over
--- 134k rows costs build time and write amplification for a feature nobody has
--- asked for yet.
+-- one". Built 2026-08-17, once retrieval of worked examples started querying by
+-- similarity. 45 seconds to build over 35,653 vectors, concurrently, so writes
+-- were never blocked.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS emails_embedding_hnsw_idx
+  ON emails USING hnsw (embedding halfvec_cosine_ops);
+
+-- WHAT THIS INDEX CANNOT DO, measured rather than assumed.
 --
--- CREATE INDEX IF NOT EXISTS emails_embedding_hnsw_idx
---   ON emails USING hnsw (embedding halfvec_cosine_ops);
+-- It serves `ORDER BY embedding <=> $1 LIMIT k` and nothing else. The retrieval
+-- query originally balanced its examples with
+-- ROW_NUMBER() OVER (PARTITION BY class ORDER BY distance), which is correct and
+-- defeats the index completely — ranking within a class needs the distance for
+-- every row, so Postgres sequential-scans all 35,653 vectors. That query took
+-- 18 SECONDS with this index present and 8.8 without it; the index made it
+-- slower by adding a plan the planner then declined to use.
+--
+-- Rewritten as two plain ORDER BY ... LIMIT queries it takes 2.8s.
+--
+-- The remaining cost is the complaints branch. Negatives are 3% of the corpus,
+-- so an approximate scan must go deep before it finds five of them. The fix is a
+-- PARTIAL index over negatives only:
+--
+--   ALTER TABLE emails ADD COLUMN sentiment_value text;   -- denormalised
+--   CREATE INDEX ... ON emails USING hnsw (embedding halfvec_cosine_ops)
+--     WHERE sentiment_value = 'negative';
+--
+-- which needs the label on this table, because an index cannot span two. Not
+-- done: retrieval is off, and 2.8s in a background analysis is tolerable where
+-- 2.8s in a request path would not be.

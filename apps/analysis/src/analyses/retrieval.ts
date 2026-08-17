@@ -64,6 +64,20 @@ const DEFAULT_MIN_BODY = 200;
  * durable fix is a participant test (ADR-020), and this filter stands in until
  * the labels themselves are corrected.
  *
+ * TWO queries, not one window function. The class balance was originally a
+ * ROW_NUMBER() OVER (PARTITION BY ...), which is correct and cannot use an
+ * index: ranking within a class needs the distance for every candidate row, so
+ * Postgres sequential-scans all 35,653 vectors. Measured at 18 SECONDS. Split
+ * into two plain ORDER BY ... LIMIT queries it drops to 2.8s, because that shape
+ * is what an HNSW index can serve.
+ *
+ * Still not fast. The complaints branch stays slow because negatives are 3% of
+ * the corpus, so an approximate-nearest-neighbour scan has to go deep before it
+ * finds five of them — the standard problem with a selective filter over ANN.
+ * The fix is to denormalise `sentiment_value` onto `emails` and build a PARTIAL
+ * hnsw index over the negatives alone; the label currently lives in
+ * email_analyses and an index cannot span two tables. Not done here.
+ *
  * Both classes are represented, half each. Complaints are 3% of mail, so the
  * ten nearest neighbours of anything are almost always ten neutral emails — and
  * a model shown ten neutral examples learns that this mailbox is neutral, which
@@ -102,35 +116,46 @@ export async function retrieveExamplesForEmail(
         SELECT embedding, thread_id
         FROM emails
         WHERE message_id = ${messageId} AND tenant_id = ${tenantId} AND embedding IS NOT NULL
-      )
-      , candidates AS (
-        SELECT e.subject,
-               e.body,
-               ea.sentiment_value,
-               (e.embedding <=> (SELECT embedding FROM q)) AS distance,
-               ROW_NUMBER() OVER (
-                 PARTITION BY (ea.sentiment_value = 'negative')
-                 ORDER BY e.embedding <=> (SELECT embedding FROM q)
-               ) AS rank_in_class
+      ),
+      complaints AS (
+        SELECT e.subject, e.body, ea.sentiment_value,
+               (e.embedding <=> (SELECT embedding FROM q)) AS distance
         FROM emails e
         JOIN email_analyses ea
-          ON ea.email_id = e.id
-         AND ea.analysis_type = 'sentiment'
-         AND ea.tenant_id = e.tenant_id
+          ON ea.email_id = e.id AND ea.analysis_type = 'sentiment' AND ea.tenant_id = e.tenant_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.message_id <> ${messageId}
+          AND e.thread_id <> (SELECT thread_id FROM q)
+          AND e.embedding IS NOT NULL
+          AND ea.sentiment_value = 'negative'
+          AND length(e.body) >= ${minBodyChars}
+          AND e.body NOT LIKE '%poolbrain.com%'
+          AND EXISTS (SELECT 1 FROM q)
+        ORDER BY e.embedding <=> (SELECT embedding FROM q)
+        LIMIT ${Math.ceil(limit / 2)}
+      ),
+      ordinary AS (
+        SELECT e.subject, e.body, ea.sentiment_value,
+               (e.embedding <=> (SELECT embedding FROM q)) AS distance
+        FROM emails e
+        JOIN email_analyses ea
+          ON ea.email_id = e.id AND ea.analysis_type = 'sentiment' AND ea.tenant_id = e.tenant_id
         WHERE e.tenant_id = ${tenantId}
           AND e.message_id <> ${messageId}
           AND e.thread_id <> (SELECT thread_id FROM q)
           AND e.embedding IS NOT NULL
           AND ea.sentiment_value IS NOT NULL
+          AND ea.sentiment_value <> 'negative'
           AND length(e.body) >= ${minBodyChars}
           AND e.body NOT LIKE '%poolbrain.com%'
           AND EXISTS (SELECT 1 FROM q)
+        ORDER BY e.embedding <=> (SELECT embedding FROM q)
+        LIMIT ${Math.floor(limit / 2)}
       )
-      SELECT subject, body, sentiment_value, distance
-      FROM candidates
-      WHERE rank_in_class <= ${Math.ceil(limit / 2)}
+      SELECT * FROM complaints
+      UNION ALL
+      SELECT * FROM ordinary
       ORDER BY distance
-      LIMIT ${limit}
     `);
 
     return rows
