@@ -36,18 +36,23 @@ function prepare(subject: string, body: string): string {
   return t.replace(/\s+/g, ' ').trim().slice(0, 2500);
 }
 
-const here = new URL('.', import.meta.url).pathname;
-// src/emails/prefilter -> apps/api -> scripts
-const dataset = join(here, '..', '..', '..', '..', 'api', 'scripts', 'sentiment-testset.jsonl');
+// Resolved from the working directory, not from `import.meta.url`: this file is
+// type-checked by `pnpm lint` under a tsconfig whose `module` setting forbids
+// `import.meta`, so using it here fails the build for every package.
+// The documented invocation is `pnpm --filter @crm/api exec tsx ...`, which runs
+// with apps/api as the cwd.
+const scripts = join(process.cwd(), 'scripts');
+const dataset = join(scripts, 'sentiment-testset.jsonl');
 const rows: Row[] = readFileSync(dataset, 'utf8')
   .split('\n')
   .filter(Boolean)
   .map((l) => JSON.parse(l) as Row);
 
 // The 50 the lexicon was written against, excluded so this is a real test.
+// See apps/api/scripts/human-labels.md for how they were produced.
 let seen = new Set<string>();
 try {
-  seen = new Set(Object.keys(JSON.parse(readFileSync('/tmp/human-labels.json', 'utf8'))));
+  seen = new Set(Object.keys(JSON.parse(readFileSync(join(scripts, 'human-labels.json'), 'utf8'))));
 } catch {
   /* no human labels present — then nothing is excluded and the numbers are optimistic */
 }

@@ -98,3 +98,7 @@ apps/addon/deployment.live-local.json
 # put client correspondence in every clone of this repository, permanently.
 apps/api/scripts/sentiment-testset.jsonl
 apps/api/scripts/*-testset.jsonl
+
+# Python bytecode from the labelling scripts in apps/api/scripts
+__pycache__/
+*.pyc
