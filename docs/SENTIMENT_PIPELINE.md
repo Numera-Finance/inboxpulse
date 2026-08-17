@@ -23,28 +23,46 @@ knows a timeline chase is a complaint. That single email is the product.
 The measure of any change here is whether it helps someone see that email sooner.
 Not accuracy for its own sake — time to respond.
 
-## The path
+## What is actually running today
+
+Read this before the design below, because most of the design is not switched on.
+
+| stage | state |
+|---|---|
+| `EmailFilterService` drops spam / marketing / automated | **live** — this is the only filter in the request path |
+| Gemini judges sentiment, prompt v1.8 | **live** |
+| `crm-embeddings` Cloud Run service | **deployed**, called only by the backfill script |
+| `emails.embedding` column | **populated**, backfill in progress |
+| `berne-whiskers` gate | **library only — nothing imports it** |
+| retrieval of worked examples | **deployed behind a flag, flag off** |
+| cron refitting the gate | **not built** |
+
+So today every email that survives the spam filter goes to Gemini. There is no
+embedding gate in production, and the cost and latency figures below describe
+what the gate *would* buy, not what it currently saves.
+
+## The intended path
 
 ```
 email arrives (crm-gmail)
    ↓
 [1] embed          768 numbers, stored on the row          crm-embeddings
    ↓
-[2] gate           dot product, microseconds               crm-api
+[2] gate           dot product, microseconds               NOT WIRED IN
    ↓  below the line → stops here, no model call, no cost
    ↓  above  the line
-[3] retrieve       10 nearest already-judged emails        pgvector
+[3] retrieve       10 nearest already-judged emails        BEHIND A FLAG, OFF
    ↓                from the SAME tenant
 [4] judge          Gemini, with those as worked examples   crm-analysis
    ↓
 [5] store          verdict saved → becomes the next email's example
-                   cron refits the gate's coefficients
+                   cron refits the gate's coefficients     NOT BUILT
 ```
 
 Steps 3 and 5 close the loop: every judgement makes the next one better, and
 nobody edits a prompt for that to happen.
 
-### [1] Embed — `apps/embeddings`
+### [1] Embed — `apps/embeddings` (deployed; only the backfill calls it)
 
 **What it buys:** everything downstream. A stored vector makes scoring free and
 retrieval possible.
@@ -61,9 +79,9 @@ cosine** against locally-produced vectors.
 Pinned to `ollama/ollama:0.32.9`, model baked into the image so a cold start does
 not wait on a 274 MB download.
 
-### [2] The gate — `apps/api/src/emails/prefilter/berne-whiskers.ts`
+### [2] The gate — `apps/api/src/emails/prefilter/berne-whiskers.ts` (not wired in)
 
-**What it buys:** ordering and latency, *not* cost. Reading every client email
+**What it would buy:** ordering and latency, *not* cost. Reading every client email
 costs about **$7/month** at current volume, so there was never a cost argument
 for dropping mail. The gate earns its place by putting the worst first and by
 being instant — a dot product over 768 numbers, no model, no network.
@@ -75,7 +93,9 @@ Honest numbers, from a fit that never saw the test mail:
 | 1 in 5 | ~7 in 10 |
 | 2 in 5 | ~9 in 10 |
 
-The deployed threshold sits at 2 in 5.
+The threshold in the model file corresponds to 2 in 5. **Nothing reads it** —
+no code imports `berne-whiskers.ts`. Wiring it in is a deliberate, separate
+decision, and the numbers above are what it would buy.
 
 **Do not re-measure the shipped coefficients against the corpus.** They are refit
 on every row before shipping, which is correct and makes them unmeasurable
@@ -94,7 +114,7 @@ own history without anyone tuning a prompt per customer.
 **Currently off** (`SENTIMENT_EXAMPLES_ENABLED`). See "Not yet demonstrated" in
 ADR-026.
 
-### [4] Judge — `apps/analysis/src/analyses/modules.ts`
+### [4] Judge — `apps/analysis/src/analyses/modules.ts` (live)
 
 `gemini-2.5-flash`, prompt v1.8. Catches 19 of 20 on the human-judged set with 9
 false alarms. This is the only paid step and the only one that decides anything.
@@ -102,7 +122,7 @@ false alarms. This is the only paid step and the only one that decides anything.
 **It is now the binding constraint.** Tightening the gate cannot recover a
 complaint the judge misreads, because the gate already sent it.
 
-### [5] The ratchet
+### [5] The ratchet (not built)
 
 Verdicts become training data. The classifier is refit; **the encoder is never
 retrained** — see ADR-024. That is what stops the loop drifting toward its own
