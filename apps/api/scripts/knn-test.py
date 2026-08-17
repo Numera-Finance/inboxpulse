@@ -66,7 +66,8 @@ def prepare(subject: str, body: str) -> str:
 # Plain ORDER BY ... LIMIT so the HNSW index is usable — a window function here
 # costs 18 seconds against 35,653 vectors instead of milliseconds.
 SQL = """
-SELECT ea.sentiment_value, (e.embedding <=> %(v)s::halfvec) AS distance
+SELECT ea.sentiment_value, (e.embedding <=> %(v)s::halfvec) AS distance,
+       split_part(e.from_email, '@', 2) AS dom
 FROM emails e
 JOIN email_analyses ea
   ON ea.email_id = e.id AND ea.analysis_type = 'sentiment' AND ea.tenant_id = e.tenant_id
@@ -112,8 +113,13 @@ def main() -> None:
             cur.execute(SQL, {'v': f'[{",".join(map(repr, v))}]',
                               'pool': '%poolbrain.com%', 'k': max(KS),
                               'self_id': r['id']})
-            neighbours.append([(r['sentiment_value'], float(r['distance']))
-                               for r in cur.fetchall()])
+            cur2 = conn.cursor()
+            cur2.execute('SELECT split_part(from_email, %s, 2) FROM emails WHERE id = %s',
+                         ('@', r['id']))
+            own = cur2.fetchone()[0]
+            cur2.close()
+            neighbours.append([(x['sentiment_value'], float(x['distance']), x['dom'], own)
+                               for x in cur.fetchall()])
     conn.close()
 
     print(f'{len(rows)} human-judged emails, {sum(truth)} complaints; '
@@ -122,7 +128,7 @@ def main() -> None:
     print('CALLING IT A COMPLAINT when any of the k nearest is one:')
     print(f"{'k':>4}{'flags':>7}{'caught':>8}{'false':>7}{'precision':>11}{'recall':>9}")
     for k in KS:
-        pred = [any(s == 'negative' for s, _ in n[:k]) for n in neighbours]
+        pred = [any(s == 'negative' for s, _, _, _ in n[:k]) for n in neighbours]
         tp = sum(1 for i in range(len(pred)) if pred[i] and truth[i])
         fp = sum(1 for i in range(len(pred)) if pred[i] and not truth[i])
         print(f'{k:>4}{sum(pred):>7}{tp:>8}{fp:>7}'
@@ -131,7 +137,7 @@ def main() -> None:
     print('\nCALLING IT BENIGN when none of the k nearest is a complaint:')
     print(f"{'k':>4}{'cleared':>9}{'wrongly':>9}{'% of mail':>11}")
     for k in KS:
-        clear = [not any(s == 'negative' for s, _ in n[:k]) for n in neighbours]
+        clear = [not any(s == 'negative' for s, _, _, _ in n[:k]) for n in neighbours]
         missed = sum(1 for i in range(len(clear)) if clear[i] and truth[i])
         print(f'{k:>4}{sum(clear):>9}{missed:>9}{100 * sum(clear) / len(clear):>10.0f}%')
 
@@ -146,6 +152,28 @@ def main() -> None:
         print(f'  non-complaints  median {sorted(ben)[len(ben) // 2]:.3f}')
     print('\n  A neighbour at 0.0 is the same email; near 0.3 is the same topic;')
     print('  past ~0.5 "nearest" stops meaning similar.')
+
+    # You are the average of five friends. If all five are the same unhappy
+    # client, the label says more about them than about this email.
+    print('\nECHO CHAMBER — how much of each neighbourhood is the SAME client:')
+    share = [sum(1 for _, _, d, own in n[:5] if d == own) for n in neighbours]
+    print(f'  same-client neighbours, mean {sum(share) / len(share):.1f} of 5')
+    print(f'  neighbourhoods that are 3+ the same client: '
+          f'{sum(1 for s in share if s >= 3)} of {len(share)}')
+
+    print('\nREQUIRING A DIVERSE NEIGHBOURHOOD before promoting (k=5):')
+    print(f"{'max same-client':>17}{'flags':>7}{'caught':>8}{'false':>7}{'precision':>11}")
+    for cap in (5, 4, 3, 2):
+        pred = []
+        for n in neighbours:
+            top = n[:5]
+            same = sum(1 for _, _, d, own in top if d == own)
+            pred.append(same <= cap and any(s == 'negative' for s, _, _, _ in top))
+        tp = sum(1 for i in range(len(pred)) if pred[i] and truth[i])
+        fp = sum(1 for i in range(len(pred)) if pred[i] and not truth[i])
+        note = '  (no cap)' if cap == 5 else ''
+        print(f'{cap:>17}{sum(pred):>7}{tp:>8}{fp:>7}'
+              f'{100 * tp / max(tp + fp, 1):>10.0f}%{note}')
 
 
 if __name__ == '__main__':

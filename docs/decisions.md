@@ -910,11 +910,14 @@ it is meant to keep.
   with no matching row — this predicate begins hiding real client threads, and
   silently, because the section renders empty rather than wrong.** First thing
   to re-check if a section goes quiet.
-- Not fixed here: the analysis pipeline still analyses these threads. The
-  metric no longer reports them, but the tokens are still spent and the data is
-  still stored. A gate belongs in `apps/api/src/emails/analysis-service.ts`
-  alongside the category filter — shared ingestion, so it is a decision for
-  whoever owns that pipeline, not a side effect of this change.
+- **Fixed 2026-08-17.** The gate is now in
+  `apps/api/src/emails/analysis-service.ts`, before the call to apps/analysis
+  rather than after it. The category filter that already discarded these results
+  ran *after* the model had answered, so the tokens were spent and the rows
+  stored regardless; `isCustomerTraffic()` skips the call outright. See
+  `prefilter/third-party.ts` for why the cut is the notification platform
+  (poolbrain.com) and not the client (Blue Ocean Pool Service, whose books we
+  keep and whose own mail must still be read).
 
 ### ADR-021: Non-client customers are recorded, not derived or hardcoded (2026-08-14)
 
