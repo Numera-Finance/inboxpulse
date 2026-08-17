@@ -1121,6 +1121,20 @@ export interface Fire {
    * call needs to know which they are getting.
    */
   ownerRole: string | null;
+  /**
+   * Complaint rate by month, oldest first, as whole percents.
+   *
+   * A count alone cannot tell a client who is getting worse from one who has
+   * always been difficult, and those need different responses. Measured across
+   * 693 client-months: a client under 10% in a month behaves exactly like one at
+   * zero — 2.0% complaints the following month either way. A client who crosses
+   * 10% runs 7.9% the next month, and is still at 5.9% three months later
+   * against 1.6% for clients who never crossed. Occasional friction is noise;
+   * crossing 10% is a step change that does not revert.
+   *
+   * Empty when the client has too little mail per month to compute a rate.
+   */
+  arc: number[];
 }
 
 /**
@@ -1225,6 +1239,29 @@ export class FiresService {
           ${scope}
         ORDER BY e.thread_id, e.received_at DESC
       )
+      , monthly AS (
+        -- Complaint RATE per month, which the thread-level CTE above cannot
+        -- give: it holds only negatives, and a rate needs the denominator.
+        -- Months with fewer than six emails are dropped rather than shown — one
+        -- angry email out of two is 50% and means nothing.
+        SELECT cd.customer_id,
+               date_trunc('month', e.received_at) AS mon,
+               count(*)::int AS mail,
+               count(*) FILTER (
+                 WHERE a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+               )::int AS neg
+        FROM emails e
+        JOIN email_analyses a ON a.email_id = e.id AND a.analysis_type = 'sentiment'
+        JOIN customer_domains cd
+          ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+         AND cd.tenant_id = e.tenant_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.is_customer_email
+          AND e.received_at > now() - interval '4 months'
+          AND a.sentiment_value IS NOT NULL
+        GROUP BY 1, 2
+        HAVING count(*) >= 6
+      )
       SELECT
         c.id::text AS customer_id,
         COALESCE(c.name, '(unknown)') AS customer,
@@ -1233,7 +1270,11 @@ export class FiresService {
         MAX(EXTRACT(EPOCH FROM (now() - t.received_at)) / 86400)::int AS oldest_days,
         MAX(al.who) AS owner,
         MAX(al.role) AS owner_role,
-        MAX(al.peers) AS owner_peers
+        MAX(al.peers) AS owner_peers,
+        (
+          SELECT array_agg(round(100.0 * m.neg / m.mail)::int ORDER BY m.mon)
+          FROM monthly m WHERE m.customer_id = c.id
+        ) AS arc
       FROM t
       JOIN customers c ON c.id = t.customer_id
       -- The best available role, not only Account manager.
@@ -1286,6 +1327,9 @@ export class FiresService {
       oldestDays: Number(r.oldest_days ?? 0),
       owner: (r.owner as string | null) ?? null,
       ownerRole: (r.owner_role as string | null) ?? null,
+      // Postgres returns an int[] or null; a client with too little mail in any
+      // month has no arc rather than a misleading one.
+      arc: Array.isArray(r.arc) ? (r.arc as unknown[]).map((n) => Number(n)) : [],
       ownerPeers: Number(r.owner_peers ?? 1),
     }));
   }

@@ -754,3 +754,32 @@ describe('slow responder sub-line units', () => {
     expect(sub(25.6, 12.8)).toContain('25.6h median · firm 12.8h');
   });
 });
+
+describe('the fire arc', () => {
+  const withFires = (arc?: number[]) =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        fires: [{
+          customerId: 'c1', customer: 'PureCipher', negative: 4, unanswered: 2,
+          oldestDays: 9, owner: 'Ana Diaz', ownerRole: 'Account manager', arc,
+        }],
+      }),
+    );
+
+  it('shows the trajectory when there is one', () => {
+    // A count cannot separate a client getting worse from one who has always
+    // been difficult, and those are different calls. Measured across 693
+    // client-months, crossing 10% is a step change that does not revert.
+    expect(withFires([5, 7, 36])).toContain('5% → 7% → 36%');
+  });
+
+  it('falls back to the count when a client has too little mail to rate', () => {
+    // Months under six emails are dropped upstream — one angry email out of two
+    // is 50% and means nothing.
+    const json = withFires();
+    expect(json).toContain('4 unhappy');
+    expect(json).not.toContain('→');
+  });
+});

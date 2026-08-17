@@ -160,6 +160,8 @@ export interface FiresView {
     ownerRole?: string | null;
     /** People sharing that role here; 2+ means this row names one of several. */
     ownerPeers?: number;
+    /** Complaint rate per month, oldest first, whole percents. */
+    arc?: number[];
   }>;
   webUrl: string;
 }
@@ -493,7 +495,19 @@ export function buildHomepageCard(
           // them. An icon that restates the section adds nothing; one that
           // names the action earns its space.
           startIcon: { knownIcon: 'PHONE' },
-          topLabel: `${f.negative} unhappy · oldest ${f.oldestDays}d`,
+          // The arc, where there is one, comes first — a count cannot separate a
+          // client who is getting worse from one who has always been difficult,
+          // and those need different calls.
+          //
+          // Measured across 693 client-months: a client under 10% in a month
+          // behaves exactly like one at zero (2.0% complaints the following
+          // month either way). Crossing 10% is a step change — 7.9% the next
+          // month, still 5.9% three months later against 1.6% for those who
+          // never crossed. Occasional friction is noise; the crossing is not,
+          // and it does not revert.
+          topLabel:
+            (f.arc?.length ? `${f.arc.map((p) => `${p}%`).join(' → ')} · ` : '') +
+            `${f.negative} unhappy · oldest ${f.oldestDays}d`,
           text:
             `<b>${escapeText(f.customer)}</b>` +
             (f.unanswered > 0

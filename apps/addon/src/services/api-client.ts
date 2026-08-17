@@ -555,6 +555,13 @@ export interface Fire {
   owner: string | null;
   ownerRole?: string | null;
   ownerPeers?: number;
+  /**
+   * Complaint rate per month, oldest first, whole percents.
+   *
+   * Optional because an older API returns rows without it, and a panel that
+   * throws on a missing field is worse than one that shows a count alone.
+   */
+  arc?: number[];
 }
 
 /** Where the fires are, by client, with the account manager to call. */
