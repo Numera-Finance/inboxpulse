@@ -1,7 +1,24 @@
 import model from './model.json';
 
 /**
- * A cheap gate in front of the LLM.
+ * A cheap gate in front of the LLM. SUPERSEDED — see berne-whiskers.ts.
+ *
+ * Both gates are unwired: nothing in the codebase imports either one. If you are
+ * here to wire "the gate" into the request path, wire the OTHER one. Measured on
+ * the same temporal hold-out, same model class, same corpus:
+ *
+ *   this file (tf-idf)     PR-AUC 0.221   84% kept at 40% sent   3.7 MB vocabulary
+ *   berne-whiskers (768d)  PR-AUC 0.264   89% kept at 40% sent   7.5 KB
+ *
+ * 20% better on 500x less, and with nothing to go stale — a word model has to be
+ * retrained as clients and projects change, and an embedding does not. This file
+ * is bigger and older and therefore looks more established, which is the only
+ * reason it might get picked.
+ *
+ * Kept rather than deleted for one reason: the CHASING regex below fires on 0.3%
+ * of mail at 32% precision, 100x base rate, and lifts recall 94% -> 96% for
+ * nothing. Short chasing emails give a bag-of-words model almost nothing to
+ * weigh, so that rule is worth porting wherever the gate ends up living.
  *
  * 96.4% of stored mail is neutral, and every one of those costs a model call to
  * establish. This scores a message with a linear model distilled from 26,641
