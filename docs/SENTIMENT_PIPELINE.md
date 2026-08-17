@@ -30,7 +30,9 @@ Read this before the design below, because most of the design is not switched on
 | stage | state |
 |---|---|
 | `EmailFilterService` drops spam / marketing / automated | **live** — this is the only filter in the request path |
-| Gemini judges sentiment, prompt v1.8 | **live** |
+| Gemini judges sentiment, prompt v1.9 | **live** |
+| "What the wording means" — the teaching layer | **live** (add-on `crm-addon-00059-kxs`) |
+| `checkQuotes` — refuses to show a fabricated quotation | **live**, same revision |
 | `crm-embeddings` Cloud Run service | **deployed**, called only by the backfill script |
 | `emails.embedding` column | **populated**, backfill in progress |
 | `berne-whiskers` gate | **library only — nothing imports it** |
@@ -57,6 +59,11 @@ email arrives (crm-gmail)
    ↓
 [5] store          verdict saved → becomes the next email's example
                    cron refits the gate's coefficients     NOT BUILT
+
+    alongside [4], on the card the reader opens:
+    what the WORDING means                                 LIVE
+    — names the device in ~1 of 10 flagged complaints,
+      and shows nothing rather than guess on the rest
 ```
 
 Steps 3 and 5 close the loop: every judgement makes the next one better, and
@@ -116,7 +123,7 @@ ADR-026.
 
 ### [4] Judge — `apps/analysis/src/analyses/modules.ts` (live)
 
-`gemini-2.5-flash`, prompt v1.8. Catches 19 of 20 on the human-judged set with 9
+`gemini-2.5-flash`, prompt v1.9. Catches 19 of 20 on the human-judged set with 9
 false alarms. This is the only paid step and the only one that decides anything.
 
 **It is now the binding constraint.** Tightening the gate cannot recover a
@@ -167,6 +174,17 @@ before any deploy:
 gcloud run services describe crm-analysis --region=us-central1 \
   --format="value(spec.template.spec.containers[0].image)"
 ```
+
+### Roll back the add-on, which is the only user-visible change
+
+```bash
+gcloud run services update crm-addon --region=us-central1 \
+  --project=project-y-email-sentiment \
+  --image=us-central1-docker.pkg.dev/project-y-email-sentiment/crm/crm-addon@sha256:ca2e7232684ae31011272ae7a87de03f135f71001a5d63ab5245e781a8eb4d77
+```
+
+That digest is the revision preceding the teaching layer. Everything else in this
+document is infrastructure behind a flag; this is the one change a person sees.
 
 ### Stop the embedding service
 
