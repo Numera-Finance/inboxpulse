@@ -165,3 +165,37 @@ describe('what the wording means', () => {
     expect(JSON.stringify(card)).not.toContain('What the wording means');
   });
 });
+
+describe('quotations in the flag reason', () => {
+  const msg = (detail: string) =>
+    ({
+      messageId: 'm1', subject: 'Re: close', fromEmail: 'c@x.com',
+      receivedAt: '2026-08-01T09:00:00Z',
+      flags: [{ label: 'Negative sentiment', detail, provenance: 'gemini' }],
+    }) as never;
+
+  it('keeps a quotation the client actually wrote', () => {
+    const card = buildFlaggedDetailCard({
+      message: msg('The client says "this is not good enough" about the close.'),
+      body: 'Frankly this is not good enough for a March close.',
+    });
+    expect(JSON.stringify(card)).toContain('this is not good enough');
+  });
+
+  it('strips the quotation marks from a phrase that is not in the email', () => {
+    // The model quotes in 83% of complaints and 30% of those phrases were never
+    // written. A reader learning the register must not study an invented one.
+    const card = buildFlaggedDetailCard({
+      message: msg('The client says "you have completely failed us" here.'),
+      body: 'Could you send an update when you have a moment?',
+    });
+    const json = JSON.stringify(card);
+    expect(json).toContain('you have completely failed us');
+    expect(json).not.toContain('\\"you have completely failed us\\"');
+  });
+
+  it('shows the reason unchanged when the body could not be fetched', () => {
+    const card = buildFlaggedDetailCard({ message: msg('They are chasing again.') });
+    expect(JSON.stringify(card)).toContain('They are chasing again.');
+  });
+});

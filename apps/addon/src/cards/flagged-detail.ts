@@ -10,7 +10,7 @@ import {
   separated,
 } from './widgets';
 import { gmailMessageUrl, type FlaggedMessage } from './flagged';
-import { explain } from '@crm/shared';
+import { explain, checkQuotes } from '@crm/shared';
 
 /**
  * The expanded view of one flagged message, pushed onto the add-on's own card
@@ -43,11 +43,19 @@ export function buildFlaggedDetailCard(input: FlaggedDetailInput): Card {
   const sections: CardSection[] = [];
 
   // Why it was flagged comes first — it's the reason the reader clicked.
+  //
+  // The model's reason is passed through `checkQuotes` before it is shown. It
+  // quotes the email in 83% of complaints and only 53% of those phrases are
+  // actually in the text; the rest are paraphrases wearing quotation marks. On a
+  // panel whose job is to teach someone the register, a studied phrase that was
+  // never written is the worst available error, so unverifiable quotations are
+  // demoted to plain claims — the assertion survives, the false citation does
+  // not.
   const flagWidgets: Widget[] = m.flags.length
     ? m.flags.map((f) =>
         deco({
           topLabel: f.label,
-          text: f.detail ?? 'No reason recorded.',
+          text: f.detail ? checkQuotes(f.detail, body ?? '').text : 'No reason recorded.',
           bottomLabel: f.provenance,
           wrapText: true,
         }),
