@@ -1171,7 +1171,35 @@ gate reaches 54% catch@20%, which is a working day-one filter for a new tenant.
 
 ### ADR-026: Worked examples retrieved per mailbox, instead of a written rulebook (2026-08-17)
 
-**Status:** Accepted, shipped disabled
+**Status:** Superseded by the measurement below — shipped, disabled, and it stays
+disabled. The code and the reasoning are kept because the design is sound and the
+result is not obvious; anyone proposing this again should read what happened.
+
+**OUTCOME (2026-08-17, full pool).** Against 35,653 vectors — every judged email
+embedded — retrieval made the classifier worse:
+
+| | catches | false alarms |
+|---|---|---|
+| as production runs now | **19/20** | **8** |
+| with retrieved examples | 18/20 | 10 |
+
+Verdicts flipped on 5 of 50 emails; net one complaint lost and two false alarms
+gained. Three measurements in total:
+
+| test | pool | result |
+|---|---|---|
+| offline, simple nearest-10 | 35,507 | parity (18/20 vs 19/20, 9 vs 9) |
+| live, sparse | 4,040 | −0 caught, +1 false alarm |
+| live, full density | 35,653 | −1 caught, +2 false alarms |
+
+**The sparse-pool explanation was wrong.** It was the stated reason for re-running
+after the backfill, and density did not rescue it. On 50 emails a gap of one or
+two is inside noise, so the claim is not "retrieval harms" — it is *no evidence of
+benefit across three attempts, with the excuse now removed*.
+
+A plausible reading: the hand-written rules encode judgements no set of ten
+neighbours conveys, and worked examples of a 3%-prevalence class mostly teach the
+model what ordinary mail looks like — which it already knew.
 
 **Context:** The sentiment prompt is 11,546 characters of hand-written rules
 describing what a complaint looks like. Adding one rule about chased timelines

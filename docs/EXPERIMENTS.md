@@ -298,8 +298,14 @@ others that contradicted it.
 **Live:** a regex spam filter, and gemini-2.5-flash with prompt v1.8. Everything
 surviving the spam filter goes to the model. 19 of 20 caught, 9 false alarms.
 
-**Built, not switched on:** the embedding gate (nothing imports it), retrieval of
-worked examples (flag off, pending a denser pool), the refit cron (not built).
+**Built, measured, and staying off:** retrieval of worked examples. Against the
+full 35,653-vector pool it catches 18 of 20 against production's 19, with 10
+false alarms against 8. Three tests — offline parity, sparse pool, full pool —
+and never a gain in any live one. Pool density was the stated hypothesis and it
+was wrong.
+
+**Built, not switched on:** the embedding gate (nothing imports it), the refit
+cron (not built).
 
 **Deployed and idle:** `crm-embeddings`, called only by the backfill.
 
