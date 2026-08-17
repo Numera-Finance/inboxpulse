@@ -4,7 +4,7 @@ const execute = vi.fn();
 vi.mock('../db', () => ({ getDb: () => ({ execute }) }));
 vi.mock('../utils/logger', () => ({ logger: { warn: vi.fn(), info: vi.fn() } }));
 
-const { retrieveExamples, formatExamples, toPlainText } = await import('./retrieval');
+const { formatExamples, toPlainText } = await import('./retrieval');
 
 function example(over: Partial<Parameters<typeof formatExamples>[0][number]> = {}) {
   return {
@@ -18,54 +18,6 @@ function example(over: Partial<Parameters<typeof formatExamples>[0][number]> = {
 
 beforeEach(() => {
   execute.mockReset();
-});
-
-describe('retrieveExamples', () => {
-  it('scopes the query to the tenant and excludes the email being judged', async () => {
-    execute.mockResolvedValue([]);
-    await retrieveExamples({
-      tenantId: 'tenant-a',
-      embedding: [0.1, 0.2],
-      excludeEmailId: 'email-1',
-    });
-
-    // These rows are pasted verbatim into a prompt. A missing tenant scope would
-    // put one customer's mail inside another customer's analysis, so the filter
-    // has to be in the query rather than applied to the results.
-    const query = execute.mock.calls[0][0];
-    const params = JSON.stringify(query.queryChunks ?? query);
-    expect(params).toContain('tenant_id');
-    expect(params).toContain('id <>');
-    // One analyses row per type; without this filter the join returns churn and
-    // escalation rows too and every verdict comes back null.
-    expect(params).toContain('analysis_type');
-  });
-
-  it('returns nothing rather than throwing when the query fails', async () => {
-    // An unpopulated embedding column is the normal state before backfill, not
-    // an error. The caller falls back to the written instructions.
-    execute.mockRejectedValue(new Error('column "embedding" does not exist'));
-    await expect(
-      retrieveExamples({ tenantId: 't', embedding: [0.1], excludeEmailId: 'e' })
-    ).resolves.toEqual([]);
-  });
-
-  it('does not query at all without an embedding', async () => {
-    expect(
-      await retrieveExamples({ tenantId: 't', embedding: [], excludeEmailId: 'e' })
-    ).toEqual([]);
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('drops rows with no subject or body', async () => {
-    execute.mockResolvedValue([
-      { subject: 'Re: close', body: 'a'.repeat(300), sentiment_value: 'negative', distance: 0.1 },
-      { subject: null, body: 'orphan', sentiment_value: 'neutral', distance: 0.2 },
-    ]);
-    const out = await retrieveExamples({ tenantId: 't', embedding: [0.1], excludeEmailId: 'e' });
-    expect(out).toHaveLength(1);
-    expect(out[0].verdict).toBe('negative');
-  });
 });
 
 describe('formatExamples', () => {

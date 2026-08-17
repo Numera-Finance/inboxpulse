@@ -33,93 +33,27 @@ export interface Example {
   distance: number;
 }
 
-export interface RetrieveOptions {
-  tenantId: string;
-  /** L2-normalised, from the model named in berne-whiskers.json. */
-  embedding: number[];
-  /** The email being judged, excluded so it cannot cite itself. */
-  excludeEmailId: string;
-  limit?: number;
-  /** Skip anything this short — a bare "thanks" teaches nothing. */
-  minBodyChars?: number;
-}
-
+/** Ten is enough to imply a pattern and few enough to leave room for the email. */
 const DEFAULT_LIMIT = 10;
+
+/** Below this a body is a bare "thanks" and teaches the model nothing. */
 const DEFAULT_MIN_BODY = 200;
 
 /**
- * Nearest already-judged emails from THIS tenant.
+ * Nearest already-judged emails from THIS tenant, keyed by the email's own id.
  *
- * The tenant filter is a correctness requirement, not a performance one. These
- * rows are pasted verbatim into a prompt, so a missing scope would put one
- * customer's mail inside another customer's analysis. It is applied in the
- * query rather than after it, so a wrong result cannot be filtered late.
+ * Keyed by id rather than by a vector the caller supplies. The row already
+ * carries its embedding from sync time, so the query reads it in a subselect and
+ * the analysis service never computes one at request time — no embedding call on
+ * the critical path, and no chance of scoring against a vector from a different
+ * model than the neighbours were stored with.
  *
- * Returns [] rather than throwing on any failure. A missing embedding column, an
- * unpopulated vector, a tenant with no judged history yet — none of these are
- * errors, they are the normal state before the corpus fills, and the caller
- * falls back to the written instructions.
- */
-export async function retrieveExamples(opts: RetrieveOptions): Promise<Example[]> {
-  const {
-    tenantId,
-    embedding,
-    excludeEmailId,
-    limit = DEFAULT_LIMIT,
-    minBodyChars = DEFAULT_MIN_BODY,
-  } = opts;
-
-  if (!embedding?.length) return [];
-
-  const vector = `[${embedding.join(',')}]`;
-
-  try {
-    const rows = await getDb().execute<{
-      subject: string | null;
-      body: string | null;
-      sentiment_value: string | null;
-      distance: number;
-    }>(sql`
-      SELECT e.subject,
-             e.body,
-             ea.sentiment_value,
-             (e.embedding <=> ${vector}::halfvec) AS distance
-      FROM emails e
-      JOIN email_analyses ea
-        ON ea.email_id = e.id
-       AND ea.analysis_type = 'sentiment'
-       AND ea.tenant_id = e.tenant_id
-      WHERE e.tenant_id = ${tenantId}
-        AND e.id <> ${excludeEmailId}
-        AND e.embedding IS NOT NULL
-        AND ea.sentiment_value IS NOT NULL
-        AND length(e.body) >= ${minBodyChars}
-      ORDER BY e.embedding <=> ${vector}::halfvec
-      LIMIT ${limit}
-    `);
-
-    return rows
-      .filter((r) => r.subject !== null && r.body !== null)
-      .map((r) => ({
-        subject: r.subject as string,
-        body: r.body as string,
-        verdict: r.sentiment_value as Example['verdict'],
-        distance: Number(r.distance),
-      }));
-  } catch (error) {
-    logger.warn({ err: error, tenantId }, 'example retrieval failed; using written instructions');
-    return [];
-  }
-}
-
-/**
- * The same thing, keyed by the email's own id.
- *
- * Preferred over passing a vector in. The row already carries its embedding from
- * sync time, so the query reads it in a subselect and the analysis service never
- * computes one at request time — no embedding call on the critical path, and no
- * chance of scoring against a vector from a different model than the neighbours
- * were stored with.
+ * There was a second entry point that took a vector directly. It was deleted
+ * rather than kept for flexibility: nothing called it, and it still carried the
+ * ORIGINAL query — no thread exclusion, no class balance, no customer-traffic
+ * filter. Every bug found by running against real data was still live in it, so
+ * it was a loaded gun for whoever called it next. Two queries that must stay in
+ * step will not.
  *
  * A client's CUSTOMERS are filtered out. poolbrain.com is the field-service
  * platform belonging to a client whose books we keep; 42 replies from homeowners
