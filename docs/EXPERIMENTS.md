@@ -361,3 +361,26 @@ bookkeeper to misread the next email.
 
 They fire on ~6% of mail. That is not coverage — it is a correct lesson when one
 is available, instead of a plausible guess on everything.
+
+**Widening it by mining is exhausted.** 637 phrases at ≥3× lift were mined from
+the training half; 19 made a checkable claim about what happened rather than an
+inference about mood; each was then validated on the 250 held-out emails
+individually. Four survived, and none of them earns a place:
+
+| candidate | fires | correct |
+|---|---|---|
+| *i thought* | 4 | 4 — already inside `counterfactual` |
+| *are still* | 4 | 4 — but *is still* was 2 of 3, so the split is noise |
+| *did not* | 9 | 8 |
+| *was not* | 7 | 6 |
+
+*did not* and *was not* clear 85% but are plain negation, not register. There is
+no lesson to attach to them — "they said something did not happen" teaches
+nobody anything, and adding them would dilute the section into noise.
+
+**The 6% is a property of the mail, not of the pattern list.** Explicit register
+devices are simply rare; the remaining complaints are carried by structure and
+context that no phrase list reaches. Extending coverage would need the embedding
+to find paraphrases the regex cannot enumerate — but an embedding can only say
+*this resembles that*, and cannot name the device, which is the part that
+teaches. **Untested, and the weaker half of the idea.**
