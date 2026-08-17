@@ -1168,3 +1168,61 @@ gate reaches 54% catch@20%, which is a working day-one filter for a new tenant.
   text, the embedding sees it, so past some volume the model learns
   synthetic-ness rather than complaint-ness. That is consistent with the decay
   above.
+
+### ADR-026: Worked examples retrieved per mailbox, instead of a written rulebook (2026-08-17)
+
+**Status:** Accepted, shipped disabled
+
+**Context:** The sentiment prompt is 11,546 characters of hand-written rules
+describing what a complaint looks like. Adding one rule about chased timelines
+(v1.8) contradicted two existing clauses stating the same emails were neutral,
+and both had to be found and rewritten by hand. That is the maintenance cost of
+a rulebook, and it grows.
+
+Measured on the 49 human-judged emails, three ways of telling the model what a
+complaint is are indistinguishable:
+
+| approach | caught | false alarms |
+|---|---|---|
+| 11,546 chars of hand-written rules | 19/20 | 9 |
+| 28 fixed real examples | 18/20 | 9 |
+| 10 examples retrieved per email | 18/20 | 9 |
+
+Equal scores are the argument, not a tie. The rules cost ongoing effort and buy
+nothing over examples the system already holds. The identical nine false alarms
+across all three say the remaining errors are not a wording problem.
+
+**Decision:** Retrieve the ten nearest already-judged emails from the SAME tenant
+by vector similarity and place them between the instructions and the email.
+Shipped behind `SENTIMENT_EXAMPLES_ENABLED`, off unless exactly `'true'`.
+Examples are ADDED to the instructions rather than replacing them — there is no
+evidence for dropping the rules, and doing both at once would make a regression
+impossible to attribute.
+
+**Consequences:**
+- **Three design flaws were found by querying real mail, none visible to 234
+  passing tests**, because those mock the database:
+  1. The three nearest neighbours were the same THREAD. Replies quoting each
+     other are near-identical in embedding space, and some carry the verdict for
+     the very exchange being judged — the model would be shown the answer and
+     score well for the wrong reason. The whole thread is now excluded.
+  2. All ten neighbours came back neutral. At 3% prevalence that is the normal
+     case, and a model shown ten neutral examples learns the mailbox is neutral —
+     the exact bias the product exists to correct. Retrieval now ranks within
+     each class and takes the closest of each.
+  3. The pool still contained `poolbrain.com` homeowner complaints, correctly
+     labelled negative and wrong to teach from (ADR-025 territory). Filtered
+     until the labels themselves are corrected.
+- **Per-tenant is the real prize.** A client who writes tersely and one who
+  buries the ask in pleasantries are each judged against their own history, and
+  nobody tunes a prompt per customer. The tenant filter is in the SQL rather than
+  applied to results, because these rows are pasted verbatim into a prompt.
+- The flag is read from `process.env`, not `getEnv()` — `getEnv()` validates the
+  whole environment and calls `process.exit(1)` on a miss, so routing an optional
+  feature through it would let an unrelated missing variable kill the service on
+  a cold path, uncatchable.
+- **Not yet demonstrated.** A pre-flight over the same 49 emails against the live
+  pool showed no complaints gained and one extra false alarm, with verdicts
+  changing on 7 of 49. The live pool was 4,040 rows against the 35,507 the
+  offline test used, so the most likely explanation is a sparse pool rather than
+  a failed idea. Re-run after the full backfill before enabling.
