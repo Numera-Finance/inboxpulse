@@ -632,8 +632,25 @@ jobs:
       - name: Point the add-on at this revision
         run: |
           URL=$(gcloud run services describe crm-addon --region ${{ env.REGION }} --format 'value(status.url)')
+          # ADDON_BASE_URL ONLY. This also set ADDON_AUDIENCE=${URL}, and that
+          # single assignment took the whole panel down after every deploy.
+          #
+          # Google does not mint event.userIdToken for the Cloud Run service URL,
+          # so pinning the audience to it made every request fail verification
+          # with `Wrong recipient, payload audience != requiredAudience`. With no
+          # verified caller there is no viewer, so the entitlement-scoped
+          # sections vanished and the card fell back to "Preview mode. Not
+          # connected to the InboxPulse API" — which reads as a configuration
+          # problem with SERVICE_API_KEY and is nothing of the sort.
+          #
+          # verify.ts treats a blank audience as "verify Google's signature and
+          # issuer, skip the aud claim", which is what env.ts defaults to and
+          # what docs/addon/05-SECURITY.md documents as the current state.
+          # Tightening it needs the audience Google actually sends, read off a
+          # verified token — not the URL we happen to be deployed at.
           gcloud run services update crm-addon --region ${{ env.REGION }} \
-            --update-env-vars "ADDON_BASE_URL=${URL},ADDON_AUDIENCE=${URL}"
+            --update-env-vars "ADDON_BASE_URL=${URL}" \
+            --remove-env-vars ADDON_AUDIENCE
           echo "### crm-addon Deployed" >> $GITHUB_STEP_SUMMARY
           echo "**URL:** ${URL}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
