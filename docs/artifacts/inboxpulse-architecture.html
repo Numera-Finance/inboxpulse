@@ -1,0 +1,318 @@
+<title>InboxPulse — Sentiment Pipeline Architecture</title>
+<style>
+  :root {
+    --paper:      #f4f5f2;
+    --card:       #fbfbf9;
+    --ink:        #191c1f;
+    --muted:      #626b71;
+    --faint:      #8c949a;
+    --line:       #dcdfd9;
+    --line-soft:  #e8eae5;
+    --signal:     #8c2f39;
+    --flow:       #2d5561;
+    --pending:    #9a6f33;
+    --shadow:     0 1px 2px rgba(25,28,31,.05), 0 8px 24px -12px rgba(25,28,31,.12);
+
+    --display: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+    --body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #14171a;
+      --card:      #1b1f23;
+      --ink:       #e9ebe7;
+      --muted:     #9aa3a9;
+      --faint:     #6f787e;
+      --line:      #2c3238;
+      --line-soft: #23282d;
+      --signal:    #d97b83;
+      --flow:      #7fb0bf;
+      --pending:   #d3a55f;
+      --shadow:    0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:     #14171a;
+    --card:      #1b1f23;
+    --ink:       #e9ebe7;
+    --muted:     #9aa3a9;
+    --faint:     #6f787e;
+    --line:      #2c3238;
+    --line-soft: #23282d;
+    --signal:    #d97b83;
+    --flow:      #7fb0bf;
+    --pending:   #d3a55f;
+    --shadow:    0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--body);
+    font-size: 16px; line-height: 1.6; margin: 0; padding: 0 1.25rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; }
+
+  header { padding: 4.5rem 0 2.5rem; border-bottom: 1px solid var(--line); margin-bottom: 3rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 1.1rem;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(2.1rem, 5.2vw, 3.4rem); line-height: 1.08;
+    letter-spacing: -.015em; margin: 0 0 1.2rem; text-wrap: balance;
+  }
+  .standfirst { font-size: 1.12rem; color: var(--muted); max-width: 40rem; margin: 0; }
+  .standfirst strong { color: var(--ink); font-weight: 600; }
+
+  section { margin: 0 0 4rem; }
+  h2 {
+    font-family: var(--display); font-weight: 400; font-size: 1.7rem;
+    letter-spacing: -.01em; margin: 0 0 .5rem;
+  }
+  .section-note { color: var(--muted); max-width: 44rem; margin: 0 0 2rem; }
+
+  .diagram {
+    background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    padding: 2rem 1rem; overflow-x: auto; box-shadow: var(--shadow);
+  }
+  .diagram pre.mermaid { margin: 0; text-align: center; }
+
+  .stages { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .stage {
+    background: var(--card); display: grid;
+    grid-template-columns: 3.2rem 1fr minmax(0, 15rem);
+    gap: 1.5rem; padding: 1.5rem 1.6rem; align-items: start;
+  }
+  @media (max-width: 46rem) {
+    .stage { grid-template-columns: 2.4rem 1fr; }
+    .stage .metric { grid-column: 2; }
+  }
+  .num { font-family: var(--mono); font-size: .82rem; color: var(--faint); padding-top: .2rem; font-variant-numeric: tabular-nums; }
+  .stage h3 { font-size: 1rem; font-weight: 620; margin: 0 0 .35rem; letter-spacing: -.005em; }
+  .stage p { margin: 0; color: var(--muted); font-size: .94rem; }
+  .stage p + p { margin-top: .5rem; }
+  .metric {
+    font-family: var(--mono); font-size: .8rem; line-height: 1.65; color: var(--muted);
+    border-left: 2px solid var(--line); padding-left: .9rem; font-variant-numeric: tabular-nums;
+  }
+  .metric b { color: var(--ink); font-weight: 600; }
+  .metric .hi { color: var(--signal); }
+
+  .tag {
+    display: inline-block; font-family: var(--mono); font-size: .64rem;
+    letter-spacing: .1em; text-transform: uppercase; padding: .18rem .5rem;
+    border-radius: 2px; vertical-align: 2px; margin-left: .5rem; border: 1px solid currentColor;
+  }
+  .tag.live { color: var(--flow); }
+  .tag.todo { color: var(--pending); }
+  .tag.dead { color: var(--faint); }
+
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .fig { background: var(--card); padding: 1.4rem 1.3rem; }
+  .fig .v { font-family: var(--display); font-size: 2rem; line-height: 1; display: block; margin-bottom: .45rem; font-variant-numeric: tabular-nums; }
+  .fig .k { font-size: .84rem; color: var(--muted); display: block; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; background: var(--card); }
+  th, td { text-align: left; padding: .8rem 1.1rem; border-bottom: 1px solid var(--line-soft); }
+  th { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 500; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+
+  .note {
+    border-left: 2px solid var(--signal); padding: .3rem 0 .3rem 1.3rem;
+    margin: 2rem 0 0; color: var(--muted); max-width: 44rem;
+  }
+  .note b { color: var(--ink); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 1.5rem; color: var(--faint); font-size: .84rem; font-family: var(--mono); }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">InboxPulse · Numera Finance</p>
+  <h1>How a client's complaint reaches the person who needs to see it</h1>
+  <p class="standfirst">A bookkeeper in Pune reads a hundred emails to find the three that matter, and the three rarely say they matter. This is the pipeline that finds them, <strong>what is running, and what turned out not to work</strong>.</p>
+</header>
+
+<section>
+  <h2>What is running today</h2>
+  <p class="section-note">Read this before the design. Most of the design is built and switched off, and the honest version of that is a table rather than a diagram.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Stage</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>Spam / marketing / automated filter</td><td>live — the only filter in the request path</td></tr>
+      <tr><td>Gemini judges sentiment, prompt v1.9</td><td>live</td></tr>
+      <tr><td>A client's customers never reach the model</td><td>live — stops paying to read homeowner mail</td></tr>
+      <tr><td>"What the wording means" teaching layer</td><td>live</td></tr>
+      <tr><td>Refuses to show a quotation the client never wrote</td><td>live</td></tr>
+      <tr><td>Client trajectory on each fire row</td><td>live</td></tr>
+      <tr><td>Embedding service + 35,653 stored vectors</td><td>deployed, called only by the backfill</td></tr>
+      <tr><td>The embedding gate</td><td><b>library only — nothing imports it</b></td></tr>
+      <tr><td>Retrieval of worked examples</td><td>shipped disabled — measured, did not help</td></tr>
+      <tr><td>Nearest-neighbour promotion</td><td>measured, not built</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note"><b>Every email that survives the spam filter goes to the model.</b> There is no embedding gate in production, so the cost and latency figures below describe what it would buy, not what it saves.</p>
+</section>
+
+<section>
+  <h2>The path</h2>
+  <p class="section-note">Solid lines are what happens while a message arrives. Dotted lines are the loop: every verdict becomes material for the next one.</p>
+  <div class="diagram">
+<pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{
+  'primaryColor':'#ffffff00','primaryTextColor':'#7f8a91','primaryBorderColor':'#8c949a',
+  'lineColor':'#8c949a','fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','fontSize':'13px'
+}}}%%
+flowchart TD
+    A["Email arrives"] --> B["Is this a client's<br/>own customer?"]
+    B -->|"yes"| Z["Skipped, no model call"]
+    B -->|"no"| C["Embed<br/>768 numbers"]
+    C --> D{"Gate<br/>NOT WIRED IN"}
+    D -->|"would drop 3 in 5"| Z2["would stop here"]
+    D --> E["Gemini reads it<br/>prompt v1.9"]
+    E --> F["Verdict stored"]
+    F --> G["Bookkeeper sees it,<br/>with the device named"]
+    F -.->|"counts per client per month"| H["Rising 5%→36%<br/>on the fire row"]
+
+    classDef free   fill:none,stroke:#2d5561,stroke-width:1.5px,color:#5f7f8a
+    classDef paid   fill:none,stroke:#8c2f39,stroke-width:1.5px,color:#a9575f
+    classDef quiet  fill:none,stroke:#b6bcc1,stroke-width:1px,color:#8c949a,stroke-dasharray:3 3
+    classDef human  fill:none,stroke:#9a6f33,stroke-width:1.5px,color:#9a6f33
+    class A,B,C free
+    class E,F paid
+    class Z,Z2,D quiet
+    class G,H human
+</pre>
+  </div>
+  <p class="note"><b>The loop that pays off is the dotted one, and it needs no model.</b> Counting verdicts per client per month finds an escalation three months before anyone notices; the vector machinery below does not.</p>
+</section>
+
+<section>
+  <h2>What each stage buys</h2>
+  <div class="stages">
+
+    <div class="stage">
+      <div class="num">01</div>
+      <div>
+        <h3>Skip a client's own customers <span class="tag live">live</span></h3>
+        <p>We keep the books for operating businesses, and their customer-facing systems copy us on traffic that is nothing to do with our work. 42 homeowner replies about pool cleaning were labelled complaints: real, and none of them about us.</p>
+        <p>The results were already discarded downstream, but that ran <em>after</em> the model answered. Now the call is never made.</p>
+      </div>
+      <div class="metric">cuts the notification platform,<br/>not the client<br/><b>0</b> tokens spent on it</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">02</div>
+      <div>
+        <h3>Embed on arrival <span class="tag live">deployed</span></h3>
+        <p>768 numbers stored on the row. Ollama pinned to one version with the model baked in, because a different implementation returns 768 plausible numbers with no error and the gate quietly stops meaning what it was trained to mean.</p>
+      </div>
+      <div class="metric"><b>0.999997</b> cosine against<br/>locally-produced vectors<br/><b>35,653</b> rows carry one</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">03</div>
+      <div>
+        <h3>The gate <span class="tag todo">not wired in</span></h3>
+        <p>Ordering and latency, not cost — reading every client email is about $7 a month, so there was never a cost case for dropping mail. Honest numbers, from a fit that never saw the test mail.</p>
+      </div>
+      <div class="metric">1 in 5 sent → <b>7 in 10</b> caught<br/>2 in 5 sent → <b>9 in 10</b><br/>7.5 KB of coefficients</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">04</div>
+      <div>
+        <h3>Gemini decides <span class="tag live">live</span></h3>
+        <p>The only paid step and the only one that decides anything. v1.9 learned that asking <em>when</em> about work we already hold is a complaint, after the prompt had explicitly taught the opposite.</p>
+        <p><b>This is now the binding constraint.</b> Tightening the gate cannot recover a complaint the judge misreads, because the gate already sent it.</p>
+      </div>
+      <div class="metric"><b>19 of 20</b> complaints caught<br/>9 false alarms in 49<br/>~<b>$7</b>/month, full coverage</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">05</div>
+      <div>
+        <h3>Name the device, or say nothing <span class="tag live">live</span></h3>
+        <p>Telling someone "this is a complaint" moves one email. Telling them <em>"'not good to have so many iterations' is understatement, read it as 'this is bad'"</em> moves every future email, including the ones we never flag.</p>
+        <p>Only patterns that name something literally written are shown. Ones that infer what the writer <em>meant</em> were wrong 4 times in 10 and stay silent.</p>
+      </div>
+      <div class="metric"><b>14 of 14</b> correct, held out<br/>fires on <b>1 in 10</b> complaints<br/>silent on the rest</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">06</div>
+      <div>
+        <h3>Show where the client is heading <span class="tag live">live</span></h3>
+        <p>A count cannot separate a client getting worse from one who has always been difficult. Each fire row now reads <em>Rising 5%→36%</em> or <em>Cooling 25%→9%</em>.</p>
+        <p>The threshold is measured: under 10% behaves exactly like zero, and crossing it does not revert.</p>
+      </div>
+      <div class="metric">under 10% → <b>2.0%</b> next month<br/>over 10% → <b class="hi">7.9%</b> next month<br/>still <b>5.9%</b> three months on</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2>The numbers that matter</h2>
+  <p class="section-note">Measured against 49 emails a person read and judged, and against 1,015 real complaints. No public corpus matches this domain, so those 49 rows are the only human instrument.</p>
+
+  <div class="figures">
+    <div class="fig"><span class="v">3%</span><span class="k">of client mail is a complaint</span></div>
+    <div class="fig"><span class="v">5 of 20</span><span class="k">complaints that say so plainly</span></div>
+    <div class="fig"><span class="v">10%</span><span class="k">the rate a client never comes back from</span></div>
+    <div class="fig"><span class="v">5</span><span class="k">clients escalating right now</span></div>
+  </div>
+
+  <p class="note"><b>Only a quarter of complaints use explicit failure wording.</b> The rest arrive as <em>"could you provide an update on the expected timeline"</em>: courteous, blameless, and understood by every American reader as a chase. That gap is the entire product.</p>
+</section>
+
+<section>
+  <h2>What did not work</h2>
+  <p class="section-note">Recorded because each was measured and closed, and because several are the obvious next idea.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Approach</th><th>Result</th><th>Why it failed</th></tr></thead>
+    <tbody>
+      <tr><td>Bag of words</td><td class="n">PR-AUC 0.221</td><td>beaten by embeddings at 1/500th the size</td></tr>
+      <tr><td>A hand-written idiom lexicon</td><td class="n">13% recall</td><td>11 of 18 patterns never fired once; an invented register</td></tr>
+      <tr><td>Transactional analysis, ego states</td><td class="n">11× lift</td><td>adds <b>zero</b> recall over sentiment</td></tr>
+      <tr><td>Politeness theory</td><td class="n">p = 0.36</td><td>B2B mail is uniformly polite</td></tr>
+      <tr><td>Synthetic training mail</td><td class="n">+0.6 pts</td><td>gain shrank as data grew sixfold</td></tr>
+      <tr><td>Retrieved examples in the prompt</td><td class="n">18 vs 19 of 20</td><td>no better than the rulebook, at full pool density</td></tr>
+      <tr><td>A mood vector per client</td><td class="n">flat</td><td>topic dominates the embedding; stance does not survive averaging</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note"><b>The tone branches all died for one reason.</b> Hotspot clients read 94% Adult stance even in their angriest months. They do not start shouting; they stay polite and get unhappy more often. The signal is content and frequency, never register.</p>
+</section>
+
+<section>
+  <h2>What is worth building next</h2>
+  <p class="section-note">One measured result is not yet in the product, and one instrument beats the model on precision.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Idea</th><th>Measured</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>Promote on a nearest labelled neighbour</td><td class="n">85% precision at k=5</td><td>not built</td></tr>
+      <tr><td>…with same-client neighbours capped</td><td class="n">88% precision</td><td>not built</td></tr>
+      <tr><td>Clear mail on benign neighbours</td><td class="n">loses 6–17 of 20</td><td><b>ruled out</b></td></tr>
+      <tr><td>Wire the embedding gate</td><td class="n">7 in 10 at 1-in-5 sent</td><td>library only</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note"><b>Nearest-neighbour lookup is more precise than the production model</b> — 85% against 70% — while catching about half as much, at no cost and in 80 milliseconds. It works because clients repeat themselves: a global boundary averages every client's private grammar into one, and there is no such average.</p>
+</section>
+
+<footer>
+  Measured 15–18 August 2026 · gemini-2.5-flash, prompt v1.9 · nomic-embed-text 768d · 35,653 vectors
+</footer>
+
+</div>

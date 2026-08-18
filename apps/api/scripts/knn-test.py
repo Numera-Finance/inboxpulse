@@ -19,6 +19,21 @@ corpus. Reports both directions, because they have different costs:
   nearest is a complaint  -> call it a complaint      (precision matters)
   all k neighbours benign -> call it benign           (a miss is unrecoverable)
 
+WHAT THIS ACTUALLY MEASURES: CLIENT MEMORY, NOT COMPLAINT DETECTION.
+
+Excluding the client's OWN prior mail as well as self and thread — the grouped
+split the leakage literature requires when items share a source — costs half the
+recall and eleven points of precision:
+
+  neighbours include the client's history   86% precision, 12/20 caught
+  same sender domain also excluded          75% precision,  6/20 caught
+
+So most of the lift is recognising "this client complaining again", not
+recognising a complaint. That is legitimate in production, where the history
+genuinely exists, but it sets what may be claimed: on an established client
+86%/60%, on a client with no history 75%/30%. Quote the second when talking about
+onboarding a new tenant.
+
 THE EMAIL ITSELF AND ITS THREAD ARE EXCLUDED. The 49 judged emails are drawn
 from this corpus, so without that the nearest neighbour is the email itself at
 distance 0.000 and every "prediction" is its own stored label read back. A first
