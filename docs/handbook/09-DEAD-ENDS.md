@@ -137,6 +137,38 @@ definition, so the population changes as you read down the column. Comparing eac
 client's first gap to their last, across 46 clients with five or more complaints:
 **24 got faster, 22 got slower.**
 
+## The tf-idf gate, and the one rule worth keeping from it
+
+**Result: PR-AUC 0.221, beaten by embeddings at 1/500th the size. Deleted.**
+
+A logistic model over tf-idf features, distilled from 26,641 LLM-judged emails.
+Measured head to head against the embedding gate on the same temporal hold-out:
+
+```
+tf-idf                 PR-AUC 0.221   84% kept at 40% sent   3.7 MB vocabulary
+berne-whiskers (768d)  PR-AUC 0.264   89% kept at 40% sent   7.5 KB
+```
+
+Its own file put the risk plainly: *"This file is bigger and older and therefore
+looks more established, which is the only reason it might get picked."* Deleted
+2026-08-18 along with its 3.85 MB vocabulary; nothing imported it.
+
+**What survives it, and should be ported wherever a gate ends up living.** One
+regex fires on **0.3% of mail at 32% precision — 100x the base rate — and lifts
+recall from 94% to 96% for nothing.** Short chasing emails give a bag-of-words
+model almost nothing to weigh, so a rule beats a weight here:
+
+```
+\b(\d(?:st|nd|rd|th)\s+(?:follow[- ]?up|reminder)|follow(?:ing)?[- ]?up\s+again
+|again\s+on\s+(?:this|the below)|still (?:waiting|have not|haven'?t|no response)
+|over and over|repeatedly|as per my (?:last|previous)|third time|second time
+|chasing this)\b
+```
+
+Note what it matches: not anger, but **repetition**. "Second time", "as per my
+last", "still waiting". A client counting their own attempts is the clearest
+signal in the corpus that does not require a model.
+
 ## The embedding gate
 
 **Status: built, measured, never wired in.**

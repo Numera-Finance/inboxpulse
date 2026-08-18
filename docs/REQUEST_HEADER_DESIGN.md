@@ -231,7 +231,9 @@ const response = await app.request('/api/customers', {
 
 **Important:** JWTs are stateless by default, which means once issued, they're valid until expiration. To invalidate tokens (e.g., on logout, password change, or security breach), you need a strategy.
 
-See **[JWT Token Invalidation Strategy](./JWT_TOKEN_INVALIDATION.md)** for detailed approaches:
+JWT tokens were never implemented; sessions live in `better_auth_session` and
+revocation is a row delete. See ADR-028 in `docs/decisions.md`. The approaches
+that document considered:
 - **Token Version** (recommended): Store a version number in user record, include in JWT, increment to invalidate all tokens
 - **Token Blacklist**: Store invalidated tokens in database, check on every request
 - **Hybrid**: Combine both approaches for maximum flexibility

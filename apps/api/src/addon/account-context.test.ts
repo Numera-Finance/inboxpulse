@@ -6,7 +6,6 @@ import {
   AccountContextService,
   WaitingClientsService,
   DangerPulseService,
-  OwnerLoadService,
   SlowRespondersService,
   FiresService,
   __resetRelationshipsTableCache,
@@ -74,11 +73,6 @@ describe('management metrics require a firm participant on the thread', () => {
     expect(sql()).toContain('participant_type');
   });
 
-  it('OwnerLoadService filters to threads we are on', async () => {
-    const { db, sql } = recordingDb();
-    await new OwnerLoadService(db).get(TENANT, 30);
-    expect(sql()).toContain('participant_type');
-  });
 
   /**
    * The predicate must be evaluated over the whole thread.
@@ -123,11 +117,6 @@ describe('non-client customers are excluded', () => {
     expect(sql()).toContain('customer_relationships');
   });
 
-  it('OwnerLoadService consults customer_relationships', async () => {
-    const { db, sql } = recordingDb();
-    await new OwnerLoadService(db).get(TENANT, 30);
-    expect(sql()).toContain('customer_relationships');
-  });
 
   /**
    * Absence must mean CLIENT, never the reverse.
@@ -139,7 +128,7 @@ describe('non-client customers are excluded', () => {
    */
   it('excludes on presence of a row, so an unlisted customer stays a client', async () => {
     const { db, sql } = recordingDb();
-    await new OwnerLoadService(db).get(TENANT, 30);
+    await new SlowRespondersService(db).get(TENANT, 30);
     // Skip the to_regclass probe, which names the table without filtering on it.
     const q = sql()
       .split('\n')
@@ -173,7 +162,7 @@ describe('missing customer_relationships table', () => {
       },
     } as unknown as Database;
 
-    await new OwnerLoadService(db).get(TENANT, 30);
+    await new SlowRespondersService(db).get(TENANT, 30);
     const queries = seen.filter((q) => !q.includes('to_regclass'));
     expect(queries.length).toBeGreaterThan(0);
     for (const q of queries) expect(q).not.toContain('customer_relationships');
@@ -246,20 +235,20 @@ describe('relationships-table probe', () => {
       },
     } as unknown as Database;
 
-    await new OwnerLoadService(db).get(TENANT, 30);
+    await new SlowRespondersService(db).get(TENANT, 30);
     expect(probes).toBe(1);
 
     // Still missing — must ask again rather than trust the cached miss.
-    await new OwnerLoadService(db).get(TENANT, 30);
+    await new SlowRespondersService(db).get(TENANT, 30);
     expect(probes).toBe(2);
 
     // Migration lands.
     exists = true;
-    await new OwnerLoadService(db).get(TENANT, 30);
+    await new SlowRespondersService(db).get(TENANT, 30);
     expect(probes).toBe(3);
 
     // Now cached: no further catalogue lookups.
-    await new OwnerLoadService(db).get(TENANT, 30);
+    await new SlowRespondersService(db).get(TENANT, 30);
     expect(probes).toBe(3);
   });
 });
@@ -278,7 +267,7 @@ describe('exclusions are consistent across services', () => {
   const services: Array<[string, (db: Database) => Promise<unknown>]> = [
     ['WaitingClientsService', (db) =>
       new WaitingClientsService(db).find(TENANT, { userId: 'u1', isAdmin: true }, { days: 90, limit: 10, ownDomains: [] })],
-    ['OwnerLoadService', (db) => new OwnerLoadService(db).get(TENANT, 30)],
+    
   ];
 
   for (const [name, run] of services) {

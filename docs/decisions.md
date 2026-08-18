@@ -1864,3 +1864,24 @@ summary instead shares the sender's line and costs no vertical space:
   `recipients.ts` rather than inside the panel so the rules are unit-tested
   (`recipients.test.ts`), following the `format-timestamp.ts` precedent in the
   same folder.
+
+### ADR-028: Session auth is better-auth over Postgres, and the JWT comparison is void (2026-08-18)
+**Status:** Accepted
+**Context:** `docs/JWT_VS_REDIS_SESSIONS.md` scored JWT-plus-refresh-tokens against
+Redis sessions across six axes and split them three-to-two. The comparison never
+decided anything, because the option that shipped was on neither side of it:
+better-auth with sessions in Postgres. No Redis was ever provisioned and
+`jsonwebtoken` appears in no `package.json`. Six further `JWT_*` documents
+describe a token lifecycle — refresh, expiration, invalidation — that no code
+implements.
+**Decision:** Sessions live in `better_auth_session`, validated per request by
+`betterAuthRequestHeaderMiddleware`. The JWT documents are deleted rather than
+kept as archaeology; this entry is the surviving record that the question was
+asked and answered by adopting a third option.
+**Consequences:** Revocation is a row delete, which is what the JWT branch was
+willing to add Redis to buy. The cost the JWT branch was avoiding — a database
+read per request — is real and is paid on every protected route. If that read
+ever becomes the bottleneck, the answer is to cache the session lookup, not to
+reopen stateless tokens: `tenant_id` and the permission set are resolved in the
+same middleware and would have to ride inside any token, which is precisely the
+staleness problem that made revocation hard in the first place.

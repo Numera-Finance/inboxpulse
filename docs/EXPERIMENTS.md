@@ -32,7 +32,8 @@ disagreement moves precision by two points. Treat gaps under ten points as noise
 
 **TF-IDF + logistic regression.** 118,932 terms, 3.7 MB of vocabulary.
 PR-AUC **0.221** on a temporal hold-out; sending 60% of mail kept 94% of
-complaints. Shipped first (`prefilter/score.ts`, `model.json`), later superseded.
+complaints. Shipped first (`prefilter/score.ts`, `model.json`), later superseded, and both
+files deleted in August 2026.
 
 **Learning stance from words.** Trained the same machinery on ego-state labels to
 detect "hackles raised" rather than complaint content. PR-AUC **0.049** — barely

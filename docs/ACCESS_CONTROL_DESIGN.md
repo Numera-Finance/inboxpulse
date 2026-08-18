@@ -668,6 +668,7 @@ If performance becomes an issue:
 
 ## Related Documents
 
-- [EMPLOYEE_SCHEMA_DESIGN.md](./EMPLOYEE_SCHEMA_DESIGN.md) - Employee tables and closure table
+- Employee tables and closure table: the `employees` entity was merged into
+  `users`; see `apps/api/src/users/schema.ts` and `docs/handbook/04-DATA-MODEL.md`.
 - [SEARCH_API_DESIGN.md](./SEARCH_API_DESIGN.md) - Search API patterns
 - [API_CONVENTIONS.md](./API_CONVENTIONS.md) - API conventions including scoped queries

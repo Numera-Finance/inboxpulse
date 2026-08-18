@@ -21,7 +21,7 @@ Two hard external dependencies gate the visible-in-Gmail features: **new OAuth s
 
 | Capability | State | Location |
 |---|---|---|
-| Multi-tenant API (Hono/Bun, Drizzle/Neon Postgres), Cloud Run, GCP `health-474623` | ✅ Mature | `apps/api` |
+| Multi-tenant API (Hono/Bun, Drizzle/Neon Postgres), Cloud Run, GCP `project-y-email-sentiment` | ✅ Mature | `apps/api` |
 | Gmail **read** sync: list/get/batch/history/profile | ✅ Mature | `apps/gmail/src/services/gmail.ts` |
 | Gmail **Pub/Sub** watch + 4h renewal cron + push handler | ✅ Mature | `sync.ts`, `watch-renewal.ts`, `webhooks.ts` |
 | OAuth flow + **AES-256-GCM** encrypted token storage/refresh (Secret Manager) | ✅ Mature (read-only scope) | `apps/api/src/oauth`, `packages/encryption` |
@@ -69,7 +69,9 @@ Two hard external dependencies gate the visible-in-Gmail features: **new OAuth s
 - **B-2: Data-retention/PII sign-off.** Storing client email bodies needs a documented retention window + redaction rule before production. Org decision.
 - **D-1: Add-on runtime — DECIDED (2026-07-21).** Build an HTTP-based Workspace Add-on as a new Cloud Run service `apps/addon`, reusing `@crm/clients` and the existing TypeScript/Bun/Cloud Run infra (not Apps Script/GAS).
 - **D-2: Chat "Share to Chat" — DECIDED (2026-07-21): DEFERRED** to a later release. Phase 4 drops off the v1 critical path.
-- **D-3: GCP project.** Confirm `health-474623` (project number `505023465535`) is "Project Y – Email Sentiment." *(pending)*
+- **D-3: GCP project.** ~~Confirm `health-474623`…~~ **RESOLVED** — the live project is
+  `project-y-email-sentiment` (`203731638840`); `health-474623` is retired. See the
+  entry below dated after this one.
 
 ---
 
@@ -133,7 +135,7 @@ Cross-mailbox digest/rollup; flag-accuracy feedback loop (👍/👎); language-d
 - Legacy `POST /api/auth/legacy/test-token` is **unreachable**: the better-auth catch-all `app.on('/api/auth/*')` (`index.ts:135`) is registered before the legacy mount (`index.ts:260`) and shadows it → 404. Reads currently require either a real better-auth Google session or the internal-key path.
 - Working local read path for dev/testing: `/api/internal/emails/*` with `x-internal-api-key: $SERVICE_API_KEY` + `x-tenant-id` + `x-user-id`.
 
-**Open (unblocked, pending you):** rotate `crm_app` DB password + Gemini key (both hit chat); confirm `project-y-email-sentiment` vs `health-474623` (gcloud default vs app env); provide restricted scopes when ready (Phase 3).
+**Open (unblocked, pending you):** rotate `crm_app` DB password + Gemini key (both hit chat); ~~confirm `project-y-email-sentiment` vs `health-474623`~~ **(resolved: the live project is `project-y-email-sentiment`)**; provide restricted scopes when ready (Phase 3).
 
 ### 2026-07-21 — Phase 1 start: `apps/addon` scaffold ✅
 - New Bun+Hono service `apps/addon` (port **4005**), matching repo conventions (`catalog:` deps, zod `getEnv`, dotenv-first bootstrap, pino, multi-stage Node→Bun Dockerfile). Delivery per **D-1** (HTTP add-on in the monorepo, not Apps Script).

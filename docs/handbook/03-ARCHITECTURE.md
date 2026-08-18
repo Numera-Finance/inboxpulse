@@ -186,12 +186,16 @@ Verified by grep, with no importers outside their own tests:
 
 | thing | file | note |
 |---|---|---|
-| `/owner-load` + `OwnerLoadService` | `addon/routes.ts:156`, `account-context.ts:969` | ~190 lines, no caller anywhere |
 | `better-auth-hooks.ts` | `auth/` | tombstone comment at `di/container.ts:128` |
 | `better-auth-routes.ts` | `auth/` | imported at `index.ts:55`, never mounted |
 | `labels/policy.ts` | 183 lines | only its own test |
-| `prefilter/score.ts` | 170 lines | self-declared SUPERSEDED |
 | `prefilter/berne-whiskers.ts` | | the replacement, also never wired in |
+
+`/owner-load` with its service, and `prefilter/score.ts` with its 3.7 MB
+`model.json`, were deleted in August 2026. The tests that used `OwnerLoadService`
+as a vehicle for shared predicates — the `customer_relationships` probe, the
+`is_auto_created` filter — now run against `SlowRespondersService`, which applies
+the same ones.
 | `getEmailStats` | `apps/addon/src/services/api-client.ts:110` | homepage hardcodes `stats = null` |
 
 **Two auth systems and two OAuth implementations run simultaneously**:

@@ -73,8 +73,11 @@ times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md
 
 ## The other documents in `docs/`
 
-There are 99 files in `docs/`, most of them historical planning artifacts —
-fourteen of them are `BETTER_AUTH_*`. Two are worth your time:
+There are 73 files beside this handbook in `docs/`, most of them planning
+artifacts from earlier work. Twenty-six others were deleted in August 2026
+because they documented subsystems the code no longer contains: JWT session
+tokens, which were never implemented (see ADR-028), and a separate `employees`
+entity, since merged into `users`. Two of what remains are worth your time:
 
 - **`docs/decisions.md`** — the ADR log, append-only. Read ADR-005 and ADR-020.
 - **`docs/EXPERIMENTS.md`** — every approach tried, with its measured result.

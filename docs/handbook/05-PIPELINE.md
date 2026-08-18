@@ -126,10 +126,12 @@ more than a false one."*
 4. **Keyword rules** — a tenant keyword match resolves the verdict with no model
    call (`modelUsed: 'keyword-match'`).
 
-**Two prefilters are built and unwired**, and the superseded one says so:
+**A prefilter is built and unwired.** A second one, `score.ts`, was built first,
+declared itself superseded, and was deleted in August 2026. The measurement that
+retired it:
 
 ```
-score.ts (tf-idf)      PR-AUC 0.221   84% kept at 40% sent   3.7 MB vocabulary
+score.ts (tf-idf)      PR-AUC 0.221   84% kept at 40% sent   3.7 MB  [deleted]
 berne-whiskers (768d)  PR-AUC 0.264   89% kept at 40% sent   7.5 KB
 ```
 
