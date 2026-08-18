@@ -415,7 +415,32 @@ describe('unhappy clients left waiting', () => {
 
   it('still shows the median, below, with its comparison', () => {
     expect(card()).toContain('12.9h');
-    expect(card()).toContain('faster than routine mail');
+    // NAMES THE NUMBER IT BEATS. "2.6h faster than routine mail" asked the
+    // reader to take the comparison on trust, and a bare delta sitting beside
+    // another duration reads as a third duration.
+    expect(card()).toContain('15.1h');
+    expect(card()).toContain('routine mail');
+  });
+
+  /**
+   * The direction word must not touch the number.
+   *
+   * The trend row rendered "18.7h → 7.4h faster", which parses as "18.7h became
+   * 7.4 hours faster" — the endpoint read as a delta, and the bold on 7.4h made
+   * it worse. Each number is now anchored to its month and the verdict sits in
+   * parentheses where it cannot be mistaken for a quantity.
+   */
+  it('anchors each trend number to a month and keeps the verdict apart', () => {
+    const json = card();
+    expect(json).toContain('in 05');
+    expect(json).toContain('in 08');
+    expect(json).toContain('(improving)');
+    expect(json).not.toMatch(/12h<\/b> faster/);
+  });
+
+  /** 12.9h is 90 days; the trend's last point is one month. Say so. */
+  it('says which window the median covers', () => {
+    expect(card()).toContain('last 90 days');
   });
 
   /** Two statements of one fact read as two facts. */
