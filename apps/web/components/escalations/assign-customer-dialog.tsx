@@ -96,8 +96,10 @@ export function AssignCustomerDialog({
       if (result.emailsReassigned > 0) {
         parts.push(`${result.emailsReassigned} email${result.emailsReassigned === 1 ? '' : 's'} reassigned`)
       }
-      if (result.tasksCreated > 0) {
-        parts.push(`${result.tasksCreated} escalation${result.tasksCreated === 1 ? '' : 's'} created`)
+      if (result.tasksQueued > 0) {
+        // Queued, not created — the tasks are made by a background job, so
+        // saying "created" would promise something the list may not show yet.
+        parts.push(`${result.tasksQueued} escalation${result.tasksQueued === 1 ? '' : 's'} queued`)
       }
       toast.success(parts.join(' — '))
 

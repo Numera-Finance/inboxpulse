@@ -1,6 +1,11 @@
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ContactService } from '../service';
+import { inngest } from '../../inngest/instance';
+
+vi.mock('../../inngest/instance', () => ({
+  inngest: { send: vi.fn().mockResolvedValue(undefined) },
+}));
 
 vi.mock('../../utils/logger', () => ({
   logger: {
@@ -55,10 +60,6 @@ function makeService(options: Options = {}) {
     findTaskEligibleEmails: vi.fn(async () => options.taskEligible ?? []),
   };
 
-  const taskService = {
-    createFromEmail: vi.fn(async () => ({ id: 'task-id' })),
-  };
-
   const tenantService = {
     findById: vi.fn(async () => ({ id: TENANT_ID, domains: options.tenantDomains ?? [] })),
   };
@@ -71,12 +72,11 @@ function makeService(options: Options = {}) {
     contactRepository as never,
     customerRepository as never,
     emailRepository as never,
-    taskService as never,
     tenantService as never,
     db as never
   );
 
-  return { service, contactRepository, customerRepository, emailRepository, taskService, tenantService };
+  return { service, contactRepository, customerRepository, emailRepository, tenantService };
 }
 
 describe('ContactService.assignCustomer domain handling', () => {
@@ -230,8 +230,8 @@ describe('ContactService.assignCustomer retroactive tasks', () => {
     expect(order).toEqual(['read', 'write']);
   });
 
-  it('creates a task for each previously-unlinked negative email', async () => {
-    const { service, taskService } = makeService({
+  it('queues every previously-unlinked negative email for task creation', async () => {
+    const { service } = makeService({
       unlinkedEmailIds: ['email-1', 'email-2'],
       taskEligible: [
         { id: 'email-1', subject: 'Still broken' },
@@ -244,27 +244,40 @@ describe('ContactService.assignCustomer retroactive tasks', () => {
       customerId: TARGET_CUSTOMER_ID,
     });
 
-    expect(result.tasksCreated).toBe(2);
-    expect(taskService.createFromEmail).toHaveBeenCalledWith(
-      TENANT_ID,
-      TARGET_CUSTOMER_ID,
-      'email-1',
-      'Still broken'
-    );
-    expect(taskService.createFromEmail).toHaveBeenCalledWith(
-      TENANT_ID,
-      TARGET_CUSTOMER_ID,
-      'email-2',
-      'Negative sentiment email'
-    );
+    expect(result.tasksQueued).toBe(2);
+    expect(inngest.send).toHaveBeenCalledWith({
+      name: 'contact/customer.assigned',
+      data: {
+        tenantId: TENANT_ID,
+        customerId: TARGET_CUSTOMER_ID,
+        emails: [
+          { id: 'email-1', subject: 'Still broken' },
+          { id: 'email-2', subject: null },
+        ],
+      },
+    });
   });
 
-  it('caps how many escalation tasks one assignment creates', async () => {
-    const many = Array.from({ length: 40 }, (_, i) => ({
+  it('sends nothing when no email qualifies', async () => {
+    const { service } = makeService();
+
+    const result = await service.assignCustomer(header, {
+      email: 'bob@acme.com',
+      customerId: TARGET_CUSTOMER_ID,
+    });
+
+    expect(result.tasksQueued).toBe(0);
+    expect(inngest.send).not.toHaveBeenCalled();
+  });
+
+  it('splits a large backfill across several events', async () => {
+    // Nothing is dropped however many there are — the batch size only bounds
+    // the size of a single event payload.
+    const many = Array.from({ length: 450 }, (_, i) => ({
       id: `email-${i}`,
       subject: `Subject ${i}`,
     }));
-    const { service, taskService } = makeService({
+    const { service } = makeService({
       unlinkedEmailIds: many.map((e) => e.id),
       taskEligible: many,
     });
@@ -274,26 +287,12 @@ describe('ContactService.assignCustomer retroactive tasks', () => {
       customerId: TARGET_CUSTOMER_ID,
     });
 
-    // Each task also auto-assigns and notifies, so an uncapped loop would
-    // blow the request timeout and bury the assignee.
-    expect(result.tasksCreated).toBe(25);
-    expect(taskService.createFromEmail).toHaveBeenCalledTimes(25);
-  });
-
-  it('keeps the reassignment when task creation fails', async () => {
-    const { service, taskService } = makeService({
-      unlinkedEmailIds: ['email-1'],
-      taskEligible: [{ id: 'email-1', subject: 'Still broken' }],
-    });
-    taskService.createFromEmail.mockRejectedValue(new Error('assignee lookup failed'));
-
-    const result = await service.assignCustomer(header, {
-      email: 'bob@acme.com',
-      customerId: TARGET_CUSTOMER_ID,
-    });
-
-    expect(result.tasksCreated).toBe(0);
-    expect(result.emailsReassigned).toBe(7);
+    expect(result.tasksQueued).toBe(450);
+    expect(inngest.send).toHaveBeenCalledTimes(3);
+    const batches = (inngest.send as unknown as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([e]: [{ data: { emails: unknown[] } }]) => e.data.emails.length
+    );
+    expect(batches).toEqual([200, 200, 50]);
   });
 });
 

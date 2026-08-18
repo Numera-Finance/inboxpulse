@@ -61,14 +61,15 @@ export const contactSchema = z.object({
 export type Contact = z.infer<typeof contactSchema>;
 
 /**
- * Result of an assignment. `emailsReassigned` counts participant rows rewritten
- * — what the UI reports back — and `domainMoved` is the domain that changed
+ * Result of an assignment. `emailsReassigned` counts the distinct emails
+ * re-linked, `tasksQueued` the escalation tasks handed to the background worker
+ * (queued, not yet created), and `domainMoved` is the domain that changed
  * hands, or null when only this one address was affected.
  */
 export const assignContactCustomerResponseSchema = z.object({
   contact: contactSchema,
   emailsReassigned: z.number().int(),
-  tasksCreated: z.number().int(),
+  tasksQueued: z.number().int(),
   domainMoved: z.string().nullable(),
 });
 

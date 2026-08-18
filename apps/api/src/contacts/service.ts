@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ContactRepository } from './repository';
 import { CustomerRepository } from '../customers/repository';
 import { EmailRepository, type ParticipantAddressMatch } from '../emails/repository';
-import { TaskService } from '../tasks/service';
+import { inngest } from '../inngest/instance';
 import { TenantService } from '../tenants/service';
 import { logger } from '../utils/logger';
 import type { Contact, NewContact } from './schema';
@@ -57,7 +57,12 @@ export type SignatureEnrichmentResult = z.infer<typeof signatureEnrichmentResult
 export interface AssignCustomerResult {
   contact: Contact;
   emailsReassigned: number;
-  tasksCreated: number;
+  /**
+   * Eligible emails handed to Inngest for escalation-task creation. Queued, not
+   * created: the tasks are made in the background, so this counts what was
+   * dispatched rather than what exists yet.
+   */
+  tasksQueued: number;
   domainMoved: string | null;
 }
 
@@ -91,15 +96,14 @@ export function signatureBelongsToSender(
 }
 
 /**
- * Ceiling on escalation tasks created retroactively by one assignment.
+ * Emails per `contact/customer.assigned` event.
  *
- * Each task also auto-assigns and notifies, and the work runs inside the
- * request. Claiming a domain can surface hundreds of previously-unlinked
- * emails at once, which would blow the request timeout and bury the assignee.
- * Anything beyond the cap is logged and left alone rather than silently
- * dropped.
+ * The eligible emails are handed to Inngest rather than processed inline, so
+ * nothing is dropped however many there are — but a single event payload has a
+ * size ceiling, so a large backfill is split across several events. Each is an
+ * independent, retryable unit of work.
  */
-const MAX_RETROACTIVE_TASKS = 25;
+const RETROACTIVE_TASK_BATCH_SIZE = 200;
 
 @injectable()
 export class ContactService {
@@ -107,7 +111,6 @@ export class ContactService {
     @inject(ContactRepository) private contactRepository: ContactRepository,
     @inject(CustomerRepository) private customerRepository: CustomerRepository,
     @inject(EmailRepository) private emailRepository: EmailRepository,
-    @inject(TaskService) private taskService: TaskService,
     @inject(TenantService) private tenantService: TenantService,
     @inject('Database') private db: Database
   ) { }
@@ -259,44 +262,21 @@ export class ContactService {
       previouslyUnlinked
     );
 
-    // Task creation runs outside the transaction: createFromEmail also
-    // auto-assigns and notifies, and a failure there must not roll back a
-    // correct reassignment. It is idempotent per email, so a retry is safe.
-    //
-    // Capped, and the overflow is logged rather than passed over in silence —
-    // claiming a busy domain can surface far more eligible emails than one
-    // request should turn into tasks and notifications.
-    const toTask = taskEligible.slice(0, MAX_RETROACTIVE_TASKS);
-    if (taskEligible.length > toTask.length) {
-      logger.warn(
-        {
+    // Task creation is handed to Inngest rather than run here. Each task also
+    // auto-assigns and sends a notification, and claiming a busy domain can
+    // surface hundreds of eligible emails — inline, that would exceed the
+    // request timeout long after the reassignment had committed, so the user
+    // would see a failure for work that actually succeeded. The reassignment is
+    // durable by this point; the tasks follow behind it.
+    for (let i = 0; i < taskEligible.length; i += RETROACTIVE_TASK_BATCH_SIZE) {
+      await inngest.send({
+        name: 'contact/customer.assigned',
+        data: {
           tenantId,
-          email: contactEmail,
-          eligible: taskEligible.length,
-          created: toTask.length,
-          skipped: taskEligible.length - toTask.length,
-          logType: 'ASSIGN_TASK_CAP_REACHED',
+          customerId: input.customerId,
+          emails: taskEligible.slice(i, i + RETROACTIVE_TASK_BATCH_SIZE),
         },
-        'Retroactive escalation tasks capped; remaining emails were reassigned but got no task'
-      );
-    }
-
-    let tasksCreated = 0;
-    for (const email of toTask) {
-      try {
-        await this.taskService.createFromEmail(
-          tenantId,
-          input.customerId,
-          email.id,
-          email.subject || 'Negative sentiment email'
-        );
-        tasksCreated++;
-      } catch (error: any) {
-        logger.warn(
-          { emailId: email.id, error: error.message, logType: 'ASSIGN_TASK_CREATE_FAILED' },
-          'Failed to create escalation task during contact assignment (non-blocking)'
-        );
-      }
+      });
     }
 
     logger.info(
@@ -305,7 +285,7 @@ export class ContactService {
         email: contactEmail,
         customerId: input.customerId,
         emailsReassigned: result.emailsReassigned,
-        tasksCreated,
+        tasksQueued: taskEligible.length,
         domainMoved,
         logType: 'CONTACT_ASSIGNED_TO_CUSTOMER',
       },
@@ -315,7 +295,7 @@ export class ContactService {
     return {
       contact: result.contact,
       emailsReassigned: result.emailsReassigned,
-      tasksCreated,
+      tasksQueued: taskEligible.length,
       domainMoved,
     };
   }

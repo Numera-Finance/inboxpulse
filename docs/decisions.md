@@ -667,10 +667,17 @@ guard for it needed no schema.
   `ep.customer_id IS NOT NULL`) and that `maybeCreateTaskForNegativeEmail`
   skipped with `SKIP_TASK_CREATION_NO_CUSTOMER`. It runs outside the
   transaction, since `createFromEmail` also auto-assigns and notifies, and is
-  idempotent per email. It is capped at 25 per assignment, with the overflow
-  logged (`ASSIGN_TASK_CAP_REACHED`): claiming a busy domain can surface far
-  more eligible emails than one request should turn into tasks and
-  notifications. Those emails are still reassigned; they just get no task.
+  idempotent per email. It is dispatched to Inngest
+  (`contact/customer.assigned` -> `create-retroactive-escalations`) rather than
+  run inline: claiming a busy domain can surface hundreds of eligible emails,
+  each of which inserts a task, auto-assigns it and notifies, which would
+  exceed the request timeout long after the reassignment had committed — the
+  user would see a failure for work that had succeeded. Batched at 200 emails
+  per event to stay inside the payload ceiling, and limited to one run per
+  tenant at a time so correcting several senders in a row does not fan out into
+  concurrent notification bursts. Nothing is dropped regardless of volume.
+- The API therefore reports `tasksQueued`, not `tasksCreated`, and the UI says
+  "queued" — the tasks do not exist yet when the response returns.
 - The tenant's own domain can never be claimed. Internal senders appear in the
   analyzed-email list, so the endpoint is reachable for one, and claiming that
   domain would hand every colleague — including `participant_type = 'user'`
