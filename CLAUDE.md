@@ -134,8 +134,7 @@ The failure mode is to select on the outcome and measure toward the past.
 "Volume rose in 180 of 265 clients who complained — 68%" is
 P(volume rose | complained), which no panel row can act on. The same rule run
 forward caught 7.5% of complaints at 15.7% precision. At a 5.7% prior, measuring
-backwards will make almost anything look strong; it has now produced two
-shipped-then-retracted findings — sensitisation and volume (ADR-027).
+backwards will make almost anything look strong.
 
 Two checks before believing a signal:
 - **Did the population get chosen by the outcome?** If the denominator is

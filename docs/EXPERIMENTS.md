@@ -324,85 +324,14 @@ trusting tests.
 
 ---
 
-## Volume doubles in the week before a client first complains — MEASURED BACKWARDS
+## What predicts a complaint next week
 
-**Read the correction below before quoting anything in this section.** The result
-is real and the framing is wrong: it is P(volume rose | complained), and a panel
-row needs P(complained | volume rose). Kept in full rather than deleted, because
-the shape of the mistake is the useful part.
+Across 9,417 client-weeks, 533 were followed by a complaint. That 5.7% is the
+prior, and every signal below is that probability after conditioning on something
+observable for free. Each is fired on every client-week and scored on what
+happened the week after, which is the only form a panel row can act on.
 
-Nobody goes from nothing to furious in one email unless the firm has genuinely
-failed. The rest rock themselves into it, and the run-up is measurable without
-any model at all.
-
-Across 265 clients with a first complaint and prior history:
-
-| | |
-|---|---|
-| median daily mail, prior month | 0.21 |
-| median daily mail, final week | **0.43** |
-| volume rose | **180 of 265 (68%)** |
-| flat or fell | 85 (32%) |
-
-Their mail roughly doubles in the week before the first complaint lands.
-
-Two properties make this the strongest early signal found: it costs nothing —
-counting messages per sender per day, no model call, no vector — and it PRECEDES
-the label rather than restating it. Nothing in the embedding work managed that:
-the mood vector was flat through Systato's escalation, ego state did not move,
-and hotspot clients read 94% Adult in their angriest months.
-
-What did NOT move in the run-up, tested at the same time: our reply latency
-(20.5h before, 19.6h at baseline) and our answer rate, which was slightly BETTER
-in the run-up. "We went quiet and they got angry" is not supported.
-
-Causation is unsettled. A busy month generates both more mail and more chances
-for friction, so this may be "activity precedes complaints" rather than
-"frustration builds". It fires before the complaint either way, which is what a
-warning needs, but it means someone sending twice their usual volume is not
-necessarily angry yet.
-
-### The 68% is measured backwards, and the section above is wrong
-
-Everything above conditions on clients **who eventually complained**, then asks
-whether volume rose beforehand. A panel row has to answer the opposite question:
-volume rose, so will they complain? At a 5.7% base rate those are wildly
-different numbers, and only the second one can be shown to a reader.
-
-Re-run as the alert it actually is — fire on every client-week, then look at what
-followed — the rule that shipped performs like this:
-
-| | |
-|---|---|
-| client-weeks measured | 9,417 |
-| weeks followed by a complaint | 533 (5.7%) |
-| alerts fired | 254 |
-| alerts that preceded a complaint | **40 (15.7%)** |
-| share of all complaints caught | **7.5%** |
-
-2.8×, not 12×. And the lift is flat across thresholds — 1.5× usual volume gives
-7.3%, 3× usual gives 7.2% — which is the tell that volume is not carrying the
-signal. Something correlated with it is.
-
-**This is the same error as the sensitisation table below, made one experiment
-later.** Select on the outcome, measure backwards, report a rate. It will make
-almost anything look strong at a 5.7% prior.
-
-## What is actually carrying it: being in the conversation
-
-Decomposing the shipped rule shows its filters, not its volume test, doing the
-work. The rule required four messages this week, eight in the prior month, and
-three replies from us. Dropping the volume condition entirely changes nothing:
-
-| | client-weeks | complaint next week |
-|---|---|---|
-| engagement filter only, no volume rule | 1,032 | **16.1%** |
-| engagement filter plus volume > 2× | 254 | 15.7% |
-
-Conditioned on engagement, volume is spent. What compounds instead is a recent
-complaint, and the two are independent enough to multiply:
-
-| what we know this week | client-weeks | P(complains next week) | vs 5.7% prior |
+| what we know this week | client-weeks | P(complains next week) | vs prior |
 |---|---|---|---|
 | volume doubled, nobody replying | 1,131 | 4.4% | **0.8×** |
 | volume doubled | 2,658 | 7.2% | 1.3× |
@@ -412,15 +341,26 @@ complaint, and the two are independent enough to multiply:
 | **both** | 384 | **24.7%** | **4.4×** |
 | both, complaints still unanswered | 215 | **27.0%** | 4.7× |
 
-Adding volume to the pair moves 24.7% to 25.0% and discards two thirds of the
-coverage. Adding acceleration makes it worse at 23.7%. Both look predictive alone
-only because loud, fast weeks are mostly engaged weeks.
+Engagement is four messages from them this week against eight in the prior month,
+with three or more replies from us. It carries evidence a recent complaint does
+not, so the two multiply; volume and acceleration carry nothing the pair lacks.
+Adding volume moves 24.7% to 25.0% and discards two thirds of the coverage.
+Adding acceleration lowers it to 23.7%. Loud, fast weeks are mostly engaged
+weeks, so once engagement is known the volume term is already spent.
 
 **Volume with nobody replying is worse than nothing** — 4.4%, below the base
-rate. An unattended spike is a notification stream. That is what the `we_replied`
-filter is really for, and why the section survives at all.
+rate. An unattended spike is a notification stream, not a person getting angrier.
+The `we_replied >= 3` filter is what separates them, and it is load-bearing
+rather than hygiene.
 
-### It beats the field the fires list ranked by
+Isolating the two:
+
+| | client-weeks | complaint next week |
+|---|---|---|
+| engagement filter only, no volume rule | 1,032 | **16.1%** |
+| engagement filter plus volume > 2× | 254 | 15.7% |
+
+### Engagement outranks unanswered complaints
 
 Within the 1,181 fires-list weeks:
 
@@ -434,14 +374,44 @@ Within the 1,181 fires-list weeks:
 
 An engaged client with **every** complaint answered (21.9%) is likelier to
 escalate than an unengaged client with complaints still open (14.7%). Answering
-the mail does not settle the client. So `FiresService` now sorts on engagement
-first and unanswered second — unanswered remains on the row and in the ordering,
-because it is the part the firm controls and the reason to reply today, but it is
-the weaker predictor of what happens next. On Gaurav's panel the swap moved
-Berolzheimer and Datairis out of the visible six and Mytaxfiler and Curium in.
+the mail does not settle the client. `FiresService` sorts on engagement first and
+unanswered second; unanswered stays in the ordering and on the row because it is
+the part the firm controls and the reason to reply today, even though it says
+less about what happens next. On the live panel this ranks Berolzheimer and
+Datairis below Mytaxfiler and Curium.
 
 **Shipped:** `engaged` on the `Fire` row, "In conversation" on the card,
 `ORDER BY engaged DESC, unanswered DESC, negative DESC`.
+
+### Volume, the one signal that fires with nothing on file
+
+Every other signal needs a complaint already written. Among clients with none,
+engaged and above twice their usual volume reaches **13.7%** against an 11.0%
+floor for engaged alone. That is 2.4×, and it is the only thing in the panel that
+can flag a client nobody has looked at yet.
+
+Reply latency does not move in the run-up: 20.5h before a first complaint against
+19.6h at baseline, with a slightly better answer rate. "We went quiet and they
+got angry" is not supported.
+
+Causation is unsettled. A busy month generates both more mail and more chances
+for friction, so this may be "activity precedes complaints" rather than
+"frustration builds". It fires before the complaint either way, which is what a
+warning needs, but a client at twice their usual volume is not necessarily angry.
+
+### Footnote: run-up numbers are not alert rates
+
+Measured across the 265 clients who went on to complain, median daily mail runs
+0.21 in the prior month and 0.43 in the final week, rising in 180 of them (68%).
+
+That 68% is P(volume rose | complained). A panel row needs P(complained | volume
+rose), and at a 5.7% prior the two differ by an order of magnitude — the same
+rule fired forward over every client-week catches 7.5% of complaints at 15.7%
+precision. The lift is also flat across thresholds, 7.3% at 1.5× usual volume and
+7.2% at 3×, which is the tell that volume is not the carrier.
+
+Any rate conditioned on clients already known to have complained belongs in this
+category, including the sensitisation numbers below.
 
 ## Unhappy clients stay unhappy; they do not get touchier
 

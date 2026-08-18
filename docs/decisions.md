@@ -1260,26 +1260,19 @@ impossible to attribute.
 
 ### ADR-027: Escalation risk is a posterior, and engagement is the evidence that moves it (2026-08-17)
 
-**Status:** Accepted. Corrects the measurement behind the "Talking more than
-usual" section shipped in `crm-api-00116-n98` / `crm-addon-00065-tvv`.
+**Status:** Accepted.
 
-**Context:** The panel gained a section built on a finding that a client's mail
-volume doubles in the week before their first complaint — "rose in 180 of 265
-clients, 68%". Asked what fraction of historical complaints that would actually
-catch, the honest re-measurement showed the figure was conditioned on clients who
-eventually complained. It answers "did volume rise before the complaint?" when a
-panel row must answer "volume rose, so will they complain?". Over all 9,417
-client-weeks the shipped rule caught 7.5% of complaints at 15.7% precision
-against a 5.7% base rate.
-
-This is the same error as the sensitisation table — "unhappy clients stay
-unhappy; they do not get touchier" in `docs/EXPERIMENTS.md` — made one experiment
-later: select on the outcome, measure backwards, report a rate.
+**Context:** The panel ranks clients by risk, and two candidate signals were
+available: how much a client is writing, and whether we are in a live exchange
+with them. Ranking them requires asking what a panel row actually has to answer —
+given what is visible this week, what is the chance this client complains next
+week — over a population of all clients rather than clients already known to have
+complained. At a 5.7% base rate the two framings differ by an order of magnitude.
 
 **Decision:** Treat every panel signal as a posterior — P(complains next week |
-what we can see) — and require it be measured as the alert it will be: fire on
-every client-week, then count what followed. Report lift against the 5.7% prior,
-never a rate conditioned on the outcome.
+what we can see) — and measure it as the alert it will be: fire on every
+client-week, then count what followed. Report lift against the 5.7% prior, never
+a rate conditioned on the outcome.
 
 Measured that way, the evidence ranks:
 
@@ -1301,23 +1294,23 @@ alone only because loud weeks are mostly engaged weeks.
 **Consequences:**
 
 - `FiresService` orders by `engaged DESC, unanswered DESC, negative DESC`.
-  Unanswered was the previous primary key and is the weaker predictor — 18.3%
-  against 14.5%, where engagement is 24.7% against 13.0%. An engaged client with
-  every complaint answered (21.9%) outranks an unengaged one with complaints
-  still open (14.7%). Unanswered stays second and stays visible because it is the
-  part the firm controls and the reason to reply today; it is simply not what
-  says the client is still working themselves up.
+  Engagement separates 24.7% from 13.0%; unanswered separates 18.3% from 14.5%.
+  An engaged client with every complaint answered (21.9%) outranks an unengaged
+  one with complaints still open (14.7%). Unanswered sorts second and stays
+  visible because it is the part the firm controls and the reason to reply today;
+  it is simply not what says the client is still working themselves up.
 - `Fire` carries `engaged`; the card shows "In conversation" and only when true.
   It leads the grey line, because it decides the sort and a reader who cannot see
   why the order changed reads the order as arbitrary. Optional on both sides of
   the seam: the addon and crm-api deploy independently and absent must render as
   no marker, never a wrong one.
-- The "Talking more than usual" section stays, with its claim corrected in place
-  from 68% to 2.4×. Among clients with no complaint on file, engaged plus
-  above twice usual volume reaches 13.7% against 11.0% for engaged alone — a real
-  but small contribution, and the only place volume earns anything.
+- The "Talking more than usual" section is worth 2.4×, and keeps its slot for
+  what it uniquely does: among clients with no complaint on file, engaged plus
+  above twice usual volume reaches 13.7% against 11.0% for engaged alone. It is
+  the only signal in the panel that fires before anything is on file.
 - The `we_replied >= 3` filter is load-bearing, not hygiene. Volume without
   replies runs 4.4%, BELOW the base rate: an unattended spike is a notification
   stream, not a person getting angrier.
-- Superseded framing in `docs/EXPERIMENTS.md` is kept and marked rather than
-  deleted, because the shape of the error is the reusable part.
+- Run-up statistics — anything measured over clients already known to have
+  complained — are footnoted in `docs/EXPERIMENTS.md` rather than quoted as
+  alert rates. The two differ by roughly an order of magnitude at this prior.
