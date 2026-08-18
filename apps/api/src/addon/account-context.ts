@@ -777,6 +777,16 @@ export interface DangerPulse {
    * into a meeting and check again next month.
    */
   overFiveDays: number;
+  /**
+   * CLIENTS behind those waits, which is what the section header promises.
+   *
+   * Every aggregate on the pulse query is per-EMAIL, so `overFiveDays` counts
+   * messages: 57 of them, from 49 clients. The card said "55 clients waited more
+   * than 5 days" while counting neither 55 nor clients. A number and the noun
+   * beside it have to agree, and the actionable unit here is the client — you
+   * call a company, not a message.
+   */
+  overFiveDaysClients: number;
   /** Median per month, oldest first, for a text sparkline. */
   trend: Array<{ month: string; medianH: number }>;
   /** Share of replies attributable to a person — caveats the per-person view. */
@@ -899,12 +909,40 @@ export class DangerPulseService {
     const num = (v: unknown): number | null =>
       v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10;
 
+    // A SEPARATE QUERY, not a join. email_participants multiplies the row -- an
+    // email with four customer-linked participants counts four times, which once
+    // took this headline from 501 to 2,089. Counting distinct clients needs that
+    // join, so it runs on its own and leaves the per-email aggregates intact.
+    const waitRows = await this.db.execute<{ clients: number }>(sql`
+      SELECT count(DISTINCT pc.customer_id)::int AS clients
+      FROM emails e
+      JOIN email_analyses a
+        ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+      JOIN email_participants pc ON pc.email_id = e.id AND pc.customer_id IS NOT NULL
+      JOIN customers c ON c.id = pc.customer_id AND NOT c.is_auto_created
+      WHERE e.tenant_id = ${tenantId}
+        AND e.is_customer_email
+        AND e.first_reply_at IS NOT NULL
+        AND e.first_reply_at > e.received_at
+        AND e.received_at > now() - (${days} || ' days')::interval
+        -- The SAME participation filters the message count uses. Without them the
+        -- client count is drawn from a wider population than the "of N answered"
+        -- beside it, and two numbers on one row would be counting two things.
+        ${weAreOnTheThread()}
+        ${weWereAddressed()}
+        AND EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600 > 120
+    `);
+    const waitClients = Number(
+      (waitRows as unknown as Array<{ clients: number }>)[0]?.clients ?? 0
+    );
+
     return {
       negativeMedianH: num(neg?.median_h),
       otherMedianH: num(oth?.median_h),
       negativeP90H: num(neg?.p90_h),
       negativeCount: Number(neg?.n ?? 0),
       overFiveDays: Number(neg?.over_five_days ?? 0),
+      overFiveDaysClients: waitClients,
       trend: (trendRows as unknown as Array<{ month: string; median_h: unknown }>).map((r) => ({
         month: r.month,
         medianH: Number(num(r.median_h) ?? 0),
