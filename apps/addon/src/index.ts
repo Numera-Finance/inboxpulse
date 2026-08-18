@@ -393,6 +393,27 @@ app.post('/gmail/analyse', async (c) => {
       ? (p.forceMode as ThreadMode)
       : null;
 
+  // NO CONSENT, NO READ.
+  //
+  // This has to sit above the CLASSIFIER, not merely above the deep read. Both
+  // send thread text to a model, so a gate placed between them leaves the panel
+  // truthfully reporting "your mail is not being read" while the classifier has
+  // already read it. That is where this check used to be.
+  //
+  // The cache is not a way around it either: entries are only ever written
+  // below, on a path this same gate governs, so a cache hit is mail this viewer
+  // already consented to have read.
+  const mayRead = await hasConsent(oauthToken);
+  // This endpoint exists only to read the thread. With reading off it has
+  // nothing to do, and a card whose analysis is quietly absent would read as
+  // "nothing to report" rather than "not looked at". Cached readings are
+  // withheld too: consent was revoked after they were written, and the switch
+  // has to govern what is shown, not only what is fetched.
+  if (!mayRead)
+    return c.json(
+      notify('Reading is off, so this thread was not read. Turn it on from the InboxPulse panel to see a summary.'),
+    );
+
   // Classification is mode-independent, so it is cached under the auto key and
   // reused even when a mode is forced -- no need to re-ask what the thread is.
   const autoCached = analysisCache.get(cacheKeyFor(null));
@@ -400,7 +421,7 @@ app.post('/gmail/analyse', async (c) => {
     ? (autoCached?.mode ?? null)
     : autoCached
       ? autoCached.mode
-      : threadText
+      : mayRead && threadText
         ? await classifyThreadMode({ subject: headers?.subject, thread: threadText })
         : null;
 
@@ -418,13 +439,6 @@ app.post('/gmail/analyse', async (c) => {
   // So the wait is now max(extraction, prose) rather than one call doing both.
   // It also puts each job on the model suited to it: gemma3:12b is reliable at
   // shape, nemotron is 2.5x faster at prose and has no schema to get wrong.
-  // NO CONSENT, NO READ.
-  //
-  // The gate belongs here, not in the card: by the time a card is built the
-  // thread has already been assembled and sent. This is the last point at
-  // which "we have not read your mail" is still true.
-  const mayRead = await hasConsent(oauthToken);
-
   const [reading, replyOptions] = cached
     ? [cached.reading, cached.replyOptions]
     : mayRead && threadText && mode !== 'fyi'
@@ -628,6 +642,13 @@ app.post('/gmail/stance', async (c) => {
   const p = getActionParameters(event);
   if (!p.stance) return c.json(notify('No approach was selected.'));
 
+  // Gate BEFORE the fetch, not just before the model: with reading off there is
+  // no reason to pull the thread into this process at all.
+  if (!(await hasConsent(oauthToken)))
+    return c.json(
+      notify('Reading is off, so this thread was not read. Turn reading on from the InboxPulse panel to draft a reply.'),
+    );
+
   const threadId = normalizeGmailMessageId(p.threadId);
   const messageId = normalizeGmailMessageId(p.messageId);
   const headers = await fetchMessageHeaders(messageId, oauthToken, accessToken);
@@ -770,6 +791,13 @@ app.post('/gmail/triage', async (c) => {
 
   const { oauthToken } = getGmail(event);
   if (!oauthToken) return c.json(notify('Gmail access is not granted.'));
+
+  // The widest read in the add-on: twelve threads, not the one the viewer has
+  // open. Gated first, so nothing is listed before consent is established.
+  if (!(await hasConsent(oauthToken)))
+    return c.json(
+      notify('Reading is off, so your inbox was not read. Turn reading on from the InboxPulse panel to prioritize it.'),
+    );
 
   let threads;
   try {
@@ -1110,6 +1138,10 @@ app.post('/gmail/contextual', async (c) => {
    */
   const liveForOpenMessage = async () => {
     if (!isLiveAnalysisEnabled()) return null;
+    // Reading off is a per-viewer answer, so it is checked here rather than at
+    // the top of the handler: every other section of this card is built from
+    // headers and stored records, and all of it still renders.
+    if (!(await hasConsent(oauthToken))) return null;
     const body = await fetchMessageBody(messageId, oauthToken, accessToken);
     if (!body) return null;
     return analyseMessageLive({ subject: headers?.subject, from: headers?.from, body });
@@ -1121,7 +1153,17 @@ app.post('/gmail/contextual', async (c) => {
     // can still be read — which is the whole point of the live path.
     const live = await liveForOpenMessage();
     return c.json(
-      pushCard(buildThreadCard({ messageId, status: 'unidentified', headers, viewerEmail, live })),
+      pushCard(
+        buildThreadCard({
+          messageId,
+          status: 'unidentified',
+          headers,
+          viewerEmail,
+          live,
+          readingOff: !live && (await hasConsent(oauthToken)) === false,
+          baseUrl: env.ADDON_BASE_URL,
+        }),
+      ),
     );
   }
 
@@ -1197,6 +1239,7 @@ app.post('/gmail/contextual', async (c) => {
           threadId: dbThreadId ?? undefined,
           baseUrl,
           live,
+          readingOff: !live && !analysisPending && (await hasConsent(oauthToken)) === false,
           chatShareEnabled: isChatShareEnabled(),
           participants,
           digest,
