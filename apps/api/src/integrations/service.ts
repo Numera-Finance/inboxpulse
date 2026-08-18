@@ -1,9 +1,36 @@
 import { injectable, inject } from 'tsyringe';
-import { IntegrationRepository, type CreateIntegrationInput, type UpdateKeysInput, type IntegrationKeys } from './repository';
+import {
+  IntegrationRepository,
+  type CreateIntegrationInput,
+  type UpdateKeysInput,
+  type IntegrationKeys,
+  type IntegrationWithKeys,
+  type IntegrationLookupResult,
+  type IntegrationAuthType,
+} from './repository';
 import { TenantRepository } from '../tenants/repository';
 import type { IntegrationSource } from './schema';
 import type { UpdateRunState, UpdateAccessToken, UpdateWatchExpiry } from '@crm/clients';
 import { logger } from '../utils/logger';
+
+/**
+ * True when `err` is a PostgreSQL unique-constraint violation (SQLSTATE 23505).
+ * postgres.js surfaces the code on the error; check `cause` too in case a
+ * wrapper re-threw it. Mirrors the helper in customers/service.ts.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  const code = (err as { code?: string })?.code
+    ?? (err as { cause?: { code?: string } })?.cause?.code;
+  return code === '23505';
+}
+
+/**
+ * Outcome of createOrUpdate. `reactivated` distinguishes a reconnect of a
+ * previously disconnected mailbox from a routine credential refresh.
+ */
+export type CreateOrUpdateResult =
+  | { integration: IntegrationWithKeys; updated: true; reactivated: boolean }
+  | { integration: IntegrationWithKeys; created: true };
 
 @injectable()
 export class IntegrationService {
@@ -14,14 +41,19 @@ export class IntegrationService {
 
   /**
    * Create or update integration
-   * Now checks by email to allow multiple integrations per tenant
+   * Keyed by mailbox, so a tenant can connect several mailboxes
+   *
+   * The lookup covers disconnected integrations too. Matching only connected
+   * ones made every reconnect insert a fresh row, and since email_threads is
+   * unique on (tenant_id, integration_id, provider_thread_id) the same Gmail
+   * thread was then re-ingested under each row (ADR-006).
    */
   async createOrUpdate(input: {
     tenantId: string;
     authType: 'oauth' | 'service_account' | 'api_key';
     keys: IntegrationKeys;
     createdBy?: string;
-  }) {
+  }): Promise<CreateOrUpdateResult> {
     const { tenantId, authType, keys, createdBy } = input;
 
     // Validate that email is set for lookup
@@ -30,15 +62,16 @@ export class IntegrationService {
       throw new Error('keys.email or keys.impersonatedUserEmail is required for tenant lookup');
     }
 
-    // Check if integration exists for this specific email
-    const existingIntegrationId = await this.integrationRepo.findIdByEmail(tenantId, 'gmail', email);
+    // Check if an integration already owns this mailbox, connected or not
+    const existing = await this.integrationRepo.findByTenantAndEmail(tenantId, 'gmail', email);
 
-    if (existingIntegrationId) {
-      logger.info({ tenantId, email }, 'Updating existing Gmail integration');
-      const integration = await this.integrationRepo.updateKeysByEmail(tenantId, 'gmail', email, { keys });
-      return { integration, updated: true };
-    } else {
-      logger.info({ tenantId, email, authType, createdBy }, 'Creating new Gmail integration');
+    if (existing) {
+      return this.applyToExisting(existing, { tenantId, email, authType, keys, createdBy });
+    }
+
+    logger.info({ tenantId, email, authType, createdBy }, 'Creating new Gmail integration');
+
+    try {
       const integration = await this.integrationRepo.create({
         tenantId,
         source: 'gmail',
@@ -48,7 +81,65 @@ export class IntegrationService {
         createdBy,
       });
       return { integration, created: true };
+    } catch (error: unknown) {
+      // Two connects for the same never-before-seen mailbox can both miss the
+      // lookup above and both insert; uniq_integrations_active_tenant_source_email
+      // then rejects the loser. Re-read the winner and apply to it, so the loser
+      // still returns a connected integration instead of surfacing a raw Postgres
+      // constraint message to the user through the OAuth callback's error redirect.
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+
+      const winner = await this.integrationRepo.findByTenantAndEmail(tenantId, 'gmail', email);
+      if (!winner) {
+        // Some other unique constraint then, or the winner vanished — either way
+        // this is not the race we know how to recover from.
+        throw error;
+      }
+
+      logger.info(
+        { tenantId, email, integrationId: winner.id },
+        'Concurrent connect won the race for this mailbox; applying to the existing row'
+      );
+      return this.applyToExisting(winner, { tenantId, email, authType, keys, createdBy });
     }
+  }
+
+  /**
+   * Apply an incoming connect to the row that already owns this mailbox.
+   *
+   * Shared by the ordinary update branch and the race-loser recovery above, so
+   * both reach the same state: a reconnect revives the row, a routine re-auth
+   * just refreshes its credentials.
+   */
+  private async applyToExisting(
+    existing: IntegrationLookupResult,
+    input: {
+      tenantId: string;
+      email: string;
+      authType: IntegrationAuthType;
+      keys: IntegrationKeys;
+      createdBy?: string;
+    }
+  ): Promise<CreateOrUpdateResult> {
+    const { tenantId, email, authType, keys, createdBy } = input;
+    const reactivated = !existing.isActive;
+
+    logger.info(
+      { tenantId, email, integrationId: existing.id, reactivated },
+      reactivated
+        ? 'Reconnecting previously disconnected Gmail integration'
+        : 'Updating existing Gmail integration'
+    );
+
+    const integration = await this.integrationRepo.updateKeysById(
+      existing.id,
+      { keys, updatedBy: createdBy },
+      { reactivate: reactivated, authType }
+    );
+
+    return { integration, updated: true, reactivated };
   }
 
   /**

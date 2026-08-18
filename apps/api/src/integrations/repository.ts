@@ -1,8 +1,14 @@
 import { injectable, inject } from 'tsyringe';
 import type { Database } from '@crm/database';
-import { integrations, type IntegrationSource, type IntegrationParameters } from './schema';
+import {
+  integrations,
+  type Integration,
+  type NewIntegration,
+  type IntegrationSource,
+  type IntegrationParameters,
+} from './schema';
 import { users } from '../users/schema';
-import { eq, and, or, isNull, lt, sql, type SQL } from 'drizzle-orm';
+import { eq, and, or, desc, isNull, lt, sql, type SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
 export interface IntegrationKeys {
@@ -57,6 +63,44 @@ function parametersToObject(params: IntegrationParameters | Record<string, any>)
 }
 
 /**
+ * Parameter keys under which a mailbox address can be stored. `email` is what
+ * OAuth writes, `impersonatedUserEmail` what service accounts use, and
+ * `userEmail` a legacy spelling — `getIntegration` and `listByTenant` fall back
+ * across all three when deriving connectedEmail, so identity lookups must cover
+ * the same set or a mailbox stored under a later key resolves for Gmail webhooks
+ * but not for reconnects, and forks its email_threads (ADR-006).
+ */
+const EMAIL_PARAMETER_KEYS = ['email', 'impersonatedUserEmail', 'userEmail'] as const;
+
+/**
+ * A key from that fixed list. The predicates below splice key names straight
+ * into a jsonpath literal, so this type — not a comment — is what keeps an
+ * arbitrary string from reaching it and producing an unparseable path.
+ */
+type EmailParameterKey = (typeof EMAIL_PARAMETER_KEYS)[number];
+
+/**
+ * Lowercase the address under every mailbox-bearing key.
+ *
+ * Email addresses are case-insensitive, and the unique index from migration 015
+ * lowercases before comparing. Storing mixed case would let one mailbox occupy
+ * two rows, and — now that the index exists — turn the resulting missed lookup
+ * into a constraint violation surfacing as a failed OAuth callback rather than a
+ * silent duplicate.
+ */
+function normalizeEmailParameters(params: Record<string, any>): Record<string, any> {
+  const normalized = { ...params };
+
+  for (const key of EMAIL_PARAMETER_KEYS) {
+    if (typeof normalized[key] === 'string') {
+      normalized[key] = normalized[key].toLowerCase();
+    }
+  }
+
+  return normalized;
+}
+
+/**
  * Convert object to key-value array
  * Values are stored as native JSON (arrays, objects, strings, etc.)
  */
@@ -67,10 +111,12 @@ function objectToParameters(obj: Record<string, any>): IntegrationParameters {
   }));
 }
 
+export type IntegrationAuthType = 'oauth' | 'service_account' | 'api_key';
+
 export interface CreateIntegrationInput {
   tenantId: string;
   source: IntegrationSource;
-  authType: 'oauth' | 'service_account' | 'api_key';
+  authType: IntegrationAuthType;
   keys: IntegrationKeys;
   createdBy?: string;
   tokenExpiresAt?: Date;
@@ -80,6 +126,19 @@ export interface UpdateKeysInput {
   keys: Partial<IntegrationKeys>;
   updatedBy?: string;
 }
+
+/**
+ * Identity of an integration resolved by mailbox, plus whether it is currently
+ * connected. Callers need `isActive` to tell a routine credential refresh from a
+ * reconnect of a previously disconnected mailbox.
+ */
+export interface IntegrationLookupResult {
+  id: string;
+  isActive: boolean;
+}
+
+/** An integration row with its `parameters` array flattened into a keys object. */
+export type IntegrationWithKeys = Integration & { keys: IntegrationKeys };
 
 @injectable()
 export class IntegrationRepository {
@@ -93,7 +152,7 @@ export class IntegrationRepository {
     const { refreshToken, accessToken, ...params } = input.keys;
 
     // Convert params object to key-value array for JSONB storage
-    const parametersArray = objectToParameters(params);
+    const parametersArray = objectToParameters(normalizeEmailParameters(params));
 
     const result = await this.db
       .insert(integrations)
@@ -393,7 +452,7 @@ export class IntegrationRepository {
    */
   private emailMatchesParameters(
     email: string,
-    keys: readonly string[] = ['email', 'impersonatedUserEmail', 'userEmail']
+    keys: readonly EmailParameterKey[] = EMAIL_PARAMETER_KEYS
   ): SQL {
     // A falsy email (or empty keys) must match nothing. Without this guard,
     // JSON.stringify drops an undefined value so the predicate degrades to
@@ -411,66 +470,179 @@ export class IntegrationRepository {
   }
 
   /**
-   * Find integration ID by email address (for internal use)
+   * Case-insensitive variant of the predicate above, matching the address under
+   * any mailbox-bearing key.
+   *
+   * Containment (`@>`) compares JSONB values byte-exactly, so it cannot see that
+   * `Ops@acme.com` and `ops@acme.com` are the same mailbox. That mismatch matters
+   * now that migration 015 enforces uniqueness over the *lowercased* address: a
+   * lookup that missed on case would fall through to an INSERT and hit the unique
+   * index, failing the OAuth callback instead of connecting. This expression is
+   * deliberately identical to the one the index is built on.
+   *
+   * Only identity lookups use this. The Gmail webhook path (findByEmail) stays on
+   * containment because it runs on every notification and depends on
+   * idx_integrations_parameters_gin to avoid the full table scans that migration
+   * 012 exists to prevent; addresses arriving from Gmail are already lowercase,
+   * and writes are normalized, so the two agree in practice.
+   *
+   * Key names come from a fixed internal list, never from a caller; the address
+   * is bound as a query parameter.
    */
-  async findIdByEmail(tenantId: string, source: IntegrationSource, email: string): Promise<string | null> {
+  private emailMatchesParametersIgnoringCase(
+    email: string,
+    keys: readonly EmailParameterKey[] = EMAIL_PARAMETER_KEYS
+  ): SQL {
+    // Same guard as above: a falsy email must match nothing rather than degrade
+    // into a predicate that matches any row carrying an email key at all.
+    if (!email || keys.length === 0) {
+      return sql`false`;
+    }
+
+    const needle = email.toLowerCase();
+
+    return or(
+      ...keys.map(
+        (key) =>
+          sql`lower(jsonb_path_query_first(${integrations.parameters}, ${`$[*] ? (@.key == "${key}").value`}::jsonpath) #>> '{}') = ${needle}`
+      )
+    )!;
+  }
+
+  /**
+   * Find the integration owning `email` for this tenant/source, connected or not.
+   *
+   * Deliberately NOT filtered by is_active. Disconnecting a mailbox flips
+   * is_active to false, so an active-only lookup made every reconnect miss the
+   * existing row and INSERT a duplicate instead — which is what fragmented one
+   * production mailbox across 13 rows and split its email_threads three ways
+   * (see ADR-006).
+   *
+   * Ordering prefers the connected row, then the most recently created one. For
+   * a tenant still carrying pre-fix duplicates that is the row holding the newest
+   * email_threads, so a reconnect revives the richest row rather than an empty
+   * one from months earlier.
+   */
+  async findByTenantAndEmail(
+    tenantId: string,
+    source: IntegrationSource,
+    email: string
+  ): Promise<IntegrationLookupResult | null> {
     const result = await this.db
-      .select({ id: integrations.id })
+      .select({ id: integrations.id, isActive: integrations.isActive })
       .from(integrations)
       .where(
         and(
           eq(integrations.tenantId, tenantId),
           eq(integrations.source, source),
-          eq(integrations.isActive, true),
-          this.emailMatchesParameters(email, ['email', 'impersonatedUserEmail'])
+          this.emailMatchesParametersIgnoringCase(email)
         )
       )
-      // Deterministic pick when more than one row matches.
-      .orderBy(integrations.createdAt, integrations.id)
+      .orderBy(desc(integrations.isActive), desc(integrations.createdAt), integrations.id)
       .limit(1);
 
-    return result.length > 0 ? result[0].id : null;
+    return result.length > 0 ? result[0] : null;
   }
 
   /**
-   * Update integration keys by email
+   * Merge `input.keys` into one specific integration row.
+   *
+   * Current parameters are read from that same row by ID. The previous
+   * implementation merged from getCredentials(tenantId, source), which returns an
+   * arbitrary ACTIVE row for the tenant — with more than one mailbox connected
+   * that copied the wrong mailbox's parameters over this one.
+   *
+   * `reactivate` marks a reconnect of a disconnected mailbox. Besides flipping
+   * is_active back on it clears the stale sync bookkeeping: last_run_token is a
+   * Gmail historyId, and Gmail rejects ones older than roughly a week, so
+   * incrementalSync would throw rather than fall back (it only degrades to
+   * initialSync when the cursor is absent). Clearing it makes the next run a full
+   * initial sync — what used to happen implicitly when a reconnect minted a fresh
+   * row. The watch and access-token fields are cleared for the same reason: the
+   * watch was stopped at disconnect, and a stale expiry in the future would
+   * suppress renewal.
    */
-  async updateKeysByEmail(
-    tenantId: string,
-    source: IntegrationSource,
-    email: string,
-    input: UpdateKeysInput
-  ) {
-    const integrationId = await this.findIdByEmail(tenantId, source, email);
-
-    if (!integrationId) {
-      throw new Error(`Integration not found for tenant ${tenantId}, source ${source}, and email ${email}`);
-    }
-
-    // Get current keys
-    const current = await this.getCredentials(tenantId, source);
+  async updateKeysById(
+    integrationId: string,
+    input: UpdateKeysInput,
+    options: { reactivate: boolean; authType?: IntegrationAuthType } = { reactivate: false }
+  ): Promise<IntegrationWithKeys> {
+    const current = await this.findById(integrationId);
 
     if (!current) {
-      throw new Error(`Integration not found for tenant ${tenantId} and source ${source}`);
+      throw new Error(`Integration not found: ${integrationId}`);
     }
 
-    // Merge with new keys
-    const updatedKeys = { ...current, ...input.keys };
+    const currentKeys: IntegrationKeys = {
+      ...parametersToObject(current.parameters as IntegrationParameters),
+      refreshToken: current.refreshToken || current.token || undefined,
+    };
 
-    // Separate token from other parameters
-    const { refreshToken, accessToken, ...params } = updatedKeys;
+    // accessToken/accessTokenExpiresAt are columns, not parameters — keep them
+    // out of the JSONB. The access token is intentionally not written here: the
+    // Gmail client only trusts one when a matching expiry is stored, and we have
+    // no expiry on this path, so it refreshes from the refresh token instead.
+    const { refreshToken, accessToken, accessTokenExpiresAt, ...params } = {
+      ...currentKeys,
+      ...input.keys,
+    };
 
-    // Convert params to key-value array
-    const parametersArray = objectToParameters(params);
+    // Re-authorizing over OAuth must retire the service-account credentials this
+    // mailbox may have carried: GmailClientFactory tests serviceAccountEmail and
+    // serviceAccountKey BEFORE the OAuth branch, so merging them forward would
+    // keep the row authenticating as a service account and leave the grant the
+    // user just made unused. impersonatedUserEmail is kept — it is an address,
+    // not a credential, and it is one of the keys this mailbox is found by.
+    if (options.authType === 'oauth') {
+      delete params.serviceAccountEmail;
+      delete params.serviceAccountKey;
+    }
+
+    const values: Partial<NewIntegration> = {
+      parameters: objectToParameters(normalizeEmailParameters(params)),
+      updatedBy: input.updatedBy,
+      updatedAt: new Date(),
+    };
+
+    // Keep auth_type in step with the credentials actually stored, so a mailbox
+    // that moves between strategies is not left claiming the old one.
+    if (options.authType) {
+      values.authType = options.authType;
+    }
+
+    // Write both columns, and only when we actually hold a token — an absent one
+    // means "unchanged", never "clear it". getCredentials prefers refresh_token
+    // and falls back to the legacy token, so writing only the legacy column would
+    // leave a previously rotated refresh token winning over the one a reconnect
+    // just issued.
+    if (refreshToken) {
+      values.refreshToken = refreshToken;
+      values.token = refreshToken;
+    }
+
+    // A caller-supplied refresh token means someone just re-authorized, so the
+    // cached access token is suspect — typically they revoked the grant and
+    // reconnected to repair it. The Gmail client trusts any stored access token
+    // whose expiry is more than 5 minutes out, so leaving it would keep a revoked
+    // token in use for up to an hour after a successful reconnect. Test
+    // input.keys rather than the merged value, which carries the row's existing
+    // token forward and would clear on every settings-only save.
+    if (input.keys.refreshToken || options.reactivate) {
+      values.accessToken = null;
+      values.accessTokenExpiresAt = null;
+    }
+
+    if (options.reactivate) {
+      values.isActive = true;
+      values.lastRunToken = null;
+      values.lastRunAt = null;
+      values.watchSetAt = null;
+      values.watchExpiresAt = null;
+    }
 
     const result = await this.db
       .update(integrations)
-      .set({
-        parameters: parametersArray,
-        token: refreshToken,
-        updatedBy: input.updatedBy,
-        updatedAt: new Date(),
-      })
+      .set(values)
       .where(eq(integrations.id, integrationId))
       .returning();
 
@@ -637,7 +809,7 @@ export class IntegrationRepository {
     return this.mapToIntegration(result[0]);
   }
 
-  private async mapToIntegration(row: any) {
+  private async mapToIntegration(row: Integration): Promise<IntegrationWithKeys> {
     // Convert parameters array to object
     const params = parametersToObject(row.parameters as IntegrationParameters);
 

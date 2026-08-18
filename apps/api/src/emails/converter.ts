@@ -114,9 +114,51 @@ export function hasExternalRecipient(email: ReplyClassifiableEmail, tenantDomain
  * Whether an outbound/reply email should count as the customer-facing first
  * reply for time-to-response: it must be a real human response addressed to the
  * customer, not automated mail and not an internal-only message.
+ *
+ * This is the message-level qualification only. Which customer email a qualifying
+ * reply actually answers is decided per row by the originator rule — the reply
+ * must address that email's own sender — and is enforced in the first-reply
+ * UPDATE (see {@link ReplyAttribution}).
  */
 export function isCountableReply(email: ReplyClassifiableEmail, tenantDomains?: string[] | null): boolean {
   return !isAutoSubmitted(email) && hasExternalRecipient(email, tenantDomains);
+}
+
+/**
+ * Everything the first-reply UPDATE needs to know about an outbound reply.
+ * Reply messages are never stored, so this is the only trace of them that
+ * survives ingestion.
+ */
+export interface ReplyAttribution {
+  /** When the reply was sent. */
+  receivedAt: Date;
+  /** Lowercased sender address — resolved to a user id for first_reply_by_id. */
+  fromEmail: string;
+  /**
+   * Lowercased, de-duplicated To + Cc addresses. A reply answers a customer
+   * email only when that email's own sender (the originator) appears here.
+   */
+  recipients: string[];
+}
+
+/**
+ * Reduce a reply to the fields the first-reply UPDATE needs, normalizing
+ * addresses to lowercase so matching against `emails.from_email` is
+ * case-insensitive on both sides.
+ */
+export function toReplyAttribution(
+  email: ReplyClassifiableEmail,
+  receivedAt: Date
+): ReplyAttribution {
+  const recipients = [...(email.tos || []), ...(email.ccs || [])]
+    .map((r) => r.email?.toLowerCase().trim())
+    .filter((e): e is string => !!e);
+
+  return {
+    receivedAt,
+    fromEmail: email.from.email.toLowerCase().trim(),
+    recipients: [...new Set(recipients)],
+  };
 }
 
 /**

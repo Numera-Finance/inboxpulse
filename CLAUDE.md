@@ -34,7 +34,7 @@ interface ApiResponse<T> {
 
 Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer management, email sync (Gmail), AI-powered email analysis, task management, dashboards, and notifications.
 
-- **GCP Project**: `health-474623`
+- **GCP Project**: `project-y-email-sentiment` (project number `203731638840`) — the Cloud Run deploy target for all services, supplied to CI as the `GCP_PROJECT_ID` secret. The older `health-474623` project still hosts stale copies of the `crm-*` services; do NOT read logs, revisions, or deploy state from it.
 - **Runtime**: Bun (backend services), Vite (frontend dev), Nginx (frontend prod)
 - **Database**: PostgreSQL (Neon) with Drizzle ORM
 - **Auth**: Better-Auth with Google OAuth SSO
@@ -309,6 +309,11 @@ Drizzle schemas live in `apps/api/src/{module}/schema.ts`. Key tables:
 2. Create SQL migration file in `apps/api/sql/` (or `apps/api/sql/migrations/` for incremental)
 3. Run `pnpm db:push` to apply schema to database
 4. Update `apps/api/sql/README.md` with execution order
+
+### Reading affected-row counts
+
+- To find out how many rows a `db.execute(sql\`...\`)` write touched, use `affectedRows(result)` from `@crm/database`. **Never read `result.rowCount` directly** — the postgres.js driver this project uses reports the count as `count`, so `rowCount` is always `undefined` and the usual `?? 0` fallback turns it into a silent, plausible-looking zero. See ADR-002.
+- This counts rows *written*, not rows *returned*. For statements with a `RETURNING` clause, use the length of the returned rows instead.
 
 ### Migration Rules
 

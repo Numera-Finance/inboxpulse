@@ -13,7 +13,7 @@
 - **ING-2** The system shall receive Gmail changes in near-real-time via push notification and begin syncing without the user taking any action.
 - **ING-3** The system shall support an on-demand initial backfill covering the **last 30 days** of email.
 - **ING-4** The system shall support on-demand incremental sync of new email since the last sync.
-- **ING-5** The system shall only ingest email from a user's **Inbox** and **Sent** folders.
+- **ING-5** The system shall ingest email only from a user's **Inbox** and **Sent** folders (and no others). Sent (outbound) messages are read specifically to capture tenant reply attribution for response-time/TAT tracking; per DIR-5 they are not stored as email records, and only the reply's timestamp and its sender's user id are retained.
 - **ING-6** The system shall resume an interrupted sync from its last checkpoint without re-importing already-processed email.
 - **ING-7** The system shall process email oldest-first so a customer message is always recorded before the reply that answers it.
 - **ING-8** The system shall keep the Gmail connection alive automatically and re-authorize before it lapses, with no user action.
@@ -40,7 +40,7 @@
 - **DIR-2** The system shall treat a message as outbound if it is a Sent message **or** its sender is on one of the tenant's configured domains.
 - **DIR-3** The system shall match tenant domains on the full domain only, so a look-alike domain (e.g. `nottenant.com` vs `tenant.com`) is never mistaken for the tenant.
 - **DIR-4** The system shall match tenant domains case-insensitively.
-- **DIR-5** The system shall store inbound customer emails as first-class records and shall **not** store outbound replies as records (only their timestamp is retained for response-time tracking).
+- **DIR-5** The system shall store inbound customer emails as first-class records and shall **not** store outbound replies as records. Two fields derived from a reply are retained on the customer email it answers: **when** it was sent and **who** sent it (resolved to a user in the tenant, null when the sender matches no user). No subject, body, or recipient list of an outbound reply is stored — recipients are read only to decide which customer email the reply answers, and are discarded.
 - **DIR-6** The system shall require a tenant to configure its email domains for direction detection to work; when unconfigured, all messages are stored and response-time tracking is disabled. ⚠️
 
 ## 4. Response time capture (first reply)
