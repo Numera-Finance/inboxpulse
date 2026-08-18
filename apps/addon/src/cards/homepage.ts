@@ -491,63 +491,62 @@ export function buildHomepageCard(
       header: heading('Where the fires are'),
       widgets: fires.fires.map((f) =>
         deco({
-          // PHONE, because the row's whole point is that someone should call
-          // them. An icon that restates the section adds nothing; one that
-          // names the action earns its space.
-          startIcon: { knownIcon: 'PHONE' },
-          // The arc, where there is one, comes first — a count cannot separate a
-          // client who is getting worse from one who has always been difficult,
-          // and those need different calls.
+          // TWO SLOTS, AND THE MEDIUM LINE LEADS.
           //
-          // Measured across 693 client-months: a client under 10% in a month
-          // behaves exactly like one at zero (2.0% complaints the following
-          // month either way). Crossing 10% is a step change — 7.9% the next
-          // month, still 5.9% three months later against 1.6% for those who
-          // never crossed. Occasional friction is noise; the crossing is not,
-          // and it does not revert.
+          // This row carried topLabel + text + bottomLabel + a PHONE icon + an
+          // "Open" button, six rows deep in a 250px column, and read as a warren
+          // of fonts. decoratedText has three fixed type sizes and no CSS, so
+          // the only lever is which slots a row spends.
           //
-          // FIRST AND LAST ONLY, and the total count dropped.
+          // topLabel is small grey and comes FIRST, which put a fog of
+          // qualifiers ahead of every client name before the eye reached one.
+          // Dropping it leaves medium-then-small down the whole section, and the
+          // scanning eye rides the bold names like a column.
           //
-          // The full arc rendered as "0% → 1% → 2% → 3% · 2 unhappy · oldest
-          // 56d" overflowed the label and Gmail truncated it mid-sentence,
-          // hiding the count that had been there before the change. Compressing
-          // the arc fixed the overflow and left the row still crowded: three
-          // dense lines in a 250px column, six rows deep.
-          //
-          // So the TOTAL goes. "4 unhappy" here and "4 unanswered" below are
-          // different numbers that read as the same one, and unanswered is the
-          // half that means we have not replied — the part the firm controls and
-          // the reason to call today. A manager needs where the client started,
-          // where they are now, and how stale the oldest thread is.
-          topLabel:
-            (f.arc && f.arc.length >= 2
-              ? `${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
-              : '') + `${f.oldestDays}d old`,
+          // The icon went because six identical PHONE glyphs are decoration
+          // costing ~40px of the width. The "Open" button went because
+          // decoratedText.onClick makes the whole row the link — same
+          // destination, no six identical pills.
           text:
             `<b>${escapeText(f.customer)}</b>` +
             (f.unanswered > 0
-              ? ` — <font color="#c5221f">${f.unanswered} unanswered</font>`
-              : ''),
-          // Who to call. A fire without a name attached is an observation.
-          // Name the role, because the fallback changes who you are calling.
-          // And when there is nobody, say what is actually wrong: the client is
-          // not on the allocation sheet. "No account manager" sent the reader
-          // looking for an owner who was never recorded — measured, every
-          // matched client has an Account manager, so a blank here always means
-          // "absent from the sheet", never "assigned to someone else".
-          bottomLabel: f.owner
-            ? (f.ownerRole && f.ownerRole !== 'Account manager'
-                ? `${f.owner} · ${f.ownerRole}`
-                : f.owner) +
-              // Admit the others rather than presenting one of two as THE owner.
-              (f.ownerPeers && f.ownerPeers > 1 ? ` +${f.ownerPeers - 1}` : '')
-            : 'not on the allocation sheet',
+              ? ` — <font color="#c5221f"><b>${f.unanswered} unanswered</b>, oldest ${f.oldestDays}d</font>`
+              : ' — all answered'),
+          // THE TRAJECTORY AS A WORD, then the numbers behind it.
+          //
+          // "Rising" and "Cooling" do the triage; "9%→25%" lets a reader check
+          // the claim. Numbers alone made a client climbing from nothing look
+          // like one coming down from a peak — opposite situations that need
+          // opposite calls.
+          //
+          // Measured across 693 client-months: under 10% behaves exactly like
+          // zero (2.0% complaints next month either way); crossing 10% runs 7.9%
+          // next month and is still 5.9% three months later against 1.6% for
+          // those who never crossed. So the word is earned, not decoration.
+          //
+          // Owner follows. A fire without a name attached is an observation, and
+          // a blank always means "absent from the allocation sheet" rather than
+          // "assigned to someone else" — measured, every matched client has an
+          // Account manager.
+          bottomLabel:
+            (f.arc && f.arc.length >= 2
+              ? `${f.arc[f.arc.length - 1] > f.arc[0] ? 'Rising' : 'Cooling'} ` +
+                `${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
+              : '') +
+            (f.owner
+              ? (f.ownerRole && f.ownerRole !== 'Account manager'
+                  ? `${f.owner} · ${f.ownerRole}`
+                  : f.owner) +
+                (f.ownerPeers && f.ownerPeers > 1 ? ` +${f.ownerPeers - 1}` : '')
+              : 'not on the allocation sheet'),
           wrapText: true,
+          // The WHOLE ROW is the link, not a pill at the end of it. Six
+          // identical "Open" buttons were six identical accessories saying the
+          // same thing; decoratedText.onClick reaches the same destination and
+          // gives the width back to the client name.
           ...(f.customerId && fires.webUrl
             ? {
-                button: {
-                  text: 'Open',
-                  onClick: {
+                onClick: {
                     openLink: {
                       // Every filter here must match what the ROW claims, or
                       // the destination contradicts the panel.
@@ -574,7 +573,6 @@ export function buildHomepageCard(
                         `&from=${sinceDays(fires.windowDays)}`,
                     },
                   },
-                },
               }
             : {}),
         }),

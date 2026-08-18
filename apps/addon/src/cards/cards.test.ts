@@ -775,7 +775,8 @@ describe('the fire arc', () => {
     // First and last only — the full arc overflowed the label and Gmail
     // truncated it, hiding the count that was already there.
     const json = withFires([5, 7, 36]);
-    expect(json).toContain('5%→36%');
+    // The word does the triage; the numbers let a reader check it.
+    expect(json).toContain('Rising 5%→36%');
     // The row must stay readable: the total count is dropped because
     // "4 unhappy" and "2 unanswered" read as the same number, and unanswered is
     // the half the firm controls.
@@ -787,11 +788,18 @@ describe('the fire arc', () => {
     expect(withFires([12])).not.toContain('→');
   });
 
+  it('says Cooling when the client is coming down', () => {
+    // A client climbing from nothing and one falling from a peak looked
+    // identical as bare numbers, and they need opposite calls.
+    expect(withFires([25, 9])).toContain('Cooling 25%→9%');
+  });
+
   it('falls back to the count when a client has too little mail to rate', () => {
     // Months under six emails are dropped upstream — one angry email out of two
     // is 50% and means nothing.
+    // Age now lives in the red span on the medium line, not a grey top label.
     const json = withFires();
-    expect(json).toContain('9d old');
+    expect(json).toContain('oldest 9d');
     expect(json).not.toContain('→');
   });
 });
