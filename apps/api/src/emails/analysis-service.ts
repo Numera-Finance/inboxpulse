@@ -700,7 +700,16 @@ export class EmailAnalysisService {
               tx,
               tenantId,
               lookupDomain,
-              { defaultName: participant.name?.trim() || lookupDomain }
+              // The thread's own addresses let ensureCustomerForEmail spot a
+              // per-client alias — hammerheadai@ — and attach the domain to that
+              // client instead of minting another auto-created customer. Passed
+              // from memory because the participant rows are not written yet.
+              {
+                defaultName: participant.name?.trim() || lookupDomain,
+                threadAddresses: participantsToEnsure
+                  .map((p) => p.email)
+                  .filter((e): e is string => Boolean(e)),
+              }
             );
             customerId = customer.id;
           } else {
