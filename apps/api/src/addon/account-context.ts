@@ -1484,17 +1484,22 @@ export class FiresService {
         LIMIT 1
       ) al ON TRUE
       GROUP BY c.id, c.name
-      -- ENGAGED FIRST, then unanswered, then weight of evidence.
+      -- UNANSWERED FIRST, then engagement, then weight of evidence.
       --
-      -- This used to lead with unanswered on the reasoning that it is the part
-      -- the firm controls. That reasoning still holds for what to DO, and it is
-      -- why unanswered is the second key and still shown on the row. It is not
-      -- what predicts trouble. Within the fires list, engagement separates 24.7%
-      -- from 13.0% while unanswered separates 18.3% from 14.5%, and an engaged
-      -- client with everything answered (21.9%) outranks an unengaged one with
-      -- complaints still open (14.7%). With only six slots, the stronger
-      -- predictor decides who gets seen.
-      ORDER BY engaged DESC, unanswered DESC, negative DESC
+      -- Engagement led this for a day and it hid the worst client on the list.
+      -- Berolzheimer had THREE unanswered complaints, more than anyone, and
+      -- rendered nowhere: it sat one message under the engagement threshold, so
+      -- it sorted below six engaged clients carrying zero or one unanswered and
+      -- fell off the LIMIT. Reported twice before the cause was found.
+      --
+      -- Engagement is still the better PREDICTOR — 24.7% against 13.0%, where
+      -- unanswered separates 18.3% from 14.5% — and it still breaks ties and
+      -- still shows on the row. But a predictor cannot be the primary key of a
+      -- six-row list, because being wrong about it removes a client from view
+      -- entirely. Unanswered is an obligation rather than a forecast: three
+      -- complaints nobody replied to is not a client who might escalate, it is a
+      -- client already being ignored, and no ranking may bury that.
+      ORDER BY unanswered DESC, engaged DESC, negative DESC
       LIMIT ${limit}
     `);
 
