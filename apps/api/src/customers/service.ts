@@ -786,7 +786,7 @@ export class CustomerService {
     tx: Transaction,
     tenantId: string,
     domain: string,
-    options: { signatureCompany?: string | null; defaultName?: string }
+    options: { signatureCompany?: string | null; defaultName?: string; threadAddresses?: string[] }
   ): Promise<Customer> {
     const normalizedDomain = domain.toLowerCase();
     const proposedRaw = options.signatureCompany?.trim() || options.defaultName?.trim() || '';
@@ -827,6 +827,74 @@ export class CustomerService {
         return updated ?? existing;
       }
       return existing;
+    }
+
+    // DOES AN EXISTING CLIENT ALREADY OWN THIS COMPANY?
+    //
+    // Creating a customer per unrecognised domain is what stranded Hammerhead:
+    // "Hammerhead AI, Inc" holds hammerhead.io and six allocated people, the
+    // client writes from hammerheadco.ai, and that domain got a fresh record
+    // with nobody on it. The panel then showed a fire with no owner while six
+    // people were assigned to that very company. Across this tenant, 3,897
+    // customers carry a domain and 2 of the auto-created ones have an owner.
+    //
+    // The evidence is a convention the firm already keeps: a per-client alias at
+    // our own domain — hammerheadai@ — riding that client's threads, whose local
+    // part identifies the client in the allocation sheet. Checked on THIS email,
+    // which is far stronger than the aggregate correlations that were measured
+    // and rejected: name prefixes pair "Americanexpress" with "AMERICAN
+    // NUTRITION ALLIANCE INC.", and domain-base prefixes pair "Prismahealth"
+    // with "Prisma Data, Inc.".
+    //
+    // Attaches ONLY when exactly one allocated client is identified. A wrong
+    // domain attributes a client's mail to another company, which is worse than
+    // an orphan, so ambiguity falls through to creating the record as before.
+    if (options.threadAddresses?.length) {
+      const claimants = await tx.execute<{ customer_id: string; name: string; alias: string }>(sql`
+        WITH ours AS (
+          SELECT split_part(lower(u.email), '@', 2) AS dom
+          FROM users u
+          WHERE u.tenant_id = ${tenantId} AND u.email LIKE '%@%'
+          GROUP BY 1 HAVING count(*) >= 3
+        )
+        , addr AS (
+          SELECT lower(a) AS email FROM unnest(${sql.raw(
+            `ARRAY[${options.threadAddresses.map((a) => `'${a.toLowerCase().replace(/'/g, "''")}'`).join(',')}]::text[]`
+          )}) AS a
+        )
+        SELECT DISTINCT ca.customer_id::text AS customer_id, c.name, addr.email AS alias
+        FROM addr
+        JOIN ours ON ours.dom = split_part(addr.email, '@', 2)
+        JOIN customer_allocations ca
+          ON ca.tenant_id = ${tenantId}
+         AND ca.customer_id IS NOT NULL
+         AND ca.client_key LIKE split_part(addr.email, '@', 1) || '%'
+        JOIN customers c ON c.id = ca.customer_id
+        WHERE length(split_part(addr.email, '@', 1)) >= 4
+      `);
+      const rows = claimants as unknown as Array<{ customer_id: string; name: string; alias: string }>;
+      const distinct = [...new Map(rows.map((r) => [r.customer_id, r])).values()];
+      if (distinct.length === 1) {
+        const owner = distinct[0];
+        await tx.execute(sql`
+          INSERT INTO customer_domains (customer_id, tenant_id, domain, verified)
+          VALUES (${owner.customer_id}, ${tenantId}, ${normalizedDomain}, false)
+          ON CONFLICT DO NOTHING
+        `);
+        logger.info(
+          {
+            tenantId,
+            customerId: owner.customer_id,
+            customerName: owner.name,
+            domain: normalizedDomain,
+            viaAlias: owner.alias,
+            logType: 'CUSTOMER_DOMAIN_CLAIMED',
+          },
+          'Domain attached to an existing allocated client instead of creating a new customer'
+        );
+        const claimed = await this.customerRepository.findById(owner.customer_id);
+        if (claimed) return claimed;
+      }
     }
 
     const created = await this.customerRepository.create(
