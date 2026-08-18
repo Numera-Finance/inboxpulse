@@ -897,7 +897,21 @@ export class DangerPulseService {
                ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
              ) AS median_h
       ${base} AND a.sentiment_value = 'negative'
-      GROUP BY 1 ORDER BY 1
+      GROUP BY 1
+      -- DROP MONTHS TOO THIN TO CARRY A MEDIAN.
+      --
+      -- The trend inherits the 90-day window, so its first bucket is whatever
+      -- fragment of a month the window happens to clip. On this tenant that was
+      -- NINE replies spanning 29-30 May — two days — and the panel presented its
+      -- 18.7h median as "May", then anchored the whole "improving" claim on it.
+      -- A median over nine is noise, and a reader has no way to see the sample
+      -- behind a trend line.
+      --
+      -- Twenty is the floor: enough that a median is not decided by one or two
+      -- slow threads, low enough to keep a genuinely quiet month. It also drops
+      -- the clipped edge month without needing to reason about window arithmetic.
+      HAVING count(*) >= 20
+      ORDER BY 1
     `);
 
     const attrRows = await this.db.execute(sql`
