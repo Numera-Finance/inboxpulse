@@ -43,6 +43,7 @@ export { useEmailsByCustomer, emailKeys } from './use-emails';
 export {
   useContactsByCustomer,
   useContactsByTenant,
+  useAssignContactCustomer,
   useUpsertContact,
   useUpdateContact,
   contactKeys,

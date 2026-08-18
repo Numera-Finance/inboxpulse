@@ -30,6 +30,36 @@ export interface FirstReplyCandidate {
   repliedById: string | null;
 }
 
+/**
+ * Which participant addresses a manual customer assignment applies to.
+ *
+ * `address` targets one sender; `domain` targets everyone on a domain, used
+ * when the assignment also takes ownership of that domain in customer_domains.
+ */
+export type ParticipantAddressMatch =
+  | { kind: 'address'; value: string }
+  | { kind: 'domain'; value: string };
+
+/**
+ * SQL predicate over `email_participants.email` for a match spec.
+ *
+ * Participant addresses are stored as they appeared on the header, so every
+ * comparison is case-folded. The domain form also matches subdomains
+ * (bob@mail.acme.com belongs to acme.com), mirroring the last-two-labels rule
+ * `resolveCustomerKeyForEmail` uses to derive the customer_domains key.
+ *
+ * Note this can't use idx_ep_tenant_email_address — it degrades to a scan
+ * within the tenant. Acceptable: these run once per user-initiated assignment,
+ * never on the analysis hot path.
+ */
+function participantAddressPredicate(match: ParticipantAddressMatch): SQL {
+  const value = match.value.toLowerCase();
+  if (match.kind === 'address') {
+    return sql`LOWER(ep.email) = ${value}`;
+  }
+  return sql`(LOWER(ep.email) LIKE ${'%@' + value} OR LOWER(ep.email) LIKE ${'%@%.' + value})`;
+}
+
 // Helper to build signal containment condition
 // PostgreSQL: signals @> ARRAY[signalValue]
 function signalContains(signalValue: number): SQL {
@@ -2572,6 +2602,94 @@ export class EmailRepository extends ScopedRepository {
       },
       'Updated firstReplyAt for customer emails (from reply markers)'
     );
+  }
+
+  /**
+   * Emails whose external sender currently resolves to no customer at all.
+   *
+   * These are invisible on the analyzed-email views, which all require
+   * `ep.customer_id IS NOT NULL`, and they never got an escalation task
+   * (maybeCreateTaskForNegativeEmail bails with SKIP_TASK_CREATION_NO_CUSTOMER).
+   * Manual assignment uses this to decide which emails need a task created
+   * retroactively — read *before* the backfill update, in the same transaction.
+   */
+  async findUnlinkedSenderEmailIds(
+    tenantId: string,
+    match: ParticipantAddressMatch,
+    tx?: Transaction
+  ): Promise<string[]> {
+    const db = tx ?? this.db;
+    const rows = await db.execute(sql`
+      SELECT DISTINCT ep.email_id
+      FROM email_participants ep
+      WHERE ep.tenant_id = ${tenantId}
+        AND ep.customer_id IS NULL
+        AND ep.direction = 'from'
+        AND ep.participant_type = 'contact'
+        AND ${participantAddressPredicate(match)}
+    `);
+    return (rows as unknown as Array<{ email_id: string }>).map((r) => r.email_id);
+  }
+
+  /**
+   * Of the given emails, the ones that would have produced an escalation task
+   * had a customer been known at analysis time: negative sentiment, and not
+   * spam/marketing/transactional/automated.
+   *
+   * Mirrors the gates in AnalysisService.maybeCreateTaskForNegativeEmail. Those
+   * read the live analysis result; here the same facts are read back off the
+   * persisted `signals` array, which carries both sentiment and classification.
+   */
+  async findTaskEligibleEmails(
+    tenantId: string,
+    emailIds: string[],
+    tx?: Transaction
+  ): Promise<Array<{ id: string; subject: string | null }>> {
+    if (emailIds.length === 0) return [];
+    const db = tx ?? this.db;
+    const rows = await db.execute(sql`
+      SELECT id, subject
+      FROM emails
+      WHERE tenant_id = ${tenantId}
+        AND id = ANY(${emailIds}::uuid[])
+        AND signals @> ARRAY[${Signal.SENTIMENT_NEGATIVE}]::integer[]
+        AND NOT (signals && ${sql.raw(
+          `ARRAY[${[
+            Signal.CLASSIFICATION_SPAM,
+            Signal.CLASSIFICATION_MARKETING,
+            Signal.CLASSIFICATION_TRANSACTIONAL,
+            Signal.CLASSIFICATION_AUTOMATED,
+          ].join(',')}]::integer[]`
+        )})
+    `);
+    return rows as unknown as Array<{ id: string; subject: string | null }>;
+  }
+
+  /**
+   * Re-link every participant row for an address (or a whole domain) to
+   * `customerId`. This is what makes a manual contact assignment retroactive:
+   * `email_participants.customer_id` is written once during analysis and never
+   * revisited, so past emails keep their original — often wrong — customer
+   * until something rewrites them.
+   *
+   * Rows already pointing at the target are excluded so the returned count
+   * reflects emails actually moved, which is what the UI reports back.
+   */
+  async reassignParticipantsByAddress(
+    tenantId: string,
+    match: ParticipantAddressMatch,
+    customerId: string,
+    tx?: Transaction
+  ): Promise<number> {
+    const db = tx ?? this.db;
+    const result = await db.execute(sql`
+      UPDATE email_participants AS ep
+      SET customer_id = ${customerId}
+      WHERE ep.tenant_id = ${tenantId}
+        AND ep.customer_id IS DISTINCT FROM ${customerId}
+        AND ${participantAddressPredicate(match)}
+    `);
+    return affectedRows(result);
   }
 
   /**

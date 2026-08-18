@@ -1,10 +1,20 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
 import { ContactRepository } from './repository';
+import { CustomerRepository } from '../customers/repository';
+import { EmailRepository, type ParticipantAddressMatch } from '../emails/repository';
+import { TaskService } from '../tasks/service';
 import { logger } from '../utils/logger';
 import type { Contact, NewContact } from './schema';
 import type { Email, RequestHeader } from '@crm/shared';
-import type { Transaction } from '@crm/database';
+import {
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+  isPersonalEmailDomain,
+  resolveCustomerKeyForEmail,
+} from '@crm/shared';
+import type { Database, Transaction } from '@crm/database';
 
 /**
  * Signature data extracted from email signatures
@@ -38,6 +48,18 @@ export const signatureEnrichmentResultSchema = z.object({
 export type SignatureEnrichmentResult = z.infer<typeof signatureEnrichmentResultSchema>;
 
 /**
+ * Outcome of a manual contact-to-customer assignment. `domainMoved` is set only
+ * when a real domain changed hands, so the UI can say "moved 14 emails from
+ * acme.com" and otherwise fall back to naming the single address.
+ */
+export interface AssignCustomerResult {
+  contact: Contact;
+  emailsReassigned: number;
+  tasksCreated: number;
+  domainMoved: string | null;
+}
+
+/**
  * Sender ownership guard. Returns true when the LLM-extracted signature
  * appears to belong to the email's sender, false when it clearly belongs to
  * a different person (an embedded forwarded/quoted signature).
@@ -69,8 +91,175 @@ export function signatureBelongsToSender(
 @injectable()
 export class ContactService {
   constructor(
-    @inject(ContactRepository) private contactRepository: ContactRepository
+    @inject(ContactRepository) private contactRepository: ContactRepository,
+    @inject(CustomerRepository) private customerRepository: CustomerRepository,
+    @inject(EmailRepository) private emailRepository: EmailRepository,
+    @inject(TaskService) private taskService: TaskService,
+    @inject('Database') private db: Database
   ) { }
+
+  /**
+   * Point an email address at a customer, and make it stick — backwards and
+   * forwards.
+   *
+   * Why this exists: `email_participants.customer_id` is stamped once during
+   * analysis and never revisited, so an email that arrived before we knew who
+   * the sender was keeps whatever customer the pipeline guessed — usually an
+   * auto-created "<domain> (Auto)" placeholder. Creating a contact alone leaves
+   * every past email pointing at it.
+   *
+   * So the assignment does three things:
+   *
+   *  1. Links the contact to the customer. This alone settles the sender's
+   *     future emails: analysis reads the contact link before the domain.
+   *  2. For a corporate address, also moves the domain onto that customer —
+   *     unless a real customer already owns it — and brings that domain's other
+   *     contacts along. Step 1 only covers this one address; the domain is what
+   *     catches colleagues we have never seen before, who would otherwise spawn
+   *     a fresh placeholder. An auto-created customer is not a real owner: it
+   *     exists only because we had nothing better to key on.
+   *     Personal addresses (gmail.com et al) skip this entirely — their key is
+   *     a per-address pseudo-domain, so there are no colleagues to catch and
+   *     nothing meaningful to attach to a real customer.
+   *  3. Rewrites past `email_participants` rows — the whole domain when step 2
+   *     claimed it, otherwise just this address — and creates the escalation
+   *     tasks that were skipped for emails that had no customer at all.
+   *
+   * The "real customer already owns it" branch is close to unreachable: if a
+   * real customer owned the domain, the email would already have been
+   * attributed to them and nobody would be here reassigning it. It is kept as a
+   * guard, and does nothing beyond linking the contact and rewriting this one
+   * address's history — the domain owner stays put.
+   */
+  async assignCustomer(
+    header: RequestHeader,
+    input: { email: string; customerId: string; name?: string }
+  ): Promise<AssignCustomerResult> {
+    const { tenantId } = header;
+    const contactEmail = input.email.trim().toLowerCase();
+
+    const customer = await this.customerRepository.findById(input.customerId);
+    if (!customer || customer.tenantId !== tenantId) {
+      throw new NotFoundError('Customer not found');
+    }
+    if (!(await this.contactRepository.canAccessCustomer(header, input.customerId))) {
+      throw new ForbiddenError('No access to this customer');
+    }
+
+    // The customer_domains key for this address: the registrable domain for a
+    // corporate address, a per-address pseudo-domain for a personal one.
+    const customerKey = resolveCustomerKeyForEmail(contactEmail, input.name);
+    if (!customerKey) {
+      throw new ValidationError('A valid email address is required');
+    }
+    const domainKey = customerKey.domain;
+    const isPersonal = isPersonalEmailDomain(contactEmail.split('@')[1]);
+
+    const result = await this.db.transaction(async (tx) => {
+      // Decide domain ownership before writing anything. Personal addresses
+      // never move a domain — their key is a per-address pseudo-domain that
+      // means nothing to a real customer, so only the contact link is made.
+      const currentOwner = isPersonal
+        ? undefined
+        : await this.customerRepository.findByDomain(tenantId, domainKey, tx);
+      const claimDomain =
+        !isPersonal &&
+        (!currentOwner || currentOwner.isAutoCreated) &&
+        currentOwner?.id !== input.customerId;
+
+      const match: ParticipantAddressMatch = claimDomain
+        ? { kind: 'domain', value: domainKey }
+        : { kind: 'address', value: contactEmail };
+
+      // Must be read before the update — these are the emails that had no
+      // customer at all, and so never got an escalation task.
+      const previouslyUnlinked = await this.emailRepository.findUnlinkedSenderEmailIds(
+        tenantId,
+        match,
+        tx
+      );
+
+      const contact = await this.contactRepository.upsert(
+        {
+          tenantId,
+          email: contactEmail,
+          customerId: input.customerId,
+          ...(input.name ? { name: input.name } : {}),
+        },
+        tx
+      );
+
+      if (claimDomain) {
+        await this.customerRepository.moveDomain(tenantId, domainKey, input.customerId, tx);
+        // The domain moved, so its contacts move with it. Analysis reads the
+        // contact link before the domain, so any sibling left behind — say
+        // alice@acme.com, still pointing at the placeholder — would keep
+        // resolving there forever.
+        await this.contactRepository.reassignByDomain(tenantId, domainKey, input.customerId, tx);
+      }
+
+      const emailsReassigned = await this.emailRepository.reassignParticipantsByAddress(
+        tenantId,
+        match,
+        input.customerId,
+        tx
+      );
+
+      const taskEligible = await this.emailRepository.findTaskEligibleEmails(
+        tenantId,
+        previouslyUnlinked,
+        tx
+      );
+
+      return {
+        contact,
+        emailsReassigned,
+        taskEligible,
+        domainMoved: claimDomain ? domainKey : null,
+      };
+    });
+
+    // Task creation runs outside the transaction: createFromEmail also
+    // auto-assigns and notifies, and a failure there must not roll back a
+    // correct reassignment. It is idempotent per email, so a retry is safe.
+    let tasksCreated = 0;
+    for (const email of result.taskEligible) {
+      try {
+        await this.taskService.createFromEmail(
+          tenantId,
+          input.customerId,
+          email.id,
+          email.subject || 'Negative sentiment email'
+        );
+        tasksCreated++;
+      } catch (error: any) {
+        logger.warn(
+          { emailId: email.id, error: error.message, logType: 'ASSIGN_TASK_CREATE_FAILED' },
+          'Failed to create escalation task during contact assignment (non-blocking)'
+        );
+      }
+    }
+
+    logger.info(
+      {
+        tenantId,
+        email: contactEmail,
+        customerId: input.customerId,
+        emailsReassigned: result.emailsReassigned,
+        tasksCreated,
+        domainMoved: result.domainMoved,
+        logType: 'CONTACT_ASSIGNED_TO_CUSTOMER',
+      },
+      'Manually assigned contact to customer'
+    );
+
+    return {
+      contact: result.contact,
+      emailsReassigned: result.emailsReassigned,
+      tasksCreated,
+      domainMoved: result.domainMoved,
+    };
+  }
 
   // ===========================================================================
   // Access-Controlled Methods

@@ -1,6 +1,11 @@
 import { BaseClient, NotFoundError } from '../base-client';
 import type { ApiResponse, SearchRequest, SearchResponse } from '@crm/shared';
-import type { Contact, CreateContactRequest } from './types';
+import type {
+  AssignContactCustomerRequest,
+  AssignContactCustomerResponse,
+  Contact,
+  CreateContactRequest,
+} from './types';
 
 /**
  * Client for contact-related API operations
@@ -11,6 +16,28 @@ export class ContactClient extends BaseClient {
    */
   async upsertContact(data: CreateContactRequest, signal?: AbortSignal): Promise<Contact> {
     const response = await this.post<ApiResponse<Contact>>('/api/contacts', data, signal);
+    if (!response || !response.data) {
+      throw new Error('Invalid API response: missing data');
+    }
+    return response.data;
+  }
+
+  /**
+   * Assign an email address to a customer, retroactively.
+   *
+   * Creates or updates the contact, re-links that sender's existing emails, and
+   * takes the domain when it is unowned or held by an auto-created placeholder.
+   * Returns how much moved so the caller can report it.
+   */
+  async assignCustomer(
+    data: AssignContactCustomerRequest,
+    signal?: AbortSignal
+  ): Promise<AssignContactCustomerResponse> {
+    const response = await this.post<ApiResponse<AssignContactCustomerResponse>>(
+      '/api/contacts/assign-customer',
+      data,
+      signal
+    );
     if (!response || !response.data) {
       throw new Error('Invalid API response: missing data');
     }

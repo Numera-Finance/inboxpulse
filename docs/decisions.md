@@ -601,3 +601,74 @@ summary instead shares the sender's line and costs no vertical space:
   `recipients.ts` rather than inside the panel so the rules are unit-tested
   (`recipients.test.ts`), following the `format-timestamp.ts` precedent in the
   same folder.
+
+### ADR-008: Contact link outranks the domain when resolving an email's customer (2026-08-14)
+
+**Status:** Accepted
+
+**Context:** A missing contact meant emails never reached the right customer.
+The pipeline resolves a participant's customer by looking up
+`customer_domains` first and consulting the contact's own `customerId` only
+when that finds nothing (`ensureContactsInTransaction`). When neither hits, it
+auto-creates a `"<domain> (Auto)"` placeholder and stamps it onto
+`email_participants.customer_id` — a value written once during analysis and
+never revisited. So an unknown sender produced a junk customer, every past
+email stayed pinned to it, and letting a user add the contact would have fixed
+nothing: the domain lookup still won on the sender's next email and dragged
+them straight back.
+
+Domain-first made sense while contacts were purely derived — the pipeline
+creates them itself, copying `customerId` from the domain result, so the two
+agree for almost every row and the order was immaterial. It stops being
+immaterial the moment a human sets a contact's customer.
+
+**Decision:**
+1. Resolution consults the contact's `customerId` before the domain lookup. A
+   contact is a fact about a person; a domain is a heuristic about an
+   organization, so the specific one wins.
+2. Whenever a domain changes hands, the contacts on it move with it. This is
+   the invariant that makes (1) safe — see Consequences. `mergeCustomer`
+   already did this; `replaceDomains` and the new assignment path now do too.
+3. `POST /api/contacts/assign-customer` (gated on `CUSTOMER_EDIT`) links the
+   contact, claims the domain when it is unowned or held by an `isAutoCreated`
+   placeholder, rewrites past `email_participants` rows, and creates the
+   escalation tasks that were skipped for emails that had no customer.
+
+Rejected: an `is_manually_assigned` column to mark human-set links as
+outranking the domain. It was aimed at `bob@contractor.com` working for Acme —
+but if a real customer owns `contractor.com`, the email is *already* attributed
+correctly and nobody is there reassigning it. The case does not arise, and the
+guard for it needed no schema.
+
+**Consequences:**
+- A contact's `customerId` is written at creation and only ever backfilled when
+  null — never refreshed. Under contact-first a stale link is therefore
+  permanent, which is why point 2 is a requirement and not a nicety. Any future
+  code that moves a domain between customers must move its contacts too.
+- Personal addresses skip the domain step entirely. Their key is a per-address
+  pseudo-domain (`bob@gmail.com` → `bob-gmail.com`), so there are no colleagues
+  to catch and nothing meaningful to attach to a real customer. Contact-first is
+  what makes these assignments hold; under domain-first they would have reverted
+  unless the pseudo-domain were moved or deleted.
+- Claiming a domain reassigns the sender's colleagues as well. That is wider
+  than the user literally asked for, so the toast names the scope
+  ("Assigned all of acme.com to …") rather than implying one address moved.
+- The auto-created placeholder is left in place, not archived or merged. It may
+  end up owning no domains and no emails. Cleaning it up is a separate
+  decision.
+- `replaceDomains` cannot take a domain from another customer —
+  `(tenant_id, domain)` is unique and the insert has no `ON CONFLICT`, so it
+  raises 23505. It only drops its own domains or claims unowned ones. The
+  contact reassignment there covers the claim case.
+- Retroactive task creation is deliberately narrow: only emails whose sender
+  participant was `NULL` before the update, filtered to negative sentiment and
+  excluding spam/marketing/transactional/automated. Those are the emails that
+  were invisible on the analyzed-email views (which all require
+  `ep.customer_id IS NOT NULL`) and that `maybeCreateTaskForNegativeEmail`
+  skipped with `SKIP_TASK_CREATION_NO_CUSTOMER`. It runs outside the
+  transaction, since `createFromEmail` also auto-assigns and notifies, and is
+  idempotent per email.
+- No schema change. `ContactRepository.upsert` was fixed as part of this: its
+  `set` block wrote every column unconditionally, so a partial upsert emitted
+  `undefined` — NULL — over the existing customer link.
+
