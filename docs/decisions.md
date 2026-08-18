@@ -667,7 +667,22 @@ guard for it needed no schema.
   `ep.customer_id IS NOT NULL`) and that `maybeCreateTaskForNegativeEmail`
   skipped with `SKIP_TASK_CREATION_NO_CUSTOMER`. It runs outside the
   transaction, since `createFromEmail` also auto-assigns and notifies, and is
-  idempotent per email.
+  idempotent per email. It is capped at 25 per assignment, with the overflow
+  logged (`ASSIGN_TASK_CAP_REACHED`): claiming a busy domain can surface far
+  more eligible emails than one request should turn into tasks and
+  notifications. Those emails are still reassigned; they just get no task.
+- The tenant's own domain can never be claimed. Internal senders appear in the
+  analyzed-email list, so the endpoint is reachable for one, and claiming that
+  domain would hand every colleague — including `participant_type = 'user'`
+  rows — to a customer. Same `tenant.domains` guard the analysis pipeline
+  applies before auto-creating an escalation.
+- Domain ownership is decided on an unlocked read, keeping the participant scan
+  out of the write transaction; the transaction re-checks the owner and raises
+  `ConflictError` if it moved, rather than letting `moveDomain` displace an
+  owner that changed underneath it.
+- Domain values reaching a `LIKE` pattern go through `escapeLikeLiteral`. The
+  `domains` field on the customer PATCH is validated only as a string, so an
+  unescaped `%` would have matched every address in the tenant.
 - No schema change. `ContactRepository.upsert` was fixed as part of this: its
   `set` block wrote every column unconditionally, so a partial upsert emitted
   `undefined` — NULL — over the existing customer link.

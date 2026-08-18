@@ -1,5 +1,5 @@
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository, affectedRows } from '@crm/database';
+import { ScopedRepository, affectedRows, escapeLikeLiteral } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
 import { isAdmin, type RequestHeader, type TATMetricRow, Signal, getSentimentFromSignals } from '@crm/shared';
 import type { NewEmail, NewEmailParticipant } from './schema';
@@ -57,7 +57,11 @@ function participantAddressPredicate(match: ParticipantAddressMatch): SQL {
   if (match.kind === 'address') {
     return sql`LOWER(ep.email) = ${value}`;
   }
-  return sql`(LOWER(ep.email) LIKE ${'%@' + value} OR LOWER(ep.email) LIKE ${'%@%.' + value})`;
+  // Escaped: the domain becomes part of the pattern, so an unescaped `%` or
+  // `_` in it would widen the match rather than being compared literally.
+  const domain = escapeLikeLiteral(value);
+  return sql`(LOWER(ep.email) LIKE ${'%@' + domain} ESCAPE '\\'
+    OR LOWER(ep.email) LIKE ${'%@%.' + domain} ESCAPE '\\')`;
 }
 
 // Helper to build signal containment condition
@@ -2672,8 +2676,10 @@ export class EmailRepository extends ScopedRepository {
    * revisited, so past emails keep their original — often wrong — customer
    * until something rewrites them.
    *
-   * Rows already pointing at the target are excluded so the returned count
-   * reflects emails actually moved, which is what the UI reports back.
+   * Rows already pointing at the target are excluded, and the return value
+   * counts *distinct emails* touched rather than rows updated: a domain match
+   * can rewrite several participants of the same email (sender plus cc'd
+   * colleagues on that domain), and the UI reports this number as emails.
    */
   async reassignParticipantsByAddress(
     tenantId: string,
@@ -2682,14 +2688,18 @@ export class EmailRepository extends ScopedRepository {
     tx?: Transaction
   ): Promise<number> {
     const db = tx ?? this.db;
-    const result = await db.execute(sql`
-      UPDATE email_participants AS ep
-      SET customer_id = ${customerId}
-      WHERE ep.tenant_id = ${tenantId}
-        AND ep.customer_id IS DISTINCT FROM ${customerId}
-        AND ${participantAddressPredicate(match)}
+    const rows = await db.execute(sql`
+      WITH updated AS (
+        UPDATE email_participants AS ep
+        SET customer_id = ${customerId}
+        WHERE ep.tenant_id = ${tenantId}
+          AND ep.customer_id IS DISTINCT FROM ${customerId}
+          AND ${participantAddressPredicate(match)}
+        RETURNING ep.email_id
+      )
+      SELECT COUNT(DISTINCT email_id)::int AS count FROM updated
     `);
-    return affectedRows(result);
+    return (rows as unknown as Array<{ count: number }>)[0]?.count ?? 0;
   }
 
   /**

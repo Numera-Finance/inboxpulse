@@ -29,6 +29,8 @@ interface Options {
   unlinkedEmailIds?: string[];
   /** Of those, the ones that qualify for an escalation task. */
   taskEligible?: Array<{ id: string; subject: string | null }>;
+  /** Domains the tenant itself owns. */
+  tenantDomains?: string[];
 }
 
 function makeService(options: Options = {}) {
@@ -57,6 +59,10 @@ function makeService(options: Options = {}) {
     createFromEmail: vi.fn(async () => ({ id: 'task-id' })),
   };
 
+  const tenantService = {
+    findById: vi.fn(async () => ({ id: TENANT_ID, domains: options.tenantDomains ?? [] })),
+  };
+
   // Run the callback inline — these tests assert the decisions the service
   // makes, not the transaction machinery underneath them.
   const db = { transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) };
@@ -66,10 +72,11 @@ function makeService(options: Options = {}) {
     customerRepository as never,
     emailRepository as never,
     taskService as never,
+    tenantService as never,
     db as never
   );
 
-  return { service, contactRepository, customerRepository, emailRepository, taskService };
+  return { service, contactRepository, customerRepository, emailRepository, taskService, tenantService };
 }
 
 describe('ContactService.assignCustomer domain handling', () => {
@@ -252,6 +259,27 @@ describe('ContactService.assignCustomer retroactive tasks', () => {
     );
   });
 
+  it('caps how many escalation tasks one assignment creates', async () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      id: `email-${i}`,
+      subject: `Subject ${i}`,
+    }));
+    const { service, taskService } = makeService({
+      unlinkedEmailIds: many.map((e) => e.id),
+      taskEligible: many,
+    });
+
+    const result = await service.assignCustomer(header, {
+      email: 'bob@acme.com',
+      customerId: TARGET_CUSTOMER_ID,
+    });
+
+    // Each task also auto-assigns and notifies, so an uncapped loop would
+    // blow the request timeout and bury the assignee.
+    expect(result.tasksCreated).toBe(25);
+    expect(taskService.createFromEmail).toHaveBeenCalledTimes(25);
+  });
+
   it('keeps the reassignment when task creation fails', async () => {
     const { service, taskService } = makeService({
       unlinkedEmailIds: ['email-1'],
@@ -293,6 +321,40 @@ describe('ContactService.assignCustomer guards', () => {
     await expect(
       service.assignCustomer(header, { email: 'bob@acme.com', customerId: TARGET_CUSTOMER_ID })
     ).rejects.toThrow(/access/i);
+  });
+
+  it('refuses to assign an address on the tenant\'s own domain', async () => {
+    const { service, customerRepository, contactRepository } = makeService({
+      tenantDomains: ['mystartupcfo.com'],
+    });
+
+    await expect(
+      service.assignCustomer(header, {
+        email: 'ops@mystartupcfo.com',
+        customerId: TARGET_CUSTOMER_ID,
+      })
+    ).rejects.toThrow(/own organization/i);
+
+    // Claiming the tenant domain would hand every colleague, and every
+    // participant_type='user' row on it, to one customer.
+    expect(customerRepository.moveDomain).not.toHaveBeenCalled();
+    expect(contactRepository.reassignByDomain).not.toHaveBeenCalled();
+    expect(contactRepository.upsert).not.toHaveBeenCalled();
+  });
+
+  it('aborts when the domain changed hands between the decision and the write', async () => {
+    const { service, customerRepository } = makeService();
+    // Unowned on the first read, owned by a real customer by the time the
+    // transaction re-checks.
+    customerRepository.findByDomain
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ id: REAL_OTHER_ID, isAutoCreated: false });
+
+    await expect(
+      service.assignCustomer(header, { email: 'bob@acme.com', customerId: TARGET_CUSTOMER_ID })
+    ).rejects.toThrow(/retry/i);
+
+    expect(customerRepository.moveDomain).not.toHaveBeenCalled();
   });
 
   it('rejects an address with no domain', async () => {

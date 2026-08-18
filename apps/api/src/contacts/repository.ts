@@ -1,6 +1,6 @@
 import { eq, and, asc, sql } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository, affectedRows } from '@crm/database';
+import { ScopedRepository, affectedRows, escapeLikeLiteral } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
 import { contacts, type Contact, type NewContact } from './schema';
@@ -87,7 +87,11 @@ export class ContactRepository extends ScopedRepository {
   async upsert(data: NewContact, tx?: Transaction): Promise<Contact> {
     const dbHandle = (tx ?? this.db) as Database;
 
-    const { tenantId, email, ...mutable } = data;
+    // `id` and `createdAt` are dropped alongside the conflict target: an
+    // upsert must never rewrite the identity of the row it matched, or
+    // polymorphic references such as email_participants.participant_id (no FK)
+    // would be left dangling.
+    const { tenantId, email, id, createdAt, ...mutable } = data;
     const set: Partial<NewContact> = { updatedAt: new Date() };
     for (const [key, value] of Object.entries(mutable)) {
       if (value !== undefined) {
@@ -304,13 +308,14 @@ export class ContactRepository extends ScopedRepository {
     tx?: Transaction
   ): Promise<number> {
     const db = tx ?? this.db;
-    const normalized = domain.toLowerCase();
+    const normalized = escapeLikeLiteral(domain.toLowerCase());
     const result = await db.execute(sql`
       UPDATE contacts
       SET customer_id = ${customerId}, updated_at = NOW()
       WHERE tenant_id = ${tenantId}
         AND customer_id IS DISTINCT FROM ${customerId}
-        AND (LOWER(email) LIKE ${'%@' + normalized} OR LOWER(email) LIKE ${'%@%.' + normalized})
+        AND (LOWER(email) LIKE ${'%@' + normalized} ESCAPE '\\'
+          OR LOWER(email) LIKE ${'%@%.' + normalized} ESCAPE '\\')
     `);
     return affectedRows(result);
   }

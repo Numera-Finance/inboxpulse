@@ -4,10 +4,12 @@ import { ContactRepository } from './repository';
 import { CustomerRepository } from '../customers/repository';
 import { EmailRepository, type ParticipantAddressMatch } from '../emails/repository';
 import { TaskService } from '../tasks/service';
+import { TenantService } from '../tenants/service';
 import { logger } from '../utils/logger';
 import type { Contact, NewContact } from './schema';
 import type { Email, RequestHeader } from '@crm/shared';
 import {
+  ConflictError,
   ForbiddenError,
   NotFoundError,
   ValidationError,
@@ -88,6 +90,17 @@ export function signatureBelongsToSender(
   return false;
 }
 
+/**
+ * Ceiling on escalation tasks created retroactively by one assignment.
+ *
+ * Each task also auto-assigns and notifies, and the work runs inside the
+ * request. Claiming a domain can surface hundreds of previously-unlinked
+ * emails at once, which would blow the request timeout and bury the assignee.
+ * Anything beyond the cap is logged and left alone rather than silently
+ * dropped.
+ */
+const MAX_RETROACTIVE_TASKS = 25;
+
 @injectable()
 export class ContactService {
   constructor(
@@ -95,6 +108,7 @@ export class ContactService {
     @inject(CustomerRepository) private customerRepository: CustomerRepository,
     @inject(EmailRepository) private emailRepository: EmailRepository,
     @inject(TaskService) private taskService: TaskService,
+    @inject(TenantService) private tenantService: TenantService,
     @inject('Database') private db: Database
   ) { }
 
@@ -153,31 +167,59 @@ export class ContactService {
       throw new ValidationError('A valid email address is required');
     }
     const domainKey = customerKey.domain;
-    const isPersonal = isPersonalEmailDomain(contactEmail.split('@')[1]);
+    const rawDomain = contactEmail.split('@')[1];
+    const isPersonal = isPersonalEmailDomain(rawDomain);
+
+    // Never let a customer take the tenant's own domain. Internal senders show
+    // up in the analyzed-email list too, so this endpoint is reachable for one;
+    // claiming that domain would hand every colleague — and every
+    // participant_type='user' row on it — to a customer. Same guard the
+    // analysis pipeline applies before auto-creating an escalation.
+    const tenant = await this.tenantService.findById(tenantId);
+    const isTenantDomain = !!tenant?.domains?.some(
+      (d) => d.toLowerCase() === rawDomain || domainKey === d.toLowerCase()
+    );
+    if (isTenantDomain) {
+      throw new ValidationError(
+        'That address belongs to your own organization and cannot be assigned to a customer'
+      );
+    }
+
+    // Decide domain ownership up front. Personal addresses never move a domain
+    // — their key is a per-address pseudo-domain that means nothing to a real
+    // customer, so only the contact link is made.
+    const ownerBeforeTx = isPersonal
+      ? undefined
+      : await this.customerRepository.findByDomain(tenantId, domainKey);
+    const claimDomain =
+      !isPersonal &&
+      (!ownerBeforeTx || ownerBeforeTx.isAutoCreated) &&
+      ownerBeforeTx?.id !== input.customerId;
+
+    const match: ParticipantAddressMatch = claimDomain
+      ? { kind: 'domain', value: domainKey }
+      : { kind: 'address', value: contactEmail };
+
+    // Read before the update — these are the emails that had no customer at
+    // all, and so never got an escalation task. Deliberately outside the
+    // transaction: it scans email_participants (the predicate cannot use
+    // idx_ep_tenant_email_address), and holding a write transaction open across
+    // that scan would block the analysis pipeline's own participant writes.
+    const previouslyUnlinked = await this.emailRepository.findUnlinkedSenderEmailIds(
+      tenantId,
+      match
+    );
 
     const result = await this.db.transaction(async (tx) => {
-      // Decide domain ownership before writing anything. Personal addresses
-      // never move a domain — their key is a per-address pseudo-domain that
-      // means nothing to a real customer, so only the contact link is made.
-      const currentOwner = isPersonal
-        ? undefined
-        : await this.customerRepository.findByDomain(tenantId, domainKey, tx);
-      const claimDomain =
-        !isPersonal &&
-        (!currentOwner || currentOwner.isAutoCreated) &&
-        currentOwner?.id !== input.customerId;
-
-      const match: ParticipantAddressMatch = claimDomain
-        ? { kind: 'domain', value: domainKey }
-        : { kind: 'address', value: contactEmail };
-
-      // Must be read before the update — these are the emails that had no
-      // customer at all, and so never got an escalation task.
-      const previouslyUnlinked = await this.emailRepository.findUnlinkedSenderEmailIds(
-        tenantId,
-        match,
-        tx
-      );
+      // The ownership decision above was made on an unlocked read. Re-check it
+      // here rather than let moveDomain displace an owner that changed in the
+      // meantime; the caller can safely retry.
+      if (!isPersonal) {
+        const owner = await this.customerRepository.findByDomain(tenantId, domainKey, tx);
+        if ((owner?.id ?? null) !== (ownerBeforeTx?.id ?? null)) {
+          throw new ConflictError('Domain ownership changed while assigning, please retry');
+        }
+      }
 
       const contact = await this.contactRepository.upsert(
         {
@@ -205,25 +247,42 @@ export class ContactService {
         tx
       );
 
-      const taskEligible = await this.emailRepository.findTaskEligibleEmails(
-        tenantId,
-        previouslyUnlinked,
-        tx
-      );
-
-      return {
-        contact,
-        emailsReassigned,
-        taskEligible,
-        domainMoved: claimDomain ? domainKey : null,
-      };
+      return { contact, emailsReassigned };
     });
+
+    const domainMoved = claimDomain ? domainKey : null;
+
+    // Filtering by signals only reads `emails`, so it needs neither the
+    // transaction nor to precede the update.
+    const taskEligible = await this.emailRepository.findTaskEligibleEmails(
+      tenantId,
+      previouslyUnlinked
+    );
 
     // Task creation runs outside the transaction: createFromEmail also
     // auto-assigns and notifies, and a failure there must not roll back a
     // correct reassignment. It is idempotent per email, so a retry is safe.
+    //
+    // Capped, and the overflow is logged rather than passed over in silence —
+    // claiming a busy domain can surface far more eligible emails than one
+    // request should turn into tasks and notifications.
+    const toTask = taskEligible.slice(0, MAX_RETROACTIVE_TASKS);
+    if (taskEligible.length > toTask.length) {
+      logger.warn(
+        {
+          tenantId,
+          email: contactEmail,
+          eligible: taskEligible.length,
+          created: toTask.length,
+          skipped: taskEligible.length - toTask.length,
+          logType: 'ASSIGN_TASK_CAP_REACHED',
+        },
+        'Retroactive escalation tasks capped; remaining emails were reassigned but got no task'
+      );
+    }
+
     let tasksCreated = 0;
-    for (const email of result.taskEligible) {
+    for (const email of toTask) {
       try {
         await this.taskService.createFromEmail(
           tenantId,
@@ -247,7 +306,7 @@ export class ContactService {
         customerId: input.customerId,
         emailsReassigned: result.emailsReassigned,
         tasksCreated,
-        domainMoved: result.domainMoved,
+        domainMoved,
         logType: 'CONTACT_ASSIGNED_TO_CUSTOMER',
       },
       'Manually assigned contact to customer'
@@ -257,7 +316,7 @@ export class ContactService {
       contact: result.contact,
       emailsReassigned: result.emailsReassigned,
       tasksCreated,
-      domainMoved: result.domainMoved,
+      domainMoved,
     };
   }
 

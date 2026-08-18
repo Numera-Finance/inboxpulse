@@ -12,3 +12,4 @@ export * from './search-condition-builder';
 export { eq, and, or, not, sql, desc, asc, like, ilike, inArray, isNull, isNotNull, lte, gte, lt, gt, ne, between, notInArray, exists, notExists } from 'drizzle-orm';
 export type { SQL } from 'drizzle-orm';
 export type { PgTableWithColumns } from 'drizzle-orm/pg-core';
+export * from './like-pattern';
