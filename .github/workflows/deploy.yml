@@ -541,10 +541,18 @@ jobs:
   #     changes the runtime identity and what it can reach in Secret Manager,
   #     which is a migration, not a build fix. Until then CI names the account
   #     the service actually runs as.
-  #   - secret  ADDON_GOOGLE_CLIENT_ID   the add-on's OWN OAuth client id, from
-  #     Marketplace SDK > Credentials. NOT crm-oauth: Google mints
-  #     event.userIdToken for the add-on's client, so verifying against the CRM
-  #     client checks the wrong audience and every request fails to verify.
+  # GOOGLE_CLIENT_ID IS NOT SET HERE, because the add-on never reads it.
+  # apps/addon/src/env.ts declares it with a default of '' and no other file in
+  # apps/addon/src references it; ID-token verification uses ADDON_AUDIENCE
+  # (auth/verify.ts). It was bound to a secret ADDON_GOOGLE_CLIENT_ID that this
+  # project's owner account cannot see or grant on, which failed every revision
+  # of this service with `Permission denied on secret ... for Revision service
+  # account crm-api-sa@` — a hard block on deploying, in exchange for a value
+  # nothing consumes. The binding is gone from the running service too.
+  #
+  # Note on reading Secret Manager errors here: NOT_FOUND means "not visible to
+  # you", not "absent". Do not conclude a secret was never created from a 404 on
+  # `gcloud secrets describe`.
   # SERVICE_API_URL is a plain env var, NOT a secret. It is the crm-api base
   # URL — public, printed by `gcloud run services describe`, and carrying
   # nothing worth protecting. It was declared here as a secret named
@@ -613,8 +621,7 @@ jobs:
           SERVICE_API_URL=https://crm-api-203731638840.us-central1.run.app" \
             --update-secrets "\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
-          LIVE_ANALYSIS_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,\
-          GOOGLE_CLIENT_ID=ADDON_GOOGLE_CLIENT_ID:latest" \
+          LIVE_ANALYSIS_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest" \
             --min-instances 0 \
             --max-instances 10 \
             --memory 512Mi \
