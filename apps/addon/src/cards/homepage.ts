@@ -301,7 +301,7 @@ export function buildHomepageCard(
             // is the one number that needs no context to read.
             bottomLabel: (() => {
               const lead = mult
-                ? `<font color="#c5221f"><b>${mult}×</b> the firm</font> · `
+                ? `<font color="#c5221f"><b>${mult}×</b> slower than the firm</font> · `
                 : '';
               if (!slow.firmMedianH) return `${lead}${hrs(p.medianH)} median · ${p.threads} answered`;
               const { a, b } = pair(p.medianH, slow.firmMedianH);
@@ -369,7 +369,7 @@ export function buildHomepageCard(
       faster === null
         ? ''
         : faster < 2
-          ? `<font color="#c5221f">only ${hrs(Math.abs(faster))} faster than routine mail. Sentiment is not changing behaviour</font>`
+          ? `<font color="#c5221f">barely faster than routine mail</font>`
           : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
 
     // THE TAIL LEADS, the median follows.
@@ -395,7 +395,7 @@ export function buildHomepageCard(
       widgets: [
         deco({
           startIcon: { knownIcon: 'CLOCK' },
-          topLabel: `of ${pulse.negativeCount} unhappy clients who got a reply`,
+          topLabel: `of ${pulse.negativeCount} answered`,
           text:
             `<b><font color="#c5221f">${pulse.overFiveDays}</font></b> waited more than <b>5 days</b> to hear back`,
           wrapText: true,
@@ -554,7 +554,7 @@ export function buildHomepageCard(
           text: `<b>${escapeText(sc.customer)}</b> <font color="#9a6f33">${sc.recent} this week</font>`,
           bottomLabel:
             `usually ${sc.usual} a week` +
-            (sc.owner ? ` · ${escapeText(sc.owner)}` : ' · not on the allocation sheet'),
+            (sc.owner ? ` · ${escapeText(sc.owner)}` : ' · no owner assigned'),
           wrapText: true,
         }),
       ),
@@ -625,7 +625,7 @@ export function buildHomepageCard(
                   ? `${f.owner} · ${f.ownerRole}`
                   : f.owner) +
                 (f.ownerPeers && f.ownerPeers > 1 ? ` +${f.ownerPeers - 1}` : '')
-              : 'not on the allocation sheet'),
+              : 'no owner assigned'),
           wrapText: true,
           // The WHOLE ROW is the link, not a pill at the end of it. Six
           // identical "Open" buttons were six identical accessories saying the

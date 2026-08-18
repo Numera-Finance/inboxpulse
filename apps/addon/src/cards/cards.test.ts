@@ -232,7 +232,7 @@ describe('where the fires are', () => {
     // A blank owner always means the client is absent from the allocation
     // sheet, never "assigned to someone else" — every matched client has an
     // Account manager. Saying so points the reader at the real fix.
-    expect(card()).toContain('not on the allocation sheet');
+    expect(card()).toContain('no owner assigned');
   });
 
   /**
@@ -558,7 +558,7 @@ describe('fire row ownership', () => {
   });
 
   it('says the client is off the sheet rather than blaming a missing manager', () => {
-    expect(card(null, null)).toContain('not on the allocation sheet');
+    expect(card(null, null)).toContain('no owner assigned');
     expect(card(null, null)).not.toContain('no account manager');
   });
 });
@@ -896,6 +896,6 @@ describe('talking more than usual', () => {
 
   it('admits when nobody owns the client', () => {
     const json = card([{ customer: 'Hinlab Inc', customerId: 'c1', recent: 20, usual: 5, owner: null }]);
-    expect(json).toContain('not on the allocation sheet');
+    expect(json).toContain('no owner assigned');
   });
 });

@@ -1110,7 +1110,7 @@ export interface Fire {
   /** How many of those nobody has answered. */
   unanswered: number;
   oldestDays: number;
-  /** Who to call, or null when the client is not on the allocation sheet. */
+  /** Who to call, or null when nobody is assigned to this client. */
   owner: string | null;
   /**
    * Which role that person holds.
