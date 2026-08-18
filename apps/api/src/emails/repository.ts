@@ -631,7 +631,31 @@ export class EmailRepository extends ScopedRepository {
     // Build base conditions
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      eq(emailParticipants.customerId, customerId),
+      // ATTRIBUTED BY PARTICIPANT LINK **OR** SENDER DOMAIN, matching
+      // findByCustomer and matching the add-on panel.
+      //
+      // The panel attributes a fire by who WROTE the mail, via the sender's
+      // domain. This filtered on the participant link alone, so a row claiming
+      // "Berolzheimer, 3 unanswered" led to a page saying "No analyzed emails
+      // found" — the panel reading as though it had made the client up.
+      //
+      // The participant link is not merely absent, it is usually pointing
+      // somewhere else: of five negative Berolzheimer emails, ONE carries a
+      // participant row for Berolzheimer and the rest name Mystartupcfo (us) or
+      // an unrelated auto-created record.
+      //
+      // Both paths are kept rather than swapping to domain alone: participant
+      // links are often wrong but not always absent, and narrowing to one would
+      // silently drop mail this page shows today.
+      or(
+        eq(emailParticipants.customerId, customerId),
+        sql`EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = ${customerId}
+            AND cd.tenant_id = ${emails.tenantId}
+            AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+        )`
+      )!,
     ];
 
     // Add text search filter (ILIKE on subject, from name/email)
@@ -728,7 +752,31 @@ export class EmailRepository extends ScopedRepository {
     // Build base conditions
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      eq(emailParticipants.customerId, customerId),
+      // ATTRIBUTED BY PARTICIPANT LINK **OR** SENDER DOMAIN, matching
+      // findByCustomer and matching the add-on panel.
+      //
+      // The panel attributes a fire by who WROTE the mail, via the sender's
+      // domain. This filtered on the participant link alone, so a row claiming
+      // "Berolzheimer, 3 unanswered" led to a page saying "No analyzed emails
+      // found" — the panel reading as though it had made the client up.
+      //
+      // The participant link is not merely absent, it is usually pointing
+      // somewhere else: of five negative Berolzheimer emails, ONE carries a
+      // participant row for Berolzheimer and the rest name Mystartupcfo (us) or
+      // an unrelated auto-created record.
+      //
+      // Both paths are kept rather than swapping to domain alone: participant
+      // links are often wrong but not always absent, and narrowing to one would
+      // silently drop mail this page shows today.
+      or(
+        eq(emailParticipants.customerId, customerId),
+        sql`EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = ${customerId}
+            AND cd.tenant_id = ${emails.tenantId}
+            AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+        )`
+      )!,
     ];
 
     // Add text search filter (ILIKE on subject, from name/email)
