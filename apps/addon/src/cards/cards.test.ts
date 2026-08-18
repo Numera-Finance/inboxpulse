@@ -772,7 +772,15 @@ describe('the fire arc', () => {
     // A count cannot separate a client getting worse from one who has always
     // been difficult, and those are different calls. Measured across 693
     // client-months, crossing 10% is a step change that does not revert.
-    expect(withFires([5, 7, 36])).toContain('5% → 7% → 36%');
+    // First and last only — the full arc overflowed the label and Gmail
+    // truncated it, hiding the count that was already there.
+    const json = withFires([5, 7, 36]);
+    expect(json).toContain('5%→36%');
+    expect(json).toContain('4 unhappy');
+  });
+
+  it('needs two months before it can show a direction', () => {
+    expect(withFires([12])).not.toContain('→');
   });
 
   it('falls back to the count when a client has too little mail to rate', () => {

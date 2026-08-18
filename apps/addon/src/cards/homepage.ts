@@ -505,9 +505,17 @@ export function buildHomepageCard(
           // month, still 5.9% three months later against 1.6% for those who
           // never crossed. Occasional friction is noise; the crossing is not,
           // and it does not revert.
+          //
+          // FIRST AND LAST ONLY, and no spaces around the arrow. The full arc
+          // rendered as "0% → 1% → 2% → 3% · 2 unhappy · oldest 56d" overflowed
+          // the label and Gmail truncated it mid-sentence, hiding the count that
+          // was already there. A manager needs where the client started and
+          // where they are now; the months between are detail this row has no
+          // width for.
           topLabel:
-            (f.arc?.length ? `${f.arc.map((p) => `${p}%`).join(' → ')} · ` : '') +
-            `${f.negative} unhappy · oldest ${f.oldestDays}d`,
+            (f.arc && f.arc.length >= 2
+              ? `${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
+              : '') + `${f.negative} unhappy · ${f.oldestDays}d`,
           text:
             `<b>${escapeText(f.customer)}</b>` +
             (f.unanswered > 0
