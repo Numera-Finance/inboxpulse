@@ -506,16 +506,23 @@ export function buildHomepageCard(
           // never crossed. Occasional friction is noise; the crossing is not,
           // and it does not revert.
           //
-          // FIRST AND LAST ONLY, and no spaces around the arrow. The full arc
-          // rendered as "0% → 1% → 2% → 3% · 2 unhappy · oldest 56d" overflowed
-          // the label and Gmail truncated it mid-sentence, hiding the count that
-          // was already there. A manager needs where the client started and
-          // where they are now; the months between are detail this row has no
-          // width for.
+          // FIRST AND LAST ONLY, and the total count dropped.
+          //
+          // The full arc rendered as "0% → 1% → 2% → 3% · 2 unhappy · oldest
+          // 56d" overflowed the label and Gmail truncated it mid-sentence,
+          // hiding the count that had been there before the change. Compressing
+          // the arc fixed the overflow and left the row still crowded: three
+          // dense lines in a 250px column, six rows deep.
+          //
+          // So the TOTAL goes. "4 unhappy" here and "4 unanswered" below are
+          // different numbers that read as the same one, and unanswered is the
+          // half that means we have not replied — the part the firm controls and
+          // the reason to call today. A manager needs where the client started,
+          // where they are now, and how stale the oldest thread is.
           topLabel:
             (f.arc && f.arc.length >= 2
               ? `${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
-              : '') + `${f.negative} unhappy · ${f.oldestDays}d`,
+              : '') + `${f.oldestDays}d old`,
           text:
             `<b>${escapeText(f.customer)}</b>` +
             (f.unanswered > 0

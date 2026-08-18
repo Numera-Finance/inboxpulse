@@ -776,7 +776,11 @@ describe('the fire arc', () => {
     // truncated it, hiding the count that was already there.
     const json = withFires([5, 7, 36]);
     expect(json).toContain('5%→36%');
-    expect(json).toContain('4 unhappy');
+    // The row must stay readable: the total count is dropped because
+    // "4 unhappy" and "2 unanswered" read as the same number, and unanswered is
+    // the half the firm controls.
+    expect(json).not.toContain('unhappy');
+    expect(json).toContain('2 unanswered');
   });
 
   it('needs two months before it can show a direction', () => {
@@ -787,7 +791,7 @@ describe('the fire arc', () => {
     // Months under six emails are dropped upstream — one angry email out of two
     // is 50% and means nothing.
     const json = withFires();
-    expect(json).toContain('4 unhappy');
+    expect(json).toContain('9d old');
     expect(json).not.toContain('→');
   });
 });
