@@ -1530,7 +1530,11 @@ export class FiresService {
           LIMIT 1
         ) corr ON TRUE
         WHERE c.tenant_id = ${tenantId}
-          AND c.id::text = ANY(${missing})
+          -- An explicit IN list. Drizzle binds a JS array as ONE parameter, so
+          -- the ANY(...) form Postgres needs never materialised and the query
+          -- failed outright - which the catch below turned into a fires list
+          -- with no owners and no complaint.
+          AND c.id::text IN (${sql.join(missing.map((m) => sql`${m}`), sql`, `)})
       `);
       const byId = new Map(
         (rows as unknown as Array<{ customer_id: string; who: string }>).map((r) => [r.customer_id, r.who]),
