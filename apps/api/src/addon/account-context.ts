@@ -1329,6 +1329,45 @@ export class FiresService {
           AND e.received_at >= now() - interval '35 days'
         GROUP BY 1
       )
+      , base_owner AS (
+        -- THE COMPANY'S OWNER IS OFTEN ON A DIFFERENT ROW THAN ITS MAIL.
+        --
+        -- When mail arrives from a domain no customer claims, ingest creates a
+        -- NEW customer for it. The allocation stays on the original record, and
+        -- the record carrying the domain has nobody. Measured on this tenant:
+        -- 3,897 customers carry a domain and 2 of the auto-created ones have an
+        -- owner, so the fires list said "no owner assigned" on five rows out of
+        -- six while the allocation sheet held 4,724 rows.
+        --
+        -- Curium Technologies Inc holds curiumsolutions.com, curiumpharma.com,
+        -- curiumdata.com and curium.world, with five allocated people. The
+        -- client writes from curium.ai, which sits alone on "Curium (Auto)".
+        --
+        -- Joined on the registrable base, which is evidence rather than a guess:
+        -- curium.ai and curium.world are the same company by construction. Name
+        -- similarity is NOT used. An eight-character name prefix matched
+        -- "Americanexpress" to "AMERICAN NUTRITION ALLIANCE INC." and
+        -- "Productiv" to "Productiva Group USA Limited" — and a wrong person to
+        -- call is worse than no name at all.
+        --
+        -- Bases resolving to more than one owned customer are dropped for the
+        -- same reason. On this tenant that excludes exactly one base and
+        -- recovers 44 clients.
+        -- (array_agg)[1], not MIN: Postgres has no MIN(uuid). The HAVING
+        -- below guarantees the array holds exactly one element.
+        SELECT d.base, (array_agg(DISTINCT d.customer_id))[1] AS owner_customer_id
+        FROM (
+          SELECT cd.customer_id, split_part(lower(cd.domain), '.', 1) AS base
+          FROM customer_domains cd
+          WHERE cd.tenant_id = ${tenantId}
+        ) d
+        WHERE EXISTS (
+          SELECT 1 FROM customer_allocations al
+          WHERE al.customer_id = d.customer_id AND al.tenant_id = ${tenantId}
+        )
+        GROUP BY d.base
+        HAVING count(DISTINCT d.customer_id) = 1
+      )
       SELECT
         c.id::text AS customer_id,
         COALESCE(c.name, '(unknown)') AS customer,
@@ -1365,7 +1404,16 @@ export class FiresService {
                count(*) OVER (PARTITION BY al.role)::int AS peers
         FROM customer_allocations al
         LEFT JOIN users u ON u.id = al.user_id
-        WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId}
+        -- This customer, or the one record that owns its domain base.
+        WHERE al.customer_id = COALESCE(
+                (SELECT bo.owner_customer_id
+                   FROM customer_domains cd2
+                   JOIN base_owner bo
+                     ON bo.base = split_part(lower(cd2.domain), '.', 1)
+                  WHERE cd2.customer_id = c.id AND cd2.tenant_id = ${tenantId}
+                  LIMIT 1),
+                c.id)
+          AND al.tenant_id = ${tenantId}
         ORDER BY CASE al.role
                    WHEN 'Account manager' THEN 1
                    WHEN 'Sr. Controller'  THEN 2
@@ -1644,6 +1692,24 @@ export class StirringService {
           AND split_part(lower(e.from_email), '@', 2) NOT IN (SELECT dom FROM ours)
         GROUP BY cd.customer_id
       )
+      , base_owner AS (
+        -- Same resolution the fires list uses: a company's allocation often
+        -- sits on a different customer row than the one carrying the domain its
+        -- mail arrives from. Joined on the registrable base only, and only where
+        -- that base resolves to a single owned customer. See FiresService.
+        SELECT d.base, (array_agg(DISTINCT d.customer_id))[1] AS owner_customer_id
+        FROM (
+          SELECT cd.customer_id, split_part(lower(cd.domain), '.', 1) AS base
+          FROM customer_domains cd
+          WHERE cd.tenant_id = ${tenantId}
+        ) d
+        WHERE EXISTS (
+          SELECT 1 FROM customer_allocations al
+          WHERE al.customer_id = d.customer_id AND al.tenant_id = ${tenantId}
+        )
+        GROUP BY d.base
+        HAVING count(DISTINCT d.customer_id) = 1
+      )
       SELECT c.id::text AS customer_id,
              COALESCE(c.name, '(unknown)') AS customer,
              v.recent,
@@ -1653,7 +1719,15 @@ export class StirringService {
              (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
                 FROM customer_allocations al
                 LEFT JOIN users u ON u.id = al.user_id
-               WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId}
+               WHERE al.customer_id = COALESCE(
+                       (SELECT bo.owner_customer_id
+                          FROM customer_domains cd2
+                          JOIN base_owner bo
+                            ON bo.base = split_part(lower(cd2.domain), '.', 1)
+                         WHERE cd2.customer_id = c.id AND cd2.tenant_id = ${tenantId}
+                         LIMIT 1),
+                       c.id)
+                 AND al.tenant_id = ${tenantId}
                ORDER BY CASE al.role WHEN 'Account manager' THEN 1 ELSE 2 END
                LIMIT 1) AS owner
       FROM vol v
