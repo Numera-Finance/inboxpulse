@@ -247,7 +247,7 @@ describe('where the fires are', () => {
   });
 });
 
-describe('slowest to answer angry mail', () => {
+describe('slowest to answer unhappy clients', () => {
   const slow = {
     firmMedianH: 12.9,
     people: [
@@ -669,7 +669,7 @@ describe('card structure', () => {
     const firstSection = JSON.stringify(full().sections[0]);
     expect(firstSection).toContain('Where the fires are');
     expect(firstSection).toContain('Unhappy clients left waiting');
-    expect(firstSection).toContain('Slowest to answer angry mail');
+    expect(firstSection).toContain('Slowest to answer unhappy clients');
     expect(firstSection).not.toContain('Prioritise my inbox');
   });
 

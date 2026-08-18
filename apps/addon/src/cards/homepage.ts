@@ -286,7 +286,14 @@ export function buildHomepageCard(
   // enough to discount it themselves.
   if (slow?.people.length) {
     firm.unshift({
-      header: heading('Slowest to answer angry mail'),
+      // "UNHAPPY", NOT "ANGRY". The rows are threads the classifier marked
+      // sentiment_value = 'negative', and negative is not anger: measured on 49
+      // human-judged emails, only 5 of 20 complaints use explicit failure
+      // wording. The rest are courteous chases — "could you provide an update on
+      // the expected timeline" — which a reader would not call angry mail, and
+      // which the section above already calls "unhappy clients". One population
+      // was carrying two vocabularies, and the louder one overstated the data.
+      header: heading('Slowest to answer unhappy clients'),
       widgets: [
         ...slow.people.map((p) => {
           // A MULTIPLE, not two durations.
