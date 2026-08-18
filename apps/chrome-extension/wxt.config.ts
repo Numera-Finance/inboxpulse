@@ -19,6 +19,15 @@ function resolveMode(): string {
 const env = loadEnv(resolveMode(), process.cwd(), 'WXT_');
 const API_URL = env.WXT_API_URL || 'http://localhost:4001';
 const WEB_URL = env.WXT_WEB_URL || 'http://localhost:4000';
+// The local `gcloud run services proxy` listener fronting the IAM-gated
+// crm-manager service. This stays a localhost URL even in production builds:
+// the proxy is what holds the caller's gcloud identity, so the extension never
+// talks to the Cloud Run hostname directly.
+const MANAGER_URL = env.WXT_MANAGER_URL || 'http://localhost:8080';
+// The flag-chip data source. Separate from API_URL because the chips use
+// service-key auth (no cookie) and can therefore read a different stack — the
+// clone — while session paths must stay on the host the web app logs into.
+const FLAGS_API_URL = env.WXT_FLAGS_API_URL || API_URL;
 
 /**
  * Convert an origin URL into a Chrome host match pattern.
@@ -36,6 +45,8 @@ const hostPermissions = Array.from(
     'https://mail.google.com/*',
     toHostMatchPattern(API_URL),
     toHostMatchPattern(WEB_URL),
+    toHostMatchPattern(MANAGER_URL),
+    toHostMatchPattern(FLAGS_API_URL),
   ]),
 );
 

@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { getContactClient, WEB_URL } from '../lib/clients';
 import type { Contact } from '@crm/clients';
-import { Users, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { Block } from './Section';
 
 const MAX_VISIBLE = 3;
 
@@ -34,14 +35,7 @@ export function ContactList({ customerId, senderEmail }: ContactListProps): Reac
   const totalCount = sorted.length;
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-1.5">
-        <Users size={12} className="text-muted-foreground" />
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-          Contacts
-        </h3>
-      </div>
-
+    <Block title="Contacts">
       {isLoading ? (
         <div className="flex items-center justify-center py-2">
           <Loader2 size={16} className="animate-spin text-muted-foreground" />
@@ -82,6 +76,6 @@ export function ContactList({ customerId, senderEmail }: ContactListProps): Reac
           )}
         </div>
       )}
-    </div>
+    </Block>
   );
 }

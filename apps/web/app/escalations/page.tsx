@@ -5,6 +5,7 @@ import { useSearchParams, useNavigate, useParams } from "react-router-dom"
 import { subDays, startOfDay, endOfDay } from "date-fns"
 import { Inbox, CheckCircle } from "lucide-react"
 import { ClassificationIndicator } from "@/components/ui/classification-indicator"
+import { ThreadTimeline } from "@/components/inbox/thread-timeline"
 import { Separator } from "@/components/ui/separator"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
@@ -215,7 +216,12 @@ export default function EscalationsPage() {
         comments = await taskClient.getComments(email.taskId, signal)
       }
 
-      return analyzedEmailToInboxContent(email, comments)
+      // The thread is what makes an escalation legible — who is on it, in what
+      // order, and how long each gap ran. Failing to load it must not blank the
+      // panel, so the message still renders without a rail.
+      const thread = await emailClient.getThread(itemId, signal).catch(() => null)
+
+      return analyzedEmailToInboxContent(email, comments, thread)
     },
     []
   )
@@ -401,21 +407,40 @@ export default function EscalationsPage() {
     )
   }, [])
 
-  const renderSidePanel = React.useCallback((item: InboxItem) => {
-    const email = item.originalData as AnalyzedEmail
-    const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
-    if (!isNegative || !email?.taskId || isTatView) {
-      // Not negative, no task, or TAT view — no resolution/comments panel
-      return null
-    }
-    return (
-      <div className="space-y-4">
-        <TaskResolutionInfo taskId={email.taskId} />
-        <Separator />
-        <TaskComments taskId={email.taskId} variant="panel" />
-      </div>
-    )
-  }, [isTatView])
+  const renderSidePanel = React.useCallback(
+    (item: InboxItem, content: InboxItemContent | null) => {
+      const email = item.originalData as AnalyzedEmail
+      const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
+      const showResolution = isNegative && Boolean(email?.taskId) && !isTatView
+
+      // The timeline is not conditional on there being a task. "Who wrote, when,
+      // and how long did it sit" is the question every escalation raises, and a
+      // thread with no task attached is exactly the one nobody has picked up.
+      // No length gate. A one-message thread is not a boring case — it is the
+      // one where nobody has replied, and "who did this go to" is exactly the
+      // question the reader has.
+      const timeline = content?.thread && content.thread.messages.length > 0 && (
+        <ThreadTimeline thread={content.thread} />
+      )
+
+      if (!timeline && !showResolution) return null
+
+      return (
+        <div className="space-y-4">
+          {timeline}
+          {timeline && showResolution && <Separator />}
+          {showResolution && email.taskId && (
+            <>
+              <TaskResolutionInfo taskId={email.taskId} />
+              <Separator />
+              <TaskComments taskId={email.taskId} variant="panel" />
+            </>
+          )}
+        </div>
+      )
+    },
+    [isTatView]
+  )
 
   // Get customer name for display
   const { data: customersData } = useCustomers({

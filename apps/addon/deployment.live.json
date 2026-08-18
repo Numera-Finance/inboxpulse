@@ -1,0 +1,24 @@
+{
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "addOns": {
+    "common": {
+      "name": "InboxPulse",
+      "logoUrl": "https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png",
+      "homepageTrigger": {
+        "runFunction": "https://crm-addon-yn7zwaf2za-uc.a.run.app/homepage"
+      }
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "https://crm-addon-yn7zwaf2za-uc.a.run.app/gmail/contextual"
+        }
+      ]
+    }
+  }
+}

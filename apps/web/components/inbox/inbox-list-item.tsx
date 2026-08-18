@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SentimentIndicator } from "@/components/ui/sentiment-indicator"
 import { ClassificationIndicator } from "@/components/ui/classification-indicator"
+import { SignalFlags } from "@/components/ui/signal-flags"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "./format-timestamp"
 import type { InboxItem, InboxListItemProps } from "./types"
@@ -161,6 +162,8 @@ export const InboxListItem = React.memo(function InboxListItem({
             >
               {item.subject}
             </p>
+            {/* Action flags (escalation / churn / upsell / kudos / competitor) */}
+            <SignalFlags signals={item.signals} size="sm" variant="icon" />
             {/* Classification indicator (spam/marketing/etc) */}
             {item.classification && item.classification.value !== 'business' && (
               <ClassificationIndicator classification={item.classification} size="sm" variant="icon" />

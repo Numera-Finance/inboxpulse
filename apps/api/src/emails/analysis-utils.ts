@@ -55,6 +55,11 @@ export function extractAnalysisFields(
       // Signature extraction doesn't have extracted fields
       // Full result is stored in JSONB
       break;
+
+    case 'context-search-string':
+      // The query itself is only ever read back whole, never filtered on, so it
+      // stays in JSONB. `confidence` is already extracted above.
+      break;
   }
 
   return extracted;

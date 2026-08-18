@@ -16,12 +16,15 @@ import { IntegrationService } from '../integrations/service';
 import { TenantRepository } from '../tenants/repository';
 import { TenantService } from '../tenants/service';
 import { EmailRepository } from '../emails/repository';
+import { ManagerRepository } from '../manager/repository';
 import { EmailThreadRepository } from '../emails/thread-repository';
 import { EmailAnalysisRepository } from '../emails/analysis-repository';
 import { ThreadAnalysisRepository } from '../emails/thread-analysis-repository';
 import { ThreadAnalysisService } from '../emails/thread-analysis-service';
 import { EmailAnalysisService } from '../emails/analysis-service';
 import { EmailService } from '../emails/service';
+import { ContextSearchService } from '../emails/context-search-service';
+import { ManagerService } from '../manager/service';
 import { AnalysisClient } from '@crm/clients';
 import { RunRepository } from '../runs/repository';
 import { RunService } from '../runs/service';
@@ -38,6 +41,7 @@ import { HolidayRepository } from '../holidays/repository';
 import { HolidayService } from '../holidays/service';
 import { KeywordRepository } from '../keywords/repository';
 import { KeywordService } from '../keywords/service';
+import { AccountContextService } from '../addon/account-context';
 import { BetterAuthUserService } from '../auth/better-auth-user-service';
 
 export function setupContainer() {
@@ -84,6 +88,7 @@ export function setupContainer() {
   container.register(IntegrationRepository, { useClass: IntegrationRepository });
   container.register(TenantRepository, { useClass: TenantRepository });
   container.register(EmailRepository, { useClass: EmailRepository });
+  container.register(ManagerRepository, { useClass: ManagerRepository });
   container.register(EmailThreadRepository, { useClass: EmailThreadRepository });
   container.register(EmailAnalysisRepository, { useClass: EmailAnalysisRepository });
   container.register(ThreadAnalysisRepository, { useClass: ThreadAnalysisRepository });
@@ -108,11 +113,14 @@ export function setupContainer() {
   container.register(DashboardService, { useClass: DashboardService });
   container.register(HolidayService, { useClass: HolidayService });
   container.register(KeywordService, { useClass: KeywordService });
+  container.register(AccountContextService, { useClass: AccountContextService });
 
   // Register services with more dependencies (after their dependencies)
   container.register(ThreadAnalysisService, { useClass: ThreadAnalysisService });
   container.register(EmailAnalysisService, { useClass: EmailAnalysisService });
   container.register(EmailService, { useClass: EmailService });
+  container.register(ContextSearchService, { useClass: ContextSearchService });
+  container.register(ManagerService, { useClass: ManagerService });
 
   // Register better-auth services
   container.register(BetterAuthUserService, { useClass: BetterAuthUserService });

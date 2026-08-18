@@ -1,0 +1,443 @@
+<title>InboxPulse — Sentiment Pipeline Architecture</title>
+<style>
+  :root {
+    --paper:      #f4f5f2;
+    --card:       #fbfbf9;
+    --ink:        #191c1f;
+    --muted:      #626b71;
+    --faint:      #8c949a;
+    --line:       #dcdfd9;
+    --line-soft:  #e8eae5;
+    --signal:     #8c2f39;
+    --flow:       #2d5561;
+    --pending:    #9a6f33;
+    --shadow:     0 1px 2px rgba(25,28,31,.05), 0 8px 24px -12px rgba(25,28,31,.12);
+
+    --display: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+    --body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #14171a;
+      --card:      #1b1f23;
+      --ink:       #e9ebe7;
+      --muted:     #9aa3a9;
+      --faint:     #6f787e;
+      --line:      #2c3238;
+      --line-soft: #23282d;
+      --signal:    #d97b83;
+      --flow:      #7fb0bf;
+      --pending:   #d3a55f;
+      --shadow:    0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:     #14171a;
+    --card:      #1b1f23;
+    --ink:       #e9ebe7;
+    --muted:     #9aa3a9;
+    --faint:     #6f787e;
+    --line:      #2c3238;
+    --line-soft: #23282d;
+    --signal:    #d97b83;
+    --flow:      #7fb0bf;
+    --pending:   #d3a55f;
+    --shadow:    0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--body);
+    font-size: 16px; line-height: 1.6; margin: 0; padding: 0 1.25rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; }
+
+  header { padding: 4.5rem 0 2.5rem; border-bottom: 1px solid var(--line); margin-bottom: 3rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 1.1rem;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(2.1rem, 5.2vw, 3.4rem); line-height: 1.08;
+    letter-spacing: -.015em; margin: 0 0 1.2rem; text-wrap: balance;
+  }
+  .standfirst { font-size: 1.12rem; color: var(--muted); max-width: 40rem; margin: 0; }
+  .standfirst strong { color: var(--ink); font-weight: 600; }
+
+  section { margin: 0 0 4rem; }
+  h2 {
+    font-family: var(--display); font-weight: 400; font-size: 1.7rem;
+    letter-spacing: -.01em; margin: 0 0 .5rem;
+  }
+  .section-note { color: var(--muted); max-width: 44rem; margin: 0 0 2rem; }
+
+  .diagram {
+    background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    padding: 2rem 1rem; overflow-x: auto; box-shadow: var(--shadow);
+  }
+  .diagram pre.mermaid { margin: 0; text-align: center; }
+
+  .stages { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .stage {
+    background: var(--card); display: grid;
+    grid-template-columns: 3.2rem 1fr minmax(0, 15rem);
+    gap: 1.5rem; padding: 1.5rem 1.6rem; align-items: start;
+  }
+  @media (max-width: 46rem) {
+    .stage { grid-template-columns: 2.4rem 1fr; }
+    .stage .metric { grid-column: 2; }
+  }
+  .num { font-family: var(--mono); font-size: .82rem; color: var(--faint); padding-top: .2rem; font-variant-numeric: tabular-nums; }
+  .stage h3 { font-size: 1rem; font-weight: 620; margin: 0 0 .35rem; letter-spacing: -.005em; }
+  .stage p { margin: 0; color: var(--muted); font-size: .94rem; }
+  .stage p + p { margin-top: .5rem; }
+  .metric {
+    font-family: var(--mono); font-size: .8rem; line-height: 1.65; color: var(--muted);
+    border-left: 2px solid var(--line); padding-left: .9rem; font-variant-numeric: tabular-nums;
+  }
+  .metric b { color: var(--ink); font-weight: 600; }
+  .metric .hi { color: var(--signal); }
+
+  .tag {
+    display: inline-block; font-family: var(--mono); font-size: .64rem;
+    letter-spacing: .1em; text-transform: uppercase; padding: .18rem .5rem;
+    border-radius: 2px; vertical-align: 2px; margin-left: .5rem; border: 1px solid currentColor;
+  }
+  .tag.live { color: var(--flow); }
+  .tag.todo { color: var(--pending); }
+  .tag.dead { color: var(--faint); }
+
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .fig { background: var(--card); padding: 1.4rem 1.3rem; }
+  .fig .v { font-family: var(--display); font-size: 2rem; line-height: 1; display: block; margin-bottom: .45rem; font-variant-numeric: tabular-nums; }
+  .fig .k { font-size: .84rem; color: var(--muted); display: block; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; background: var(--card); }
+  th, td { text-align: left; padding: .8rem 1.1rem; border-bottom: 1px solid var(--line-soft); }
+  th { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 500; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+
+  .note {
+    border-left: 2px solid var(--signal); padding: .3rem 0 .3rem 1.3rem;
+    margin: 2rem 0 0; color: var(--muted); max-width: 44rem;
+  }
+  .note b { color: var(--ink); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 1.5rem; color: var(--faint); font-size: .84rem; font-family: var(--mono); }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">InboxPulse · Numera Finance</p>
+  <h1>The best signal is counting</h1>
+  <p class="standfirst">A bookkeeper in Pune reads a hundred emails to find the three that matter, and the three rarely say they matter. A model finds them one at a time. <strong>What says which client is about to blow up is a complaint rate and a message count</strong> — no embedding, no inference, already in the database.</p>
+</header>
+
+<section>
+  <h2>What is running today</h2>
+  <p class="section-note">Seven things are live and reading a real mailbox. Three more are built and switched off.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Stage</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>Spam / marketing / automated filter</td><td>live — the only filter in the request path</td></tr>
+      <tr><td>Gemini judges sentiment, prompt v1.9</td><td>live</td></tr>
+      <tr><td>A client's customers never reach the model</td><td>live — stops paying to read homeowner mail</td></tr>
+      <tr><td>"What the wording means" teaching layer</td><td>live</td></tr>
+      <tr><td>Refuses to show a quotation the client never wrote</td><td>live</td></tr>
+      <tr><td>Client trajectory on each fire row</td><td>live — Rising, Cooling or Entrenched</td></tr>
+      <tr><td>Fires ranked by whether we are in the conversation</td><td>live — the strongest predictor measured, 24.7% against 13.0%</td></tr>
+      <tr><td>"Talking more than usual", before any complaint</td><td>live — 2.4×, the only signal that fires before a complaint</td></tr>
+      <tr><td>Embedding service + 35,653 stored vectors</td><td>deployed, called only by the backfill</td></tr>
+      <tr><td>The embedding gate</td><td><b>library only — nothing imports it</b></td></tr>
+      <tr><td>Retrieval of worked examples</td><td>shipped disabled — measured, did not help</td></tr>
+      <tr><td>Nearest-neighbour promotion</td><td>measured, not built</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note"><b>Every email that survives the spam filter goes to the model.</b> There is no embedding gate in production, so the cost and latency figures below describe what it would buy, not what it saves.</p>
+</section>
+
+<section>
+  <h2>What predicts trouble</h2>
+  <p class="section-note">Given what we can see about a client this week, what is the chance they complain next week? None of it needs a model. All of it was in the database the whole time.</p>
+
+  <p>Across <b>9,417 client-weeks</b>, 533 were followed by a complaint. That is the prior — <b>5.7%</b> — and every claim below is the same probability after conditioning on something we can observe for free.</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>What we know about the client this week</th><th>client-weeks</th><th>P(complains next week)</th><th>vs prior</th></tr></thead>
+    <tbody>
+      <tr><td>nothing — the prior</td><td>9,417</td><td>5.7%</td><td>1.0×</td></tr>
+      <tr><td>their volume doubled, but we are not replying</td><td>1,131</td><td>4.4%</td><td><b>0.8×</b></td></tr>
+      <tr><td>their volume doubled</td><td>2,658</td><td>7.2%</td><td>1.3×</td></tr>
+      <tr><td>their mail is accelerating, three weeks running</td><td>995</td><td>7.5%</td><td>1.3×</td></tr>
+      <tr><td>we are in a real back-and-forth with them</td><td>1,032</td><td>16.1%</td><td>2.8×</td></tr>
+      <tr><td>they complained in the last four weeks</td><td>1,181</td><td>16.9%</td><td>3.0×</td></tr>
+      <tr><td><b>both — they complained, and we are in it with them</b></td><td>384</td><td><b class="hi">24.7%</b></td><td><b>4.4×</b></td></tr>
+      <tr><td>both, and complaints are still unanswered</td><td>215</td><td><b class="hi">27.0%</b></td><td><b>4.7×</b></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="note"><b>Evidence only counts when it is independent.</b> Engagement is worth 2.8× alone and a recent complaint 3.0× alone; together they reach 4.4×, because each carries something the other does not. Volume carries nothing new: bolt it onto the pair and 24.7% becomes 25.0% while two thirds of the coverage is thrown away. Acceleration makes it <em>worse</em>, at 23.7%. Loud, fast weeks are mostly engaged weeks, so once engagement is known the volume term is already spent.</p>
+
+  <div class="stages">
+    <div class="stage">
+      <div class="num">A</div>
+      <div>
+        <h3>Being in the conversation is the signal <span class="tag live">live</span></h3>
+        <p>Not what the client writes — whether an exchange is happening. Four or more messages from them this week against eight in the prior month, and three or more replies from us.</p>
+        <p>It outranks the count of unanswered complaints, which separates 18.3% from 14.5%. An engaged client whose complaints have <em>all</em> been answered runs 21.9%, against 14.7% for an unengaged client with complaints still sitting open. <b>Answering the mail does not settle the client.</b> Being in the conversation is what says they are still working themselves up.</p>
+        <p>The fires list sorts on this first and shows "In conversation" on the rows that carry it. Unanswered sorts second and stays on the row: it is the part the firm controls and the reason to reply today, even though it says less about what happens next.</p>
+      </div>
+      <div class="metric">engaged → <b class="hi">24.7%</b><br/>not engaged → <b>13.0%</b><br/>counting, <b>no model call</b></div>
+    </div>
+
+    <div class="stage">
+      <div class="num">B</div>
+      <div>
+        <h3>Volume catches the client nobody has flagged yet <span class="tag live">live</span></h3>
+        <p>Every other signal needs a complaint already on file. This one is the only thing in the panel that fires before anyone has written one, which is what earns it a slot at 2.4× when the pair above manage 4.4×.</p>
+        <p>It works on top of engagement, not instead of it: among clients with nothing on file, engaged and above twice their usual volume reaches <b>13.7%</b> against an 11.0% floor for engaged alone. <b>Volume with nobody replying runs 4.4%, below the base rate</b> — an unattended spike is a notification stream, not a person getting angrier, and the reply test is what separates them.</p>
+      </div>
+      <div class="metric">engaged + loud → <b class="hi">13.7%</b><br/>engaged alone → <b>11.0%</b><br/>fires with <b>nothing</b> on file</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">C</div>
+      <div>
+        <h3>Crossing 10% is a step change that does not revert <span class="tag live">live</span></h3>
+        <p>Under 10% in a month, a client behaves exactly like one at zero. Over it, they sit at four times base rate for at least three months and do not drift back.</p>
+        <p>They do not accelerate. Within a single client, the gap between complaints is a coin flip — 24 speeding up against 22 slowing down. Elevated, not spiralling, which makes an intervention a rescue rather than a race.</p>
+      </div>
+      <div class="metric">under 10% → <b>2.0%</b> next month<br/>over 10% → <b class="hi">7.9%</b><br/>still <b>5.9%</b> three months on</div>
+    </div>
+  </div>
+
+  <p class="note"><b>Every rate here is what a panel row can act on:</b> the signal fired on all 9,417 client-weeks, scored against what happened the week after.</p>
+
+  <p class="note"><b>Every model-based approach either failed or restated what was already known.</b> The per-client mood vector stayed flat through a real escalation. Ego state did not move. Clients at their angriest still read as Adult stance — they do not start shouting, they stay polite and get unhappy more often.</p>
+</section>
+
+<section>
+  <h2>The path</h2>
+  <p class="section-note">Solid lines are the paid path, run once per message. Dotted lines are the free ones, run over history — and they are where the panel's judgement comes from.</p>
+  <div class="diagram">
+<pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{
+  'primaryColor':'#ffffff00','primaryTextColor':'#7f8a91','primaryBorderColor':'#8c949a',
+  'lineColor':'#8c949a','fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','fontSize':'13px'
+}}}%%
+flowchart TD
+    A["Email arrives"] --> B["Is this a client's<br/>own customer?"]
+    B -->|"yes"| Z["Skipped, no model call"]
+    B -->|"no"| C["Embed<br/>768 numbers"]
+    C --> D{"Gate<br/>NOT WIRED IN"}
+    D -->|"would drop 3 in 5"| Z2["would stop here"]
+    D --> E["Gemini reads it<br/>prompt v1.9"]
+    E --> F["Verdict stored"]
+    F --> G["Bookkeeper sees it,<br/>with the device named"]
+
+    F -.->|"rate per client<br/>per month"| H["Rising 5%→36%<br/>on the fire row"]
+    F -.->|"complained in the<br/>last four weeks"| P
+    A -.->|"message counts only,<br/>no model, no vector"| K["4+ from them,<br/>3+ replies from us"]
+    K -.-> P["In conversation<br/>orders the fires list<br/>24.7% against 13.0%"]
+    A -.->|"received_at to<br/>first_reply_at"| L["Reply latency<br/>12.2h median on<br/>angry mail"]
+
+    classDef free   fill:none,stroke:#2d5561,stroke-width:1.5px,color:#5f7f8a
+    classDef paid   fill:none,stroke:#8c2f39,stroke-width:1.5px,color:#a9575f
+    classDef quiet  fill:none,stroke:#b6bcc1,stroke-width:1px,color:#8c949a,stroke-dasharray:3 3
+    classDef human  fill:none,stroke:#9a6f33,stroke-width:1.5px,color:#9a6f33
+    class A,B,C,K free
+    class E,F paid
+    class Z,Z2,D,L quiet
+    class G,H,P human
+</pre>
+  </div>
+  <p class="note"><b>The loops that pay off are the dotted ones, and none of them needs a model.</b> Counting verdicts per client per month finds an escalation three months before anyone notices. Counting messages and replies finds the clients about to escalate this week. The vector machinery in the solid path does neither.</p>
+</section>
+
+<section>
+  <h2>How fast we answer</h2>
+  <p class="section-note">The number the product was built to move, over 12 months of client mail.</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>&nbsp;</th><th>emails</th><th>answered</th><th>median</th><th>p90</th><th>over 24h</th></tr></thead>
+    <tbody>
+      <tr><td><b>negative mail</b></td><td>861</td><td><b>53.0%</b></td><td>12.2h</td><td>124.9h</td><td>29.2%</td></tr>
+      <tr><td>ordinary mail</td><td>29,666</td><td>36.1%</td><td>14.6h</td><td>189.6h</td><td>37.5%</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p><b>The firm is faster on angry mail, not slower.</b> It answers 53% of complaints against 36% of ordinary mail, at a shorter median and a much shorter tail. "We went quiet and they got angry" is not what the data shows — reply latency in the run-up to a first complaint was 20.5h against a 19.6h baseline, and the answer rate was slightly <em>better</em>. The real gap is the 47% of complaints that get no reply at all, and the p90 of 124.9 hours: five days for the slowest tenth.</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>That week, we…</th><th>client-weeks</th><th>P(complains next week)</th><th>vs prior</th></tr></thead>
+    <tbody>
+      <tr><td>answered nothing</td><td>2,782</td><td>3.0%</td><td><b>0.53×</b></td></tr>
+      <tr><td>answered within 4h</td><td>817</td><td>9.4%</td><td>1.67×</td></tr>
+      <tr><td>answered in 4–24h</td><td>1,212</td><td>11.0%</td><td>1.94×</td></tr>
+      <tr><td>answered in 24–72h</td><td>536</td><td>12.3%</td><td>2.18×</td></tr>
+      <tr><td>took over 72h</td><td>889</td><td>9.3%</td><td>1.65×</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="note"><b>That is the engagement signal wearing a disguise.</b> We reply when something is happening, and something happening is what predicts a complaint. A week where we answered nothing is mostly a week where nothing arrived.</p>
+
+  <p>Holding that constant by looking only <em>inside</em> engaged weeks, where an exchange is definitely under way:</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Engaged weeks, median reply</th><th>weeks</th><th>P(complains next week)</th></tr></thead>
+    <tbody>
+      <tr><td>all engaged weeks</td><td>1,032</td><td>16.1%</td></tr>
+      <tr><td>under 4h</td><td>261</td><td>15.7%</td></tr>
+      <tr><td>4–24h</td><td>471</td><td>15.3%</td></tr>
+      <tr><td>24–72h</td><td>150</td><td>16.7%</td></tr>
+      <tr><td>over 72h</td><td>150</td><td>18.7%</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="note"><b>Reply speed does not predict escalation.</b> Across a twentyfold range of response time the rate moves from 15.3% to 18.7%, on 150 weeks in each tail bucket. The tail leans the right way; the counts cannot separate it from flat.</p>
+
+  <p><b>So the lever is which client, not how fast.</b> Answering everyone quicker is expensive and buys no measurable reduction in escalation. Answering the right client — engaged, and complaining inside four weeks — starts from a 24.7% chance they escalate again, four times the base rate, and that is where a bookkeeper's morning should go. Speed still matters for reasons this corpus cannot see: satisfaction, renewal, what a client says to their peers. It just cannot be sold as escalation prevention.</p>
+</section>
+
+<section>
+  <h2>What each stage buys</h2>
+  <div class="stages">
+
+    <div class="stage">
+      <div class="num">01</div>
+      <div>
+        <h3>Skip a client's own customers <span class="tag live">live</span></h3>
+        <p>We keep the books for operating businesses, and their customer-facing systems copy us on traffic that is nothing to do with our work. 42 homeowner replies about pool cleaning were labelled complaints: real, and none of them about us.</p>
+        <p>The results were already discarded downstream, but that ran <em>after</em> the model answered. Now the call is never made.</p>
+      </div>
+      <div class="metric">cuts the notification platform,<br/>not the client<br/><b>0</b> tokens spent on it</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">02</div>
+      <div>
+        <h3>Embed on arrival <span class="tag live">deployed</span></h3>
+        <p>768 numbers stored on the row. Ollama pinned to one version with the model baked in, because a different implementation returns 768 plausible numbers with no error and the gate quietly stops meaning what it was trained to mean.</p>
+      </div>
+      <div class="metric"><b>0.999997</b> cosine against<br/>locally-produced vectors<br/><b>35,653</b> rows carry one</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">03</div>
+      <div>
+        <h3>The gate <span class="tag todo">not wired in</span></h3>
+        <p>Ordering and latency, not cost — reading every client email is about $7 a month, so there was never a cost case for dropping mail. Honest numbers, from a fit that never saw the test mail.</p>
+      </div>
+      <div class="metric">1 in 5 sent → <b>7 in 10</b> caught<br/>2 in 5 sent → <b>9 in 10</b><br/>7.5 KB of coefficients</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">04</div>
+      <div>
+        <h3>Gemini decides <span class="tag live">live</span></h3>
+        <p>The only paid step and the only one that decides anything. v1.9 learned that asking <em>when</em> about work we already hold is a complaint, after the prompt had explicitly taught the opposite.</p>
+        <p><b>This is now the binding constraint.</b> Tightening the gate cannot recover a complaint the judge misreads, because the gate already sent it.</p>
+      </div>
+      <div class="metric"><b>19 of 20</b> complaints caught<br/>9 false alarms in 49<br/>~<b>$7</b>/month, full coverage</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">05</div>
+      <div>
+        <h3>Name the device, or say nothing <span class="tag live">live</span></h3>
+        <p>Telling someone "this is a complaint" moves one email. Telling them <em>"'not good to have so many iterations' is understatement, read it as 'this is bad'"</em> moves every future email, including the ones we never flag.</p>
+        <p>Only patterns that name something literally written are shown. Ones that infer what the writer <em>meant</em> were wrong 4 times in 10 and stay silent.</p>
+      </div>
+      <div class="metric"><b>14 of 14</b> correct, held out<br/>fires on <b>1 in 10</b> complaints<br/>silent on the rest</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">06</div>
+      <div>
+        <h3>Show where the client is heading <span class="tag live">live</span></h3>
+        <p>A count cannot separate a client getting worse from one who has always been difficult. Each fire row now reads <em>Rising 5%→36%</em> or <em>Cooling 25%→9%</em>.</p>
+        <p>The threshold is measured: under 10% behaves exactly like zero, and crossing it does not revert.</p>
+      </div>
+      <div class="metric">under 10% → <b>2.0%</b> next month<br/>over 10% → <b class="hi">7.9%</b> next month<br/>still <b>5.9%</b> three months on</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2>The numbers that matter</h2>
+  <p class="section-note">Measured against 49 emails a person read and judged, and against 1,015 real complaints. No public corpus matches this domain, so those 49 rows are the only human instrument.</p>
+
+  <div class="figures">
+    <div class="fig"><span class="v">3%</span><span class="k">of client mail is a complaint</span></div>
+    <div class="fig"><span class="v">5 of 20</span><span class="k">complaints that say so plainly</span></div>
+    <div class="fig"><span class="v">5.7%</span><span class="k">chance any client complains next week</span></div>
+    <div class="fig"><span class="v">24.7%</span><span class="k">if they complained recently and we are in it with them</span></div>
+    <div class="fig"><span class="v">10%</span><span class="k">the rate a client never comes back from</span></div>
+    <div class="fig"><span class="v">5</span><span class="k">clients escalating right now</span></div>
+  </div>
+
+  <p class="note"><b>Only a quarter of complaints use explicit failure wording.</b> The rest arrive as <em>"could you provide an update on the expected timeline"</em>: courteous, blameless, and understood by every American reader as a chase. That gap is the entire product.</p>
+</section>
+
+<section>
+  <h2>What did not work</h2>
+  <p class="section-note">Every one of these is a reasonable idea with a measured answer. Read it before spending a week on any of them.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Approach</th><th>Result</th><th>Why it failed</th></tr></thead>
+    <tbody>
+      <tr><td>Bag of words</td><td class="n">PR-AUC 0.221</td><td>beaten by embeddings at 1/500th the size</td></tr>
+      <tr><td>A hand-written idiom lexicon</td><td class="n">13% recall</td><td>11 of 18 patterns never fired once; an invented register</td></tr>
+      <tr><td>Transactional analysis, ego states</td><td class="n">11× lift</td><td>adds <b>zero</b> recall over sentiment</td></tr>
+      <tr><td>Politeness theory</td><td class="n">p = 0.36</td><td>B2B mail is uniformly polite</td></tr>
+      <tr><td>Synthetic training mail</td><td class="n">+0.6 pts</td><td>gain shrank as data grew sixfold</td></tr>
+      <tr><td>Retrieved examples in the prompt</td><td class="n">18 vs 19 of 20</td><td>no better than the rulebook, at full pool density</td></tr>
+      <tr><td>A mood vector per client</td><td class="n">flat</td><td>topic dominates the embedding; stance does not survive averaging</td></tr>
+      <tr><td>Clients getting progressively touchier</td><td class="n">24 vs 22</td><td>survivorship — within a client it is a coin flip</td></tr>
+      <tr><td>Rising volume as an alert on its own</td><td class="n">1.3×</td><td>flat across 1.5× to 3×; and 0.8× when nobody is replying</td></tr>
+      <tr><td>Accelerating mail, three weeks running</td><td class="n">1.3×</td><td>adds nothing to engagement, and subtracts when combined</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note"><b>The tone branches all died for one reason.</b> Hotspot clients read 94% Adult stance even in their angriest months. They do not start shouting; they stay polite and get unhappy more often. The signal is content and frequency, never register.</p>
+</section>
+
+<section>
+  <h2>What is worth building next</h2>
+  <p class="section-note">One measured result is not yet in the product, and one instrument beats the model on precision.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Idea</th><th>Measured</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>Promote on a nearest labelled neighbour</td><td class="n">86% / 60% recall</td><td>not built</td></tr>
+      <tr><td>…the same, on a client with no history</td><td class="n">75% / 30% recall</td><td>it is client memory, not detection</td></tr>
+      <tr><td>Clear mail on benign neighbours</td><td class="n">loses 6–17 of 20</td><td><b>ruled out</b></td></tr>
+      <tr><td>Wire the embedding gate</td><td class="n">7 in 10 at 1-in-5 sent</td><td>library only</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note"><b>Nearest-neighbour lookup is more precise than the production model</b> — 86% against 70% — but half of that comes from the client's own history. Excluding it drops the result to 75% precision and halves the recall. It is institutional memory rather than complaint detection: it recognises <em>this client complaining again</em>, which is legitimate where the history exists and worth far less on a new tenant.</p>
+</section>
+
+<footer>
+  Measured 15–18 August 2026 · gemini-2.5-flash, prompt v1.9 · nomic-embed-text 768d · 35,653 vectors · 9,417 client-weeks at a 5.7% prior
+</footer>
+
+</div>

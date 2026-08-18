@@ -70,7 +70,16 @@ export type UpsellResult = z.infer<typeof upsellSchema>;
  * Churn Risk Schema
  */
 export const churnSchema = z.object({
-  riskLevel: z.enum(['low', 'medium', 'high', 'critical']),
+  /**
+   * 'none' exists because its absence made this field meaningless.
+   *
+   * The enum was low|medium|high|critical, so the model had no way to say "no
+   * churn risk in this email" — the floor was 'low'. It duly returned 'low' for
+   * 29,312 of 33,497 assessments, 87% of all mail, including invoice reminders
+   * and scheduling notes. That was not a judgement about the customer; it was
+   * the shape of the enum.
+   */
+  riskLevel: z.enum(['none', 'low', 'medium', 'high', 'critical']),
   confidence: z.number().min(0).max(1),
   indicators: z.array(z.string()).describe('Specific phrases or behaviors indicating churn risk'),
   reason: llmOptional(z.string()),
@@ -125,6 +134,27 @@ export const signatureSchema = z.object({
 export type SignatureResult = z.infer<typeof signatureSchema>;
 
 /**
+ * Context Search String Schema
+ *
+ * `query` is emitted verbatim into a Gmail search box, so it is stored as the
+ * single string the model produced rather than decomposed into operands — the
+ * consumer's job is to run it, not to rebuild it.
+ *
+ * `intent` is the scoring target for reranking. Retrieval happens later and
+ * live, so the candidates cannot be ranked at analysis time — but what makes a
+ * candidate good is a property of THIS email and is knowable now. Ordering
+ * matters: `intent` is declared first so the model settles what it is looking
+ * for before writing the query meant to find it.
+ */
+export const contextSearchStringSchema = z.object({
+  intent: z.string(),
+  query: z.string(),
+  confidence: z.number().min(0).max(1),
+});
+
+export type ContextSearchStringResult = z.infer<typeof contextSearchStringSchema>;
+
+/**
  * Map of analysis type to schema for easy lookup
  */
 export const analysisSchemas = {
@@ -135,6 +165,7 @@ export const analysisSchemas = {
   'kudos': kudosSchema,
   'competitor': competitorSchema,
   'signature-extraction': signatureSchema,
+  'context-search-string': contextSearchStringSchema,
 } as const;
 
 /**

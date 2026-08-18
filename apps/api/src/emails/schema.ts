@@ -2,7 +2,6 @@ import { pgTable, text, timestamp, uuid, integer, jsonb, varchar, decimal, small
 import { v7 as uuidv7 } from 'uuid';
 import { tenants } from '../tenants/schema';
 import { integrations } from '../integrations/schema';
-import { users } from '../users/schema';
 
 /**
  * Email analysis status enum
@@ -103,16 +102,10 @@ export const emails = pgTable('emails', {
   // Set during email ingestion to avoid expensive domain matching in queries
   isCustomerEmail: boolean('is_customer_email'),
 
-  // firstReplyAt: Timestamp of the first reply (tenant's outbound message) that
-  // arrived after this customer email AND was addressed to its sender — the
-  // time-to-response anchor. Reply emails are not stored as rows, so only this
-  // trace of them is recorded here.
+  // firstReplyAt: Timestamp of the first reply (tenant's outbound message) in the
+  // thread that arrived after this customer email — the time-to-response anchor.
+  // Reply emails are not stored as rows, so only the timestamp is recorded here.
   firstReplyAt: timestamp('first_reply_at'),
-
-  // firstReplyById: The user who sent that first reply, resolved from its sender
-  // address. Null when the reply came from an address with no matching user
-  // (shared mailbox, alias) — the reply still counts for firstReplyAt.
-  firstReplyById: uuid('first_reply_by_id').references(() => users.id, { onDelete: 'set null' }),
 
   // Tracking
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -130,8 +123,6 @@ export const emails = pgTable('emails', {
   ),
   // Index for TAT metrics queries (customer emails only)
   index('idx_emails_tenant_customer').on(table.tenantId, table.isCustomerEmail),
-  // Index for "who responded first" reporting / user-deletion FK checks
-  index('idx_emails_first_reply_by').on(table.tenantId, table.firstReplyById),
   // Dedup indexes
   index('idx_emails_rfc_message_id').on(table.tenantId, table.rfcMessageId),
   index('idx_emails_content_hash').on(table.tenantId, table.contentHash),

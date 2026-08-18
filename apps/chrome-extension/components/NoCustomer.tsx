@@ -7,7 +7,7 @@ interface NoCustomerProps {
 
 export function NoCustomer({ label }: NoCustomerProps): React.ReactElement {
   return (
-    <div className="mt-8 flex flex-col items-center gap-3 text-center">
+    <div className="flex flex-col items-center gap-3 text-center">
       <div className="rounded-full bg-muted p-3">
         <SearchX size={20} className="text-muted-foreground" />
       </div>

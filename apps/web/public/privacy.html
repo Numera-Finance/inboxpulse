@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" href="/icon.png">
+<title>InboxPulse — Gmail access</title>
+<style>
+  :root {
+    --ground: #fbfbfc;
+    --raised: #ffffff;
+    --ink: #16181d;
+    --ink-2: #4a515f;
+    --ink-3: #79808f;
+    --rule: #e3e5ea;
+    --rule-2: #eef0f3;
+    --ok: #0f6e5c;
+    --ok-bg: #eaf5f1;
+    --no: #b3261e;
+    --no-bg: #fbeeed;
+    --code-bg: #f3f4f7;
+    --shadow: 0 1px 2px rgba(20, 24, 33, .05), 0 8px 24px -12px rgba(20, 24, 33, .12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #101116;
+      --raised: #171922;
+      --ink: #eceef3;
+      --ink-2: #b3b9c6;
+      --ink-3: #838b9c;
+      --rule: #272a36;
+      --rule-2: #1e212b;
+      --ok: #57c8ab;
+      --ok-bg: #12241f;
+      --no: #f2837a;
+      --no-bg: #261615;
+      --code-bg: #1c1f29;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101116;
+    --raised: #171922;
+    --ink: #eceef3;
+    --ink-2: #b3b9c6;
+    --ink-3: #838b9c;
+    --rule: #272a36;
+    --rule-2: #1e212b;
+    --ok: #57c8ab;
+    --ok-bg: #12241f;
+    --no: #f2837a;
+    --no-bg: #261615;
+    --code-bg: #1c1f29;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 50rem; margin: 0 auto; padding: 4.5rem 1.5rem 6rem; }
+
+  .eyebrow {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .72rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 1rem;
+  }
+
+  h1 {
+    font-size: clamp(1.9rem, 4.4vw, 2.7rem);
+    line-height: 1.13;
+    letter-spacing: -.022em;
+    font-weight: 640;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 1.13rem;
+    color: var(--ink-2);
+    margin: 0 0 2.5rem;
+    max-width: 40rem;
+  }
+
+  h2 {
+    font-size: 1.32rem;
+    letter-spacing: -.014em;
+    font-weight: 640;
+    margin: 3.6rem 0 .5rem;
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .82rem;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-right: .6rem;
+    letter-spacing: 0;
+  }
+
+  h3 {
+    font-size: .96rem;
+    font-weight: 640;
+    margin: 2rem 0 .4rem;
+    letter-spacing: -.005em;
+  }
+
+  p { margin: 0 0 1.05rem; max-width: 42rem; }
+  .lede { color: var(--ink-2); }
+
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .855em;
+  }
+  code {
+    background: var(--code-bg);
+    padding: .12em .38em;
+    border-radius: 4px;
+    color: var(--ink);
+  }
+
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 3.2rem 0; }
+
+  /* The consent quote — the sentence he will actually see */
+  .consent {
+    background: var(--no-bg);
+    border: 1px solid color-mix(in srgb, var(--no) 22%, transparent);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin: 1.6rem 0 1.2rem;
+  }
+  .consent .label {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--no);
+    display: block;
+    margin-bottom: .5rem;
+  }
+  .consent q {
+    font-size: 1.12rem;
+    font-weight: 560;
+    quotes: "\201C" "\201D";
+  }
+
+  /* Ledger: what it grants vs what it does */
+  .ledger {
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 1.6rem 0 1rem;
+    background: var(--raised);
+    box-shadow: var(--shadow);
+  }
+  .ledger-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--rule-2);
+  }
+  .ledger-row:last-child { border-bottom: 0; }
+  .ledger-head {
+    background: var(--code-bg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .ledger-cell { padding: .85rem 1.15rem; }
+  .ledger-cell + .ledger-cell { border-left: 1px solid var(--rule-2); }
+  .ledger-cell.can { color: var(--ink-2); }
+  .ledger-cell.does { font-weight: 560; }
+  .tick { color: var(--ok); font-weight: 700; margin-right: .45rem; }
+  .cross { color: var(--no); font-weight: 700; margin-right: .45rem; }
+
+  @media (max-width: 34rem) {
+    .ledger-row { grid-template-columns: 1fr; }
+    .ledger-cell + .ledger-cell { border-left: 0; border-top: 1px solid var(--rule-2); }
+    .ledger-head { display: none; }
+  }
+
+  /* Evidence card — a claim tied to a mechanism */
+  .evidence {
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--ok);
+    border-radius: 8px;
+    padding: 1.05rem 1.25rem;
+    margin: 0 0 .85rem;
+  }
+  .evidence .claim { font-weight: 620; margin: 0 0 .3rem; }
+  .evidence .how { color: var(--ink-2); margin: 0; font-size: .95rem; }
+  .evidence .where {
+    display: block;
+    margin-top: .55rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .77rem;
+    color: var(--ink-3);
+  }
+
+  .diagram {
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 1.5rem 1rem;
+    margin: 1.6rem 0;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .caption {
+    color: var(--ink-3);
+    font-size: .87rem;
+    margin: -.6rem 0 2rem;
+  }
+
+  /* ---- Flow diagrams.
+     Hand-built in CSS rather than rendered from mermaid, because loading a
+     diagram library from a CDN would make a page about not sending your data
+     anywhere issue a request to a third party on open. No script runs here. ---- */
+
+  .flow { display: flex; flex-direction: column; align-items: center; gap: .5rem; }
+  .flow-row {
+    display: flex; align-items: stretch; justify-content: center;
+    gap: .5rem; flex-wrap: wrap;
+  }
+
+  .node {
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    padding: .6rem .85rem;
+    font-size: .84rem;
+    line-height: 1.4;
+    text-align: center;
+    color: var(--ink);
+    min-width: 8.5rem;
+    max-width: 13rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* A terminal state that is good news for the reader: nothing read, everything cleared. */
+  .node.ok { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); font-weight: 560; }
+  /* A step that leaves our process — the one the reader should look hardest at. */
+  .node.ext { background: var(--code-bg); border-color: var(--ink-3); }
+  .node.q { border-style: dashed; font-weight: 560; }
+  .node .mono, .node code { font-size: .8em; }
+
+  /* Arrows are text glyphs, not images: they survive any font fallback. */
+  .arr {
+    color: var(--ink-3);
+    font-size: 1.05rem;
+    line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 .1rem;
+  }
+  .arr::before { content: "\2193"; }              /* down */
+  .flow-row > .arr::before,
+  .merge > .arr::before { content: "\2192"; }     /* right */
+
+  /* Branch labels on the two legs out of a decision. */
+  .leg { display: flex; flex-direction: column; align-items: center; gap: .5rem; flex: 0 1 auto; }
+  .leg-label {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .68rem;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* Three inputs converging on one function. */
+  .merge { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; justify-content: center; }
+  .merge-in { display: flex; flex-direction: column; gap: .4rem; }
+  .merge-in .node { min-width: 11rem; }
+
+  @media (max-width: 34rem) {
+    /* Horizontal chains stack rather than scroll on a phone. */
+    .flow-row, .merge { flex-direction: column; align-items: center; }
+    .flow-row > .arr::before,
+    .merge > .arr::before { content: "\2193"; }
+    .node { max-width: none; width: 100%; }
+    .merge-in { width: 100%; }
+  }
+
+  .limits {
+    background: var(--code-bg);
+    border-radius: 10px;
+    padding: 1.35rem 1.5rem;
+    margin: 1.4rem 0;
+  }
+  .limits p:last-child { margin-bottom: 0; }
+
+  ul { padding-left: 1.15rem; margin: 0 0 1.05rem; max-width: 42rem; }
+  li { margin-bottom: .45rem; }
+
+  .foot {
+    margin-top: 4rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--rule);
+    color: var(--ink-3);
+    font-size: .87rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">MyStartupCFO · internal</p>
+  <h1>InboxPulse asks for broad access to your Gmail. Here is what it uses.</h1>
+  <p class="standfirst">
+    InboxPulse is an internal Gmail side panel built here. It shows which clients are unhappy and
+    waiting, and lets you mark threads to come back to. Installing it puts a Google consent screen
+    in front of you whose wording is much wider than anything the add-on does — so this sets out
+    that sentence, every Gmail call in the code, which build is running, and who can change it.
+  </p>
+
+  <h2><span class="num">01</span>The sentence you will see</h2>
+  <p class="lede">
+    Google words its consent screens by scope family, not by what an application does with them.
+    Approving InboxPulse shows this:
+  </p>
+
+  <div class="consent">
+    <span class="label">Google consent screen</span>
+    <q>Read, compose, and send emails from your Gmail account.</q>
+  </div>
+
+  <p>
+    That is the wording for <code>gmail.modify</code>. It is required for one reason: attaching a
+    label to a thread is the <code>users.threads.modify</code> API, and no narrower scope grants it.
+    <code>gmail.labels</code> creates and renames label <em>definitions</em> but cannot put one on a
+    message. There is no third option, and nothing in the product can change that sentence.
+  </p>
+
+  <h2><span class="num">02</span>Granted versus used</h2>
+  <p class="lede">
+    The left column is what the permission technically allows. The right column is every Gmail
+    call in the source code — the complete list, not a summary.
+  </p>
+
+  <div class="ledger">
+    <div class="ledger-row ledger-head">
+      <div class="ledger-cell">The scope permits</div>
+      <div class="ledger-cell">The add-on calls</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can">Send mail as you</div>
+      <div class="ledger-cell does"><span class="cross">✕</span>Never. No send endpoint appears anywhere.</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can">Delete or trash messages</div>
+      <div class="ledger-cell does"><span class="cross">✕</span>Never. No trash or delete on any message.</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can">Create a draft, forward, reply</div>
+      <div class="ledger-cell does"><span class="cross">✕</span>Never. There is no drafts endpoint
+        in the code at all — nothing is written into your mail.</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can">Compose reply text</div>
+      <div class="ledger-cell does"><span class="tick">✓</span>It writes suggested wording and
+        displays it in the panel. That text exists on screen only; putting it in a reply is you
+        copying it.</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can">Read any message at any time</div>
+      <div class="ledger-cell does"><span class="tick">✓</span>Only the thread open in front of you, only after you turn reading on.</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can">Add or remove any label</div>
+      <div class="ledger-cell does"><span class="tick">✓</span><strong>Writes, at your say so.</strong>
+        Three calls — create a <code>⚡/</code> label, add its id, remove its id — and none of them
+        runs unless you press a button on that thread.</div>
+    </div>
+  </div>
+
+  <p>
+    The mutating surface is three <code>POST</code>s and one <code>DELETE</code>, the delete targets
+    a <em>label definition</em> rather than a message, and you trigger every one of them by pressing something. Everything else the add-on does is a read of the thread on your screen.
+  </p>
+
+  <h2><span class="num">03</span>What happens when you open a thread</h2>
+
+  <div class="diagram">
+<div class="flow">
+  <div class="node">You open a thread with the panel showing</div>
+  <div class="arr"></div>
+  <div class="node q">Have you turned reading on?</div>
+  <div class="flow-row" style="align-items:flex-start; gap:1.75rem; margin-top:.6rem">
+
+    <div class="leg">
+      <div class="leg-label">No &mdash; the default</div>
+      <div class="arr"></div>
+      <div class="node ok">Nothing is read. Panel shows the privacy notice and a button.</div>
+    </div>
+
+    <div class="leg">
+      <div class="leg-label">Yes</div>
+      <div class="arr"></div>
+      <div class="node">Thread text assembled in memory</div>
+      <div class="arr"></div>
+      <div class="node ext">Summarized by Google Gemini</div>
+      <div class="arr"></div>
+      <div class="node">Summary held in process memory, keyed to that thread</div>
+      <div class="arr"></div>
+      <div class="node">Panel renders &mdash; for your account only</div>
+      <div class="arr"></div>
+      <div class="node ok">Dropped after 30 minutes, or when 300 summaries push it out</div>
+    </div>
+
+  </div>
+</div>
+  </div>
+  <p class="caption">
+    The gate sits before the thread text is assembled, so nothing has been read at the point the
+    decision is made.
+  </p>
+
+  <h2><span class="num">04</span>The only thing ever written</h2>
+
+  <div class="diagram">
+<div class="flow">
+  <div class="flow-row">
+    <div class="node ok">You press Focus / Research / Calendar / Chasing</div>
+    <div class="arr"></div>
+    <div class="node">Label created under the <code>⚡/</code> namespace</div>
+    <div class="arr"></div>
+    <div class="node"><code>threads.modify</code> <code>addLabelIds</code></div>
+  </div>
+  <div class="arr"></div>
+  <div class="flow-row">
+    <div class="node">Label visible in your inbox</div>
+    <div class="arr"></div>
+    <div class="node">Expires after 30 min &mdash; or &mdash; &ldquo;Clear all my marks&rdquo;</div>
+    <div class="arr"></div>
+    <div class="node ok">Every <code>⚡/</code> label removed at once</div>
+  </div>
+</div>
+  </div>
+  <p class="caption">
+    Nothing is ever labeled automatically. A mark exists because you pressed a button on
+    that thread, and one press removes all of them.
+  </p>
+
+  <h2><span class="num">05</span>Why it cannot quietly do more</h2>
+  <p class="lede">
+    Each promise below is a property of the code, not a policy. The file is named so it can be
+    checked rather than believed.
+  </p>
+
+  <div class="evidence">
+    <p class="claim">Nothing is read until you say so</p>
+    <p class="how">Reading is off by default, per person. Without consent the thread text is never
+      assembled and no model call is made.</p>
+    <span class="where">apps/addon/src/services/consent.ts</span>
+  </div>
+
+  <div class="evidence">
+    <p class="claim">No message text is stored anywhere</p>
+    <p class="how">The summary cache is in process memory and <strong>there is no code path that
+      writes it anywhere else</strong>. It could once persist to disk behind an unset environment
+      variable; that branch has been deleted rather than switched off, because an unset variable is
+      a promise about configuration and anyone with deploy access can change it without telling
+      you. The add-on has no database client at all.</p>
+    <span class="where">apps/addon/src/services/analysis-cache.ts</span>
+  </div>
+
+  <div class="evidence">
+    <p class="claim">Only you can see your panel</p>
+    <p class="how">Every render is scoped to the account Google authenticated on that request.
+      Logs record a salted, namespaced one-way hash instead of an address, so an engineer reading
+      production logs cannot tell whose panel it was.</p>
+    <span class="where">apps/addon/src/services/api-client.ts · pseudo() — see section 07</span>
+  </div>
+
+  <div class="evidence">
+    <p class="claim">Every write is reversible in one press</p>
+    <p class="how">All labels live under a single <code>⚡/</code> namespace. Deleting a label
+      removes it from every thread that carried it, so “Clear all my marks” is one operation and
+      cannot miss one.</p>
+    <span class="where">apps/addon/src/gmail/labels.ts · clearAllOfLabel()</span>
+  </div>
+
+  <div class="evidence">
+    <p class="claim">The label expiry uses your token, not a stored one</p>
+    <p class="how">Marks clear after 30 minutes — but nothing runs on a schedule to do it. The
+      sweep happens when <em>you</em> next open the panel, using the token Google mints for that
+      request, and there is no background job, no service account and no stored credential that
+      can touch your mailbox while you are away. If you never open the panel again, nothing ever
+      calls your mailbox again.</p>
+    <span class="where">apps/addon/src/index.ts · sweepExpired()</span>
+  </div>
+
+  <h2><span class="num">06</span>Where the firm-wide numbers come from</h2>
+  <p class="lede">
+    The client figures in the panel — who is waiting, who is slow — are <strong>not</strong> derived
+    from your mailbox. They come from a shared mailbox the firm already routes client
+    correspondence through and has been analyzing for months. That predates this add-on and is
+    unaffected by whether you install it.
+  </p>
+  <p>
+    Installing or refusing this add-on changes nothing about that mailbox — the analysis runs
+    either way.
+  </p>
+
+  <h2><span class="num">07</span>What our own logs record</h2>
+  <p class="lede">
+    Cloud logs are readable by every project owner, so a log line saying which mailbox opened which
+    panel would be a record of your behavior visible to colleagues. Your address is never written.
+    This is what happens to it instead:
+  </p>
+
+  <div class="diagram">
+<div class="flow">
+  <div class="merge">
+    <div class="merge-in">
+      <div class="node ext"><code>you@mystartupcfo.com</code></div>
+      <div class="node ok">Secret salt (Secret Manager)</div>
+      <div class="node ok"><span>Namespace<br><code>user</code> / <code>account</code></span></div>
+    </div>
+    <div class="arr"></div>
+    <div class="node">SHA-256</div>
+    <div class="arr"></div>
+    <div class="node"><code>f3462b7e2240</code></div>
+  </div>
+  <div class="arr"></div>
+  <div class="node ok">This is what the log line says</div>
+</div>
+  </div>
+
+  <p>
+    Each of the three inputs is doing a specific job, and dropping any one of them would break the
+    guarantee:
+  </p>
+
+  <div class="ledger">
+    <div class="ledger-row ledger-head">
+      <div class="ledger-cell">Ingredient</div>
+      <div class="ledger-cell">What it prevents</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can"><strong>The address is hashed</strong></div>
+      <div class="ledger-cell does">A one-way function. The log holds no address to read.</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can"><strong>A secret salt is mixed in</strong></div>
+      <div class="ledger-cell does">Without it, a plain hash of a work email is not anonymous —
+        a firm has a finite staff list, and anyone could hash every name on it and match.
+        The salt lives in Secret Manager. <strong>That is not a separate grant from the logs</strong>
+        — a project Owner reads both, so the people who hold Owner are exactly the people who
+        could reverse this. The salt defends against a curious engineer with log access, not
+        against the trust boundary.</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can"><strong>A namespace is mixed in</strong></div>
+      <div class="ledger-cell does">The same address hashed as a <em>viewer</em> and as a
+        <em>customer domain</em> produces different digests, so the two cannot be cross-referenced
+        to link you to an account.</div>
+    </div>
+  </div>
+
+  <h3>The same address, three ways</h3>
+  <div class="ledger">
+    <div class="ledger-row ledger-head">
+      <div class="ledger-cell">Input</div>
+      <div class="ledger-cell">Appears in logs as</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can mono">user · you@…</div>
+      <div class="ledger-cell does mono">f3462b7e2240</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can mono">account · you@…</div>
+      <div class="ledger-cell does mono">341bf2842131</div>
+    </div>
+    <div class="ledger-row">
+      <div class="ledger-cell can mono">user · you@… (different salt)</div>
+      <div class="ledger-cell does mono">e48e3e00fb1e</div>
+    </div>
+  </div>
+  <p class="caption">
+    Computed with a demonstration salt, not the production one. Same person, unrelated outputs —
+    which is the point.
+  </p>
+
+  <p>
+    Two qualifications. The per-thread log line records only the classification, whether a summary
+    was produced, and cache counters — <strong>your address is not in it at all</strong>, hashed or
+    otherwise. And when a model call fails, we log only the provider's numeric error code and status.
+    We discard the error body. We used to truncate it and write it out, and removed that because a
+    content filter can quote the input that tripped it.
+  </p>
+  <p>
+    If the salt is ever missing, the function returns the literal string <code>redacted</code>
+    rather than falling back to an unsalted hash. A digest that looks anonymous and is not would be
+    worse than plainly omitting the value.
+  </p>
+
+  <h2><span class="num">08</span>The risk that is actually yours</h2>
+  <p class="lede">
+    Your mail already lives on Google’s servers and Gemini is already in your Gmail toolbar. That
+    is not the same as this: your Workspace agreement with Google is not the same legal object as
+    thread text posted to a Gemini endpoint under an API key held by a project four colleagues own.
+    Google’s Gemini API writes the summary. We call it from our own Google Cloud project at
+    <code>generativelanguage.googleapis.com</code>, model <code>gemini-3.1-flash-lite</code>, using
+    an API key we keep in Secret Manager.
+    <strong>We pay for those calls, which puts them on the paid tier.</strong> Google does not
+    train on paid-tier prompts. The free tier does, and we are not on it.
+  </p>
+  <p>
+    The exposure this add-on genuinely adds is different, and it is not technical. Granting the
+    permission gives a token to software <em>we</em> deploy. Everything in section 02 describes the
+    code running today; anyone who can deploy new code to that project could ship a version that
+    uses the same token differently, and you would not see a second consent screen.
+  </p>
+
+  <div class="limits">
+    <p><strong>Four people hold Owner on the Google Cloud project that runs this add-on.</strong>
+      Any of them can deploy code that uses your token differently.</p>
+    <p><strong>You can revoke it.</strong> Google Account → Data &amp; privacy → Third-party apps
+      kills the token immediately, without asking us. The add-on stops working the moment you do.</p>
+    <p><strong>You can see the labels.</strong> Every mark the add-on puts on your mail shows up in
+      your own Gmail sidebar under <code>⚡/</code>, not in a log you cannot read.</p>
+  </div>
+
+  <h2><span class="num">09</span>What you control</h2>
+  <ul>
+    <li><strong>Turn reading off</strong> — one button in the panel. Takes effect immediately;
+      nothing further is read.</li>
+    <li><strong>Clear all marks</strong> — removes every label the add-on has ever applied.</li>
+    <li><strong>Revoke the permission</strong> — Google Account → Data &amp; privacy → Third-party
+      apps. Kills the token; the panel stops working entirely.</li>
+    <li><strong>Uninstall</strong> — removes the add-on from Gmail.</li>
+  </ul>
+
+</div>
+</body>
+</html>

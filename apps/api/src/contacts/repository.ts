@@ -1,6 +1,6 @@
 import { eq, and, asc, sql } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository, affectedRows } from '@crm/database';
+import { ScopedRepository } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
 import { contacts, type Contact, type NewContact } from './schema';
@@ -290,6 +290,6 @@ export class ContactRepository extends ScopedRepository {
       SET customer_id = ${targetCustomerId}, updated_at = NOW()
       WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
     `);
-    return affectedRows(result);
+    return (result as any).rowCount ?? 0;
   }
 }

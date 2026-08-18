@@ -11,6 +11,7 @@ import {
   User,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { Block } from './Section';
 
 interface CustomerHeaderProps {
   customer: Customer;
@@ -31,69 +32,73 @@ export function CustomerHeader({ customer }: CustomerHeaderProps): React.ReactEl
   const owner = assignedUsers?.[0];
 
   return (
-    <div className="space-y-2">
-      {/* Customer name + sentiment + CRM link */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold truncate">
-              {customer.name || customer.domains[0]}
-            </h2>
-            {customer.sentiment && (
-              <span
-                className={cn(
-                  'flex items-center gap-1 text-xs font-medium shrink-0 rounded-full px-2 py-0.5',
-                  sentimentColor,
-                )}
-              >
-                {sentimentIcon}
-                {customer.sentiment.value}
-              </span>
-            )}
+    <Block title="Customer">
+      <div className="space-y-2">
+        {/* Customer name + sentiment + CRM link */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              {/* Plain text, not a heading: the enclosing Block already
+                  contributes the "Customer" heading for this region. */}
+              <p className="text-base font-bold truncate">
+                {customer.name || customer.domains[0]}
+              </p>
+              {customer.sentiment && (
+                <span
+                  className={cn(
+                    'flex items-center gap-1 text-xs font-medium shrink-0 rounded-full px-2 py-0.5',
+                    sentimentColor,
+                  )}
+                >
+                  {sentimentIcon}
+                  {customer.sentiment.value}
+                </span>
+              )}
+            </div>
           </div>
+          <a
+            href={`${WEB_URL}/customers/${customer.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-md p-1 text-muted-foreground hover:text-primary hover:bg-accent transition-colors shrink-0"
+            title="Open in CRM"
+          >
+            <ExternalLink size={14} />
+          </a>
         </div>
-        <a
-          href={`${WEB_URL}/customers/${customer.id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-md p-1 text-muted-foreground hover:text-primary hover:bg-accent transition-colors shrink-0"
-          title="Open in CRM"
-        >
-          <ExternalLink size={14} />
-        </a>
-      </div>
 
-      {/* Domains */}
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Globe size={12} className="shrink-0" />
-        <span className="truncate">{customer.domains.join(', ')}</span>
-      </div>
-
-      {/* Labels */}
-      {customer.labels && customer.labels.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <Tag size={12} className="text-muted-foreground shrink-0" />
-          {customer.labels.map((label) => (
-            <span
-              key={label}
-              className="inline-flex rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
-            >
-              {label}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Owner */}
-      {owner && (
+        {/* Domains */}
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <User size={12} className="shrink-0" />
-          <span>
-            Owner: <span className="text-foreground font-medium">{owner.firstName} {owner.lastName}</span>
-          </span>
+          <Globe size={12} className="shrink-0" />
+          <span className="truncate">{customer.domains.join(', ')}</span>
         </div>
-      )}
-    </div>
+
+        {/* Labels */}
+        {customer.labels && customer.labels.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Tag size={12} className="text-muted-foreground shrink-0" />
+            {customer.labels.map((label) => (
+              <span
+                key={label}
+                className="inline-flex rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Owner */}
+        {owner && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <User size={12} className="shrink-0" />
+            <span>
+              Owner: <span className="text-foreground font-medium">{owner.firstName} {owner.lastName}</span>
+            </span>
+          </div>
+        )}
+      </div>
+    </Block>
   );
 }
 
