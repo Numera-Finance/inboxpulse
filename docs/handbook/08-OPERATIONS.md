@@ -24,12 +24,12 @@ are Cloud Run.
 | `crm-analysis` | `apps/analysis` | model calls |
 | `crm-notifications` | `apps/notifications` | email notifications |
 | `crm-manager` | `apps/manager` | ported manager endpoints |
-| `crm-api-clone` | — | **reads `CLONE_DATABASE_URL`, a separate database** |
 | `crm-embeddings` | — | nomic-embed-text behind an auth'd endpoint |
 
-**`crm-api-clone` is a trap.** It looks like crm-api and reads a different
-database. If a page shows unexpected data, check which host it calls before
-changing code.
+**Check which host a surface calls before changing code.** A `crm-api-clone`
+reading a separate `CLONE_DATABASE_URL` existed until 2026-08-18 and caused
+exactly this confusion; `crm-web-clone` still does. A page showing unexpected
+data may be reading a different database, not a different code path.
 
 ## Deploying
 

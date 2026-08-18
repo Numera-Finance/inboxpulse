@@ -81,9 +81,23 @@ that leaves the browser.
 
 ## 4. A predictor must not be the primary key of a short list
 
-Engagement predicts escalation better than unanswered complaints do — 24.7%
-against 13.0%, versus 18.3% against 14.5%. On that basis it was made the primary
-sort key of the six-row fires list.
+Both signals were measured the same way: among clients already on the fires
+list, how often did a complaint follow the next week?
+
+| | complaint next week |
+|---|---|
+| engaged | **24.7%** |
+| not engaged | 13.0% |
+| has unanswered complaints | 18.3% |
+| no unanswered complaints | 14.5% |
+
+Engagement separates the two groups by 11.7 points; unanswered separates them by
+3.8. On that basis engagement was made the primary sort key of the six-row fires
+list.
+
+(The same 24.7% appears in `06-SIGNALS.md` for "engaged **and** complained
+recently". It is the same population: every client on the fires list has
+complained recently by definition.)
 
 It deleted the worst client on the list. Berolzheimer had three unanswered
 complaints, sat one message under the engagement threshold, and fell off the end.

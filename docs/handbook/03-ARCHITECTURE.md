@@ -3,9 +3,22 @@
 *Every claim here carries a `file:line` so you can check it. Where a subsystem is
 dead or duplicated, that is stated rather than tidied away.*
 
-## The seven services
+## What runs
 
-All Cloud Run, project `project-y-email-sentiment`, region `us-central1`.
+**Ten Cloud Run services**, project `project-y-email-sentiment`, region
+`us-central1`, verified 2026-08-18:
+
+`crm-api` · `crm-addon` · `crm-web` · `crm-gmail` · `crm-analysis` ·
+`crm-notifications` · `crm-manager` · `crm-embeddings` · `crm-addon-design` ·
+`crm-web-clone`
+
+**The Chrome extension is not one of them** — it is a browser extension,
+installed rather than deployed, and it appears in the diagram below only because
+it is a caller.
+
+> A `crm-api-clone` service reading a separate `CLONE_DATABASE_URL` existed
+> earlier on 2026-08-18 and **has since been deleted**. If you find a reference
+> to it, that is why. `crm-web-clone` still exists.
 
 ```
                         ┌──────────────────────────┐

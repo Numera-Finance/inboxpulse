@@ -1,6 +1,9 @@
 # How an email becomes a verdict
 
-## The four services and the boundary between them
+## The four services *in this pipeline*, and the boundary between them
+
+*Ten services run in total (see `03-ARCHITECTURE.md`). These four carry an email
+from Gmail to a stored verdict.*
 
 | service | owns | never does |
 |---|---|---|

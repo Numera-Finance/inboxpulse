@@ -1,13 +1,20 @@
 # InboxPulse handbook
 
 *Written for someone who has never seen this codebase and is now responsible for
-it. Assumes no context. Every factual claim carries a `file:line` or a
-measurement you can re-run.*
+it. Assumes no context.*
+
+**Verified against the live system on 2026-08-18.** Line numbers and counts drift;
+treat them as pointers, not guarantees. Where a number matters, the query that
+produced it is given so you can re-run it.
+
+**Internal only.** This handbook names real clients and gives reply-time figures
+for named employees.
 
 ## Read in this order
 
 | # | Document | What it answers | Read it when |
 |---|---|---|---|
+| 0 | **[00-GLOSSARY.md](00-GLOSSARY.md)** | Every term this handbook uses without explaining | Keep it open beside the others |
 | 1 | **[01-WHY.md](01-WHY.md)** | Why this product exists and what it claims | First. Nothing else makes sense without it. |
 | 2 | **[02-WHAT-IT-DOES.md](02-WHAT-IT-DOES.md)** | Every panel section, what each number means | A user asks what something means |
 | 3 | **[03-ARCHITECTURE.md](03-ARCHITECTURE.md)** | Services, surfaces, request paths, what is dead | Before changing any code |
@@ -18,6 +25,7 @@ measurement you can re-run.*
 | 8 | **[08-OPERATIONS.md](08-OPERATIONS.md)** | Deploy, debug, the configuration traps | Something is broken |
 | 9 | **[09-DEAD-ENDS.md](09-DEAD-ENDS.md)** | What was tried and failed, with numbers | Before proposing an improvement |
 | 10 | **[10-NEXT-INTEGRATIONS.md](10-NEXT-INTEGRATIONS.md)** | The design brief for making this a shared surface | Planning the next phase |
+| 11 | **[11-ACCESS-AND-FIRST-RESPONSE.md](11-ACCESS-AND-FIRST-RESPONSE.md)** | How to get credentials, and what order to check things in | **Your first day, and every incident** |
 
 ## The five-minute version
 
@@ -60,8 +68,8 @@ times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md
 | `first_reply_by_id` is computed and then discarded — 16,290 rows have a reply time, 2,065 an author | `05-PIPELINE.md` |
 | Four model call sites bypass the consent gate | `03-ARCHITECTURE.md` |
 | `/stirring` names customers without viewer scoping, where `/fires` withholds them | `03-ARCHITECTURE.md` |
-| Drizzle and SQL disagree on six columns | `04-DATA-MODEL.md` |
-| Hammerhead's six allocated people are unreachable via `hammerheadco.ai` | `04-DATA-MODEL.md` |
+| Drizzle and SQL disagree about several columns and indexes | `04-DATA-MODEL.md` |
+| Hammerhead's six allocated people are unreachable via `hammerheadco.ai` | `09-DEAD-ENDS.md` |
 
 ## The other documents in `docs/`
 

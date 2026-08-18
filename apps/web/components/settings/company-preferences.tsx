@@ -5,14 +5,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import { useToast } from "@/components/ui/use-toast"
+import { toast } from "sonner"
 import { Download, Loader2 } from "lucide-react"
 import { getLoginHistoryClient, getTenantClient } from "@/lib/api/clients"
 import { downloadBlob } from "@/lib/utils/export"
 import type { Tenant } from "@crm/clients"
 
 export function CompanyPreferences() {
-  const { toast } = useToast()
   const [tenant, setTenant] = useState<Tenant | null>(null)
   const [loadingTenant, setLoadingTenant] = useState(true)
   const [exporting, setExporting] = useState(false)
@@ -26,11 +25,7 @@ export function CompanyPreferences() {
       } catch (error) {
         if (controller.signal.aborted) return
         console.error("Failed to load company info:", error)
-        toast({
-          title: "Error",
-          description: "Could not load company information.",
-          variant: "destructive",
-        })
+        toast.error("Error", { description: "Could not load company information." })
       } finally {
         if (!controller.signal.aborted) {
           setLoadingTenant(false)
@@ -47,17 +42,10 @@ export function CompanyPreferences() {
       const blob = await getLoginHistoryClient().exportCsv()
       const today = new Date().toISOString().slice(0, 10)
       downloadBlob(blob, `login-history-${today}.csv`)
-      toast({
-        title: "Export started",
-        description: "Login history for the last 30 days has been downloaded.",
-      })
+      toast.success("Export started", { description: "Login history for the last 30 days has been downloaded." })
     } catch (error) {
       console.error("Failed to export login history:", error)
-      toast({
-        title: "Export failed",
-        description: "Could not export login history. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Export failed", { description: "Could not export login history. Please try again." })
     } finally {
       setExporting(false)
     }

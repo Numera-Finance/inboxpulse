@@ -152,7 +152,8 @@ four to five owners per client and `role_id` NULL on all 4,111 mappings —
 counting per owner charged one complaint to five people.
 
 > **Three add-on endpoints return 500 if this table is missing** — `/fires`,
-> `/slow-responders`, `/owner-load` — while `/waiting` and `/pulse` return 200.
+> `/slow-responders`, and `/owner-load` (which has no caller and so breaks
+> nothing) — while `/waiting` and `/pulse` return 200.
 > The add-on client swallows a non-OK response and returns `[]`, so the section
 > renders empty and reads as "nothing to report".
 

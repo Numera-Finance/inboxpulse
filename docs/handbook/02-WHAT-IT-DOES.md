@@ -37,13 +37,13 @@ In conversation · Entrenched 22%→25% · 31d · Neeraja Suryadevara · most in
 | element | meaning |
 |---|---|
 | **3 unanswered** | negative threads with no reply. Red, because it is the part the firm controls. |
-| **In conversation** | we are in a live back-and-forth: 4+ messages from them this week, 3+ replies from us. Only shown when true. |
+| **In conversation** | a live back-and-forth: **4+ messages from them in 7 days, 8+ in the preceding 28, and 3+ replies from us in 7**. All three, or it is false. Only shown when true. |
 | **Entrenched 22%→25%** | their monthly complaint rate, first to last. See "the arc" below. |
 | **31d** | age of the oldest unanswered complaint. |
 | **Neeraja Suryadevara** | who to call. |
 | **most in touch** | this name came from the correspondence, not the allocation sheet. An assignment is a commitment; this is an observation. |
 
-**Sorted by unanswered, then engagement, then total.** Clicking a row opens the
+**Sorted `unanswered DESC, engaged DESC, negative DESC`** — obligation first, prediction as tiebreak, then weight of evidence. Clicking a row opens the
 escalations view filtered to exactly that population.
 
 ### The arc: Rising, Cooling, Entrenched
@@ -82,7 +82,7 @@ useless. The damage is entirely in the tail.
 
 **Why 12.9h and 7.4h can both be true:** 12.9h is the pooled median of all
 individual reply times across 90 days; 7.4h is August alone. June and July hold
-383 of those 508 replies and both sit above 13h, so they pull the pooled figure
+most of those 501 replies and both sit above 13h, so they pull the pooled figure
 up. It is not the median of the monthly medians — that would be 13.2h.
 
 **Months need 20+ replies to appear on the trend.** The trend inherits the 90-day

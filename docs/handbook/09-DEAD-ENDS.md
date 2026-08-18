@@ -113,9 +113,19 @@ claims, so ingest creates a new record and the allocation stays on the old one.
 | shared threads | 3,164 | vendors and cc'd third parties share threads too |
 
 **A wrong owner sends someone to call the wrong client, which is worse than an
-empty field.** What replaced these is documented in `04-DATA-MODEL.md`: a
-per-client alias at the firm's own domain, which is evidence rather than
-resemblance.
+empty field.**
+
+What replaced them uses a convention the firm already keeps: a **per-client alias
+at our own domain** — `hammerheadai@mystartupcfo.com` — riding that client's
+threads. Its local part identifies the client in the allocation sheet, and the
+external domain dominating that alias's mail is the client's real domain.
+Hammerhead resolves at 236 threads, 95% of that alias.
+
+Validated against links already known to be correct: of 146 aliases whose local
+part identifies a sheet client, **93 propose a domain that client already owns**.
+Roughly eight in ten of the new proposals are right, so it is a **review queue**,
+not a rule: `apps/api/scripts/propose-domain-links.py` prints evidence for a
+human to confirm, and `--sql` emits INSERTs rather than writing them.
 
 ## Sensitisation — clients getting touchier
 
@@ -134,6 +144,10 @@ client's first gap to their last, across 46 clients with five or more complaints
 A linear model over embeddings that would drop obvious mail before it reaches the
 model. Honest numbers from a fit that never saw the test mail: **1 in 5 sent
 catches 7 in 10 complaints; 2 in 5 sent catches 9 in 10.**
+
+Those come from `metrics` in `berne-whiskers.json`, which is a **separate held-out fit** — they
+are the honest numbers. Do not confuse them with the warning below, which is
+about a different fit entirely.
 
 It is not wired in because **there was never a cost case**. Reading every client
 email costs about $7 a month. The gate would buy ordering and latency, not money,
