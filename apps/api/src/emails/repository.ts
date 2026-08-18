@@ -259,16 +259,37 @@ export class EmailRepository extends ScopedRepository {
     const limit = options?.limit || 50;
     const offset = options?.offset || 0;
 
+    // ATTRIBUTED TWO WAYS, BECAUSE THE PANEL AND THIS PAGE DISAGREED.
+    //
+    // This filtered on email_participants.customer_id alone. "Where the fires
+    // are" counts by SENDER DOMAIN, because participant attribution credits a
+    // client for mail they merely received — of 1,484 participant rows behind
+    // that population, only 275 were cases where the customer actually wrote.
+    //
+    // The panel was fixed and this was not, so a row reading "Berolzheimer, 3
+    // unanswered" linked to a page that answered "No analyzed emails found":
+    // six emails by sender domain, one by participant link, zero after the
+    // status and date filters. A destination that contradicts the row it came
+    // from is worse than no link.
+    //
+    // Both paths are kept rather than swapping to domain alone: participant
+    // links are often wrong but not always absent, and narrowing this would
+    // silently drop mail the page shows today.
+    const attributedToCustomer = or(
+      eq(emailParticipants.customerId, customerId),
+      sql`EXISTS (
+        SELECT 1 FROM customer_domains cd
+        WHERE cd.customer_id = ${customerId}
+          AND cd.tenant_id = ${emails.tenantId}
+          AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+      )`
+    );
+
     return this.db
       .selectDistinct({ emails })
       .from(emails)
-      .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, tenantId),
-          eq(emailParticipants.customerId, customerId)
-        )
-      )
+      .leftJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
+      .where(and(eq(emails.tenantId, tenantId), attributedToCustomer))
       .orderBy(desc(emails.receivedAt))
       .limit(limit)
       .offset(offset)
@@ -279,16 +300,37 @@ export class EmailRepository extends ScopedRepository {
    * Count emails by customer using email_participants
    */
   async countByCustomer(tenantId: string, customerId: string): Promise<number> {
+    // ATTRIBUTED TWO WAYS, BECAUSE THE PANEL AND THIS PAGE DISAGREED.
+    //
+    // This filtered on email_participants.customer_id alone. "Where the fires
+    // are" counts by SENDER DOMAIN, because participant attribution credits a
+    // client for mail they merely received — of 1,484 participant rows behind
+    // that population, only 275 were cases where the customer actually wrote.
+    //
+    // The panel was fixed and this was not, so a row reading "Berolzheimer, 3
+    // unanswered" linked to a page that answered "No analyzed emails found":
+    // six emails by sender domain, one by participant link, zero after the
+    // status and date filters. A destination that contradicts the row it came
+    // from is worse than no link.
+    //
+    // Both paths are kept rather than swapping to domain alone: participant
+    // links are often wrong but not always absent, and narrowing this would
+    // silently drop mail the page shows today.
+    const attributedToCustomer = or(
+      eq(emailParticipants.customerId, customerId),
+      sql`EXISTS (
+        SELECT 1 FROM customer_domains cd
+        WHERE cd.customer_id = ${customerId}
+          AND cd.tenant_id = ${emails.tenantId}
+          AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+      )`
+    );
+
     const result = await this.db
       .select({ count: sql<number>`count(DISTINCT ${emails.id})::int` })
       .from(emails)
-      .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, tenantId),
-          eq(emailParticipants.customerId, customerId)
-        )
-      );
+      .leftJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
+      .where(and(eq(emails.tenantId, tenantId), attributedToCustomer));
 
     return result[0]?.count || 0;
   }
