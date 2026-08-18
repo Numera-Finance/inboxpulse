@@ -93,7 +93,24 @@ export class ManagerRepository extends ScopedRepository {
   /** The dashboard's top-bar customer / team-member filters. */
   private scopeParts(filters: DashboardFilters): SQL[] {
     const parts: SQL[] = [];
-    if (filters.customerId) parts.push(sql`ep.customer_id = ${filters.customerId}`);
+    // ATTRIBUTED BY PARTICIPANT LINK **OR** SENDER DOMAIN.
+    //
+    // A deliberate departure from the crm-manager SQL, because the participant
+    // link alone contradicts the add-on panel. The panel attributes a fire by
+    // who WROTE the mail, via the sender's domain; this page filtered on the
+    // link, so "Berolzheimer — 3 unanswered" led here to "No analyzed emails
+    // found" and the panel read as though it had invented the client.
+    //
+    // The link is not merely absent, it usually points elsewhere: of six
+    // negative Berolzheimer emails, ONE carries a participant row for
+    // Berolzheimer and the rest name Mystartupcfo (us) or an unrelated
+    // auto-created record. Matches findByCustomer, which was fixed for this.
+    if (filters.customerId) parts.push(sql`(ep.customer_id = ${filters.customerId} OR EXISTS (
+      SELECT 1 FROM customer_domains cd
+      WHERE cd.customer_id = ${filters.customerId}
+        AND cd.tenant_id = e.tenant_id
+        AND lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+    ))`);
     if (filters.teamMemberId) {
       // Account-ownership semantics: the email's customer is one this member owns.
       parts.push(sql`EXISTS (
@@ -712,7 +729,24 @@ export class ManagerRepository extends ScopedRepository {
         parts.push(sql`t.assigned_to_id = ${req.assignedToId}`);
       }
     }
-    if (req.customerId) parts.push(sql`ep.customer_id = ${req.customerId}`);
+    // ATTRIBUTED BY PARTICIPANT LINK **OR** SENDER DOMAIN.
+    //
+    // A deliberate departure from the crm-manager SQL, because the participant
+    // link alone contradicts the add-on panel. The panel attributes a fire by
+    // who WROTE the mail, via the sender's domain; this page filtered on the
+    // link, so "Berolzheimer — 3 unanswered" led here to "No analyzed emails
+    // found" and the panel read as though it had invented the client.
+    //
+    // The link is not merely absent, it usually points elsewhere: of six
+    // negative Berolzheimer emails, ONE carries a participant row for
+    // Berolzheimer and the rest name Mystartupcfo (us) or an unrelated
+    // auto-created record. Matches findByCustomer, which was fixed for this.
+    if (req.customerId) parts.push(sql`(ep.customer_id = ${req.customerId} OR EXISTS (
+      SELECT 1 FROM customer_domains cd
+      WHERE cd.customer_id = ${req.customerId}
+        AND cd.tenant_id = e.tenant_id
+        AND lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+    ))`);
     if (req.teamMemberId) {
       // Sender semantics here, not ownership: "this member's threads" means
       // chains they actually replied on.
