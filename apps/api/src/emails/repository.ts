@@ -2020,9 +2020,31 @@ export class EmailRepository extends ScopedRepository {
       }
     }
 
-    // Customer filter — matches the sender's customer (ep is sender only).
+    // Customer filter — the sender's participant link OR the sender's DOMAIN.
+    //
+    // This is the query behind AI Analysis, and it is what the add-on panel
+    // links a fire row into. The panel attributes by who WROTE the mail, via the
+    // sender's domain; this matched only the participant link, so a row reading
+    // "Berolzheimer — 3 unanswered" landed on "No analyzed emails found" and the
+    // panel read as though it had invented the client.
+    //
+    // The link is not merely absent, it usually points elsewhere: of six negative
+    // Berolzheimer emails, ONE carries a participant row naming Berolzheimer and
+    // the rest name Mystartupcfo (us) or an unrelated auto-created record.
+    // Measured with the page's own filters: 1 -> 5.
+    //
+    // Both paths are kept. Participant links are often wrong but not always
+    // absent, and narrowing to domain alone would drop mail this page shows.
     if (request.customerId) {
-      whereParts.push(sql`ep.customer_id = ${request.customerId}`);
+      whereParts.push(sql`(
+        ep.customer_id = ${request.customerId}
+        OR EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = ${request.customerId}
+            AND cd.tenant_id = e.tenant_id
+            AND lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+        )
+      )`);
     }
 
     // Date range filters
