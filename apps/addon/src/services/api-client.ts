@@ -528,8 +528,16 @@ export interface DangerPulse {
   otherMedianH: number | null;
   negativeP90H: number | null;
   negativeCount: number;
-  /** Angry clients who waited more than five days for a first reply. */
+  /** MESSAGES that waited more than five days for a first reply. Per-email. */
   overFiveDays: number;
+  /**
+   * Distinct clients behind those waits — the unit the card reports.
+   *
+   * Optional: the add-on and crm-api deploy independently, and against an
+   * older API the card falls back to the message count rather than showing
+   * `undefined clients`.
+   */
+  overFiveDaysClients?: number;
   trend: Array<{ month: string; medianH: number }>;
   attributionPct: number;
 }

@@ -247,7 +247,7 @@ describe('where the fires are', () => {
   });
 });
 
-describe('slowest to answer angry mail', () => {
+describe('slowest to answer unhappy clients', () => {
   const slow = {
     firmMedianH: 12.9,
     people: [
@@ -669,7 +669,7 @@ describe('card structure', () => {
     const firstSection = JSON.stringify(full().sections[0]);
     expect(firstSection).toContain('Where the fires are');
     expect(firstSection).toContain('Unhappy clients left waiting');
-    expect(firstSection).toContain('Slowest to answer angry mail');
+    expect(firstSection).toContain('Slowest to answer unhappy clients');
     expect(firstSection).not.toContain('Prioritise my inbox');
   });
 
@@ -986,5 +986,55 @@ describe('an unrecognised viewer', () => {
 
   it('stays quiet when there are simply no fires', () => {
     expect(card(undefined, false)).not.toContain('not a user in this workspace');
+  });
+});
+
+/**
+ * The number and the noun beside it must agree.
+ *
+ * "Unhappy clients left waiting" read "<b>55</b> waited more than 5 days" while
+ * every aggregate on the pulse query is per-EMAIL. Measured against the corpus:
+ * 57 messages, from 49 clients. The row reported neither the right figure nor
+ * the right unit, and a reader deciding how many companies to call was given a
+ * message count wearing the word "clients".
+ */
+describe('the waiting row counts clients, not messages', () => {
+  const card = (overFiveDays: number, overFiveDaysClients?: number) =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, {
+        windowDays: 90,
+        negativeMedianH: 12.9,
+        otherMedianH: 15.1,
+        negativeP90H: 124.9,
+        negativeCount: 507,
+        overFiveDays,
+        overFiveDaysClients,
+        trend: [],
+        attributionPct: 0,
+      }),
+    );
+
+  it('reports the client count when the API sends one', () => {
+    const json = card(57, 49);
+    expect(json).toContain('49');
+    expect(json).toContain('clients');
+    // 57 is the message count and must not be the headline.
+    expect(json).not.toMatch(/>57<\/font>/);
+  });
+
+  it('names the denominator as messages, since that is what it counts', () => {
+    expect(card(57, 49)).toContain('507 answered messages');
+  });
+
+  it('falls back to the message count against an older API', () => {
+    // Absent must degrade to a number, never "undefined clients".
+    const json = card(57, undefined);
+    expect(json).toContain('57');
+    expect(json).not.toContain('undefined');
+  });
+
+  it('says client, singular, when there is one', () => {
+    const json = card(3, 1);
+    expect(json).toMatch(/1<\/font><\/b> client waited/);
   });
 });

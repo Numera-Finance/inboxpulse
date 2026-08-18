@@ -777,6 +777,16 @@ export interface DangerPulse {
    * into a meeting and check again next month.
    */
   overFiveDays: number;
+  /**
+   * CLIENTS behind those waits, which is what the section header promises.
+   *
+   * Every aggregate on the pulse query is per-EMAIL, so `overFiveDays` counts
+   * messages: 57 of them, from 49 clients. The card said "55 clients waited more
+   * than 5 days" while counting neither 55 nor clients. A number and the noun
+   * beside it have to agree, and the actionable unit here is the client — you
+   * call a company, not a message.
+   */
+  overFiveDaysClients: number;
   /** Median per month, oldest first, for a text sparkline. */
   trend: Array<{ month: string; medianH: number }>;
   /** Share of replies attributable to a person — caveats the per-person view. */
@@ -899,12 +909,40 @@ export class DangerPulseService {
     const num = (v: unknown): number | null =>
       v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10;
 
+    // A SEPARATE QUERY, not a join. email_participants multiplies the row -- an
+    // email with four customer-linked participants counts four times, which once
+    // took this headline from 501 to 2,089. Counting distinct clients needs that
+    // join, so it runs on its own and leaves the per-email aggregates intact.
+    const waitRows = await this.db.execute<{ clients: number }>(sql`
+      SELECT count(DISTINCT pc.customer_id)::int AS clients
+      FROM emails e
+      JOIN email_analyses a
+        ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
+      JOIN email_participants pc ON pc.email_id = e.id AND pc.customer_id IS NOT NULL
+      JOIN customers c ON c.id = pc.customer_id AND NOT c.is_auto_created
+      WHERE e.tenant_id = ${tenantId}
+        AND e.is_customer_email
+        AND e.first_reply_at IS NOT NULL
+        AND e.first_reply_at > e.received_at
+        AND e.received_at > now() - (${days} || ' days')::interval
+        -- The SAME participation filters the message count uses. Without them the
+        -- client count is drawn from a wider population than the "of N answered"
+        -- beside it, and two numbers on one row would be counting two things.
+        ${weAreOnTheThread()}
+        ${weWereAddressed()}
+        AND EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600 > 120
+    `);
+    const waitClients = Number(
+      (waitRows as unknown as Array<{ clients: number }>)[0]?.clients ?? 0
+    );
+
     return {
       negativeMedianH: num(neg?.median_h),
       otherMedianH: num(oth?.median_h),
       negativeP90H: num(neg?.p90_h),
       negativeCount: Number(neg?.n ?? 0),
       overFiveDays: Number(neg?.over_five_days ?? 0),
+      overFiveDaysClients: waitClients,
       trend: (trendRows as unknown as Array<{ month: string; median_h: unknown }>).map((r) => ({
         month: r.month,
         medianH: Number(num(r.median_h) ?? 0),
@@ -1446,17 +1484,22 @@ export class FiresService {
         LIMIT 1
       ) al ON TRUE
       GROUP BY c.id, c.name
-      -- ENGAGED FIRST, then unanswered, then weight of evidence.
+      -- UNANSWERED FIRST, then engagement, then weight of evidence.
       --
-      -- This used to lead with unanswered on the reasoning that it is the part
-      -- the firm controls. That reasoning still holds for what to DO, and it is
-      -- why unanswered is the second key and still shown on the row. It is not
-      -- what predicts trouble. Within the fires list, engagement separates 24.7%
-      -- from 13.0% while unanswered separates 18.3% from 14.5%, and an engaged
-      -- client with everything answered (21.9%) outranks an unengaged one with
-      -- complaints still open (14.7%). With only six slots, the stronger
-      -- predictor decides who gets seen.
-      ORDER BY engaged DESC, unanswered DESC, negative DESC
+      -- Engagement led this for a day and it hid the worst client on the list.
+      -- Berolzheimer had THREE unanswered complaints, more than anyone, and
+      -- rendered nowhere: it sat one message under the engagement threshold, so
+      -- it sorted below six engaged clients carrying zero or one unanswered and
+      -- fell off the LIMIT. Reported twice before the cause was found.
+      --
+      -- Engagement is still the better PREDICTOR — 24.7% against 13.0%, where
+      -- unanswered separates 18.3% from 14.5% — and it still breaks ties and
+      -- still shows on the row. But a predictor cannot be the primary key of a
+      -- six-row list, because being wrong about it removes a client from view
+      -- entirely. Unanswered is an obligation rather than a forecast: three
+      -- complaints nobody replied to is not a client who might escalate, it is a
+      -- client already being ignored, and no ranking may bury that.
+      ORDER BY unanswered DESC, engaged DESC, negative DESC
       LIMIT ${limit}
     `);
 

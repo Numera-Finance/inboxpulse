@@ -67,8 +67,10 @@ export interface PulseView {
   otherMedianH: number | null;
   negativeP90H: number | null;
   negativeCount: number;
-  /** Angry clients who waited more than five days for a first reply. */
+  /** MESSAGES that waited more than five days for a first reply. Per-email. */
   overFiveDays: number;
+  /** Distinct clients behind those waits — what the row reports. */
+  overFiveDaysClients?: number;
   trend: Array<{ month: string; medianH: number }>;
   attributionPct: number;
 }
@@ -286,7 +288,14 @@ export function buildHomepageCard(
   // enough to discount it themselves.
   if (slow?.people.length) {
     firm.unshift({
-      header: heading('Slowest to answer angry mail'),
+      // "UNHAPPY", NOT "ANGRY". The rows are threads the classifier marked
+      // sentiment_value = 'negative', and negative is not anger: measured on 49
+      // human-judged emails, only 5 of 20 complaints use explicit failure
+      // wording. The rest are courteous chases — "could you provide an update on
+      // the expected timeline" — which a reader would not call angry mail, and
+      // which the section above already calls "unhappy clients". One population
+      // was carrying two vocabularies, and the louder one overstated the data.
+      header: heading('Slowest to answer unhappy clients'),
       widgets: [
         ...slow.people.map((p) => {
           // A MULTIPLE, not two durations.
@@ -415,9 +424,18 @@ export function buildHomepageCard(
       widgets: [
         deco({
           startIcon: { knownIcon: 'CLOCK' },
-          topLabel: `of ${pulse.negativeCount} answered`,
+          // THE NUMBER AND THE NOUN MUST AGREE.
+          //
+          // This read "<b>55</b> waited more than 5 days" under a heading that
+          // says CLIENTS, while every aggregate on the pulse query is per-EMAIL.
+          // Measured: 57 messages, from 49 clients. It reported neither the right
+          // figure nor the right unit. You call a company, not a message, so the
+          // client count leads and the message count qualifies it.
+          topLabel: `of ${pulse.negativeCount} answered messages`,
           text:
-            `<b><font color="#c5221f">${pulse.overFiveDays}</font></b> waited more than <b>5 days</b> to hear back`,
+            `<b><font color="#c5221f">${pulse.overFiveDaysClients ?? pulse.overFiveDays}</font></b> ` +
+            `${(pulse.overFiveDaysClients ?? pulse.overFiveDays) === 1 ? 'client' : 'clients'} ` +
+            `waited more than <b>5 days</b> to hear back`,
           wrapText: true,
           ...(waiting?.webUrl
             ? {
