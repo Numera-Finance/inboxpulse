@@ -193,6 +193,27 @@ export interface PrivacyView {
   canWrite?: boolean;
 }
 
+/**
+ * One word for where a client sits, from their monthly complaint rates.
+ *
+ * THREE STATES, NOT TWO. Rising and Cooling alone mislabel the clients who need
+ * the most care: one sitting steady at 15% for six months rendered as "Cooling
+ * 16%→15%", which reads as improving. Measured, that client is nothing of the
+ * sort — crossing 10% holds a client at ~4x base for at least three months and
+ * they do not drift back out.
+ *
+ * Entrenched and Rising are different jobs. Rising is someone newly slipping and
+ * early contact is the whole point. Entrenched is a relationship already in the
+ * state, where early is months ago and the answer is senior involvement rather
+ * than a faster reply. The two lists barely overlap: of the clients escalating
+ * now and the clients carrying five or more complaints at under a week apart,
+ * exactly one appears on both.
+ */
+export function arcWord(arc: number[]): string {
+  if (arc.every((p) => p >= 10)) return 'Entrenched';
+  return arc[arc.length - 1] > arc[0] ? 'Rising' : 'Cooling';
+}
+
 export function buildHomepageCard(
   stats: EmailStats | null,
   working?: WorkingSetView,
@@ -535,8 +556,7 @@ export function buildHomepageCard(
           // Account manager.
           bottomLabel:
             (f.arc && f.arc.length >= 2
-              ? `${f.arc[f.arc.length - 1] > f.arc[0] ? 'Rising' : 'Cooling'} ` +
-                `${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
+              ? `${arcWord(f.arc)} ${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
               : '') +
             `${f.oldestDays}d · ` +
             (f.owner

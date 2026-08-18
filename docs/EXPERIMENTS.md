@@ -324,6 +324,39 @@ trusting tests.
 
 ---
 
+## Volume doubles in the week before a client first complains
+
+Nobody goes from nothing to furious in one email unless the firm has genuinely
+failed. The rest rock themselves into it, and the run-up is measurable without
+any model at all.
+
+Across 265 clients with a first complaint and prior history:
+
+| | |
+|---|---|
+| median daily mail, prior month | 0.21 |
+| median daily mail, final week | **0.43** |
+| volume rose | **180 of 265 (68%)** |
+| flat or fell | 85 (32%) |
+
+Their mail roughly doubles in the week before the first complaint lands.
+
+Two properties make this the strongest early signal found: it costs nothing —
+counting messages per sender per day, no model call, no vector — and it PRECEDES
+the label rather than restating it. Nothing in the embedding work managed that:
+the mood vector was flat through Systato's escalation, ego state did not move,
+and hotspot clients read 94% Adult in their angriest months.
+
+What did NOT move in the run-up, tested at the same time: our reply latency
+(20.5h before, 19.6h at baseline) and our answer rate, which was slightly BETTER
+in the run-up. "We went quiet and they got angry" is not supported.
+
+Causation is unsettled. A busy month generates both more mail and more chances
+for friction, so this may be "activity precedes complaints" rather than
+"frustration builds". It fires before the complaint either way, which is what a
+warning needs, but it means someone sending twice their usual volume is not
+necessarily angry yet.
+
 ## Unhappy clients stay unhappy; they do not get touchier
 
 Complaint gaps appear to shrink as a client accumulates them — 8.2 days to the
