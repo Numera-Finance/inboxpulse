@@ -1202,9 +1202,22 @@ export class FiresService {
 
     // Same entitlement rule as the rest of the panel: a lead's view of "where
     // the fires are" must not become a way to read accounts they cannot open.
+    //
+    // SCOPED ON `cd`, THE SAME ALIAS THE ATTRIBUTION USES. This said
+    // `p.customer_id` — the email_participants join that attribution was moved
+    // off when a fire became "what the client WROTE" rather than what they
+    // received. The alias went; the entitlement clause kept referring to it, so
+    // Postgres rejected the whole query with `missing FROM-clause entry for
+    // table "p"` and every NON-ADMIN viewer got a 500.
+    //
+    // It read as good news. The card treats an errored fetch and an empty list
+    // identically, so the panel simply had no "Where the fires are" section and
+    // looked like a firm with nothing on fire. Admins saw a correct list, which
+    // is why it survived: the person most likely to check could not reproduce
+    // it.
     const scope = viewer.isAdmin
       ? sql``
-      : sql`AND p.customer_id IN (
+      : sql`AND cd.customer_id IN (
               SELECT customer_id FROM user_accessible_customers WHERE user_id = ${viewer.userId}
             )`;
 

@@ -272,7 +272,30 @@ describe('slowest to answer angry mail', () => {
    * person named as slowest cannot argue with a number whose basis is hidden.
    */
   it('shows the sample the median rests on', () => {
-    expect(card()).toContain('10 answered threads');
+    expect(card()).toContain('10 answered');
+  });
+
+  /**
+   * THE NAME ALONE ON THE MEDIUM LINE.
+   *
+   * The row carried name + multiplier + "the firm" on one line above a grey
+   * topLabel, in a 250px column. With real names — "Meghana Muralidhar Murthy"
+   * — every row wrapped three and four deep and the red multiplier landed
+   * orphaned on its own line. Same rule as the fire row: one short claim up
+   * top, qualifiers on the grey line beneath.
+   */
+  it('keeps the medium line to the name, so a long one cannot wrap', () => {
+    const rows = JSON.parse(card()) as {
+      sections: Array<{ widgets: Array<{ decoratedText?: { text: string; topLabel?: string } }> }>;
+    };
+    const people = rows.sections
+      .flatMap((s) => s.widgets)
+      .map((w) => w.decoratedText)
+      .filter((d): d is { text: string; topLabel?: string } => Boolean(d?.text.includes('</b>')));
+    for (const d of people) {
+      expect(d.text).toMatch(/^<b>[^<]+<\/b>$/);
+      expect(d.topLabel).toBeUndefined();
+    }
   });
 
   /**
@@ -746,12 +769,12 @@ describe('slow responder sub-line units', () => {
 
   it('renders both sides in days when the person is measured in days', () => {
     const out = sub(120, 12.8);
-    expect(out).toContain('5.0d median · firm 0.5d');
-    expect(out).not.toContain('firm 12.8h');
+    expect(out).toContain('5.0d vs 0.5d');
+    expect(out).not.toContain('12.8h');
   });
 
   it('renders both sides in hours when neither reaches a day', () => {
-    expect(sub(25.6, 12.8)).toContain('25.6h median · firm 12.8h');
+    expect(sub(25.6, 12.8)).toContain('25.6h vs 12.8h');
   });
 });
 

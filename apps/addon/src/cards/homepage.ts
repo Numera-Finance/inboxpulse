@@ -106,26 +106,6 @@ function pair(a: number | null, b: number | null): { a: string; b: string } {
   return { a: fmt(a), b: fmt(b) };
 }
 
-/**
- * A trend drawn in block characters.
- *
- * CardService has no canvas and no SVG, so a chart is not available at any
- * price. Eight block glyphs are — and for "is this getting better", eight
- * glyphs is the entire question. Lower is better here, so the bars are
- * INVERTED: a falling line means faster replies, which is what the reader
- * expects a good trend to look like.
- */
-function sparkline(values: number[]): string {
-  if (values.length < 2) return '';
-  const blocks = '▁▂▃▄▅▆▇█';
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const span = max - min || 1;
-  return values
-    .map((v) => blocks[Math.round(((max - v) / span) * (blocks.length - 1))])
-    .join('');
-}
-
 export interface FiresView {
   /**
    * The window the fires were counted over, so the deep link can match it.
@@ -301,15 +281,31 @@ export function buildHomepageCard(
               ? Math.round((p.medianH / slow.firmMedianH) * 10) / 10
               : null;
           return deco({
-            startIcon: { knownIcon: 'PERSON' },
-            topLabel: `${p.threads} answered threads`,
-            text: mult
-              ? `<b>${escapeText(p.name)}</b> <font color="#c5221f"><b>${mult}×</b> the firm</font>`
-              : `<b>${escapeText(p.name)}</b> <font color="#c5221f">${hrs(p.medianH)}</font>`,
+            // THE NAME ALONE ON THE MEDIUM LINE.
+            //
+            // This carried the name, the multiplier and the words "the firm" on
+            // one line, above a grey topLabel and below a PERSON icon, in a
+            // 250px column. Real names here are "Meghana Muralidhar Murthy" and
+            // "Gourish Jagadish Hegde", so every row wrapped three and four deep
+            // and the red "3.7×" landed orphaned on a line of its own. Four rows
+            // of that is not a list, it is a wall.
+            //
+            // Same shape as the fire row, and for the same reason: one short
+            // claim on the medium line, everything that qualifies it on the grey
+            // line below. The icon goes because four identical PERSON glyphs are
+            // decoration costing ~40px of a column that has none to spare, and
+            // the topLabel goes because a grey qualifier ABOVE the name puts fog
+            // in front of the only word being scanned for.
+            text: `<b>${escapeText(p.name)}</b>`,
+            // Multiplier first, because it is the reason the row is here, and it
+            // is the one number that needs no context to read.
             bottomLabel: (() => {
-              if (!slow.firmMedianH) return `${hrs(p.medianH)} median`;
+              const lead = mult
+                ? `<font color="#c5221f"><b>${mult}×</b> the firm</font> · `
+                : '';
+              if (!slow.firmMedianH) return `${lead}${hrs(p.medianH)} median · ${p.threads} answered`;
               const { a, b } = pair(p.medianH, slow.firmMedianH);
-              return `${a} median · firm ${b}`;
+              return `${lead}${a} vs ${b} · ${p.threads} answered`;
             })(),
             wrapText: true,
             // "Their queue", NOT "see these N".
@@ -375,7 +371,6 @@ export function buildHomepageCard(
         : faster < 2
           ? `<font color="#c5221f">only ${hrs(Math.abs(faster))} faster than routine mail. Sentiment is not changing behaviour</font>`
           : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
-    const spark = sparkline(pulse.trend.map((t) => t.medianH));
 
     // THE TAIL LEADS, the median follows.
     //
@@ -454,13 +449,33 @@ export function buildHomepageCard(
         // form nobody can act on, and two ways of stating one fact reads as
         // two facts.
 
-        ...(spark
+        // THE TREND AS TWO NUMBERS, NOT EIGHT BLOCK GLYPHS.
+        //
+        // This was a sparkline built from ▁▂▃▄▅▆▇█ and coloured blue. Gmail's
+        // font has no glyph for most of that range, so it renders them as solid
+        // filled boxes at a uniform height — and a row of black rectangles above
+        // the words "lower is faster" reads as a redaction bar, not a trend.
+        // The colour did not survive either.
+        //
+        // Four monthly points do not need a chart. First against last, with the
+        // direction named, is the whole of what "is this getting better" asks,
+        // and it renders in any font.
+        ...(pulse.trend.length >= 2
           ? [
-              deco({
-                topLabel: `by month · ${pulse.trend[0]?.month ?? ''} → ${pulse.trend[pulse.trend.length - 1]?.month ?? ''}`,
-                text: `<font color="#1a73e8">${spark}</font>  <font color="#5f6368">lower is faster</font>`,
-                wrapText: false,
-              }),
+              (() => {
+                const first = pulse.trend[0];
+                const last = pulse.trend[pulse.trend.length - 1];
+                const better = last.medianH < first.medianH;
+                const { a, b } = pair(first.medianH, last.medianH);
+                return deco({
+                  topLabel: `first reply, by month · ${first.month} → ${last.month}`,
+                  text:
+                    `${a} → <b>${b}</b> ` +
+                    `<font color="${better ? '#188038' : '#c5221f'}">` +
+                    `${better ? 'faster' : 'slower'}</font>`,
+                  wrapText: true,
+                });
+              })(),
             ]
           : []),
         // The apology that used to sit here — "Per-person breakdown needs reply

@@ -536,3 +536,54 @@ describe('public mail domains', () => {
     expect(sql()).toContain('lower(cd.domain) <> ALL');
   });
 });
+
+/**
+ * Every table alias the entitlement clause names must exist in the query.
+ *
+ * This is a regression test for a live 500, and for the reason it survived.
+ *
+ * `FiresService` scoped a non-admin viewer with `AND p.customer_id IN (...)`,
+ * where `p` was the email_participants join. Attribution later moved to the
+ * sender's domain — a fire is what a client WROTE, not what they received — and
+ * the `p` alias went with it. The entitlement clause kept referring to it, so
+ * Postgres rejected the entire query with `missing FROM-clause entry for table
+ * "p"` and every NON-ADMIN viewer got a 500 on the fires list.
+ *
+ * It survived for two reasons worth naming, because both recur:
+ *
+ * 1. The card renders a failed fetch and an empty list identically, so the
+ *    panel showed no "Where the fires are" section at all and read as a firm
+ *    with nothing on fire. A broken query looked like good news.
+ * 2. Every test above passes `isAdmin: true`, which takes the empty branch and
+ *    never builds the broken SQL. The person most able to notice — an admin —
+ *    was the one person who could not reproduce it.
+ *
+ * Structural rather than behavioural: the assertion is that an alias used in a
+ * WHERE fragment is one the FROM clause actually introduces. That needs no
+ * database and would have caught this the day the attribution changed.
+ */
+describe('the entitlement clause cannot name a table the query dropped', () => {
+  it('scopes a non-admin viewer on an alias the fires query defines', async () => {
+    const { db, sql } = recordingDb();
+    await new FiresService(db).get(TENANT, { userId: 'u1', isAdmin: false }, 90, 6);
+    const text = sql();
+
+    // The scope must be present at all — without it a lead reads accounts they
+    // cannot open.
+    expect(text).toContain('user_accessible_customers');
+
+    // Every alias the query qualifies a column with must be introduced by the
+    // FROM/JOIN list. `p` is the specific ghost this test exists for.
+    const aliases = new Set(
+      [...text.matchAll(/(?:FROM|JOIN)\s+(?:LATERAL\s+)?([a-z_]+)\s+([a-z]{1,3})\b/gi)].map((m) => m[2]),
+    );
+    expect(aliases.has('p')).toBe(false);
+    expect(text).not.toMatch(/\bp\.customer_id\b/);
+  });
+
+  it('builds no scope at all for an admin', async () => {
+    const { db, sql } = recordingDb();
+    await new FiresService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90, 6);
+    expect(sql()).not.toContain('user_accessible_customers');
+  });
+});
