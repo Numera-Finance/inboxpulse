@@ -572,6 +572,12 @@ export interface Fire {
    * card renders as no marker rather than as a wrong one.
    */
   engaged?: boolean;
+  /**
+   * True when `owner` is who actually corresponds with this client rather than
+   * who the allocation sheet assigns. Optional for the same deploy-skew reason
+   * as the fields above.
+   */
+  ownerInferred?: boolean;
 }
 
 /** Where the fires are, by client, with the account manager to call. */

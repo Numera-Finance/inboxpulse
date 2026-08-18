@@ -151,6 +151,12 @@ export interface FiresView {
      * showing it is what lets a reader see WHY a row is at the top.
      */
     engaged?: boolean;
+    /**
+     * True when `owner` came from the correspondence rather than the allocation
+     * sheet. Rendered differently: an assignment is a commitment somebody made,
+     * this is an observation about who has been doing the work.
+     */
+    ownerInferred?: boolean;
   }>;
   webUrl: string;
 }
@@ -620,12 +626,23 @@ export function buildHomepageCard(
               ? `${arcWord(f.arc)} ${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
               : '') +
             `${f.oldestDays}d · ` +
+            // AN ASSIGNMENT AND AN OBSERVATION READ DIFFERENTLY.
+            //
+            // Most clients on this list have nobody on the allocation sheet, and
+            // the row used to end there — which was true and useless, because
+            // the firm is plainly working those accounts. Truefoundry sits on
+            // 258 threads with Deep Jyoti. So when the sheet is silent the row
+            // names whoever has actually been in the correspondence, marked as
+            // such: "most in touch" is a fact about the mail, not a promise
+            // anybody made.
             (f.owner
-              ? (f.ownerRole && f.ownerRole !== 'Account manager'
-                  ? `${f.owner} · ${f.ownerRole}`
-                  : f.owner) +
-                (f.ownerPeers && f.ownerPeers > 1 ? ` +${f.ownerPeers - 1}` : '')
-              : 'no owner assigned'),
+              ? f.ownerInferred
+                ? `${f.owner} · most in touch`
+                : (f.ownerRole && f.ownerRole !== 'Account manager'
+                    ? `${f.owner} · ${f.ownerRole}`
+                    : f.owner) +
+                  (f.ownerPeers && f.ownerPeers > 1 ? ` +${f.ownerPeers - 1}` : '')
+              : 'nobody has replied to them'),
           wrapText: true,
           // The WHOLE ROW is the link, not a pill at the end of it. Six
           // identical "Open" buttons were six identical accessories saying the

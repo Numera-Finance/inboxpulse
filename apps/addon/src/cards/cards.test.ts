@@ -229,10 +229,11 @@ describe('where the fires are', () => {
    */
   it('says so when nobody owns the client, rather than omitting the row', () => {
     expect(card()).toContain('Truefoundry');
-    // A blank owner always means the client is absent from the allocation
-    // sheet, never "assigned to someone else" — every matched client has an
-    // Account manager. Saying so points the reader at the real fix.
-    expect(card()).toContain('no owner assigned');
+    // A blank owner now means something much narrower than "not on the sheet":
+    // the sheet was silent AND nobody at the firm has been in the
+    // correspondence either. Most ownerless clients do have a correspondent, so
+    // reaching this string at all is rare and worth stating plainly.
+    expect(card()).toContain('nobody has replied to them');
   });
 
   /**
@@ -558,7 +559,7 @@ describe('fire row ownership', () => {
   });
 
   it('says the client is off the sheet rather than blaming a missing manager', () => {
-    expect(card(null, null)).toContain('no owner assigned');
+    expect(card(null, null)).toContain('nobody has replied to them');
     expect(card(null, null)).not.toContain('no account manager');
   });
 });
@@ -897,5 +898,49 @@ describe('talking more than usual', () => {
   it('admits when nobody owns the client', () => {
     const json = card([{ customer: 'Hinlab Inc', customerId: 'c1', recent: 20, usual: 5, owner: null }]);
     expect(json).toContain('no owner assigned');
+  });
+});
+
+/**
+ * An assignment and an observation must not read the same.
+ *
+ * The allocation sheet covers 790 customers while 3,897 carry an email domain,
+ * so most fires have nobody assigned and the row used to end at "no owner
+ * assigned". That was true and useless: the firm is plainly working those
+ * accounts — Truefoundry sits on 258 threads with Deep Jyoti, Aescape on 238
+ * with Padma Shanbhag. So when the sheet is silent the row names whoever has
+ * actually been in the mail, and marks it, because nobody committed to it.
+ */
+describe('an inferred owner is labelled as one', () => {
+  const fire = (owner: string | null, ownerInferred: boolean) =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        fires: [{
+          customerId: 'c1', customer: 'Truefoundry', negative: 2, unanswered: 2,
+          oldestDays: 57, owner, ownerRole: null, ownerInferred,
+        }],
+      }),
+    );
+
+  it('marks a name that came from the correspondence', () => {
+    expect(fire('Deep Jyoti', true)).toContain('Deep Jyoti · most in touch');
+  });
+
+  it('states an allocated owner plainly, with no qualifier', () => {
+    const json = fire('Amanda Tabb', false);
+    expect(json).toContain('Amanda Tabb');
+    expect(json).not.toContain('most in touch');
+  });
+
+  it('falls back only when there is genuinely nobody', () => {
+    expect(fire(null, false)).toContain('nobody has replied to them');
+  });
+
+  it('never claims an assignment the sheet did not make', () => {
+    // The failure this guards: rendering an inferred name identically to an
+    // allocated one, so a reader calls someone believing they own the account.
+    expect(fire('Deep Jyoti', true)).not.toMatch(/Deep Jyoti · (Account manager|Controller|Accountant)/);
   });
 });

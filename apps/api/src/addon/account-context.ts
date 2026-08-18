@@ -1160,6 +1160,19 @@ export interface Fire {
    * happens next it is the weaker of the two.
    */
   engaged: boolean;
+  /**
+   * True when `owner` came from who actually corresponds with this client
+   * rather than from the allocation sheet.
+   *
+   * The sheet covers 790 customers; 3,897 carry an email domain, and the two
+   * sets barely overlap, so most fires had no assigned owner and the row said
+   * so. But the firm is plainly working those accounts — Truefoundry appears on
+   * 258 threads with Deep Jyoti, Aescape on 238 with Padma Shanbhag — and "who
+   * to call" is answerable from the correspondence even when nobody filled in a
+   * form. Marked rather than silently blended, because an assignment is a
+   * commitment and this is an observation.
+   */
+  ownerInferred: boolean;
 }
 
 /**
@@ -1374,7 +1387,8 @@ export class FiresService {
         count(*)::int AS negative,
         count(*) FILTER (WHERE t.first_reply_at IS NULL)::int AS unanswered,
         MAX(EXTRACT(EPOCH FROM (now() - t.received_at)) / 86400)::int AS oldest_days,
-        MAX(al.who) AS owner,
+        COALESCE(MAX(al.who), MAX(corr.who)) AS owner,
+        (MAX(al.who) IS NULL AND MAX(corr.who) IS NOT NULL) AS owner_inferred,
         MAX(al.role) AS owner_role,
         MAX(al.peers) AS owner_peers,
         (
@@ -1431,6 +1445,44 @@ export class FiresService {
                  who
         LIMIT 1
       ) al ON TRUE
+      -- WHO ACTUALLY TALKS TO THEM, when the sheet names nobody.
+      --
+      -- "Ours" is defined as an address that belongs to a user in this tenant,
+      -- not by matching a domain string, so it cannot drift from the staff list.
+      -- Ordered by thread count, which prefers a person over a per-client team
+      -- alias without special-casing either: Truefoundry is djyoti on 258
+      -- threads against ensemble@ on 53, Actonadu is Amanda Tabb on 30 against
+      -- actonadu@ on 12.
+      LEFT JOIN LATERAL (
+        SELECT btrim(regexp_replace(
+                 COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) AS who,
+               count(DISTINCT e2.thread_id) AS threads
+        FROM emails e2
+        JOIN customer_domains cd3
+          ON lower(cd3.domain) = split_part(lower(e2.from_email), '@', 2)
+         AND cd3.tenant_id = e2.tenant_id
+        JOIN email_participants p2 ON p2.email_id = e2.id
+        JOIN users u2 ON lower(u2.email) = lower(p2.email) AND u2.tenant_id = ${tenantId}
+        WHERE cd3.customer_id = c.id
+          AND e2.tenant_id = ${tenantId}
+          AND e2.received_at > now() - (${days} || ' days')::interval
+        GROUP BY btrim(regexp_replace(
+                   COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g'))
+        -- A PERSON BEFORE A TEAM ALIAS, then volume.
+        --
+        -- Many client threads carry a per-client group address the team listens
+        -- on, and it is a user row like any other. Ranked purely by volume,
+        -- Hammerheadco answered "Hammerheadai (Auto)", which is a mailbox, not
+        -- somebody to call. Demoting alias-shaped names surfaces Nagaraj Hebbar
+        -- on 59 threads instead. can_login does not separate these — 214
+        -- alias-shaped accounts can log in, ensemble@ among them.
+        ORDER BY (COALESCE(u2.first_name || ' ' || u2.last_name, p2.email) NOT ILIKE '%team%'
+              AND COALESCE(u2.first_name || ' ' || u2.last_name, p2.email) NOT ILIKE '%(auto)%') DESC,
+             count(DISTINCT e2.thread_id) DESC,
+             btrim(regexp_replace(
+               COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g'))
+        LIMIT 1
+      ) corr ON TRUE
       GROUP BY c.id, c.name
       -- ENGAGED FIRST, then unanswered, then weight of evidence.
       --
@@ -1458,6 +1510,7 @@ export class FiresService {
       // month has no arc rather than a misleading one.
       arc: Array.isArray(r.arc) ? (r.arc as unknown[]).map((n) => Number(n)) : [],
       engaged: r.engaged === true,
+      ownerInferred: r.owner_inferred === true,
       ownerPeers: Number(r.owner_peers ?? 1),
     }));
   }
