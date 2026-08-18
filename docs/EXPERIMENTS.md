@@ -324,6 +324,26 @@ trusting tests.
 
 ---
 
+## Unhappy clients stay unhappy; they do not get touchier
+
+Complaint gaps appear to shrink as a client accumulates them — 8.2 days to the
+second, 3.7 to the sixth. That is **survivorship**, not sensitisation. Clients who
+complain often occupy the later positions by definition, so the population
+changes as you read down the column.
+
+Within the same client, comparing their first gap to their last across 46 clients
+with five or more complaints: median 6.1 days then 4.9, with **24 getting faster
+and 22 getting slower**. A coin flip.
+
+What is real is persistence. Crossing 10% in a month puts a client at roughly 4×
+the base rate and holds them there for at least three months (7.9%, 3.8%, 5.9%
+against 1.6% for clients who never crossed). They do not accelerate; they settle
+into a worse steady state and do not drift back out.
+
+That distinction changes what an intervention is for. Nobody is racing a
+runaway — they are pulling a client out of a state that is stable without them.
+A quiet month inside that state is not a recovery.
+
 ## The synthesis: the dead ends are the explanation layer
 
 Every branch above failed as a *detector*. None failed as an *explanation*, and
