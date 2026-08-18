@@ -1476,8 +1476,10 @@ export class FiresService {
         -- somebody to call. Demoting alias-shaped names surfaces Nagaraj Hebbar
         -- on 59 threads instead. can_login does not separate these — 214
         -- alias-shaped accounts can log in, ensemble@ among them.
-        ORDER BY (COALESCE(u2.first_name || ' ' || u2.last_name, p2.email) NOT ILIKE '%team%'
-              AND COALESCE(u2.first_name || ' ' || u2.last_name, p2.email) NOT ILIKE '%(auto)%') DESC,
+        ORDER BY (btrim(regexp_replace(
+                    COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) NOT ILIKE '%team%'
+              AND btrim(regexp_replace(
+                    COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) NOT ILIKE '%(auto)%') DESC,
              count(DISTINCT e2.thread_id) DESC,
              btrim(regexp_replace(
                COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g'))
