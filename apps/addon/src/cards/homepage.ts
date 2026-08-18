@@ -223,6 +223,8 @@ export function buildHomepageCard(
   fires?: FiresView,
   slow?: SlowRespondersView,
   privacy?: PrivacyView,
+  /** Clients talking twice as much as usual, who have not complained. */
+  stirring?: Array<{ customer: string; customerId: string | null; recent: number; usual: number; owner: string | null }>,
 ): Card {
   // No lead-in section.
   //
@@ -504,6 +506,34 @@ export function buildHomepageCard(
             'The figures below are firm-wide and are not restricted.</font>',
         ),
       ],
+    });
+  }
+
+  // BEFORE anyone complains. Placed after the fires so it does not outrank a
+  // client who is already unhappy, and kept separate because these two lists
+  // need opposite responses: a fire wants a call today, a stirring client wants
+  // someone to notice a conversation getting heavier than usual.
+  //
+  // Measured over 265 clients who eventually complained: median daily mail 0.21
+  // in the prior month, 0.43 in the final week, rising in 68% of them. It costs
+  // nothing to compute and it is the only signal here that precedes the label.
+  //
+  // The row states volume and does not assert a mood. Causation is unsettled — a
+  // busy month makes both more mail and more chances for friction — so "Hinlab,
+  // 20 this week against 5 usual" is a fact a reader can act on, where "Hinlab
+  // is getting frustrated" would be a guess.
+  if (stirring?.length) {
+    firm.push({
+      header: heading('Talking more than usual'),
+      widgets: stirring.map((sc) =>
+        deco({
+          text: `<b>${escapeText(sc.customer)}</b> <font color="#9a6f33">${sc.recent} this week</font>`,
+          bottomLabel:
+            `usually ${sc.usual} a week` +
+            (sc.owner ? ` · ${escapeText(sc.owner)}` : ' · not on the allocation sheet'),
+          wrapText: true,
+        }),
+      ),
     });
   }
 

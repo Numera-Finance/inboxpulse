@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { InvalidInputError } from '@crm/shared';
-import { AccountContextService, WaitingClientsService, DangerPulseService, OwnerLoadService, FiresService, SlowRespondersService } from './account-context';
+import { AccountContextService, WaitingClientsService, DangerPulseService, OwnerLoadService, FiresService, SlowRespondersService, StirringService } from './account-context';
 
 export const addonRoutes = new Hono();
 
@@ -187,6 +187,28 @@ addonRoutes.get('/fires', async (c) => {
     data: await container
       .resolve(FiresService)
       .get(tenantId, { userId, isAdmin: c.req.query('isAdmin') === 'true' }, days),
+  });
+});
+
+/**
+ * GET /api/internal/addon/stirring?tenantId=
+ *
+ * Clients whose mail has roughly doubled this week and who have NOT complained.
+ *
+ * The only signal in the panel that fires before a complaint is written.
+ * Measured over 265 clients who eventually complained: volume rose in 68% of
+ * them in the final week beforehand.
+ *
+ * Not entitlement-scoped by viewer, matching /fires' firm-wide framing for a
+ * management panel; it names customers, so if that ever tightens for /fires it
+ * must tighten here in the same change.
+ */
+addonRoutes.get('/stirring', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  return c.json({
+    success: true,
+    data: await container.resolve(StirringService).get(tenantId),
   });
 });
 

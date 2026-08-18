@@ -587,6 +587,39 @@ export async function getFires(
   }
 }
 
+/**
+ * A client talking twice as much as usual, who has not complained.
+ *
+ * The row states the volume and does not assert a mood: causation is unsettled,
+ * and a client at twice their usual traffic is not necessarily unhappy.
+ */
+export interface Stirring {
+  customer: string;
+  customerId: string | null;
+  /** Messages in the last 7 days. */
+  recent: number;
+  /** Their usual, as messages per week over the preceding four. */
+  usual: number;
+  owner: string | null;
+}
+
+/** Clients whose mail has doubled this week, before anyone has complained. */
+export async function getStirring(tenantId: string): Promise<Stirring[]> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return [];
+  const res = await apiFetch(
+    `${env.SERVICE_API_URL}/api/internal/addon/stirring?tenantId=${encodeURIComponent(tenantId)}`,
+    { headers: internalHeaders(tenantId) },
+  );
+  if (!res || !res.ok) return [];
+  try {
+    const d = unwrap<Stirring[]>(await res.json());
+    return Array.isArray(d) ? d : [];
+  } catch {
+    return [];
+  }
+}
+
 export interface SlowResponder {
   name: string;
   userId?: string | null;

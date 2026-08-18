@@ -806,3 +806,33 @@ describe('the fire arc', () => {
     expect(json).not.toContain('→');
   });
 });
+
+describe('talking more than usual', () => {
+  const card = (stirring: Array<{ customer: string; customerId: string | null; recent: number; usual: number; owner: string | null }>) =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, stirring),
+    );
+
+  it('names the client and both numbers', () => {
+    const json = card([{ customer: 'Hinlab Inc', customerId: 'c1', recent: 20, usual: 5, owner: 'Ana Diaz' }]);
+    expect(json).toContain('Hinlab Inc');
+    expect(json).toContain('20 this week');
+    expect(json).toContain('usually 5 a week');
+  });
+
+  it('states volume without asserting a mood', () => {
+    // Causation is unsettled: a busy month makes both more mail and more chances
+    // for friction. The row must not claim the client is unhappy.
+    const json = card([{ customer: 'Hinlab Inc', customerId: 'c1', recent: 20, usual: 5, owner: null }]);
+    expect(json).not.toMatch(/unhappy|angry|frustrat|complain/i);
+  });
+
+  it('says nothing when no client is stirring', () => {
+    expect(card([])).not.toContain('Talking more than usual');
+  });
+
+  it('admits when nobody owns the client', () => {
+    const json = card([{ customer: 'Hinlab Inc', customerId: 'c1', recent: 20, usual: 5, owner: null }]);
+    expect(json).toContain('not on the allocation sheet');
+  });
+});

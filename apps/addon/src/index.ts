@@ -27,6 +27,7 @@ import {
   getAnalyzedEmail,
   getDangerPulse,
   getFires,
+  getStirring,
   getSlowResponders,
   getThreadFlagged,
   getThreadTrend,
@@ -1019,6 +1020,8 @@ app.post('/homepage', async (c) => {
   // as an absent section that reads as "nothing is wrong".
   const restricted = Boolean(who && !who.isAdmin && who.accessibleCustomers === 0);
   const slow = tenantId ? await getSlowResponders(tenantId) : [];
+  // The only section that fires before a complaint is written.
+  const stirring = tenantId ? await getStirring(tenantId) : [];
   // The working set is the reason to open the panel without a message: it is
   // the only view of what the user marked, since nothing was written to Gmail.
   workingSet.prune();
@@ -1042,6 +1045,7 @@ app.post('/homepage', async (c) => {
         // shown where they can actually run, and the write is only disclosed
         // where it can actually happen.
         { readingOn: await hasConsent(homeToken), canWrite: Boolean(homeToken) },
+        stirring,
       ),
     ),
   );
