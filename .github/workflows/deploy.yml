@@ -537,7 +537,14 @@ jobs:
   #     Marketplace SDK > Credentials. NOT crm-oauth: Google mints
   #     event.userIdToken for the add-on's client, so verifying against the CRM
   #     client checks the wrong audience and every request fails to verify.
-  #   - secret  ADDON_SERVICE_API_URL    the crm-api base URL
+  # SERVICE_API_URL is a plain env var, NOT a secret. It is the crm-api base
+  # URL — public, printed by `gcloud run services describe`, and carrying
+  # nothing worth protecting. It was declared here as a secret named
+  # ADDON_SERVICE_API_URL that was never created, and the live service had it as
+  # a literal, so every deploy of this service failed on `Cannot update
+  # environment variable [SERVICE_API_URL] to the given type because it has
+  # already been set with a different type` before it ever got as far as the
+  # missing secret.
   # Deploying without these gives a service that starts and then rejects every
   # request Google sends it.
   deploy-addon:
@@ -594,11 +601,11 @@ jobs:
           LIVE_ANALYSIS_PROVIDER=gemini,\
           LIVE_ANALYSIS_MODEL=gemini-3.1-flash-lite,\
           LIVE_ANALYSIS_REASONING=none,\
-          LIVE_ANALYSIS_TIMEOUT_MS=20000" \
+          LIVE_ANALYSIS_TIMEOUT_MS=20000,\
+          SERVICE_API_URL=https://crm-api-203731638840.us-central1.run.app" \
             --update-secrets "\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           LIVE_ANALYSIS_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,\
-          SERVICE_API_URL=ADDON_SERVICE_API_URL:latest,\
           GOOGLE_CLIENT_ID=ADDON_GOOGLE_CLIENT_ID:latest" \
             --min-instances 0 \
             --max-instances 10 \
