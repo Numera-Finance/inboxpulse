@@ -1503,7 +1503,7 @@ export class FiresService {
         FROM customers c
         JOIN LATERAL (
           SELECT btrim(regexp_replace(
-                   COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g')) AS who
+                   COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) AS who
           FROM emails e2
           JOIN customer_domains cd3
             ON lower(cd3.domain) = split_part(lower(e2.from_email), '@', 2)
@@ -1514,19 +1514,19 @@ export class FiresService {
             AND e2.tenant_id = ${tenantId}
             AND e2.received_at > now() - (${days} || ' days')::interval
           GROUP BY btrim(regexp_replace(
-                     COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g'))
+                     COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g'))
           -- A person before a team alias, then volume. Many client threads carry
           -- a per-client group address which is a user row like any other, and
           -- ranked purely by volume this answered "Hammerheadai (Auto)" — a
           -- mailbox, not somebody to call. can_login does not separate them: 214
           -- alias-shaped accounts can log in, ensemble@ among them.
           ORDER BY (btrim(regexp_replace(
-                      COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g')) NOT ILIKE '%team%'
+                      COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) NOT ILIKE '%team%'
                 AND btrim(regexp_replace(
-                      COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g')) NOT ILIKE '%(auto)%') DESC,
+                      COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) NOT ILIKE '%(auto)%') DESC,
                count(DISTINCT e2.thread_id) DESC,
                btrim(regexp_replace(
-                 COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g'))
+                 COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g'))
           LIMIT 1
         ) corr ON TRUE
         WHERE c.tenant_id = ${tenantId}
