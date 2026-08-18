@@ -532,7 +532,15 @@ jobs:
   # ADDON_VERIFY_ID_TOKEN must be true here.
   #
   # PREREQUISITES, none of which this job creates:
-  #   - service account  crm-addon-sa@  with roles/secretmanager.secretAccessor
+  #   - service account: crm-api-sa@, which is what the running service uses.
+  #     crm-addon-sa@ was named here and never created, so every CI deploy of
+  #     this service died on `PERMISSION_DENIED: Permission
+  #     'iam.serviceaccounts.actAs' denied on service account crm-addon-sa@ (or
+  #     it may not exist)`. Giving the add-on its own identity is the right end
+  #     state — it holds gmail scopes crm-api does not need — but creating one
+  #     changes the runtime identity and what it can reach in Secret Manager,
+  #     which is a migration, not a build fix. Until then CI names the account
+  #     the service actually runs as.
   #   - secret  ADDON_GOOGLE_CLIENT_ID   the add-on's OWN OAuth client id, from
   #     Marketplace SDK > Credentials. NOT crm-oauth: Google mints
   #     event.userIdToken for the add-on's client, so verifying against the CRM
@@ -588,7 +596,7 @@ jobs:
             --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-addon:${{ github.sha }}" \
             --platform managed \
             --region ${{ env.REGION }} \
-            --service-account "crm-addon-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --service-account "crm-api-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
             --network ${{ env.VPC_NAME }} \
             --subnet "${SUBNET}" \
             --vpc-egress private-ranges-only \
