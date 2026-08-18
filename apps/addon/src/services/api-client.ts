@@ -79,10 +79,20 @@ export interface EmailStats {
  * name. The thread reading does not depend on any of it, so a slow API should
  * cost the user a smaller card, never the whole panel.
  *
- * Two seconds because this runs inside a request a human is watching. An
- * internal service that has not answered in two seconds is not about to.
+ * Two seconds was chosen when every call here was a lookup. The management
+ * queries are not: "where the fires are" aggregates 90 days of negative threads
+ * per client, computes a monthly complaint rate for each, and then resolves an
+ * owner — 2.2s against the live corpus, plus 0.9s for the owner step. Under a 2s
+ * deadline it timed out on EVERY request, and the card renders a failed fetch
+ * and an empty list identically, so the panel simply had no "Where the fires
+ * are" section and read as a firm with nothing on fire.
+ *
+ * Six seconds is chosen against what the slow calls actually take with headroom,
+ * not against what feels responsive. The failure it prevents is silent and total;
+ * the cost when a service really is down is a panel that takes six seconds to
+ * render everything else, which is visible and recoverable.
  */
-const API_TIMEOUT_MS = 2000;
+const API_TIMEOUT_MS = 6000;
 
 async function apiFetch(url: string, init?: RequestInit): Promise<Response | null> {
   const controller = new AbortController();

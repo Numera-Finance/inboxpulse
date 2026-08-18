@@ -1,6 +1,7 @@
 import { inject, injectable } from 'tsyringe';
 import { sql, type SQL } from 'drizzle-orm';
 import type { Database } from '@crm/database';
+import { logger } from '../utils/logger';
 
 /**
  * Account context for a sender's domain — the part of the panel Gemini cannot
@@ -1387,8 +1388,7 @@ export class FiresService {
         count(*)::int AS negative,
         count(*) FILTER (WHERE t.first_reply_at IS NULL)::int AS unanswered,
         MAX(EXTRACT(EPOCH FROM (now() - t.received_at)) / 86400)::int AS oldest_days,
-        COALESCE(MAX(al.who), MAX(corr.who)) AS owner,
-        (MAX(al.who) IS NULL AND MAX(corr.who) IS NOT NULL) AS owner_inferred,
+        MAX(al.who) AS owner,
         MAX(al.role) AS owner_role,
         MAX(al.peers) AS owner_peers,
         (
@@ -1445,46 +1445,6 @@ export class FiresService {
                  who
         LIMIT 1
       ) al ON TRUE
-      -- WHO ACTUALLY TALKS TO THEM, when the sheet names nobody.
-      --
-      -- "Ours" is defined as an address that belongs to a user in this tenant,
-      -- not by matching a domain string, so it cannot drift from the staff list.
-      -- Ordered by thread count, which prefers a person over a per-client team
-      -- alias without special-casing either: Truefoundry is djyoti on 258
-      -- threads against ensemble@ on 53, Actonadu is Amanda Tabb on 30 against
-      -- actonadu@ on 12.
-      LEFT JOIN LATERAL (
-        SELECT btrim(regexp_replace(
-                 COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) AS who,
-               count(DISTINCT e2.thread_id) AS threads
-        FROM emails e2
-        JOIN customer_domains cd3
-          ON lower(cd3.domain) = split_part(lower(e2.from_email), '@', 2)
-         AND cd3.tenant_id = e2.tenant_id
-        JOIN email_participants p2 ON p2.email_id = e2.id
-        JOIN users u2 ON lower(u2.email) = lower(p2.email) AND u2.tenant_id = ${tenantId}
-        WHERE cd3.customer_id = c.id
-          AND e2.tenant_id = ${tenantId}
-          AND e2.received_at > now() - (${days} || ' days')::interval
-        GROUP BY btrim(regexp_replace(
-                   COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g'))
-        -- A PERSON BEFORE A TEAM ALIAS, then volume.
-        --
-        -- Many client threads carry a per-client group address the team listens
-        -- on, and it is a user row like any other. Ranked purely by volume,
-        -- Hammerheadco answered "Hammerheadai (Auto)", which is a mailbox, not
-        -- somebody to call. Demoting alias-shaped names surfaces Nagaraj Hebbar
-        -- on 59 threads instead. can_login does not separate these — 214
-        -- alias-shaped accounts can log in, ensemble@ among them.
-        ORDER BY (btrim(regexp_replace(
-                    COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) NOT ILIKE '%team%'
-              AND btrim(regexp_replace(
-                    COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g')) NOT ILIKE '%(auto)%') DESC,
-             count(DISTINCT e2.thread_id) DESC,
-             btrim(regexp_replace(
-               COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\\s+', ' ', 'g'))
-        LIMIT 1
-      ) corr ON TRUE
       GROUP BY c.id, c.name
       -- ENGAGED FIRST, then unanswered, then weight of evidence.
       --
@@ -1500,7 +1460,7 @@ export class FiresService {
       LIMIT ${limit}
     `);
 
-    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+    const fires: Fire[] = (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
       customerId: (r.customer_id as string | null) ?? null,
       customer: String(r.customer ?? '(unknown)'),
       negative: Number(r.negative ?? 0),
@@ -1512,9 +1472,78 @@ export class FiresService {
       // month has no arc rather than a misleading one.
       arc: Array.isArray(r.arc) ? (r.arc as unknown[]).map((n) => Number(n)) : [],
       engaged: r.engaged === true,
-      ownerInferred: r.owner_inferred === true,
+      ownerInferred: false,
       ownerPeers: Number(r.owner_peers ?? 1),
     }));
+
+    return this.nameWhoTalksToThem(tenantId, fires, days);
+  }
+
+  /**
+   * Fill in an owner for the rows the allocation sheet left blank.
+   *
+   * A SECOND QUERY over the handful of ids the first one returned, rather than a
+   * LATERAL inside it. As a LATERAL this ran per candidate customer before the
+   * LIMIT and took 26 TO 48 SECONDS against the corpus. The add-on gives every
+   * API call 2 seconds, so the fires endpoint timed out on every request and the
+   * panel showed no "Where the fires are" section at all — the same silent
+   * absence the entitlement bug caused, reintroduced by the fix for it. Bounded
+   * to six ids it is a different query with a different plan.
+   *
+   * Returns the input untouched on any failure. An owner is enrichment; a fires
+   * list without one is still worth showing, and this must never be the reason
+   * the section disappears again.
+   */
+  private async nameWhoTalksToThem(tenantId: string, fires: Fire[], days: number): Promise<Fire[]> {
+    const missing = fires.filter((f) => !f.owner && f.customerId).map((f) => f.customerId as string);
+    if (!missing.length) return fires;
+    try {
+      const rows = await this.db.execute(sql`
+        SELECT c.id::text AS customer_id, corr.who
+        FROM customers c
+        JOIN LATERAL (
+          SELECT btrim(regexp_replace(
+                   COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g')) AS who
+          FROM emails e2
+          JOIN customer_domains cd3
+            ON lower(cd3.domain) = split_part(lower(e2.from_email), '@', 2)
+           AND cd3.tenant_id = e2.tenant_id
+          JOIN email_participants p2 ON p2.email_id = e2.id
+          JOIN users u2 ON lower(u2.email) = lower(p2.email) AND u2.tenant_id = ${tenantId}
+          WHERE cd3.customer_id = c.id
+            AND e2.tenant_id = ${tenantId}
+            AND e2.received_at > now() - (${days} || ' days')::interval
+          GROUP BY btrim(regexp_replace(
+                     COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g'))
+          -- A person before a team alias, then volume. Many client threads carry
+          -- a per-client group address which is a user row like any other, and
+          -- ranked purely by volume this answered "Hammerheadai (Auto)" — a
+          -- mailbox, not somebody to call. can_login does not separate them: 214
+          -- alias-shaped accounts can log in, ensemble@ among them.
+          ORDER BY (btrim(regexp_replace(
+                      COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g')) NOT ILIKE '%team%'
+                AND btrim(regexp_replace(
+                      COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g')) NOT ILIKE '%(auto)%') DESC,
+               count(DISTINCT e2.thread_id) DESC,
+               btrim(regexp_replace(
+                 COALESCE(u2.first_name || ' ' || u2.last_name, p2.email), '\s+', ' ', 'g'))
+          LIMIT 1
+        ) corr ON TRUE
+        WHERE c.tenant_id = ${tenantId}
+          AND c.id::text = ANY(${missing})
+      `);
+      const byId = new Map(
+        (rows as unknown as Array<{ customer_id: string; who: string }>).map((r) => [r.customer_id, r.who]),
+      );
+      return fires.map((f) =>
+        !f.owner && f.customerId && byId.get(f.customerId)
+          ? { ...f, owner: byId.get(f.customerId) as string, ownerInferred: true }
+          : f,
+      );
+    } catch (error) {
+      logger.warn({ err: error, tenantId }, 'correspondent lookup failed; showing fires without it');
+      return fires;
+    }
   }
 }
 
