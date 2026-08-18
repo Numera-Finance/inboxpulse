@@ -48,7 +48,7 @@ export function privacyBlock(opts: {
     deco({
       startIcon: { knownIcon: 'DESCRIPTION' },
       text: opts.on
-        ? '<b>Reading is on</b> — only for you, only while you have a thread open'
+        ? '<b>Reading is on.</b> Only for you, only while you have a thread open'
         : '<b>Your mail is not being read</b>',
       wrapText: true,
     }),
@@ -59,7 +59,7 @@ export function privacyBlock(opts: {
         '<b>Only you see it.</b> This panel is rendered for your account alone. Logs record a one-way hash, not your address.<br>' +
         '<b>It uses Google Gemini.</b> The thread text is sent there to be summarized, and not used to train it.' +
         (opts.canWrite
-          ? '<br><b>One thing gets written.</b> A label under ⚡/ on threads you mark yourself — never on mail you have not touched. ' +
+          ? '<br><b>One thing gets written.</b> A label under ⚡/ on threads you mark yourself, never on mail you have not touched. ' +
             '"Clear all my marks" removes every one of them in a single press.'
           : '') +
         '</font>',

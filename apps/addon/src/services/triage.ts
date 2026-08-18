@@ -36,10 +36,10 @@ const WEIGHT: Record<ThreadMode, number> = {
 
 /** Plain-language reason the item sits where it does. */
 const WHY: Record<ThreadMode, string> = {
-  complaint: 'Someone is unhappy — gets worse if it waits',
-  scheduling: 'A time is being arranged — expires if you leave it',
+  complaint: 'Someone is unhappy, gets worse if it waits',
+  scheduling: 'A time is being arranged, expires if you leave it',
   working: 'Live work, waiting on you',
-  opportunity: 'An opening — decays slowly, but it decays',
+  opportunity: 'An opening, decays slowly, but it decays',
   fyi: 'Nothing needed from you',
 };
 

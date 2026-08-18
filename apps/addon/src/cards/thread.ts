@@ -125,12 +125,12 @@ export interface ThreadCardInput {
  * stays honest without going blank.
  */
 const NON_RESOLVED_COPY: Record<Exclude<ThreadStatus, 'resolved'>, string> = {
-  preview: 'Preview mode — InboxPulse API not configured, so no live flags are shown.',
+  preview: 'Preview mode. InboxPulse API not configured, so no live flags are shown.',
   unverified: 'Could not verify this request came from Google, so no data is shown.',
   unidentified:
     "Your Google account isn't linked to an InboxPulse workspace yet, so account context can't be loaded. Linking happens when a mailbox is connected to InboxPulse.",
   untracked:
-    "Not a tracked client thread — so there's nothing analysed to show. InboxPulse only analyses mail with an external customer participant; internal and automated mail is skipped on purpose.",
+    "Not a tracked client thread, so there's nothing analysed to show. InboxPulse only analyses mail with an external customer participant; internal and automated mail is skipped on purpose.",
   unreadable:
     "InboxPulse couldn't read this message. Gmail declined the request because the add-on hasn't been granted access to your mail yet.",
 };
@@ -212,7 +212,7 @@ function deriveState(
       : `${flagged.length} message${flagged.length === 1 ? '' : 's'} flagged on this thread.`;
     return {
       headline: falling
-        ? `<b><font color="${LIVE_COLOR.negative}">Needs attention — getting worse</font></b>`
+        ? `<b><font color="${LIVE_COLOR.negative}">Needs attention, getting worse</font></b>`
         : `<b><font color="${LIVE_COLOR.negative}">Needs attention</font></b>`,
       detail,
     };
@@ -534,7 +534,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             }),
           ),
           deco({
-            text: 'Sentiment, commitments and a draft reply — read on your machine, not stored.',
+            text: 'Sentiment, commitments and a draft reply, read on your machine and not stored.',
             wrapText: true,
           }),
         ],
@@ -631,7 +631,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
         if (acct.priorConcerns.length) {
           widgets.push(
             deco({
-              topLabel: `Raised before — ${acct.negativeCount} negative message${acct.negativeCount === 1 ? '' : 's'}`,
+              topLabel: `Raised before, ${acct.negativeCount} negative message${acct.negativeCount === 1 ? '' : 's'}`,
               text: acct.priorConcerns
                 .map((p) => `<b>${p.when}</b> ${escapeText(p.reason)}`)
                 .join('<br>'),
@@ -690,7 +690,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             deco({
               // The quote is the point: a paraphrase is a claim to trust, a
               // quote is one the reader can check against the thread on screen.
-              text: `<b>${escapeText(c.who)}</b> — ${escapeText(c.what)}${
+              text: `<b>${escapeText(c.who)}</b>, ${escapeText(c.what)}${
                 c.quote ? `<br><i>&ldquo;${escapeText(c.quote)}&rdquo;</i>` : ''
               }`,
               bottomLabel: c.when,
@@ -733,7 +733,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             // approaches. Same clipping that truncated the draft earlier.
             text:
               `<b>${escapeText(o.stance)}</b>${i === 0 ? ' <font color="#1a73e8">· recommended</font>' : ''}` +
-              (o.rationale ? ` — ${escapeText(o.rationale)}` : '') +
+              (o.rationale ? `, ${escapeText(o.rationale)}` : '') +
               (o.text ? `<br>${escapeText(o.text)}` : '<br><i>Pick this approach to have it written</i>'),
             wrapText: true,
             button: o.text
@@ -898,7 +898,7 @@ export function buildThreadCard(input: ThreadCardInput): Card {
             ),
             deco({
               text: marked.size
-                ? `<font color="#5f6368">Refresh Gmail to see the label — an add-on cannot repaint the message list. Clears itself in 30 minutes; press again to clear now.</font>`
+                ? `<font color="#5f6368">Refresh Gmail to see the label, an add-on cannot repaint the message list. Clears itself in 30 minutes; press again to clear now.</font>`
                 : `<font color="#5f6368">${INSTANT_LABELS.map((l) => l.means.toLowerCase()).join(' · ')}</font>`,
               wrapText: true,
             }),

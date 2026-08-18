@@ -100,7 +100,7 @@ export const CONNECTORS: Connector[] = [
     key: 'streak',
     name: 'Streak',
     pull: 'the pipeline and stage this contact sits in',
-    example: 'Onboarding — Docs collected, 9 days in stage',
+    example: 'Onboarding, Docs collected, 9 days in stage',
     // The cheapest connector on this list by a distance: Streak is Gmail-native,
     // so the box is already attached to the thread the user is reading. It is
     // also the only one whose data is arguably already on screen, which caps how
@@ -114,7 +114,7 @@ export const CONNECTORS: Connector[] = [
     key: 'gchat',
     name: 'Google Chat',
     pull: 'whether this client was discussed internally in the last 7 days',
-    example: 'Dolly raised this in Client — Blitzz yesterday',
+    example: 'Dolly raised this in Client, Blitzz yesterday',
     // Stops two people answering the same client differently within an hour,
     // which is the failure that makes a firm look disorganised in a way no
     // individual reply can undo. Same Google identity the add-on already holds,
@@ -132,7 +132,7 @@ export const CONNECTORS: Connector[] = [
     // embarrassment of proposing times to someone you are seeing in two days.
     changesTheReply: 'whether to write a long reply at all, or just say "Thursday"',
     modes: ['scheduling', 'complaint', 'opportunity'],
-    cost: 'calendar.readonly — RESTRICTED tier, so it needs security review',
+    cost: 'calendar.readonly, RESTRICTED tier, so it needs security review',
   },
 ];
 

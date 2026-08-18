@@ -272,8 +272,8 @@ export function buildHomepageCard(
             startIcon: { knownIcon: 'PERSON' },
             topLabel: `${p.threads} answered threads`,
             text: mult
-              ? `<b>${escapeText(p.name)}</b> — <font color="#c5221f"><b>${mult}×</b> the firm</font>`
-              : `<b>${escapeText(p.name)}</b> — <font color="#c5221f">${hrs(p.medianH)}</font>`,
+              ? `<b>${escapeText(p.name)}</b> <font color="#c5221f"><b>${mult}×</b> the firm</font>`
+              : `<b>${escapeText(p.name)}</b> <font color="#c5221f">${hrs(p.medianH)}</font>`,
             bottomLabel: (() => {
               if (!slow.firmMedianH) return `${hrs(p.medianH)} median`;
               const { a, b } = pair(p.medianH, slow.firmMedianH);
@@ -341,7 +341,7 @@ export function buildHomepageCard(
       faster === null
         ? ''
         : faster < 2
-          ? `<font color="#c5221f">only ${hrs(Math.abs(faster))} faster than routine mail — sentiment is not changing behaviour</font>`
+          ? `<font color="#c5221f">only ${hrs(Math.abs(faster))} faster than routine mail. Sentiment is not changing behaviour</font>`
           : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
     const spark = sparkline(pulse.trend.map((t) => t.medianH));
 
@@ -393,7 +393,7 @@ export function buildHomepageCard(
         // is context for it.
         deco({
           topLabel: `median over ${pulse.negativeCount} replies`,
-          text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? ` — ${verdict}` : ''}`,
+          text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? `, ${verdict}` : ''}`,
           wrapText: true,
           // Land on exactly the population the median was computed over:
           // negative, still open, same window. A headline number you cannot
@@ -647,7 +647,7 @@ export function buildHomepageCard(
       widgets: [
         buttons(actionButton('Clear all my marks', `${baseUrl}/gmail/clear-marks`, {})),
         deco({
-          text: '<font color="#5f6368">Removes every InboxPulse ⚡ label from your mailbox. Use this if a mark outlived its 30 minutes — timed expiry needs the service to stay running, and a deploy or restart loses it.</font>',
+          text: '<font color="#5f6368">Removes every InboxPulse ⚡ label from your mailbox. Use this if a mark outlived its 30 minutes: timed expiry needs the service to stay running, and a deploy or restart loses it.</font>',
           wrapText: true,
         }),
       ],
@@ -685,7 +685,7 @@ export function buildHomepageCard(
     footer.push({
       widgets: [
         text(
-          'Preview mode — not connected to the InboxPulse API. Set SERVICE_API_KEY (and ADDON_DEV_TENANT_ID for local clone data) to show live stats.',
+          'Preview mode. Not connected to the InboxPulse API. Set SERVICE_API_KEY (and ADDON_DEV_TENANT_ID for local clone data) to show live stats.',
         ),
       ],
     });

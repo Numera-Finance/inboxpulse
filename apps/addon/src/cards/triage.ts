@@ -66,7 +66,7 @@ export function buildTriageCard(input: {
           }),
         ),
         deco({
-          text: '<font color="#5f6368"><b>Label the top</b> flags the first few as Focus. <b>Label by type</b> colours each row by what it needs — Unhappy, Needs a time, Waiting on you, Opening. Threads needing nothing get no label. <b>Refresh Gmail to see them</b> — an add-on cannot repaint the message list. Both clear in 30 minutes.</font>',
+          text: '<font color="#5f6368"><b>Label the top</b> flags the first few as Focus. <b>Label by type</b> colours each row by what it needs: Unhappy, Needs a time, Waiting on you, Opening. Threads needing nothing get no label. <b>Refresh Gmail to see them.</b> An add-on cannot repaint the message list. Both clear in 30 minutes.</font>',
           wrapText: true,
         }),
       ],
@@ -75,7 +75,7 @@ export function buildTriageCard(input: {
 
   if (input.work.length) {
     sections.push({
-      header: heading(`Do these first — ${input.work.length}`),
+      header: heading(`Do these first: ${input.work.length}`),
       widgets: input.work.map((i, n) =>
         deco({
           topLabel: `${n + 1}.  ${i.why} · ${age(i.ageHours)}`,
@@ -83,7 +83,7 @@ export function buildTriageCard(input: {
           // three lines of attendee names and timezone, and nine of those turn
           // a ranked list into a wall the user has to scroll to see the ranking
           // — which defeats the only thing this card is for.
-          text: `<b>${escapeText(who(i.from))}</b> — ${escapeText(
+          text: `<b>${escapeText(who(i.from))}</b> ${escapeText(
             i.subject.length > 60 ? `${i.subject.slice(0, 57)}…` : i.subject,
           )}`,
           wrapText: false,

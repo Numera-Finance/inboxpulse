@@ -123,13 +123,13 @@ export function nextActionsFor(input: {
       return [
         {
           label: 'Start a proposal',
-          url: newDocUrl(`Proposal — ${subject}`),
+          url: newDocUrl(`Proposal, ${subject}`),
           hint: 'New Google Doc, titled from this thread',
         },
         {
           label: 'Draft the invite',
           url: calendarInviteUrl({
-            title: `Intro call — ${subject}`,
+            title: `Intro call, ${subject}`,
             attendees: externals.length ? externals : everyone,
             details: `From the Gmail thread: ${subject}`,
             now,
@@ -146,7 +146,7 @@ export function nextActionsFor(input: {
         {
           label: 'Get them on a call',
           url: calendarInviteUrl({
-            title: `Follow-up — ${subject}`,
+            title: `Follow-up, ${subject}`,
             attendees: everyone,
             details: `From the Gmail thread: ${subject}`,
             now,

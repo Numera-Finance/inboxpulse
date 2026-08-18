@@ -120,7 +120,7 @@ app.post('/consent/grant', async (c) => {
   const verified = await verifyRequest(c.req.header('authorization'), event);
   if (!verified.ok) return c.json(notify('Could not verify your account.'));
   const { oauthToken: t } = getGmail(event);
-  if (!(await grantConsent(t))) return c.json(notify('Could not turn reading on — this install may not have permission to add a label.'));
+  if (!(await grantConsent(t))) return c.json(notify('Could not turn reading on, this install may not have permission to add a label.'));
   return c.json(notify('Reading is on. Open a thread to see the summary.'));
 });
 
@@ -256,7 +256,7 @@ function buildHistoryPoints(account: { found: boolean; negativeCount: number; op
   // the open thread.
   for (const c of account.priorConcerns.slice(0, 2)) {
     const short = c.reason.length > 120 ? `${c.reason.slice(0, 117)}…` : c.reason;
-    points.push(`${c.when} — ${short}`);
+    points.push(`${c.when}, ${short}`);
   }
 
   if (account.openTasks > 0) {
@@ -721,9 +721,9 @@ app.post('/gmail/mark', async (c) => {
     notify(
       res.on
         ? wrote
-          ? `${short} added — refresh Gmail to see it. Clears in ${res.minutesLeft} min.`
-          : `${short} — clears in ${res.minutesLeft} min (panel only)`
-        : `${short} cleared — refresh Gmail to see it go`,
+          ? `${short} added, refresh Gmail to see it. Clears in ${res.minutesLeft} min.`
+          : `${short}, clears in ${res.minutesLeft} min (panel only)`
+        : `${short} cleared, refresh Gmail to see it go`,
     ),
   );
 });
@@ -860,7 +860,7 @@ app.post('/gmail/triage/label', async (c) => {
   // the only honest thing is to say so rather than let them wonder whether the
   // button worked.
   return c.json(
-    notify(`Focus added to ${n} thread${n === 1 ? '' : 's'} — refresh Gmail to see them. Clears in 30 min.`),
+    notify(`Focus added to ${n} thread${n === 1 ? '' : 's'}, refresh Gmail to see them. Clears in 30 min.`),
   );
 });
 
@@ -905,7 +905,7 @@ app.post('/gmail/clear-marks', async (c) => {
     // cleared", which is what a clean mailbox looks like.
     if (err instanceof MissingScopeError) {
       return c.json(
-        notify('This version cannot change labels — it only reads the thread you have open.'),
+        notify('This version cannot change labels, it only reads the thread you have open.'),
       );
     }
     throw err;
@@ -923,7 +923,7 @@ app.post('/gmail/clear-marks', async (c) => {
       total || removedDefs
         ? `Cleared ${total} thread${total === 1 ? '' : 's'}` +
           (removedDefs ? `, removed ${removedDefs} old label${removedDefs === 1 ? '' : 's'}` : '') +
-          ' — refresh Gmail to see'
+          ', refresh Gmail to see'
         : 'Nothing marked',
     ),
   );
@@ -982,7 +982,7 @@ app.post('/gmail/triage/label-types', async (c) => {
   return c.json(
     notify(
       n
-        ? `Labelled ${n} thread${n === 1 ? '' : 's'} by type — refresh Gmail to see them. Clears in 30 min.`
+        ? `Labelled ${n} thread${n === 1 ? '' : 's'} by type, refresh Gmail to see them. Clears in 30 min.`
         : 'Nothing needed a label.',
     ),
   );
