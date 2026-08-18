@@ -562,6 +562,16 @@ export interface Fire {
    * throws on a missing field is worse than one that shows a count alone.
    */
   arc?: number[];
+  /**
+   * Whether we are in a live back-and-forth with this client right now — the
+   * client wrote 4+ times in the last week against 8+ in the prior month, and
+   * we replied 3+ times.
+   *
+   * Optional for the same reason as `arc`: the addon and crm-api deploy
+   * independently, and against an older API this is simply absent, which the
+   * card renders as no marker rather than as a wrong one.
+   */
+  engaged?: boolean;
 }
 
 /** Where the fires are, by client, with the account manager to call. */

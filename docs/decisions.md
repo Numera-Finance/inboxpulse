@@ -1257,3 +1257,67 @@ impossible to attribute.
   changing on 7 of 49. The live pool was 4,040 rows against the 35,507 the
   offline test used, so the most likely explanation is a sparse pool rather than
   a failed idea. Re-run after the full backfill before enabling.
+
+### ADR-027: Escalation risk is a posterior, and engagement is the evidence that moves it (2026-08-17)
+
+**Status:** Accepted. Corrects the measurement behind the "Talking more than
+usual" section shipped in `crm-api-00116-n98` / `crm-addon-00065-tvv`.
+
+**Context:** The panel gained a section built on a finding that a client's mail
+volume doubles in the week before their first complaint — "rose in 180 of 265
+clients, 68%". Asked what fraction of historical complaints that would actually
+catch, the honest re-measurement showed the figure was conditioned on clients who
+eventually complained. It answers "did volume rise before the complaint?" when a
+panel row must answer "volume rose, so will they complain?". Over all 9,417
+client-weeks the shipped rule caught 7.5% of complaints at 15.7% precision
+against a 5.7% base rate.
+
+This is the same error as the sensitisation table — "unhappy clients stay
+unhappy; they do not get touchier" in `docs/EXPERIMENTS.md` — made one experiment
+later: select on the outcome, measure backwards, report a rate.
+
+**Decision:** Treat every panel signal as a posterior — P(complains next week |
+what we can see) — and require it be measured as the alert it will be: fire on
+every client-week, then count what followed. Report lift against the 5.7% prior,
+never a rate conditioned on the outcome.
+
+Measured that way, the evidence ranks:
+
+| what we know this week | client-weeks | P(complains next week) | vs prior |
+|---|---|---|---|
+| volume doubled, nobody replying | 1,131 | 4.4% | 0.8× |
+| volume doubled | 2,658 | 7.2% | 1.3× |
+| accelerating three weeks running | 995 | 7.5% | 1.3× |
+| in a real back-and-forth with us | 1,032 | 16.1% | 2.8× |
+| complained in the last four weeks | 1,181 | 16.9% | 3.0× |
+| **both** | 384 | **24.7%** | **4.4×** |
+| both, complaints still unanswered | 215 | 27.0% | 4.7× |
+
+Engagement and a recent complaint carry independent evidence and compound.
+Volume and acceleration do not: bolted onto the pair they move 24.7% to 25.0% and
+23.7% respectively while discarding most of the coverage. They look predictive
+alone only because loud weeks are mostly engaged weeks.
+
+**Consequences:**
+
+- `FiresService` orders by `engaged DESC, unanswered DESC, negative DESC`.
+  Unanswered was the previous primary key and is the weaker predictor — 18.3%
+  against 14.5%, where engagement is 24.7% against 13.0%. An engaged client with
+  every complaint answered (21.9%) outranks an unengaged one with complaints
+  still open (14.7%). Unanswered stays second and stays visible because it is the
+  part the firm controls and the reason to reply today; it is simply not what
+  says the client is still working themselves up.
+- `Fire` carries `engaged`; the card shows "In conversation" and only when true.
+  It leads the grey line, because it decides the sort and a reader who cannot see
+  why the order changed reads the order as arbitrary. Optional on both sides of
+  the seam: the addon and crm-api deploy independently and absent must render as
+  no marker, never a wrong one.
+- The "Talking more than usual" section stays, with its claim corrected in place
+  from 68% to 2.4×. Among clients with no complaint on file, engaged plus
+  above twice usual volume reaches 13.7% against 11.0% for engaged alone — a real
+  but small contribution, and the only place volume earns anything.
+- The `we_replied >= 3` filter is load-bearing, not hygiene. Volume without
+  replies runs 4.4%, BELOW the base rate: an unattended spike is a notification
+  stream, not a person getting angrier.
+- Superseded framing in `docs/EXPERIMENTS.md` is kept and marked rather than
+  deleted, because the shape of the error is the reusable part.

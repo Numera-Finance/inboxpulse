@@ -807,6 +807,46 @@ describe('the fire arc', () => {
   });
 });
 
+describe('the engagement marker on a fire', () => {
+  const withEngaged = (engaged?: boolean) =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        fires: [{
+          customerId: 'c1', customer: 'PureCipher', negative: 4, unanswered: 2,
+          oldestDays: 9, owner: 'Ana Diaz', ownerRole: 'Account manager',
+          arc: [5, 7, 36], engaged,
+        }],
+      }),
+    );
+
+  it('marks a client we are actually talking to', () => {
+    // The strongest predictor measured anywhere in this panel: within the fires
+    // list, engaged clients complain again next week 24.7% of the time against
+    // 13.0% for the rest. It also decides the sort order, so a reader who cannot
+    // see it reads the order as arbitrary.
+    expect(withEngaged(true)).toContain('In conversation');
+  });
+
+  it('leads with it, ahead of the trajectory', () => {
+    // Placement is the claim. It sorts first, so it reads first.
+    const json = withEngaged(true);
+    expect(json.indexOf('In conversation')).toBeLessThan(json.indexOf('Rising'));
+  });
+
+  it('says nothing when we are not in the conversation', () => {
+    // A marker on every row is a column heading, not a signal.
+    expect(withEngaged(false)).not.toContain('In conversation');
+  });
+
+  it('says nothing against an older API that does not send the field', () => {
+    // The addon and crm-api deploy independently and the addon has shipped
+    // ahead before. Absent must render as no marker, never as a wrong one.
+    expect(withEngaged()).not.toContain('In conversation');
+  });
+});
+
 describe('talking more than usual', () => {
   const card = (stirring: Array<{ customer: string; customerId: string | null; recent: number; usual: number; owner: string | null }>) =>
     JSON.stringify(

@@ -123,6 +123,31 @@ Two related traps in this corpus:
 - **Mine features on the training half only.** Phrases mined over everything
   score well and mean nothing.
 
+## Never Measure a Signal Backwards
+
+Every panel signal is a posterior: **P(trouble next week | what we can see)**.
+Measure it as the alert it will actually be — fire it on every client-week, then
+count what followed — and report lift against the base rate. The base rate is
+**5.7%** of client-weeks followed by a complaint.
+
+The failure mode is to select on the outcome and measure toward the past.
+"Volume rose in 180 of 265 clients who complained — 68%" is
+P(volume rose | complained), which no panel row can act on. The same rule run
+forward caught 7.5% of complaints at 15.7% precision. At a 5.7% prior, measuring
+backwards will make almost anything look strong; it has now produced two
+shipped-then-retracted findings — sensitisation and volume (ADR-027).
+
+Two checks before believing a signal:
+- **Did the population get chosen by the outcome?** If the denominator is
+  "clients who complained", the number is describing history, not predicting it.
+- **Does it survive conditioning on what you already show?** Volume looked worth
+  1.3× and went to nothing once engagement was known. A flat lift curve across
+  thresholds (1.5× volume and 3× volume both landing at ~7.2%) means something
+  correlated with the signal is carrying it, not the signal.
+
+And keep the anti-signals: **volume with nobody replying runs 4.4%, below base
+rate.** An unattended spike is a notification stream, not a person getting angry.
+
 ## Export Rules
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.

@@ -1135,6 +1135,31 @@ export interface Fire {
    * Empty when the client has too little mail per month to compute a rate.
    */
   arc: number[];
+  /**
+   * Whether we are in a live back-and-forth with this client right now.
+   *
+   * The strongest predictor of escalation in the corpus, and it is free —
+   * message counts, no model call and no vector. Measured over 9,417
+   * client-weeks, of which 1,181 had a complaint in the preceding four weeks:
+   *
+   *   all fires-list weeks                     16.9% complained again next week
+   *   engaged                          (384)   24.7%
+   *   not engaged                      (797)   13.0%
+   *
+   * It also beats the field this list used to rank by. Unanswered complaints
+   * separate 18.3% from 14.5% — real but weak — and the two compose rather than
+   * duplicate: engaged AND unanswered is 27.0%, the worst cell in the table.
+   * Decisively, an engaged client whose complaints have ALL been answered runs
+   * 21.9% against 14.7% for an unengaged client with complaints still sitting
+   * open. Answering the mail does not settle the client; being in the
+   * conversation is what says they are still working themselves up.
+   *
+   * That is why this sorts ahead of `unanswered`. Unanswered stays in the
+   * ordering underneath it, and stays on the row, because it is the part the
+   * firm controls and the reason to reply today — but as a predictor of what
+   * happens next it is the weaker of the two.
+   */
+  engaged: boolean;
 }
 
 /**
@@ -1262,6 +1287,35 @@ export class FiresService {
         GROUP BY 1, 2
         HAVING count(*) >= 6
       )
+      , engagement AS (
+        -- Are we ACTUALLY talking to this client, this week?
+        --
+        -- Deliberately the same three counts StirringService uses, over the same
+        -- 7-day / 35-day windows, so the two sections cannot disagree about what
+        -- "engaged" means. A client is engaged when they wrote at least four
+        -- times this week, have enough history for that to be a rate rather than
+        -- an accident, and WE REPLIED at least three times.
+        --
+        -- The reply count is what keeps machines out. Volume alone is worse than
+        -- useless here: client-weeks where mail doubled with no reply traffic
+        -- complained 4.4% of the time against a 5.7% base — BELOW chance,
+        -- because an unattended volume spike is a notification stream, not a
+        -- person getting angrier.
+        SELECT cd.customer_id,
+               count(*) FILTER (WHERE e.received_at >= now() - interval '7 days')::int AS recent,
+               count(*) FILTER (WHERE e.received_at <  now() - interval '7 days'
+                                  AND e.received_at >= now() - interval '35 days')::int AS prior,
+               count(*) FILTER (WHERE e.received_at >= now() - interval '7 days'
+                                  AND e.first_reply_at IS NOT NULL)::int AS we_replied
+        FROM emails e
+        JOIN customer_domains cd
+          ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+         AND cd.tenant_id = e.tenant_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.is_customer_email
+          AND e.received_at >= now() - interval '35 days'
+        GROUP BY 1
+      )
       SELECT
         c.id::text AS customer_id,
         COALESCE(c.name, '(unknown)') AS customer,
@@ -1274,9 +1328,11 @@ export class FiresService {
         (
           SELECT array_agg(round(100.0 * m.neg / m.mail)::int ORDER BY m.mon)
           FROM monthly m WHERE m.customer_id = c.id
-        ) AS arc
+        ) AS arc,
+        COALESCE(BOOL_OR(g.recent >= 4 AND g.prior >= 8 AND g.we_replied >= 3), false) AS engaged
       FROM t
       JOIN customers c ON c.id = t.customer_id
+      LEFT JOIN engagement g ON g.customer_id = c.id
       -- The best available role, not only Account manager.
       --
       -- Reading only role = 'Account manager' meant a client with a
@@ -1315,7 +1371,17 @@ export class FiresService {
         LIMIT 1
       ) al ON TRUE
       GROUP BY c.id, c.name
-      ORDER BY 4 DESC, 3 DESC
+      -- ENGAGED FIRST, then unanswered, then weight of evidence.
+      --
+      -- This used to lead with unanswered on the reasoning that it is the part
+      -- the firm controls. That reasoning still holds for what to DO, and it is
+      -- why unanswered is the second key and still shown on the row. It is not
+      -- what predicts trouble. Within the fires list, engagement separates 24.7%
+      -- from 13.0% while unanswered separates 18.3% from 14.5%, and an engaged
+      -- client with everything answered (21.9%) outranks an unengaged one with
+      -- complaints still open (14.7%). With only six slots, the stronger
+      -- predictor decides who gets seen.
+      ORDER BY engaged DESC, unanswered DESC, negative DESC
       LIMIT ${limit}
     `);
 
@@ -1330,6 +1396,7 @@ export class FiresService {
       // Postgres returns an int[] or null; a client with too little mail in any
       // month has no arc rather than a misleading one.
       arc: Array.isArray(r.arc) ? (r.arc as unknown[]).map((n) => Number(n)) : [],
+      engaged: r.engaged === true,
       ownerPeers: Number(r.owner_peers ?? 1),
     }));
   }
@@ -1468,23 +1535,45 @@ export class SlowRespondersService {
 }
 
 /**
- * A client whose mail has suddenly doubled, before anyone has complained.
+ * A client we are deep in conversation with, before anyone has complained.
  *
  * Every other signal in this panel reacts to a complaint that has already been
- * written. This one fires first. Measured over 265 clients who eventually
- * complained: median daily mail ran 0.21 in the prior month and 0.43 in the
- * final week before the first complaint, and volume rose in 180 of them — 68%.
- * Clients rock themselves into anger, and the back-and-forth intensifies before
- * the complaint lands.
+ * written. This one fires first, and that is the whole of its claim. It is a
+ * modest signal and the comment here once said otherwise.
  *
- * Two properties earn it a place. It costs nothing — counting messages per
- * sender per day, no model call and no vector — and it PRECEDES the label rather
- * than restating it, which nothing built on embeddings managed: a per-client mood
+ * WHAT THE NUMBER ACTUALLY IS. Measured over 9,417 client-weeks, of which 533
+ * were followed by a complaint — a 5.7% base rate:
+ *
+ *   clean client, engaged and >2x usual volume   (183)  13.7%   2.4x
+ *   clean client, engaged, any volume            (648)  11.0%   1.9x
+ *   clean client, >2x volume but NOT engaged   (1,131)   4.4%   0.8x
+ *
+ * So the section is worth about 2.4x, and the volume rule earns its place only
+ * on top of engagement: 11.0% to 13.7%.
+ *
+ * THE CORRECTED CLAIM. This comment previously reported "volume rose in 180 of
+ * 265 clients — 68%" and called it the strongest early signal in the product.
+ * That 68% was measured only on clients who eventually complained, so it answers
+ * "did volume rise before the complaint?" when the question a panel row has to
+ * answer is "given volume rose, will they complain?". Selecting on the outcome
+ * and then reporting the rate is the same survivorship trap that killed the
+ * sensitisation table one experiment earlier. Run as an actual alert over every
+ * client-week, the original rule caught 7.5% of complaints at 15.7% precision.
+ *
+ * VOLUME ALONE IS WORSE THAN NOTHING — see the third row. An unattended volume
+ * spike is a notification stream, and it complains LESS often than an average
+ * week. The `we_replied` filter below is not a tidy-up, it is the thing that
+ * makes the section work at all.
+ *
+ * WHAT SURVIVES. It still costs nothing — counting messages per sender per day,
+ * no model call and no vector — and it still PRECEDES the label rather than
+ * restating it, which nothing built on embeddings managed: a per-client mood
  * centroid stayed flat through a real escalation, ego state did not move, and
  * clients at their angriest still read as Adult stance.
  *
  * DELIBERATELY EXCLUDES CLIENTS WHO HAVE ALREADY COMPLAINED. They are on the
- * fires list, where the arc says whether they are rising or entrenched. Repeating
+ * fires list, which now ranks by this same engagement test — that is where the
+ * strong version of this signal lives (24.7% against a 13.0% floor). Repeating
  * them here would make the loud clients louder and bury the quiet one who is
  * about to become a problem, which is the only thing this section is for.
  *

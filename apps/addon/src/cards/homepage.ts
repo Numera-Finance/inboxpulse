@@ -162,6 +162,15 @@ export interface FiresView {
     ownerPeers?: number;
     /** Complaint rate per month, oldest first, whole percents. */
     arc?: number[];
+    /**
+     * Whether we are in a live back-and-forth with this client right now.
+     *
+     * The strongest predictor of escalation measured anywhere in this panel:
+     * within the fires list, engaged clients complain again next week 24.7% of
+     * the time against 13.0% for the rest. It also decides the sort order, so
+     * showing it is what lets a reader see WHY a row is at the top.
+     */
+    engaged?: boolean;
   }>;
   webUrl: string;
 }
@@ -584,7 +593,14 @@ export function buildHomepageCard(
           // a blank always means "absent from the allocation sheet" rather than
           // "assigned to someone else" — measured, every matched client has an
           // Account manager.
+          //
+          // "In conversation" LEADS when it is there, because it is both the
+          // strongest predictor in the panel and the reason the row sorted
+          // where it did. A reader who cannot see why the order changed will
+          // read the order as arbitrary. Only rendered when true — a marker
+          // that appears on every row is a column heading, not a signal.
           bottomLabel:
+            (f.engaged ? 'In conversation · ' : '') +
             (f.arc && f.arc.length >= 2
               ? `${arcWord(f.arc)} ${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
               : '') +

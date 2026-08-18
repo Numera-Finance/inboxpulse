@@ -135,8 +135,8 @@
 
 <header>
   <p class="eyebrow">InboxPulse · Numera Finance</p>
-  <h1>How a client's complaint reaches the person who needs to see it</h1>
-  <p class="standfirst">A bookkeeper in Pune reads a hundred emails to find the three that matter, and the three rarely say they matter. This is the pipeline that finds them, <strong>what is running, and what turned out not to work</strong>.</p>
+  <h1>The best signal turned out to be counting</h1>
+  <p class="standfirst">A bookkeeper in Pune reads a hundred emails to find the three that matter, and the three rarely say they matter. Two days of measurement on embeddings, ego states, judge panels and synthetic data, and <strong>the two things that predict trouble are a complaint rate and a message count</strong>.</p>
 </header>
 
 <section>
@@ -151,7 +151,9 @@
       <tr><td>A client's customers never reach the model</td><td>live — stops paying to read homeowner mail</td></tr>
       <tr><td>"What the wording means" teaching layer</td><td>live</td></tr>
       <tr><td>Refuses to show a quotation the client never wrote</td><td>live</td></tr>
-      <tr><td>Client trajectory on each fire row</td><td>live</td></tr>
+      <tr><td>Client trajectory on each fire row</td><td>live — Rising, Cooling or Entrenched</td></tr>
+      <tr><td>Fires ranked by whether we are in the conversation</td><td>live — the strongest predictor measured, 24.7% against 13.0%</td></tr>
+      <tr><td>"Talking more than usual", before any complaint</td><td>live — worth 2.4×, not the 68% first claimed</td></tr>
       <tr><td>Embedding service + 35,653 stored vectors</td><td>deployed, called only by the backfill</td></tr>
       <tr><td>The embedding gate</td><td><b>library only — nothing imports it</b></td></tr>
       <tr><td>Retrieval of worked examples</td><td>shipped disabled — measured, did not help</td></tr>
@@ -160,6 +162,69 @@
   </table>
   </div>
   <p class="note"><b>Every email that survives the spam filter goes to the model.</b> There is no embedding gate in production, so the cost and latency figures below describe what it would buy, not what it saves.</p>
+</section>
+
+<section>
+  <h2>What predicts trouble</h2>
+  <p class="section-note">One question, asked properly: given what we can see about a client this week, what is the chance they complain next week? None of it needs a model. All of it was in the database the whole time.</p>
+
+  <p>Across <b>9,417 client-weeks</b>, 533 were followed by a complaint. That is the prior — <b>5.7%</b> — and every claim below is the same probability after conditioning on something we can observe for free.</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>What we know about the client this week</th><th>client-weeks</th><th>P(complains next week)</th><th>vs prior</th></tr></thead>
+    <tbody>
+      <tr><td>nothing — the prior</td><td>9,417</td><td>5.7%</td><td>1.0×</td></tr>
+      <tr><td>their volume doubled, but we are not replying</td><td>1,131</td><td>4.4%</td><td><b>0.8×</b></td></tr>
+      <tr><td>their volume doubled</td><td>2,658</td><td>7.2%</td><td>1.3×</td></tr>
+      <tr><td>their mail is accelerating, three weeks running</td><td>995</td><td>7.5%</td><td>1.3×</td></tr>
+      <tr><td>we are in a real back-and-forth with them</td><td>1,032</td><td>16.1%</td><td>2.8×</td></tr>
+      <tr><td>they complained in the last four weeks</td><td>1,181</td><td>16.9%</td><td>3.0×</td></tr>
+      <tr><td><b>both — they complained, and we are in it with them</b></td><td>384</td><td><b class="hi">24.7%</b></td><td><b>4.4×</b></td></tr>
+      <tr><td>both, and complaints are still unanswered</td><td>215</td><td><b class="hi">27.0%</b></td><td><b>4.7×</b></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="note"><b>Evidence only counts when it is independent.</b> Engagement is worth 2.8× alone and a recent complaint 3.0× alone; together they reach 4.4×, because each carries something the other does not. Volume carries nothing new: bolt it onto the pair and 24.7% becomes 25.0% while two thirds of the coverage is thrown away. Acceleration makes it <em>worse</em>, at 23.7%. Loud, fast weeks are mostly engaged weeks, so once engagement is known the volume term is already spent.</p>
+
+  <div class="stages">
+    <div class="stage">
+      <div class="num">A</div>
+      <div>
+        <h3>Being in the conversation is the signal <span class="tag live">live</span></h3>
+        <p>Not what the client writes — whether an exchange is happening. Four or more messages from them this week against eight in the prior month, and three or more replies from us.</p>
+        <p>It also beats the field the fires list used to rank by. Unanswered complaints separate 18.3% from 14.5%; engagement separates 24.7% from 13.0%. Decisively, an engaged client whose complaints have <em>all</em> been answered runs 21.9%, against 14.7% for an unengaged client with complaints still sitting open. <b>Answering the mail does not settle the client.</b> Being in the conversation is what says they are still working themselves up.</p>
+        <p>So the panel now sorts fires by this first and shows "In conversation" on the rows that carry it. Unanswered stays second, and stays on the row, because it is the part the firm controls and the reason to reply today — it is simply the weaker predictor of what happens next.</p>
+      </div>
+      <div class="metric">engaged → <b class="hi">24.7%</b><br/>not engaged → <b>13.0%</b><br/>counting, <b>no model call</b></div>
+    </div>
+
+    <div class="stage">
+      <div class="num">B</div>
+      <div>
+        <h3>Volume, corrected downward <span class="tag live">live</span></h3>
+        <p>This was reported here as the strongest early signal in the product, on the strength of "volume rose in 180 of 265 clients — 68%". That number was measured only on clients who <em>eventually complained</em>. It answers "did volume rise before the complaint?" when the question a panel row has to answer is "given volume rose, will they complain?"</p>
+        <p>Run as a real alert over every client-week instead, the original rule caught <b>7.5%</b> of complaints at <b>15.7%</b> precision. What survives is smaller and still worth a slot: among clients with no complaint on file, engaged and above twice their usual volume reaches 13.7% against an 11.0% floor for engaged alone.</p>
+        <p><b>Volume without engagement is worse than nothing</b> — 4.4%, below the prior. An unattended spike is a notification stream, not a person getting angrier.</p>
+      </div>
+      <div class="metric">claimed <b>68%</b><br/>measured <b class="hi">13.7%</b><br/>2.4× the prior, not 12×</div>
+    </div>
+
+    <div class="stage">
+      <div class="num">C</div>
+      <div>
+        <h3>Crossing 10% is a step change that does not revert <span class="tag live">live</span></h3>
+        <p>Under 10% in a month, a client behaves exactly like one at zero. Over it, they sit at four times base rate for at least three months and do not drift back.</p>
+        <p>They do not accelerate — an apparent shrinking of the gap between complaints turned out to be survivorship, and within a single client it is a coin flip. Elevated, not spiralling, which makes an intervention a rescue rather than a race.</p>
+      </div>
+      <div class="metric">under 10% → <b>2.0%</b> next month<br/>over 10% → <b class="hi">7.9%</b><br/>still <b>5.9%</b> three months on</div>
+    </div>
+  </div>
+
+  <p class="note"><b>The same mistake twice, one experiment apart.</b> Both the 68% volume figure and an earlier claim that unhappy clients grow more sensitive were produced by selecting on the outcome and then reporting a rate. Conditioning on "they complained" and measuring backwards will make almost any signal look strong at a 5.7% prior. The rule that survives: measure it as the alert it will actually be — fire it on every client-week, then count what followed.</p>
+
+  <p class="note"><b>Every model-based approach either failed or restated what was already known.</b> The per-client mood vector stayed flat through a real escalation. Ego state did not move. Clients at their angriest still read as Adult stance — they do not start shouting, they stay polite and get unhappy more often.</p>
 </section>
 
 <section>
@@ -267,6 +332,8 @@ flowchart TD
   <div class="figures">
     <div class="fig"><span class="v">3%</span><span class="k">of client mail is a complaint</span></div>
     <div class="fig"><span class="v">5 of 20</span><span class="k">complaints that say so plainly</span></div>
+    <div class="fig"><span class="v">5.7%</span><span class="k">chance any client complains next week</span></div>
+    <div class="fig"><span class="v">24.7%</span><span class="k">if they complained recently and we are in it with them</span></div>
     <div class="fig"><span class="v">10%</span><span class="k">the rate a client never comes back from</span></div>
     <div class="fig"><span class="v">5</span><span class="k">clients escalating right now</span></div>
   </div>
@@ -288,6 +355,9 @@ flowchart TD
       <tr><td>Synthetic training mail</td><td class="n">+0.6 pts</td><td>gain shrank as data grew sixfold</td></tr>
       <tr><td>Retrieved examples in the prompt</td><td class="n">18 vs 19 of 20</td><td>no better than the rulebook, at full pool density</td></tr>
       <tr><td>A mood vector per client</td><td class="n">flat</td><td>topic dominates the embedding; stance does not survive averaging</td></tr>
+      <tr><td>Clients getting progressively touchier</td><td class="n">24 vs 22</td><td>survivorship — within a client it is a coin flip</td></tr>
+      <tr><td>Rising volume as an alert on its own</td><td class="n">1.3×</td><td>flat across 1.5× to 3×; and 0.8× when nobody is replying</td></tr>
+      <tr><td>Accelerating mail, three weeks running</td><td class="n">1.3×</td><td>adds nothing to engagement, and subtracts when combined</td></tr>
     </tbody>
   </table>
   </div>
@@ -301,18 +371,18 @@ flowchart TD
   <table>
     <thead><tr><th>Idea</th><th>Measured</th><th>State</th></tr></thead>
     <tbody>
-      <tr><td>Promote on a nearest labelled neighbour</td><td class="n">85% precision at k=5</td><td>not built</td></tr>
-      <tr><td>…with same-client neighbours capped</td><td class="n">88% precision</td><td>not built</td></tr>
+      <tr><td>Promote on a nearest labelled neighbour</td><td class="n">86% / 60% recall</td><td>not built</td></tr>
+      <tr><td>…the same, on a client with no history</td><td class="n">75% / 30% recall</td><td>it is client memory, not detection</td></tr>
       <tr><td>Clear mail on benign neighbours</td><td class="n">loses 6–17 of 20</td><td><b>ruled out</b></td></tr>
       <tr><td>Wire the embedding gate</td><td class="n">7 in 10 at 1-in-5 sent</td><td>library only</td></tr>
     </tbody>
   </table>
   </div>
-  <p class="note"><b>Nearest-neighbour lookup is more precise than the production model</b> — 85% against 70% — while catching about half as much, at no cost and in 80 milliseconds. It works because clients repeat themselves: a global boundary averages every client's private grammar into one, and there is no such average.</p>
+  <p class="note"><b>Nearest-neighbour lookup is more precise than the production model</b> — 86% against 70% — but half of that comes from the client's own history. Excluding it drops the result to 75% precision and halves the recall. It is institutional memory rather than complaint detection: it recognises <em>this client complaining again</em>, which is legitimate where the history exists and worth far less on a new tenant.</p>
 </section>
 
 <footer>
-  Measured 15–18 August 2026 · gemini-2.5-flash, prompt v1.9 · nomic-embed-text 768d · 35,653 vectors
+  Measured 15–18 August 2026 · gemini-2.5-flash, prompt v1.9 · nomic-embed-text 768d · 35,653 vectors · 9,417 client-weeks at a 5.7% prior
 </footer>
 
 </div>
