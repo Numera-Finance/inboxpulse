@@ -971,17 +971,6 @@ export class EmailAnalysisService {
     analysisResults: Record<string, any>,
     classificationResult?: ClassificationResult
   ): Promise<void> {
-    // Respect manual overrides: if a user has corrected this email's signals,
-    // never let a re-analysis (LLM or keyword) clobber them. This is the single
-    // choke point through which both paths update signals.
-    if (await this.emailRepo.isSignalsOverridden(emailId, tx)) {
-      logger.info(
-        { emailId, logType: 'EMAIL_SIGNALS_SKIPPED_OVERRIDDEN' },
-        'Skipping signal update — signals manually overridden'
-      );
-      return;
-    }
-
     const signals: number[] = [];
 
     // Classification
@@ -1058,12 +1047,19 @@ export class EmailAnalysisService {
       signals.push(Signal.COMPETITOR);
     }
 
-    // Update signals array
-    await this.emailRepo.updateSignals(emailId, signals, tx);
+    // Update signals array — respecting manual overrides. This is the single
+    // choke point through which both the LLM and keyword paths write signals, so
+    // the conditional write here locks a human correction against re-analysis.
+    const written = await this.emailRepo.updateSignalsUnlessOverridden(emailId, signals, tx);
 
     logger.info(
-      { emailId, signals, classification: classificationResult?.category, logType: 'EMAIL_SIGNALS_UPDATED' },
-      'Updated email signals'
+      {
+        emailId,
+        signals,
+        classification: classificationResult?.category,
+        logType: written ? 'EMAIL_SIGNALS_UPDATED' : 'EMAIL_SIGNALS_SKIPPED_OVERRIDDEN',
+      },
+      written ? 'Updated email signals' : 'Skipping signal update — signals manually overridden'
     );
   }
 
@@ -1255,6 +1251,18 @@ export class EmailAnalysisService {
       const email = await this.emailRepo.findById(ctx.emailId);
       if (!email) {
         logger.warn({ emailId: ctx.emailId }, 'Email not found for task creation');
+        return;
+      }
+
+      // Respect manual signal overrides. If a user corrected this email's signals,
+      // the displayed sentiment may no longer be negative even though the model
+      // still reports negative on re-analysis. Creating a task off the stale model
+      // verdict would contradict the corrected signals, so skip.
+      if (email.signalsOverridden) {
+        logger.debug(
+          { emailId: ctx.emailId, logType: 'SKIP_TASK_CREATION_SIGNALS_OVERRIDDEN' },
+          'Skipping task creation — signals manually overridden'
+        );
         return;
       }
 

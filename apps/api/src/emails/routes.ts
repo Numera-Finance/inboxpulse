@@ -7,7 +7,7 @@ import { RunService } from '../runs/service';
 import { dbEmailToEmail } from './converter';
 import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
-import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError } from '@crm/shared';
+import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError, ForbiddenError } from '@crm/shared';
 import { analyzedEmailSearchRequestSchema, firstReplyMarkersRequestSchema, updateEmailSignalsRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
 import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
@@ -524,8 +524,16 @@ app.post('/:emailId/analyze', async (c) => {
  * Replaces the email's signal set with the user-supplied one, locks it against
  * future re-analysis, and records the before/after in the override audit log.
  * Available to any user with email access (authed /api/emails mount only).
+ *
  */
 app.patch('/:emailId/signals', async (c) => {
+  // This router is mounted at both /api/emails (session auth) and
+  // /api/internal/emails (service-key auth). Reject the internal mount: the
+  // override is a user-attributed write and must not trust a caller-supplied
+  // x-user-id for the audit log.
+  if (c.req.path.startsWith('/api/internal/')) {
+    throw new ForbiddenError('Signal overrides are not available over the internal API');
+  }
   return handleApiRequestWithParams(
     c,
     z.object({ emailId: z.string().uuid() }),

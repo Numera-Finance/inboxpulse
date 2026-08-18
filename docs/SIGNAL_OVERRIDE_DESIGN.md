@@ -60,13 +60,19 @@ the existing set). Response: `{ emailId, signals, signalsOverridden }`.
 
 ## Consequences
 
-- **Auto-task side effect is unchanged.** The negative-sentiment auto-task
-  (`maybeCreateTaskForNegativeEmail`) fires only from the analysis pipeline.
-  Manually setting negative sentiment does **not** create a task, and manually
-  clearing it does **not** close an existing task. This is deliberate (safer); can
-  be revisited if product wants manual edits to drive tasks.
+- **Auto-task respects the lock.** The negative-sentiment auto-task
+  (`maybeCreateTaskForNegativeEmail`) fires only from the analysis pipeline and is
+  **skipped when `signals_overridden` is set** — otherwise re-analyzing an email a
+  user had corrected to non-negative would still spawn an escalation off the stale
+  model verdict, contradicting the corrected signals. Manually setting negative
+  sentiment does **not** create a task, and manually clearing it does **not** close
+  an existing task; this is deliberate (safer) and can be revisited if product
+  wants manual edits to drive tasks.
+- The signal lock is enforced by a single conditional write
+  (`updateSignalsUnlessOverridden`: `UPDATE ... WHERE signals_overridden = false`)
+  at the pipeline's one signal-writing choke point — no extra read on the hot path.
 - Re-analysis of an overridden email is effectively a no-op for signals until the
   lock is cleared. There is currently no UI to "unlock" / revert to the model's
   value; the override table retains the history if we need to build one.
-- Migration: `apps/api/sql/migrations/013_email_signal_overrides.sql`
+- Migration: `apps/api/sql/migrations/016_email_signal_overrides.sql`
   (adds `emails.signals_overridden`; creates `email_signal_overrides`).

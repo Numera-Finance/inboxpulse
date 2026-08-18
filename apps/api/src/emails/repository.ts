@@ -156,40 +156,32 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Update email signals after analysis
-   * Sets the signals array with all detected signals
+   * Update email signals after analysis, unless they've been manually overridden.
+   *
+   * A single conditional UPDATE (`WHERE signals_overridden = false`) enforces the
+   * lock without an extra read on the hot path: an overridden email simply matches
+   * no rows and is left untouched.
+   *
    * @param emailId - Email UUID
    * @param signals - Array of Signal integers (from @crm/shared Signal constants)
    * @param tx - Optional transaction context
+   * @returns true if signals were written, false if skipped due to an override
    */
-  async updateSignals(
+  async updateSignalsUnlessOverridden(
     emailId: string,
     signals: number[],
     tx?: Transaction
-  ): Promise<void> {
+  ): Promise<boolean> {
     const db = tx ?? this.db;
-    await db
+    const rows = await db
       .update(emails)
       .set({
         signals,
         updatedAt: new Date(),
       })
-      .where(eq(emails.id, emailId));
-  }
-
-  /**
-   * Whether an email's signals have been manually overridden (locked).
-   * @param emailId - Email UUID
-   * @param tx - Optional transaction context
-   */
-  async isSignalsOverridden(emailId: string, tx?: Transaction): Promise<boolean> {
-    const db = tx ?? this.db;
-    const rows = await db
-      .select({ signalsOverridden: emails.signalsOverridden })
-      .from(emails)
-      .where(eq(emails.id, emailId))
-      .limit(1);
-    return rows[0]?.signalsOverridden ?? false;
+      .where(and(eq(emails.id, emailId), eq(emails.signalsOverridden, false)))
+      .returning({ id: emails.id });
+    return rows.length > 0;
   }
 
   /**

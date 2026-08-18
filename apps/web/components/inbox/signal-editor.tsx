@@ -141,8 +141,11 @@ export function SignalEditor({ emailId, signals, onSaved }: SignalEditorProps) {
         request: { signals: next, reason: reason.trim() || undefined },
       })
       toast.success("Tags updated")
-      onSaved(result.signals)
+      // Close the popover before onSaved: in the escalations page onSaved bumps
+      // a key that remounts this component's parent subtree, so calling it last
+      // avoids a state update on an unmounting component.
       setOpen(false)
+      onSaved(result.signals)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update tags")
     }
