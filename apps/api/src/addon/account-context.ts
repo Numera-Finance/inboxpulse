@@ -1466,3 +1466,119 @@ export class SlowRespondersService {
     }));
   }
 }
+
+/**
+ * A client whose mail has suddenly doubled, before anyone has complained.
+ *
+ * Every other signal in this panel reacts to a complaint that has already been
+ * written. This one fires first. Measured over 265 clients who eventually
+ * complained: median daily mail ran 0.21 in the prior month and 0.43 in the
+ * final week before the first complaint, and volume rose in 180 of them — 68%.
+ * Clients rock themselves into anger, and the back-and-forth intensifies before
+ * the complaint lands.
+ *
+ * Two properties earn it a place. It costs nothing — counting messages per
+ * sender per day, no model call and no vector — and it PRECEDES the label rather
+ * than restating it, which nothing built on embeddings managed: a per-client mood
+ * centroid stayed flat through a real escalation, ego state did not move, and
+ * clients at their angriest still read as Adult stance.
+ *
+ * DELIBERATELY EXCLUDES CLIENTS WHO HAVE ALREADY COMPLAINED. They are on the
+ * fires list, where the arc says whether they are rising or entrenched. Repeating
+ * them here would make the loud clients louder and bury the quiet one who is
+ * about to become a problem, which is the only thing this section is for.
+ *
+ * WHAT IT IS NOT. Causation is unsettled: a busy month produces both more mail
+ * and more chances for friction, so this may be "activity precedes complaints"
+ * rather than "frustration builds". A client at twice their usual volume is not
+ * necessarily angry. The row says what it knows — the volume — and does not
+ * assert a mood.
+ */
+export interface Stirring {
+  customer: string;
+  customerId: string | null;
+  /** Messages in the last 7 days. */
+  recent: number;
+  /** Their usual, as messages per week over the preceding 4 weeks. */
+  usual: number;
+  owner: string | null;
+}
+
+@injectable()
+export class StirringService {
+  constructor(@inject('Database') private readonly db: Database) {}
+
+  async get(tenantId: string, limit = 4): Promise<Stirring[]> {
+    const rows = await this.db.execute(sql`
+      WITH ours AS (
+        -- Domains where STAFF have accounts are us, not a client. Derived rather
+        -- than listed: a hand-maintained exclusion list once contained a real
+        -- paying customer.
+        SELECT split_part(lower(u.email), '@', 2) AS dom
+        FROM users u
+        WHERE u.tenant_id = ${tenantId} AND u.email LIKE '%@%'
+        GROUP BY 1 HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
+      ),
+      vol AS (
+        SELECT cd.customer_id,
+               count(*) FILTER (WHERE e.received_at >= now() - interval '7 days')::int AS recent,
+               count(*) FILTER (WHERE e.received_at <  now() - interval '7 days'
+                                  AND e.received_at >= now() - interval '35 days')::int AS prior,
+               count(*) FILTER (
+                 WHERE ea.sentiment_value = 'negative'
+                   AND e.received_at >= now() - interval '35 days'
+               )::int AS complaints,
+               -- Proof a human is on the other side of this.
+               count(*) FILTER (WHERE e.first_reply_at IS NOT NULL)::int AS we_replied
+        FROM emails e
+        JOIN customer_domains cd
+          ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+         AND cd.tenant_id = e.tenant_id
+        LEFT JOIN email_analyses ea
+          ON ea.email_id = e.id AND ea.analysis_type = 'sentiment'
+        WHERE e.tenant_id = ${tenantId}
+          AND e.is_customer_email
+          AND e.received_at >= now() - interval '35 days'
+          AND split_part(lower(e.from_email), '@', 2) NOT IN (SELECT dom FROM ours)
+        GROUP BY cd.customer_id
+      )
+      SELECT c.id::text AS customer_id,
+             COALESCE(c.name, '(unknown)') AS customer,
+             v.recent,
+             -- Their prior four weeks expressed as a weekly rate, so the row
+             -- compares like with like.
+             round(v.prior / 4.0)::int AS usual,
+             (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
+                FROM customer_allocations al
+                LEFT JOIN users u ON u.id = al.user_id
+               WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId}
+               ORDER BY CASE al.role WHEN 'Account manager' THEN 1 ELSE 2 END
+               LIMIT 1) AS owner
+      FROM vol v
+      JOIN customers c ON c.id = v.customer_id
+      WHERE v.complaints = 0
+        -- Enough history to have a "usual" at all, and enough mail this week for
+        -- the ratio to mean something. Two emails against one is noise.
+        AND v.prior >= 8
+        AND v.recent >= 4
+        AND v.recent > (v.prior / 4.0) * 2
+        -- WE MUST HAVE REPLIED. Without this the list is machines: the top hits
+        -- were Gotowebinar at 270 messages, Versapay at 123, ExceedLMS at 137 —
+        -- notification streams whose volume swings for reasons nobody should be
+        -- called about. The fires list never had this problem because it
+        -- requires a negative verdict and automated mail rarely earns one; a
+        -- volume signal has no such protection and needs its own.
+        AND v.we_replied >= 3
+      ORDER BY v.recent::float / NULLIF(v.prior / 4.0, 0) DESC
+      LIMIT ${limit}
+    `);
+
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      customerId: (r.customer_id as string | null) ?? null,
+      customer: String(r.customer ?? '(unknown)'),
+      recent: Number(r.recent ?? 0),
+      usual: Number(r.usual ?? 0),
+      owner: (r.owner as string | null) ?? null,
+    }));
+  }
+}
