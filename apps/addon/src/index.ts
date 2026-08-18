@@ -1019,6 +1019,10 @@ app.post('/homepage', async (c) => {
   // the entitlement-scoped sections. That must be stated on the card, not left
   // as an absent section that reads as "nothing is wrong".
   const restricted = Boolean(who && !who.isAdmin && who.accessibleCustomers === 0);
+  // Recognised-but-unentitled and not-recognised-at-all need different words and
+  // different fixes. Only the second one is reported with the address, because
+  // the fix is to add that exact address as a user.
+  const viewerUnknown = tenantId && verified.email && !who ? verified.email : undefined;
   const slow = tenantId ? await getSlowResponders(tenantId) : [];
   // The only section that fires before a complaint is written.
   const stirring = tenantId ? await getStirring(tenantId) : [];
@@ -1039,7 +1043,7 @@ app.post('/homepage', async (c) => {
         getEnv().ADDON_BASE_URL,
         { clients: waiting, webUrl: getEnv().WEB_URL },
         pulse ?? undefined,
-        { fires, restricted, windowDays: 90, webUrl: getEnv().WEB_URL },
+        { fires, restricted, viewerEmail: viewerUnknown, windowDays: 90, webUrl: getEnv().WEB_URL },
         { people: slow, firmMedianH: pulse?.negativeMedianH ?? null, webUrl: getEnv().WEB_URL, windowDays: 90 },
         // canWrite tracks the SCOPE, not a preference: the label tools are only
         // shown where they can actually run, and the write is only disclosed

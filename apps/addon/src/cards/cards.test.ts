@@ -944,3 +944,47 @@ describe('an inferred owner is labelled as one', () => {
     expect(fire('Deep Jyoti', true)).not.toMatch(/Deep Jyoti · (Account manager|Controller|Accountant)/);
   });
 });
+
+/**
+ * An unresolved viewer must be stated, not rendered as calm.
+ *
+ * When the signed-in Gmail address is not a user in the workspace, every
+ * entitlement-scoped query is skipped. "Where the fires are" and the waiting
+ * clients disappear while the tenant-wide sections beside them keep showing real
+ * numbers, so the panel reads as a working product reporting that nothing is
+ * wrong. That is the most reassuring possible rendering of a broken lookup, and
+ * it is what a live panel showed for hours.
+ */
+describe('an unrecognised viewer', () => {
+  const card = (viewerEmail?: string, restricted?: boolean) =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, {
+        webUrl: 'https://web.test',
+        windowDays: 90,
+        fires: [],
+        viewerEmail,
+        restricted,
+      }),
+    );
+
+  it('says the mailbox is not a user here, and names it', () => {
+    const json = card('gaurav@numerafinance.com');
+    expect(json).toContain('not a user in this workspace');
+    // The address is the fix. "Someone is unrecognised" is not actionable.
+    expect(json).toContain('gaurav@numerafinance.com');
+  });
+
+  it('does not silently omit the section', () => {
+    expect(card('someone@example.com')).toContain('Where the fires are');
+  });
+
+  it('keeps saying something different when the viewer IS known but unentitled', () => {
+    const json = card(undefined, true);
+    expect(json).toContain('No client access on your account');
+    expect(json).not.toContain('not a user in this workspace');
+  });
+
+  it('stays quiet when there are simply no fires', () => {
+    expect(card(undefined, false)).not.toContain('not a user in this workspace');
+  });
+});

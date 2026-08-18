@@ -129,6 +129,20 @@ export interface FiresView {
    * them displayed real data. It looked like the feature was missing.
    */
   restricted?: boolean;
+  /**
+   * The signed-in Gmail address is not a user in this workspace, so nothing can
+   * be scoped to them.
+   *
+   * Distinct from `restricted`, which means "recognised, but entitled to no
+   * customers". This means "not recognised at all", and it silently removed the
+   * two entitlement-scoped sections — fires and waiting clients — while every
+   * tenant-wide section beside them kept rendering real data. The panel looked
+   * like a firm with nothing on fire.
+   *
+   * Carries the address, because the fix is to add exactly that address and a
+   * reader cannot act on "someone is unrecognised".
+   */
+  viewerEmail?: string;
   fires: Array<{
     customerId: string | null;
     customer: string;
@@ -521,7 +535,27 @@ export function buildHomepageCard(
   // absent, and only one of them is good news. This is the same failure that
   // hid a crashing /waiting endpoint for weeks — silence reading as "all
   // clear".
-  if (fires && !fires.fires.length && fires.restricted) {
+  // NOT RECOGNISED IS NOT THE SAME AS NOTHING WRONG.
+  //
+  // When the viewer cannot be resolved, every entitlement-scoped query is
+  // skipped and the sections that depend on them disappear. Beside them the
+  // tenant-wide sections carry on showing real numbers, so the panel reads as a
+  // working product reporting calm — the most reassuring possible rendering of
+  // a broken identity lookup.
+  if (fires && !fires.fires.length && fires.viewerEmail) {
+    firm.unshift({
+      header: heading('Where the fires are'),
+      widgets: [
+        deco({
+          text: '<b>This mailbox is not a user in this workspace</b>',
+          bottomLabel:
+            `${escapeText(fires.viewerEmail)} · ask an admin to add it, ` +
+            'or open the panel from your work mailbox',
+          wrapText: true,
+        }),
+      ],
+    });
+  } else if (fires && !fires.fires.length && fires.restricted) {
     firm.unshift({
       header: heading('Where the fires are'),
       widgets: [
