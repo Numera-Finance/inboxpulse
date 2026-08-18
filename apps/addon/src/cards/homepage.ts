@@ -507,11 +507,16 @@ export function buildHomepageCard(
           // costing ~40px of the width. The "Open" button went because
           // decoratedText.onClick makes the whole row the link — same
           // destination, no six identical pills.
+          // ONE SHORT CLAIM ON THE MEDIUM LINE. Client names here run to
+          // "Ctruh Technologies Private Limited", so anything appended to the
+          // name wraps and the count lands orphaned on its own line — "— 4"
+          // then "unanswered". Age moves down to the grey line; the number that
+          // decides whether to call stays up with the name.
           text:
             `<b>${escapeText(f.customer)}</b>` +
             (f.unanswered > 0
-              ? ` — <font color="#c5221f"><b>${f.unanswered} unanswered</b>, oldest ${f.oldestDays}d</font>`
-              : ' — all answered'),
+              ? ` <font color="#c5221f"><b>${f.unanswered} unanswered</b></font>`
+              : ''),
           // THE TRAJECTORY AS A WORD, then the numbers behind it.
           //
           // "Rising" and "Cooling" do the triage; "9%→25%" lets a reader check
@@ -533,6 +538,7 @@ export function buildHomepageCard(
               ? `${f.arc[f.arc.length - 1] > f.arc[0] ? 'Rising' : 'Cooling'} ` +
                 `${f.arc[0]}%→${f.arc[f.arc.length - 1]}% · `
               : '') +
+            `${f.oldestDays}d · ` +
             (f.owner
               ? (f.ownerRole && f.ownerRole !== 'Account manager'
                   ? `${f.owner} · ${f.ownerRole}`

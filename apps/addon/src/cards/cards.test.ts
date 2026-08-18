@@ -781,7 +781,10 @@ describe('the fire arc', () => {
     // "4 unhappy" and "2 unanswered" read as the same number, and unanswered is
     // the half the firm controls.
     expect(json).not.toContain('unhappy');
+    // The count stays on the medium line with the name; the age moves to grey,
+    // so a long client name cannot orphan the number onto its own line.
     expect(json).toContain('2 unanswered');
+    expect(json).not.toContain('unanswered</b></font>, oldest');
   });
 
   it('needs two months before it can show a direction', () => {
@@ -799,7 +802,7 @@ describe('the fire arc', () => {
     // is 50% and means nothing.
     // Age now lives in the red span on the medium line, not a grey top label.
     const json = withFires();
-    expect(json).toContain('oldest 9d');
+    expect(json).toContain('9d');
     expect(json).not.toContain('→');
   });
 });
