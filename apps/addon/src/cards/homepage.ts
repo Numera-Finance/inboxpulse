@@ -398,8 +398,12 @@ export function buildHomepageCard(
       faster === null
         ? ''
         : faster < 2
-          ? `<font color="#c5221f">barely faster than routine mail</font>`
-          : `<font color="#188038">${hrs(faster)} faster than routine mail</font>`;
+          // NAME THE NUMBER BEING BEATEN. "2.6h faster than routine mail" asks
+          // the reader to take the comparison on trust and gives them no way to
+          // check it, and a bare delta beside another duration reads as a third
+          // duration. Both sides, so the claim is arithmetic the reader can do.
+          ? `<font color="#c5221f">barely faster than routine mail at ${hrs(pulse.otherMedianH)}</font>`
+          : `<font color="#188038">against ${hrs(pulse.otherMedianH)} for routine mail</font>`;
 
     // THE TAIL LEADS, the median follows.
     //
@@ -457,7 +461,7 @@ export function buildHomepageCard(
         // they went to the same place. The headline keeps the action; this row
         // is context for it.
         deco({
-          topLabel: `median over ${pulse.negativeCount} replies`,
+          topLabel: `median over ${pulse.negativeCount} replies, last 90 days`,
           text: `<b>${hrs(pulse.negativeMedianH)}</b> to first reply${verdict ? `, ${verdict}` : ''}`,
           wrapText: true,
           // Land on exactly the population the median was computed over:
@@ -506,11 +510,18 @@ export function buildHomepageCard(
                 const better = last.medianH < first.medianH;
                 const { a, b } = pair(first.medianH, last.medianH);
                 return deco({
-                  topLabel: `first reply, by month · ${first.month} → ${last.month}`,
+                  // THE DIRECTION WORD MUST NOT TOUCH THE NUMBER.
+                  //
+                  // This rendered "18.7h → 7.4h faster", which parses as "18.7h
+                  // became 7.4 hours faster" — the endpoint read as a delta. The
+                  // months move into the line so each number is anchored to one,
+                  // and the verdict goes in parentheses where it cannot be
+                  // mistaken for a quantity.
+                  topLabel: 'first reply, monthly median',
                   text:
-                    `${a} → <b>${b}</b> ` +
+                    `${a} in ${first.month.slice(5)} → <b>${b}</b> in ${last.month.slice(5)} ` +
                     `<font color="${better ? '#188038' : '#c5221f'}">` +
-                    `${better ? 'faster' : 'slower'}</font>`,
+                    `(${better ? 'improving' : 'slipping'})</font>`,
                   wrapText: true,
                 });
               })(),

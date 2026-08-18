@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { useToast } from "@/components/ui/use-toast"
+import { toast } from "sonner"
 import { SUPPORTED_TIMEZONES } from "@/lib/constants/timezones"
 import { getUserClient, getNotificationsClient } from "@/lib/api/clients"
 import type { NotificationPreference, BatchInterval, NotificationContext } from "@crm/clients"
@@ -56,7 +56,6 @@ const ESCALATION_FREQUENCY_OPTIONS = [
 
 export function UserPreferences() {
   const { user } = useAuth()
-  const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [preferences, setPreferences] = useState<UserPreferencesData>({
@@ -104,20 +103,12 @@ export function UserPreferences() {
           } catch (notifError) {
             // Notifications service may not be running - show warning
             console.warn('Notifications service unavailable, using default preferences')
-            toast({
-              title: "Warning",
-              description: "Notifications service unavailable. Notification preferences may not be accurate.",
-              variant: "destructive",
-            })
+            toast.error("Warning", { description: "Notifications service unavailable. Notification preferences may not be accurate." })
           }
         }
       } catch (error) {
         console.error('Failed to fetch preferences:', error)
-        toast({
-          title: "Error",
-          description: "Failed to load preferences.",
-          variant: "destructive",
-        })
+        toast.error("Error", { description: "Failed to load preferences." })
       } finally {
         setLoading(false)
       }
@@ -153,26 +144,15 @@ export function UserPreferences() {
         } catch (notifError) {
           // Notifications service may not be running - show warning but continue
           console.warn('Notifications service unavailable, notification preferences not saved')
-          toast({
-            title: "Partial save",
-            description: "Timezone saved, but notification preferences could not be saved (service unavailable).",
-            variant: "destructive",
-          })
+          toast.error("Partial save", { description: "Timezone saved, but notification preferences could not be saved (service unavailable)." })
           return
         }
       }
 
-      toast({
-        title: "Preferences saved",
-        description: "Your preferences have been updated successfully.",
-      })
+      toast.success("Preferences saved", { description: "Your preferences have been updated successfully." })
     } catch (error) {
       console.error('Failed to save preferences:', error)
-      toast({
-        title: "Error",
-        description: "Failed to save preferences. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Error", { description: "Failed to save preferences. Please try again." })
     } finally {
       setSaving(false)
     }

@@ -897,7 +897,21 @@ export class DangerPulseService {
                ORDER BY EXTRACT(EPOCH FROM (e.first_reply_at - e.received_at)) / 3600
              ) AS median_h
       ${base} AND a.sentiment_value = 'negative'
-      GROUP BY 1 ORDER BY 1
+      GROUP BY 1
+      -- DROP MONTHS TOO THIN TO CARRY A MEDIAN.
+      --
+      -- The trend inherits the 90-day window, so its first bucket is whatever
+      -- fragment of a month the window happens to clip. On this tenant that was
+      -- NINE replies spanning 29-30 May — two days — and the panel presented its
+      -- 18.7h median as "May", then anchored the whole "improving" claim on it.
+      -- A median over nine is noise, and a reader has no way to see the sample
+      -- behind a trend line.
+      --
+      -- Twenty is the floor: enough that a median is not decided by one or two
+      -- slow threads, low enough to keep a genuinely quiet month. It also drops
+      -- the clipped edge month without needing to reason about window arithmetic.
+      HAVING count(*) >= 20
+      ORDER BY 1
     `);
 
     const attrRows = await this.db.execute(sql`
@@ -951,195 +965,7 @@ export class DangerPulseService {
     };
   }
 }
-
-export interface OwnerLoad {
-  name: string;
-  threads: number;
-  oldestDays: number;
-  unassigned: boolean;
-  /**
-   * For the unallocated row only: which customers it is made of.
-   *
-   * An aggregate count here changes nothing a reader can act on, because the
-   * bucket is not one kind of thing. Measured on the live data it is 16 threads
-   * across 12 customers, and roughly half of them are our own vendors and
-   * counterparties rather than clients — SVB, Rippling, Bill, Countsy, a law
-   * firm. The other half are real clients simply missing from the allocation
-   * sheet: Truefoundry, Minerra Health, Elemind, Goicon.
-   *
-   * Those two need opposite responses — one is a customer record that should
-   * not be in a client review at all, the other is a client nobody has been
-   * assigned to. "16 unallocated" cannot tell them apart, so it prompts
-   * nothing. The names can: a reader who sees Truefoundry adds an owner, and a
-   * reader who sees SVB knows the list is picking up vendors.
-   */
-  customers?: Array<{ name: string; threads: number }>;
-}
-
-/**
- * Who is carrying the unanswered angry mail, by ROLE.
- *
- * Getting attribution right was most of the work here, and three sources had to
- * be tried before one held up:
- *
- *   first_reply_by_id — 7% populated. Replies are never stored (see
- *     emails/service.ts: matched for a timestamp, then discarded), so there is
- *     usually no row to attribute. A ranking on 7% coverage ranks whoever
- *     happens to be attributable.
- *
- *   user_customers — 100% coverage but FOUR TO FIVE owners per client and
- *     role_id null on all 4,111 mappings. Counting per owner charged one
- *     complaint to five people.
- *
- *   customer_allocations — the firm's own allocation sheet: one person per role
- *     per client, six roles, 857 clients, 181 people. 90% of rows match a
- *     customer by normalised name. THIS is the accountable owner.
- *
- * Own entities and auto-created customers are excluded. Without that the list
- * is topped by "Mystartupcfo" (46 threads) being unhappy with itself, and by
- * customers the ingester invented from a sender domain. Excluding them takes
- * the population from 188 threads to 30 — the 188 was almost entirely noise,
- * and reporting it would have been a management review of our own mail.
- */
-
-/**
- * Customers that are actually US, derived rather than listed.
- *
- * This was a hardcoded array — and it contained 'blueoceanps', which is a real
- * client (Blue Ocean Pool Service, blueoceanps.co). A hand-maintained "not a
- * client" list silently removed a paying customer from the management review,
- * which is the exact opposite of what this feature is for, and nothing would
- * ever have surfaced it: an excluded row simply does not appear.
- *
- * So it is derived from where STAFF have accounts. A domain with three or more
- * users in the `users` table is somewhere we work, not somewhere we sell to.
- * That yields mystartupcfo.com, numerafinance.com and mytaxfiler.com — the
- * three that are genuinely ours — and cannot accidentally capture a client,
- * because clients do not have staff accounts here.
- *
- * The threshold is three rather than one so a single client contact who was
- * given a login cannot hide their own company from the review.
- */
 const OWN_DOMAIN_MIN_STAFF = 3;
-
-@injectable()
-export class OwnerLoadService {
-  constructor(@inject('Database') private readonly db: Database) {}
-
-  async get(
-    tenantId: string,
-    days = 30,
-    role = 'Account manager',
-    limit = 8,
-  ): Promise<OwnerLoad[]> {
-    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
-    const rows = await this.db.execute(sql`
-      WITH t AS MATERIALIZED (
-        -- One row per THREAD. Without this a complaint counts once per message
-        -- and once per participant.
-        SELECT DISTINCT ON (e.thread_id) e.thread_id, e.received_at, p.customer_id
-        FROM emails e
-        JOIN email_analyses a
-          ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
-        JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
-        WHERE e.tenant_id = ${tenantId}
-          AND e.first_reply_at IS NULL
-          AND e.is_customer_email
-          AND e.received_at > now() - (${days} || ' days')::interval
-          ${weAreOnTheThread()}
-        ORDER BY e.thread_id, e.received_at DESC
-      )
-      SELECT
-        COALESCE(u.first_name || ' ' || u.last_name, al.email, '(not allocated)') AS who,
-        (al.id IS NULL) AS is_unassigned,
-        count(DISTINCT t.thread_id)::int AS threads,
-        MAX(EXTRACT(EPOCH FROM (now() - t.received_at)) / 86400)::int AS oldest_days
-      FROM t
-      JOIN customers c ON c.id = t.customer_id
-      LEFT JOIN customer_allocations al
-        ON al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = ${role}
-      LEFT JOIN users u ON u.id = al.user_id
-      WHERE NOT c.is_auto_created
-        AND NOT EXISTS (
-          SELECT 1 FROM customer_domains cd
-          WHERE cd.customer_id = c.id
-            AND lower(cd.domain) IN (
-              SELECT split_part(lower(u2.email), '@', 2)
-              FROM users u2
-              WHERE u2.tenant_id = ${tenantId} AND u2.email LIKE '%@%'
-              GROUP BY 1
-              HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
-            )
-        )
-        ${clientFilter}
-      GROUP BY 1, 2
-      ORDER BY 3 DESC
-      LIMIT ${limit}
-    `);
-
-    const owners = (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
-      name: String(r.who),
-      threads: Number(r.threads ?? 0),
-      oldestDays: Number(r.oldest_days ?? 0),
-      unassigned: Boolean(r.is_unassigned),
-    }));
-
-    // Nothing more to fetch if every thread has an owner.
-    if (!owners.some((o) => o.unassigned)) return owners;
-
-    // The same population, grouped by customer instead of by person. Run as a
-    // second query rather than folded into the first: the main one groups by
-    // owner, and adding the customer to that GROUP BY would split a real
-    // manager's row into one line per account, which is the opposite of what
-    // the section is for.
-    const nameRows = await this.db.execute(sql`
-      WITH t AS MATERIALIZED (
-        SELECT DISTINCT ON (e.thread_id) e.thread_id, p.customer_id
-        FROM emails e
-        JOIN email_analyses a
-          ON a.email_id = e.id AND a.analysis_type = 'sentiment' AND a.sentiment_value = 'negative'
-        JOIN email_participants p ON p.email_id = e.id AND p.customer_id IS NOT NULL
-        WHERE e.tenant_id = ${tenantId}
-          AND e.first_reply_at IS NULL
-          AND e.is_customer_email
-          AND e.received_at > now() - (${days} || ' days')::interval
-          ${weAreOnTheThread()}
-        ORDER BY e.thread_id, e.received_at DESC
-      )
-      SELECT COALESCE(c.name, '(unknown)') AS customer,
-             count(DISTINCT t.thread_id)::int AS threads
-      FROM t
-      JOIN customers c ON c.id = t.customer_id
-      WHERE NOT c.is_auto_created
-        AND NOT EXISTS (
-          SELECT 1 FROM customer_domains cd
-          WHERE cd.customer_id = c.id
-            AND lower(cd.domain) IN (
-              SELECT split_part(lower(u2.email), '@', 2)
-              FROM users u2
-              WHERE u2.tenant_id = ${tenantId} AND u2.email LIKE '%@%'
-              GROUP BY 1
-              HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
-            )
-        )
-        ${clientFilter}
-        AND NOT EXISTS (
-          SELECT 1 FROM customer_allocations al
-          WHERE al.customer_id = c.id AND al.tenant_id = ${tenantId} AND al.role = ${role}
-        )
-      GROUP BY 1
-      ORDER BY 2 DESC, 1
-      LIMIT ${limit}
-    `);
-
-    const customers = (nameRows as unknown as Array<Record<string, unknown>>).map((r) => ({
-      name: String(r.customer ?? '(unknown)'),
-      threads: Number(r.threads ?? 0),
-    }));
-
-    return owners.map((o) => (o.unassigned ? { ...o, customers } : o));
-  }
-}
 
 export interface Fire {
   customerId: string | null;

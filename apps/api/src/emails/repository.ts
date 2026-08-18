@@ -2684,21 +2684,54 @@ export class EmailRepository extends ScopedRepository {
     tenantId: string,
     joinFragment: SQL,
     logContext: Record<string, unknown>,
-    message: string
+    message: string,
+    /**
+     * Whether `joinFragment`'s VALUES table carries a `replied_by_id` column.
+     *
+     * The two callers differ: the marker path resolves the sender to a user and
+     * passes it, the thread-id path has only timestamps. Rather than force a
+     * NULL column into the second one, the winning row's author is written only
+     * where it exists.
+     */
+    carriesAuthor = false
   ): Promise<number> {
+    // DISTINCT ON, NOT MIN() ... GROUP BY.
+    //
+    // Both forms pick the earliest qualifying reply, and only one of them can
+    // also say WHO sent it. An aggregate collapses the rows it is choosing
+    // between, so the author of the winning reply is not available to the SET
+    // clause -- and `first_reply_by_id` was therefore computed and thrown away.
+    // attributeRepliesToUsers resolved it, the VALUES row carried it, and the
+    // UPDATE never referenced it again.
+    //
+    // Measured on this tenant before the fix: 16,290 emails carried a reply time
+    // and 2,065 an author, the remainder written by a build that predated the
+    // regression. Downstream had already adapted -- the slow-responder section
+    // attributes by the allocation sheet rather than by who actually replied,
+    // because this column could not be relied on.
+    //
+    // The regression arrived with the squashed port 72f8231, which replaced a
+    // DISTINCT ON form with this aggregate. It is restored here.
+    //
+    // ORDER BY reply_at then replied_by_id NULLS LAST: on the rare tie, prefer
+    // the row that can name a person over one that cannot.
+    const authorSelect = carriesAuthor ? sql`, r.replied_by_id` : sql`, NULL::uuid AS replied_by_id`;
+    const authorOrder = carriesAuthor ? sql`, r.replied_by_id NULLS LAST` : sql``;
     const result = await this.db.execute(sql`
       UPDATE emails e
       SET
         first_reply_at = sub.min_reply,
+        first_reply_by_id = COALESCE(sub.replied_by_id, e.first_reply_by_id),
         updated_at = NOW()
       FROM (
-        SELECT e2.id AS email_id, MIN(r.reply_at) AS min_reply
+        SELECT DISTINCT ON (e2.id)
+               e2.id AS email_id, r.reply_at AS min_reply${authorSelect}
         FROM emails e2
         ${joinFragment}
         WHERE e2.tenant_id = ${tenantId}
           AND e2.is_customer_email = true
           AND e2.first_reply_at IS NULL
-        GROUP BY e2.id
+        ORDER BY e2.id, r.reply_at${authorOrder}
       ) sub
       WHERE e.id = sub.email_id
     `);
@@ -2805,7 +2838,10 @@ export class EmailRepository extends ScopedRepository {
         threadCount: new Set(replies.map((r) => r.providerThreadId)).size,
         replyCount: replies.length,
       },
-      'Updated firstReplyAt for customer emails (from reply markers)'
+      'Updated firstReplyAt for customer emails (from reply markers)',
+      // This path resolved the sender to a user id, so the winning reply can
+      // name a person.
+      true
     );
   }
 
