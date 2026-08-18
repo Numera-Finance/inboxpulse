@@ -31,3 +31,7 @@ CREATE TABLE IF NOT EXISTS email_threads (
 CREATE INDEX idx_threads_tenant_last_message ON email_threads(tenant_id, last_message_at DESC);
 CREATE INDEX idx_threads_integration_thread ON email_threads(integration_id, provider_thread_id);
 CREATE INDEX idx_threads_integration ON email_threads(integration_id);
+-- Serves the first-reply marker lookup, which matches a provider thread id across
+-- every integration of the tenant rather than only the submitting one. The indexes
+-- above all lead with integration_id and cannot serve it directly (ADR-005).
+CREATE INDEX idx_threads_tenant_provider_thread ON email_threads(tenant_id, provider_thread_id);

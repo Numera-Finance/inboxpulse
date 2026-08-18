@@ -28,6 +28,38 @@ export interface RebuildResult {
 
 @injectable()
 export class UserRepository extends ScopedRepository {
+  /**
+   * Batch resolve email addresses to user IDs, case-insensitively.
+   *
+   * Unlike {@link findByEmails} (exact-match `IN`), this lowercases both sides,
+   * so addresses harvested from mail headers — whose casing we don't control —
+   * still resolve. Returns a map of lowercased email -> user id; addresses with
+   * no matching user are simply absent.
+   */
+  async findIdsByEmails(tenantId: string, emails: string[]): Promise<Map<string, string>> {
+    const lowered = [...new Set(emails.map((e) => e.toLowerCase().trim()).filter(Boolean))];
+    if (lowered.length === 0) {
+      return new Map();
+    }
+
+    const result = await this.db
+      .select({ id: users.id, email: users.email })
+      .from(users)
+      .where(
+        and(
+          eq(users.tenantId, tenantId),
+          // Built element-by-element: drizzle flattens a bound JS array into one
+          // parameter per item, so `= ANY($n::text[])` would receive a bare string.
+          sql`LOWER(${users.email}) IN (${sql.join(
+            lowered.map((e) => sql`${e}`),
+            sql`, `
+          )})`
+        )
+      );
+
+    return new Map(result.map((u) => [u.email.toLowerCase(), u.id]));
+  }
+
   constructor(@inject('Database') db: Database) {
     super(db);
   }

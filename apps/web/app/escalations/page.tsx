@@ -37,7 +37,7 @@ import {
   taskKeys,
 } from "@/lib/hooks"
 import { useQueryClient } from "@tanstack/react-query"
-import type { AnalyzedEmail, AnalyzedEmailSearchRequest } from "@crm/clients"
+import type { AnalyzedEmail, AnalyzedEmailListItem, AnalyzedEmailSearchRequest } from "@crm/clients"
 import { Signal, hasSignal, SIGNAL_LABELS, type SignalType } from "@crm/shared"
 import { useAuth } from "@/src/contexts/AuthContext"
 import { getEmailClient, getTaskClient } from "@/lib/api/clients"
@@ -181,7 +181,7 @@ export default function EscalationsPage() {
     async (
       filter: InboxFilter,
       pagination: InboxPagination
-    ): Promise<InboxPage<InboxItem<AnalyzedEmail>>> => {
+    ): Promise<InboxPage<InboxItem<AnalyzedEmailListItem>>> => {
       const request = buildSearchRequest(filter, pagination)
       const emailClient = getEmailClient()
       const data = await emailClient.searchAnalyzed(request)
@@ -230,7 +230,7 @@ export default function EscalationsPage() {
   // current page (off-page or filtered out). getAnalyzedById tolerates a task
   // id, so older task-id escalation links resolve to the right email too.
   const handleFetchItem = React.useCallback(
-    async (itemId: string, signal?: AbortSignal): Promise<InboxItem<AnalyzedEmail> | null> => {
+    async (itemId: string, signal?: AbortSignal): Promise<InboxItem<AnalyzedEmailListItem> | null> => {
       const emailClient = getEmailClient()
       const email = await emailClient.getAnalyzedById(itemId, signal)
       return email ? analyzedEmailToInboxItem(email) : null

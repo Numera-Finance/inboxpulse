@@ -6,7 +6,7 @@ import { TenantRepository } from '../tenants/repository';
 import { ContactRepository } from '../contacts/repository';
 import type { NewEmail, NewEmailThread } from './schema';
 import { EmailAnalysisStatus } from './schema';
-import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply } from './converter';
+import { threadToDb, emailToDb, computeEmailContentHash, isReplyEmail, isCountableReply, toReplyAttribution } from './converter';
 import { emailCollectionSchema, getSentimentFromSignals, NotFoundError, type EmailCollection, type Email, type RequestHeader } from '@crm/shared';
 import type {
   AnalyzedEmailSearchRequest,
@@ -29,6 +29,9 @@ import { createHash } from 'crypto';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
 import { htmlToText, extractLatestReply } from './extraction/extractor';
+import { UserRepository } from '../users/repository';
+import type { FirstReplyCandidate } from './repository';
+import type { ReplyAttribution } from './converter';
 
 /** How much of a flagged message's text the drill-down view gets. */
 const BODY_PREVIEW_LIMIT = 4000;
@@ -89,8 +92,32 @@ export class EmailService {
     @inject(EmailThreadRepository) private threadRepo: EmailThreadRepository,
     @inject(TenantRepository) private tenantRepo: TenantRepository,
     @inject(ContactRepository) private contactRepo: ContactRepository,
+    @inject(UserRepository) private userRepo: UserRepository,
     @inject('Database') private db: Database
   ) {}
+
+  /**
+   * Attach the sender's user id to each reply, so first_reply_by_id can record
+   * who responded. One bulk lookup per batch.
+   *
+   * A reply whose sender matches no user in the tenant (shared mailbox, alias,
+   * someone never onboarded) still counts for time-to-response — a human did
+   * reply — it just carries a null replier.
+   */
+  private async attributeRepliesToUsers<T extends ReplyAttribution>(
+    tenantId: string,
+    replies: T[]
+  ): Promise<Array<T & FirstReplyCandidate>> {
+    const userIdsByEmail = await this.userRepo.findIdsByEmails(
+      tenantId,
+      replies.map((r) => r.fromEmail)
+    );
+
+    return replies.map((reply) => ({
+      ...reply,
+      repliedById: userIdsByEmail.get(reply.fromEmail) ?? null,
+    }));
+  }
 
   /**
    * Apply header-only first-reply markers from the Gmail sync.
@@ -124,8 +151,7 @@ export class EmailService {
       return { updatedCount: 0 };
     }
 
-    const providerThreadIds: string[] = [];
-    const replyReceivedAts: Date[] = [];
+    const qualifying: Array<{ providerThreadId: string } & ReplyAttribution> = [];
     for (const marker of markers) {
       // Reuse the exact reply classification from the full-email path so the two
       // never diverge. Auto-submitted / internal-only replies are filtered out.
@@ -143,19 +169,20 @@ export class EmailService {
       if (Number.isNaN(receivedAt.getTime())) {
         continue;
       }
-      providerThreadIds.push(marker.providerThreadId);
-      replyReceivedAts.push(receivedAt);
+      qualifying.push({
+        providerThreadId: marker.providerThreadId,
+        ...toReplyAttribution(classifiable, receivedAt),
+      });
     }
 
-    if (!providerThreadIds.length) {
+    if (!qualifying.length) {
       return { updatedCount: 0 };
     }
 
     const updatedCount = await this.emailRepo.setFirstReplyForProviderThreads(
       tenantId,
       integrationId,
-      providerThreadIds,
-      replyReceivedAts
+      await this.attributeRepliesToUsers(tenantId, qualifying)
     );
 
     return { updatedCount };

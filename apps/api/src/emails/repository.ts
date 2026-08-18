@@ -9,7 +9,23 @@ import { customers } from '../customers/schema';
 import { users } from '../users/schema';
 import { eq, and, desc, asc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
-import type { AnalyzedEmail, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
+import type { AnalyzedEmail, AnalyzedEmailListItem, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
+
+/**
+ * One outbound reply, as far as first-reply (TAT) attribution is concerned.
+ * Reply messages are never stored, so this is all we carry into the UPDATE.
+ */
+export interface FirstReplyCandidate {
+  /** When the reply was sent. */
+  receivedAt: Date;
+  /**
+   * Lowercased To + Cc addresses of the reply. A customer email is only answered
+   * by this reply if its own sender (the originator) appears here.
+   */
+  recipients: string[];
+  /** users.id of the sender, or null when the address matches no user in the tenant. */
+  repliedById: string | null;
+}
 
 // Re-export TATMetricRow from shared
 export type { TATMetricRow } from '@crm/shared';
@@ -28,6 +44,18 @@ function signalOverlaps(signalValues: number[]): SQL {
 
 @injectable()
 export class EmailRepository extends ScopedRepository {
+  /**
+   * Render a reply's recipient list as a typed Postgres array literal. An empty
+   * list yields `ARRAY[]::text[]`, which matches nothing under the originator
+   * rule — the correct outcome for a reply with no addressable recipients.
+   */
+  private static recipientsArray(recipients: string[]): SQL {
+    return sql`ARRAY[${sql.join(
+      recipients.map((r) => sql`${r}`),
+      sql`, `
+    )}]::text[]`;
+  }
+
   constructor(@inject('Database') db: Database) {
     super(db);
   }
@@ -2045,7 +2073,9 @@ export class EmailRepository extends ScopedRepository {
       OFFSET ${offset}
     `);
 
-    const items: AnalyzedEmail[] = rows.map(row => ({
+    // Recipients are omitted here — see AnalyzedEmailListItem. The detail view
+    // fetches them via getAnalyzedEmailById.
+    const items: AnalyzedEmailListItem[] = rows.map(row => ({
       id: row.id,
       subject: row.subject,
       body: row.body,
@@ -2078,7 +2108,10 @@ export class EmailRepository extends ScopedRepository {
   async exportAnalyzedEmails(
     header: RequestHeader,
     request: AnalyzedEmailSearchRequest
-  ): Promise<Array<AnalyzedEmail & { taskComments: Array<{ userName: string; content: string; createdAt: Date }> }>> {
+    // Recipients are omitted: the XLSX column list has no To/Cc columns, and
+    // this query is unpaginated, so fetching them would be dead payload on
+    // every exported row.
+  ): Promise<Array<Omit<AnalyzedEmail, 'tos' | 'ccs'> & { taskComments: Array<{ userName: string; content: string; createdAt: Date }> }>> {
     // Build raw SQL WHERE conditions (same as searchAnalyzedEmails)
     const whereParts: SQL[] = [
       sql`e.tenant_id = ${header.tenantId}`,
@@ -2289,6 +2322,8 @@ export class EmailRepository extends ScopedRepository {
       body: string | null;
       from_email: string;
       from_name: string | null;
+      tos: Array<{ email: string; name?: string }> | null;
+      ccs: Array<{ email: string; name?: string }> | null;
       received_at: Date;
       signals: number[];
       customer_id: string;
@@ -2311,6 +2346,8 @@ export class EmailRepository extends ScopedRepository {
         e.body,
         e.from_email,
         e.from_name,
+        e.tos,
+        e.ccs,
         e.received_at,
         e.signals,
         ep.customer_id,
@@ -2345,6 +2382,8 @@ export class EmailRepository extends ScopedRepository {
       body: row.body,
       fromEmail: row.from_email,
       fromName: row.from_name,
+      tos: row.tos ?? [],
+      ccs: row.ccs ?? [],
       receivedAt: new Date(row.received_at),
       signals: row.signals ?? [],
       customerId: row.customer_id,
@@ -2632,49 +2671,70 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Set first_reply_at on customer emails from a batch of (provider-thread,
-   * reply-timestamp) pairs in a single set-based UPDATE.
+   * Set first_reply_at / first_reply_by_id on customer emails from a batch of
+   * replies keyed by the PROVIDER's thread id, in a single set-based UPDATE.
    *
-   * Same semantics as {@link setFirstReplyForThreads} (earliest reply strictly
-   * after each customer email; never overwrites an existing value), but keyed by
-   * the provider's thread id so callers that only have header metadata — e.g.
-   * blacklisted tenant-domain replies the Gmail sync never stores — don't need to
-   * resolve internal thread UUIDs first. Threads are scoped by (tenant,
-   * integration) to match the email_threads uniqueness.
+   * Same semantics as {@link setFirstReplyForThreads}, but callers that only have
+   * header metadata — e.g. blacklisted tenant-domain replies the Gmail sync never
+   * stores — don't need to resolve internal thread UUIDs first.
    *
-   * @param integrationId       Integration the threads belong to
-   * @param providerThreadIds   Provider thread ids, parallel to replyReceivedAts
-   * @param replyReceivedAts    Reply timestamps, parallel to providerThreadIds
+   * Threads are matched on (tenant, provider_thread_id) across EVERY integration,
+   * deliberately NOT the submitting one. `email_threads` is unique on
+   * (tenant, integration, provider_thread_id), so reconnecting a mailbox — which
+   * mints a new integration row — starts a second set of thread rows for the very
+   * same Gmail threads. Scoping the lookup to the submitting integration therefore
+   * made every reply to a thread first seen under a previous connection
+   * unmatchable: the join dropped it silently, with `updatedCount: 0` the only
+   * trace. In production that fragmented one mailbox across three integrations and
+   * put 62k customer emails permanently out of reach. See ADR-005.
+   *
+   * A provider thread id is unique per mailbox, and a reply's recipients still have
+   * to satisfy the originator rule, so widening to the tenant does not let a reply
+   * attach to an unrelated conversation. Where the same Gmail thread has rows under
+   * several integrations, all of them match — `DISTINCT ON (e2.id)` in
+   * {@link runFirstReplyUpdate} still yields one winning reply per email.
+   *
+   * @param integrationId  Integration that submitted the batch — recorded in the
+   *                       log context for observability, NOT used for matching.
+   * @param replies        Replies keyed by provider thread id
    */
   async setFirstReplyForProviderThreads(
     tenantId: string,
     integrationId: string,
-    providerThreadIds: string[],
-    replyReceivedAts: Date[]
+    replies: Array<{ providerThreadId: string } & FirstReplyCandidate>
   ): Promise<number> {
-    if (providerThreadIds.length === 0 || providerThreadIds.length !== replyReceivedAts.length) {
+    if (replies.length === 0) {
       return 0;
     }
 
-    // Build a VALUES list of (provider_thread_id, reply_at) pairs. The casts on
-    // the row fragments establish the column types for the VALUES-derived table.
-    const pairs = providerThreadIds.map(
-      (providerThreadId, i) => sql`(${providerThreadId}::text, ${replyReceivedAts[i].toISOString()}::timestamp)`
+    // Build a VALUES list of (provider_thread_id, reply_at, recipients,
+    // replied_by_id) rows. The casts on the row fragments establish the column
+    // types for the VALUES-derived table.
+    const rows = replies.map(
+      (r) => sql`(
+        ${r.providerThreadId}::text,
+        ${r.receivedAt.toISOString()}::timestamp,
+        ${EmailRepository.recipientsArray(r.recipients)},
+        ${r.repliedById}::uuid
+      )`
     );
-    const valuesList = sql.join(pairs, sql`, `);
     const joinFragment = sql`
       JOIN email_threads et
         ON et.id = e2.thread_id
        AND et.tenant_id = ${tenantId}
-       AND et.integration_id = ${integrationId}
-      JOIN (VALUES ${valuesList}) AS r(provider_thread_id, reply_at)
+      JOIN (VALUES ${sql.join(rows, sql`, `)}) AS r(provider_thread_id, reply_at, recipients, replied_by_id)
         ON r.provider_thread_id = et.provider_thread_id
-       AND r.reply_at > e2.received_at`;
+       AND r.reply_at > e2.received_at
+       AND LOWER(e2.from_email) = ANY(r.recipients)`;
 
     return this.runFirstReplyUpdate(
       tenantId,
       joinFragment,
-      { integrationId, threadCount: new Set(providerThreadIds).size, replyCount: providerThreadIds.length },
+      {
+        integrationId,
+        threadCount: new Set(replies.map((r) => r.providerThreadId)).size,
+        replyCount: replies.length,
+      },
       'Updated firstReplyAt for customer emails (from reply markers)'
     );
   }

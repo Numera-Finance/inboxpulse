@@ -4,8 +4,12 @@ This directory contains the SQL schema files for the CRM database, split into in
 
 ## Connection String
 
-```
-postgresql://neondb_owner:npg_1gHnfsaiR8Fz@ep-odd-thunder-a88b2g71-pooler.eastus2.azure.neon.tech/neondb?sslmode=require&channel_binding=require
+Every command below reads `$DATABASE_URL`. Take it from `apps/api/.env.local` (or
+GCP Secret Manager for deployed environments) — never commit a connection string
+that carries a password.
+
+```bash
+export DATABASE_URL=$(grep -m1 '^DATABASE_URL=' apps/api/.env.local | cut -d= -f2-)
 ```
 
 ## Execution Order
@@ -83,11 +87,26 @@ psql $DATABASE_URL -f apps/api/sql/migrations/012_email_analyses_user_submitted.
 # Required by the AI Analysis search, which now matches message bodies —
 # an unanchored ILIKE that no B-tree can serve. Reads the whole emails table and
 # holds a table lock while building; see the file for the CONCURRENTLY variant.
-psql $DATABASE_URL -f apps/api/sql/migrations/013_emails_search_trgm_index.sql
+psql $DATABASE_URL -f apps/api/sql/migrations/016_emails_search_trgm_index.sql
 
 # Register the context-search-string analysis type. Comment-only: analysis_type
 # has no CHECK constraint, so the new type needs no DDL to start writing rows.
-psql $DATABASE_URL -f apps/api/sql/migrations/014_email_analyses_context_search_string.sql
+psql $DATABASE_URL -f apps/api/sql/migrations/017_email_analyses_context_search_string.sql
+# Add emails.first_reply_by_id (who sent the first reply) + FK to users and index.
+# Ships with the originator matching rule: a reply only counts for a customer
+# email when it is addressed to that email's own sender. No backfill.
+psql $DATABASE_URL -f apps/api/sql/migrations/013_email_first_reply_by.sql
+
+# Add email_threads (tenant_id, provider_thread_id) index. First-reply markers now
+# match a thread across every integration of the tenant rather than only the
+# submitting one — reconnecting a mailbox mints a new integration id and used to
+# orphan every thread stored under the previous one (ADR-005).
+psql $DATABASE_URL -f apps/api/sql/migrations/014_threads_tenant_provider_thread_index.sql
+
+# Add a partial UNIQUE index enforcing one CONNECTED integration per
+# (tenant, source, mailbox). Reconnecting a mailbox must revive the existing row,
+# never insert a second one — duplicates fragment email_threads (ADR-006).
+psql $DATABASE_URL -f apps/api/sql/migrations/015_integrations_unique_connected_mailbox.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
@@ -103,6 +122,7 @@ Migration files are idempotent (safe to run multiple times).
 - The `contacts` table has a unique constraint: `CONSTRAINT uniq_contacts_tenant_email UNIQUE (tenant_id, email)`
 - The `emails` table has a unique constraint: `CONSTRAINT uniq_emails_tenant_provider_message UNIQUE (tenant_id, provider, message_id)`
 - The `email_threads` table has a unique constraint: `CONSTRAINT uniq_thread_tenant_integration UNIQUE (tenant_id, integration_id, provider_thread_id)`
+- The `integrations` table has a partial unique index: `uniq_integrations_active_tenant_source_email` over `(tenant_id, source, lower(COALESCE(<the "email", "impersonatedUserEmail" and "userEmail" entries in parameters>))) WHERE is_active` - at most one *connected* integration per mailbox. Mailbox addresses are stored lowercased by the API layer to match. It is partial because pre-existing disconnected duplicates would block a full unique index; see ADR-006 for the historical merge that has to precede the strict version. Expression indexes over JSONB cannot be expressed in Drizzle, so this lives only in SQL (migration 015)
 - The `email_analyses` table has a unique constraint: `CONSTRAINT uniq_email_analysis_type UNIQUE (email_id, analysis_type)` - ensures one analysis result per email per analysis type
 - The `thread_analyses` table has a unique constraint: `CONSTRAINT uniq_thread_analysis_type UNIQUE (thread_id, analysis_type)` - ensures one thread summary per thread per analysis type
 - The `contacts` table has a foreign key reference to `customers(id)` with SET NULL on delete

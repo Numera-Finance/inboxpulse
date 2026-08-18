@@ -7,7 +7,7 @@
 
 import type { Email as FrontendEmail } from "@/lib/types"
 import type { Escalation } from "@/lib/data"
-import type { Task, TaskComment, AnalyzedEmail, EmailThread } from "@crm/clients"
+import type { Task, TaskComment, AnalyzedEmail, AnalyzedEmailListItem, EmailThread } from "@crm/clients"
 import { Signal, hasSignal } from "@crm/shared"
 import type {
   InboxItem,
@@ -549,9 +549,9 @@ export const apiTaskToInboxContent: InboxContentAdapter<TaskWithComments> = (
  * Convert AnalyzedEmail to InboxItem
  * Uses the email as the primary data source with task info overlaid
  */
-export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmail> = (
+export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmailListItem> = (
   email
-): InboxItem<AnalyzedEmail> => {
+): InboxItem<AnalyzedEmailListItem> => {
   const timestamp = new Date(email.receivedAt)
   const hasTask = email.taskId !== null
   const classification = parseClassification(email.signals)
