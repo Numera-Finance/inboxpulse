@@ -54,8 +54,17 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS emails_embedding_hnsw_idx
 -- Rewritten as two plain ORDER BY ... LIMIT queries it takes 2.8s.
 --
 -- The remaining cost is the complaints branch. Negatives are 3% of the corpus,
--- so an approximate scan must go deep before it finds five of them. The fix is a
--- PARTIAL index over negatives only:
+-- so an approximate scan reaches its limit before finding five and falls back.
+--
+-- FIRST FIX, applied: hnsw.iterative_scan. Measured on this corpus, 880ms ->
+-- 261ms. It is pgvector's documented answer for exactly this selectivity regime,
+-- and the ANN literature agrees that recall degrades below ~5% selectivity
+-- (ACORN, SIGMOD 2024). Set with SET LOCAL inside the transaction in
+-- retrieval.ts: the parameter only exists once the extension is loaded in a
+-- session, ALTER ROLE is refused to the app user, and a pooled connection would
+-- otherwise carry the setting into unrelated queries.
+--
+-- SECOND FIX, not applied: a PARTIAL index over negatives only:
 --
 --   ALTER TABLE emails ADD COLUMN sentiment_value text;   -- denormalised
 --   CREATE INDEX ... ON emails USING hnsw (embedding halfvec_cosine_ops)

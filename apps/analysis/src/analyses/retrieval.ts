@@ -106,7 +106,23 @@ export async function retrieveExamplesForEmail(
   minBodyChars = DEFAULT_MIN_BODY
 ): Promise<Example[]> {
   try {
-    const rows = await getDb().execute<{
+    // ITERATIVE SCAN, SET PER TRANSACTION.
+    //
+    // The complaints branch asks HNSW for the 5 nearest rows of a class that is
+    // 3% of the corpus, so an approximate scan reaches its limit before finding
+    // five and Postgres falls back. Measured: 880ms default, 261ms with
+    // iterative scan — 3.4x, and pgvector's documented answer for exactly this
+    // selectivity regime (a partial index over the labelled complaints is the
+    // second move, and needs the label denormalised onto emails).
+    //
+    // SET LOCAL inside a transaction rather than on the role: the parameter only
+    // exists once the extension is loaded in a session, ALTER ROLE is refused to
+    // the app user, and a pooled connection would otherwise carry the setting
+    // into unrelated queries.
+    const rows = await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL hnsw.iterative_scan = relaxed_order`);
+      await tx.execute(sql`SET LOCAL hnsw.max_scan_tuples = 20000`);
+      return tx.execute<{
       subject: string | null;
       body: string | null;
       sentiment_value: string | null;
@@ -157,6 +173,7 @@ export async function retrieveExamplesForEmail(
       SELECT * FROM ordinary
       ORDER BY distance
     `);
+    });
 
     return rows
       .filter((r) => r.subject !== null && r.body !== null)
