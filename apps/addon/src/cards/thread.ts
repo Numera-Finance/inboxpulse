@@ -70,6 +70,12 @@ export interface ThreadCardInput {
    * stored. Only ever set for threads InboxPulse does not track.
    */
   live?: LiveAnalysis | null;
+  /**
+   * Reading is off for this viewer, so `live` is empty by choice rather than by
+   * failure. Worth a line of its own: an absent analysis and a declined one look
+   * identical on the card, and only one of them is fixed by pressing a button.
+   */
+  readingOff?: boolean;
   /** Renders the "Share to Chat" button when a webhook is configured. */
   chatShareEnabled?: boolean;
   /** Everyone on the thread, most-involved first. */
@@ -549,6 +555,27 @@ export function buildThreadCard(input: ThreadCardInput): Card {
       }
       sections.push(...loopInSections(input));
       return { sections: separated(sections) };
+    }
+
+    // Say why the analysis is missing, and offer the switch that fills it. The
+    // panel otherwise renders its remaining sections and reads as though this
+    // message had nothing to report.
+    if (!input.live && input.readingOff) {
+      sections.push({
+        widgets: [
+          deco({
+            startIcon: { knownIcon: 'DESCRIPTION' },
+            text: '<b>Your mail is not being read</b>',
+            wrapText: true,
+          }),
+          text(
+            '<font color="#5f6368">This message was not sent to a model. Turn reading on and it is read only while you have it open, and nothing is kept.</font>',
+          ),
+          ...(input.baseUrl
+            ? [buttons(actionButton('Turn on reading', `${input.baseUrl}/consent/grant`, {}))]
+            : []),
+        ],
+      });
     }
 
     if (input.live) {

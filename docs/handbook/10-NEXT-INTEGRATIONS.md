@@ -25,9 +25,14 @@ and read `tenantId` from query parameters rather than the authenticated header.
 
 Before anyone external builds against this, settle and publish:
 
-- **The envelope.** `ApiResponse<T>` is the stated standard, and the auth
-  middlewares already violate it by returning `error` as a bare string. A client
-  parsing `error.message` gets `undefined` on a 401.
+- **The envelope.** `ApiResponse<T>` is the standard and now holds at the auth
+  boundary: `requireServiceAuth` and `requireInternalAuth` returned `error` as a
+  bare string until August 2026, so a client reading `error.message` got
+  `undefined` on every 401. The add-on's own `safeErrorDetail` reads `error.code`
+  and logged "json body, no error object" — the reason was in the response and
+  discarded by the one client that needed it. Both now return
+  `{ code, message, statusCode }`, typed as `ApiResponse<never>` so the compiler
+  refuses the next bare string, and `service-auth.test.ts` covers all six.
 - **Where identity comes from.** A valid service key currently grants
   `ALL_PERMISSIONS` and the caller asserts its own `isAdmin` in a query
   parameter. That is workable for a first-party add-on and is not a model to hand

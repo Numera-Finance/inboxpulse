@@ -207,12 +207,25 @@ survive a restart or a second instance.
 **Ten `@deprecated` methods are still called**, each pointing at a `…Scoped`
 replacement.
 
-## A privacy gap worth knowing
+## The consent gate, and how it failed
 
-The consent gate — "no consent, no read" — is checked at
-`apps/addon/src/index.ts:426` and `:1051`. **Four model call sites do not check
-it**: `classifyThreadMode` (`:404`, before the gate), `/gmail/triage` (`:791`),
-`/gmail/stance` (`:641`), and `liveForOpenMessage` (`:1111`).
+"No consent, no read" is enforced by `hasConsent`, which asks Gmail whether the
+`⚡/Reading on` label exists. The label is the record — it lives in the user's
+mailbox, is visible in their label list, and deleting it turns reading off
+whether or not this code cooperates.
 
-The card says "Analysed live. Not stored", which remains true. But a user who has
-not turned reading on can still have thread text sent to a model by those paths.
+**Until August 2026 four model call sites bypassed it.** `/gmail/analyse`
+computed the gate and guarded the deep read with it, but `classifyThreadMode`
+ran twenty-two lines above that line and sent the same thread to the same model.
+`/gmail/stance`, `/gmail/triage` and the contextual live path had no gate at all.
+A viewer who had never turned reading on had their mail read while the panel
+correctly displayed "Your mail is not being read".
+
+All four are gated now, and `consent-gate.test.ts` asserts the property that was
+actually violated: within any handler, no model call may appear above the consent
+check. Order is the whole point — the original gate existed and sat too low. The
+test derives its list of model functions from the async exports of
+`live-analysis.ts`, so a new one is covered when it is written.
+
+What the test cannot check is that the consent value is *used* rather than merely
+computed early. That still needs a reader.
