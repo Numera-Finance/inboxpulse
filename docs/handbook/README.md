@@ -80,6 +80,9 @@ entity, since merged into `users`. Two of what remains are worth your time:
 
 - **`docs/decisions.md`** — the ADR log, append-only. Read ADR-005 and ADR-020.
 - **`docs/EXPERIMENTS.md`** — every approach tried, with its measured result.
+- **`docs/RETIRED-BRANCHES.md`** — the ten branches deleted in August 2026,
+  each with the evidence for deleting it and the SHA to restore it from. Read
+  this before concluding a half-built feature was never started.
 
 Treat the rest as archaeology unless something points you at one. Specifically,
 **`docs/GMAIL-OAUTH-SETUP.md` names a retired GCP project** (`health-474623`) and
