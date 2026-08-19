@@ -499,26 +499,47 @@ export interface Viewer {
  * the user's actual permissions rather than a hardcoded `isAdmin: false`, which
  * was quietly denying admins their own tenant's history.
  */
-export async function resolveViewer(tenantId: string, email: string): Promise<Viewer | null> {
+/**
+ * Three outcomes, deliberately not two.
+ *
+ * `absent` means the service answered and this address is not a member.
+ * `unreachable` means we never got an answer. Collapsing them into `null` let
+ * the panel tell a real user "This mailbox is not a user in this workspace"
+ * during an outage on 2026-08-19 — a timeout rendered as a confident statement
+ * about their account, and they went looking for who had revoked their access.
+ * The row was there the whole time.
+ */
+export type ViewerLookup =
+  | { status: 'found'; viewer: Viewer }
+  | { status: 'absent' }
+  | { status: 'unreachable' };
+
+export async function resolveViewer(tenantId: string, email: string): Promise<ViewerLookup> {
   const env = getEnv();
-  if (!env.SERVICE_API_KEY || !email) return null;
+  // No key or no address: we cannot ask, which is not the same as an answer.
+  if (!env.SERVICE_API_KEY || !email) return { status: 'unreachable' };
   const url =
     `${env.SERVICE_API_URL}/api/internal/addon/viewer` +
     `?tenantId=${encodeURIComponent(tenantId)}&email=${encodeURIComponent(email)}`;
   const res = await apiFetch(url, { headers: internalHeaders(tenantId) });
-  if (!res || !res.ok) return null;
+  if (!res || !res.ok) return { status: 'unreachable' };
   try {
     const d = unwrap<{ found?: boolean; userId?: string; isAdmin?: boolean; accessibleCustomers?: number }>(
       await res.json(),
     );
-    if (!d?.found || !d.userId) return null;
+    // A well-formed answer saying `found: false` IS an answer.
+    if (!d?.found || !d.userId) return { status: 'absent' };
     return {
-      userId: d.userId,
-      isAdmin: Boolean(d.isAdmin),
-      accessibleCustomers: Number(d.accessibleCustomers ?? 0),
+      status: 'found',
+      viewer: {
+        userId: d.userId,
+        isAdmin: Boolean(d.isAdmin),
+        accessibleCustomers: Number(d.accessibleCustomers ?? 0),
+      },
     };
   } catch {
-    return null;
+    // Unparseable is a broken conversation, not a membership verdict.
+    return { status: 'unreachable' };
   }
 }
 

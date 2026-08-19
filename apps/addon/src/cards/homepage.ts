@@ -132,6 +132,16 @@ export interface FiresView {
    */
   restricted?: boolean;
   /**
+   * The viewer lookup never answered, so this panel is unscoped — not empty.
+   *
+   * Kept apart from `viewerEmail` because the two need opposite words. "You are
+   * not a member" is a fact about the reader's account and sends them to an
+   * admin; this one is a fact about us, and the reader should try again. On
+   * 2026-08-19 an outage rendered as the first, and the reader went looking for
+   * who had removed their access.
+   */
+  lookupFailed?: boolean;
+  /**
    * The signed-in Gmail address is not a user in this workspace, so nothing can
    * be scoped to them.
    *
@@ -571,7 +581,21 @@ export function buildHomepageCard(
   // tenant-wide sections carry on showing real numbers, so the panel reads as a
   // working product reporting calm — the most reassuring possible rendering of
   // a broken identity lookup.
-  if (fires && !fires.fires.length && fires.viewerEmail) {
+  if (fires && !fires.fires.length && fires.lookupFailed) {
+    firm.unshift({
+      header: heading('Where the fires are'),
+      widgets: [
+        deco({
+          startIcon: { knownIcon: 'CLOCK' },
+          text: '<b>Could not check who you are</b>',
+          bottomLabel:
+            'This section is scoped to you, so it is unscoped rather than empty. ' +
+            'Reopen the panel in a minute. Nothing here means nothing is wrong.',
+          wrapText: true,
+        }),
+      ],
+    });
+  } else if (fires && !fires.fires.length && fires.viewerEmail) {
     firm.unshift({
       header: heading('Where the fires are'),
       widgets: [

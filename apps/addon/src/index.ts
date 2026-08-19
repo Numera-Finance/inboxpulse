@@ -334,7 +334,8 @@ app.post('/gmail/analyse', async (c) => {
   // The REAL viewer, not a pinned dev id. ADDON_DEV_USER_ID is unset in
   // production, so every account-context call was short-circuiting on an empty
   // userId and the history section silently never rendered.
-  const viewer = tenantId && viewerEmail ? await resolveViewer(tenantId, viewerEmail) : null;
+  const viewerLookup = tenantId && viewerEmail ? await resolveViewer(tenantId, viewerEmail) : null;
+  const viewer = viewerLookup?.status === 'found' ? viewerLookup.viewer : null;
   const externalDomain = participants.find((p) => p.external)?.address.split('@')[1];
 
   // Account history FIRST, then the reading — the reading needs the history as
@@ -1038,7 +1039,8 @@ app.post('/homepage', async (c) => {
   const stats = null;
   // Resolve the real viewer before asking — the query is entitlement-scoped and
   // "who is unhappy" must not become a way to read accounts they cannot open.
-  const who = tenantId && verified.email ? await resolveViewer(tenantId, verified.email) : null;
+  const whoLookup = tenantId && verified.email ? await resolveViewer(tenantId, verified.email) : null;
+  const who = whoLookup?.status === 'found' ? whoLookup.viewer : null;
   const waiting = tenantId && who ? await getWaitingClients(tenantId, who.userId, who.isAdmin) : [];
   const pulse = tenantId ? await getDangerPulse(tenantId) : null;
   // Both are management views: where the fires are, and who to ask about them.
@@ -1050,7 +1052,17 @@ app.post('/homepage', async (c) => {
   // Recognised-but-unentitled and not-recognised-at-all need different words and
   // different fixes. Only the second one is reported with the address, because
   // the fix is to add that exact address as a user.
-  const viewerUnknown = tenantId && verified.email && !who ? verified.email : undefined;
+  //
+  // ONLY when the service actually answered. This previously fired whenever the
+  // lookup returned null, so during the outage of 2026-08-19 a timeout rendered
+  // as "This mailbox is not a user in this workspace" to a user whose row was
+  // present and active the whole time. A failure must never be reported as a
+  // fact about someone's account.
+  const viewerUnknown =
+    whoLookup?.status === 'absent' && verified.email ? verified.email : undefined;
+  // We could not ask. Said out loud, because an unscoped panel that stays silent
+  // reads as "nothing is on fire".
+  const viewerUncheckable = whoLookup?.status === 'unreachable';
   const slow = tenantId ? await getSlowResponders(tenantId) : [];
   // The only section that fires before a complaint is written.
   const stirring = tenantId ? await getStirring(tenantId) : [];
@@ -1071,7 +1083,14 @@ app.post('/homepage', async (c) => {
         getEnv().ADDON_BASE_URL,
         { clients: waiting, webUrl: getEnv().WEB_URL },
         pulse ?? undefined,
-        { fires, restricted, viewerEmail: viewerUnknown, windowDays: 90, webUrl: getEnv().WEB_URL },
+        {
+          fires,
+          restricted,
+          viewerEmail: viewerUnknown,
+          lookupFailed: viewerUncheckable,
+          windowDays: 90,
+          webUrl: getEnv().WEB_URL,
+        },
         { people: slow, firmMedianH: pulse?.negativeMedianH ?? null, webUrl: getEnv().WEB_URL, windowDays: 90 },
         // canWrite tracks the SCOPE, not a preference: the label tools are only
         // shown where they can actually run, and the write is only disclosed

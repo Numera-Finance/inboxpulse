@@ -981,7 +981,7 @@ describe('an inferred owner is labelled as one', () => {
  * it is what a live panel showed for hours.
  */
 describe('an unrecognised viewer', () => {
-  const card = (viewerEmail?: string, restricted?: boolean) =>
+  const card = (viewerEmail?: string, restricted?: boolean, lookupFailed?: boolean) =>
     JSON.stringify(
       buildHomepageCard(null, undefined, undefined, undefined, undefined, {
         webUrl: 'https://web.test',
@@ -989,6 +989,7 @@ describe('an unrecognised viewer', () => {
         fires: [],
         viewerEmail,
         restricted,
+        lookupFailed,
       }),
     );
 
@@ -1011,6 +1012,29 @@ describe('an unrecognised viewer', () => {
 
   it('stays quiet when there are simply no fires', () => {
     expect(card(undefined, false)).not.toContain('not a user in this workspace');
+  });
+
+  /**
+   * The 2026-08-19 outage: `/addon/viewer` timed out, `resolveViewer` returned
+   * null, and the card told a real admin their mailbox was not a user in this
+   * workspace. Their row was present and active throughout, and they went
+   * looking for who had revoked their access.
+   *
+   * A failed lookup is a fact about US. It must never be rendered as a fact
+   * about the reader's account.
+   */
+  it('never claims the viewer is not a member when the lookup failed', () => {
+    const json = card(undefined, false, true);
+    expect(json).not.toContain('not a user in this workspace');
+    expect(json).toContain('Could not check who you are');
+    // And it must not read as calm: the section says why it is unscoped.
+    expect(json).toContain('Where the fires are');
+  });
+
+  it('still says "not a member" when the service actually answered', () => {
+    const json = card('gaurav@numerafinance.com', false, false);
+    expect(json).toContain('not a user in this workspace');
+    expect(json).not.toContain('Could not check who you are');
   });
 });
 
