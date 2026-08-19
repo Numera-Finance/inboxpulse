@@ -18,6 +18,13 @@ import { TenantService } from '../tenants/service';
 import { KeywordService } from '../keywords/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply } from './extraction/extractor';
+import { buildThreadContext, type ThreadContextEmail } from './thread-context';
+import {
+  buildParticipantRoster,
+  customerDomainKeysFor,
+  type AddressSource,
+  type RosterEntry,
+} from './participant-roles';
 import { isCustomerTraffic } from './prefilter/third-party';
 
 // =============================================================================
@@ -57,6 +64,13 @@ export interface AnalysisExecutionOptions {
   emailId: string;
   email: Email;
   threadId: string;
+  /**
+   * Prior messages in the thread. When provided, the service builds both the
+   * participant roster and the thread-context block from them, so role
+   * labelling stays in one place instead of being duplicated per caller.
+   */
+  threadEmails?: ThreadContextEmail[];
+  /** Pre-built thread context. Takes precedence over `threadEmails`. */
   threadContext?: string;
   persist?: boolean;
   analysisTypes?: AnalysisType[];
@@ -71,10 +85,13 @@ interface AnalysisContext {
   emailId: string;
   email: Email;
   threadId: string;
+  threadEmails?: ThreadContextEmail[];
   persist: boolean;
   analysisTypes?: AnalysisType[];
   useThreadSummaries: boolean;
   threadContext?: string;
+  /** Role-labelled participants across the current email and thread messages. */
+  participants?: RosterEntry[];
   result: AnalysisExecutionResult;
 }
 
@@ -156,7 +173,9 @@ export class EmailAnalysisService {
     // PHASE 1: Gather data from external services (no local DB writes)
     // =========================================================================
 
-    // Step 1: Get thread context
+    // Step 1: Resolve participant roles, then build thread context (which
+    // renders those roles onto each turn's From/To/Cc).
+    ctx.participants = await this.buildRoster(ctx);
     ctx.threadContext = await this.getThreadContext(ctx, options.threadContext);
 
     // Step 2: Call external APIs to gather data
@@ -467,6 +486,7 @@ export class EmailAnalysisService {
     try {
       const response = await this.analysisClient.analyze(ctx.tenantId, ctx.email, {
         threadContext: ctx.threadContext,
+        participants: ctx.participants,
         analysisTypes: analysisTypes,
         // Enable classification and skip AI analysis for non-business emails
         filter: {
@@ -1387,11 +1407,63 @@ export class EmailAnalysisService {
       emailId: options.emailId,
       email: options.email,
       threadId: options.threadId,
+      threadEmails: options.threadEmails,
       persist: options.persist ?? false,
       analysisTypes: options.analysisTypes,
       useThreadSummaries: options.useThreadSummaries ?? false,
       result: {},
     };
+  }
+
+  /**
+   * Resolve a participant role for every address on the current email and the
+   * thread messages that accompany it.
+   *
+   * Scoped strictly to addresses present on those messages — the roster is not
+   * a dump of the tenant's contacts. Roles come from tenant domains (`us`) and
+   * curated customer records (`customer`); everything else is
+   * `unknown_external`. See participant-roles.ts for why auto-created customer
+   * rows deliberately do not earn the `customer` label.
+   *
+   * Failures are non-fatal: an unlabelled roster degrades the prompt to the
+   * pre-roster behaviour rather than failing the analysis.
+   */
+  private async buildRoster(ctx: AnalysisContext): Promise<RosterEntry[] | undefined> {
+    const sources: AddressSource[] = [ctx.email, ...(ctx.threadEmails || [])];
+
+    try {
+      const tenant = await this.tenantService.findById(ctx.tenantId);
+      const domainKeys = customerDomainKeysFor(sources);
+      const curatedDomains = await this.customerService.findCuratedDomains(
+        ctx.tenantId,
+        domainKeys
+      );
+
+      const roster = buildParticipantRoster(sources, tenant?.domains, curatedDomains);
+
+      logger.debug(
+        {
+          tenantId: ctx.tenantId,
+          emailId: ctx.emailId,
+          participantCount: roster.length,
+          roleCounts: roster.reduce<Record<string, number>>((acc, entry) => {
+            acc[entry.role] = (acc[entry.role] || 0) + 1;
+            return acc;
+          }, {}),
+          tenantDomainsConfigured: !!tenant?.domains?.length,
+          logType: 'PARTICIPANT_ROSTER_BUILT',
+        },
+        'Built participant roster for analysis'
+      );
+
+      return roster;
+    } catch (error: any) {
+      logger.warn(
+        { error: error.message, tenantId: ctx.tenantId, emailId: ctx.emailId },
+        'Failed to build participant roster, continuing without role labels'
+      );
+      return undefined;
+    }
   }
 
   /**
@@ -1403,6 +1475,14 @@ export class EmailAnalysisService {
   ): Promise<string | undefined> {
     if (providedContext) {
       return providedContext;
+    }
+
+    // Build from raw thread messages when the caller supplied them. This is the
+    // main ingestion path; it carries per-message To/Cc with role labels, which
+    // thread summaries cannot.
+    if (ctx.threadEmails?.length) {
+      return buildThreadContext(ctx.threadEmails, ctx.email.messageId, ctx.participants)
+        .threadContext;
     }
 
     if (!ctx.useThreadSummaries) {

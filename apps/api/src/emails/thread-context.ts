@@ -1,63 +1,117 @@
-/**
- * Maximum number of emails to include in thread context
- * Limits token usage and memory for large threads
- *
- * Phase 1: Include only recent emails (default: 5)
- * Phase 2: LLM will query for additional thread context via tools when needed
- */
-const MAX_THREAD_CONTEXT_EMAILS = 5;
+import { extractLatestReply } from './extraction/extractor';
+import {
+  formatAddressesWithRoles,
+  formatRosterBlock,
+  rosterRoleMap,
+  roleLabel,
+  type AddressLike,
+  type ParticipantRole,
+  type RosterEntry,
+} from './participant-roles';
+import { logger } from '../utils/logger';
 
 /**
- * Maximum body length per email in thread context
+ * Maximum number of messages to include in thread context.
+ *
+ * Bodies are dequoted before inclusion (see below), so this is a genuine
+ * window over distinct turns rather than a token-budget proxy.
  */
-const MAX_BODY_PREVIEW_LENGTH = 300;
+const MAX_THREAD_CONTEXT_EMAILS = 8;
+
+/** Email row fields the thread context reads. */
+export interface ThreadContextEmail {
+  messageId: string;
+  subject?: string | null;
+  fromEmail?: string | null;
+  fromName?: string | null;
+  tos?: AddressLike[] | null;
+  ccs?: AddressLike[] | null;
+  body?: string | null;
+  receivedAt?: Date | string | null;
+}
 
 /**
- * Build thread context string for analyses that require it
- * Limits context size to reduce token usage and prevent memory issues with large threads
+ * Reduce a stored body to the text the model should actually read.
  *
- * Phase 1: Includes limited recent emails (MAX_THREAD_CONTEXT_EMAILS)
- * Phase 2: LLM will query for additional thread context via tools when needed
+ * Two transforms, both load-bearing:
+ *  1. HTML → text. Gmail bodies are stored as raw HTML; without this the model
+ *     reads markup, and the prompt is mostly `<div dir="ltr">`.
+ *  2. Dequoting. Every message in a thread embeds the entire prior chain as
+ *     quoted text. Including it verbatim would repeat the thread once per turn
+ *     — quadratic growth, and the model sees the same content N times.
  *
- * Performance optimizations:
- * 1. Limits to MAX_THREAD_CONTEXT_EMAILS most recent emails
- * 2. Truncates body previews to MAX_BODY_PREVIEW_LENGTH
- * 3. Prioritizes emails around the current email
+ * Returns the body unchanged if extraction throws, which is the safe direction:
+ * a noisy body beats a missing one.
  */
-export function buildThreadContext(threadEmails: any[], currentMessageId: string): { threadContext: string } {
+function prepareThreadBody(body: string, messageId: string): string {
+  const isHtml = /<\/?[a-z][\s\S]*>/i.test(body);
+
+  try {
+    const extraction = extractLatestReply(body, isHtml);
+    const prepared = extraction.messageBody.trim();
+    // Dequoting occasionally strips everything (a reply that is only a quote).
+    // Fall back rather than emit an empty turn.
+    return prepared || body.trim();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      { messageId, error: message },
+      'Thread body extraction failed, using raw body'
+    );
+    return body.trim();
+  }
+}
+
+/**
+ * Build the thread-context block sent to the analysis service.
+ *
+ * Each turn carries its full dequoted body plus the addressing structure
+ * (From / To / Cc, each labelled with its participant role). The addressing is
+ * what lets attribution-sensitive analyses tell "the customer is complaining to
+ * us" from "a third party is complaining and we are merely copied" — the roles
+ * come from {@link buildParticipantRoster}, resolved against tenant domains and
+ * curated customer records.
+ *
+ * @param roster - Participant roster covering these messages. When omitted,
+ *   addresses render without role labels (callers that have no tenant context).
+ */
+export function buildThreadContext(
+  threadEmails: ThreadContextEmail[],
+  currentMessageId: string,
+  roster?: RosterEntry[]
+): { threadContext: string } {
   if (!threadEmails || threadEmails.length === 0) {
     return { threadContext: 'No thread history available' };
   }
 
-  // Sort by received date
   const sortedEmails = [...threadEmails].sort((a, b) => {
     const dateA = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
     const dateB = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
     return dateA - dateB;
   });
 
-  // Select emails to include (limit to MAX_THREAD_CONTEXT_EMAILS)
-  // Strategy: Include the most recent emails (including current email)
-  // This prioritizes recent context which is most relevant for analysis
-  // Phase 2: LLM can query for older thread context via tools if needed
-  let emailsToInclude: any[];
+  // Keep the most recent window — it always contains the current message, which
+  // is typically the newest turn.
+  const emailsToInclude =
+    sortedEmails.length <= MAX_THREAD_CONTEXT_EMAILS
+      ? sortedEmails
+      : sortedEmails.slice(-MAX_THREAD_CONTEXT_EMAILS);
 
-  if (sortedEmails.length <= MAX_THREAD_CONTEXT_EMAILS) {
-    // Thread is small enough - include all emails
-    emailsToInclude = sortedEmails;
-  } else {
-    // Thread is large - include the most recent MAX_THREAD_CONTEXT_EMAILS emails
-    // This ensures we always include the current email (which is typically the most recent)
-    emailsToInclude = sortedEmails.slice(-MAX_THREAD_CONTEXT_EMAILS);
-  }
+  const roles: ReadonlyMap<string, ParticipantRole> = roster
+    ? rosterRoleMap(roster)
+    : new Map<string, ParticipantRole>();
 
   const contextParts: string[] = [];
+
+  const rosterBlock = roster ? formatRosterBlock(roster) : '';
+  if (rosterBlock) {
+    contextParts.push(rosterBlock);
+    contextParts.push('');
+  }
+
   if (sortedEmails.length > emailsToInclude.length) {
     contextParts.push(
-      `Thread History (showing ${emailsToInclude.length} of ${sortedEmails.length} messages, most recent):\n`
-    );
-    contextParts.push(
-      `Note: Additional thread context can be retrieved via tools if needed (Phase 2).\n`
+      `Thread History (showing the ${emailsToInclude.length} most recent of ${sortedEmails.length} messages):\n`
     );
   } else {
     contextParts.push(`Thread History (${sortedEmails.length} messages):\n`);
@@ -65,19 +119,28 @@ export function buildThreadContext(threadEmails: any[], currentMessageId: string
 
   for (const dbEmail of emailsToInclude) {
     const isCurrent = dbEmail.messageId === currentMessageId;
-    const marker = isCurrent ? '[CURRENT]' : '';
+    const marker = isCurrent ? '[CURRENT] ' : '';
 
-    contextParts.push(`${marker} From: ${dbEmail.fromName || dbEmail.fromEmail} (${dbEmail.fromEmail})`);
-    contextParts.push(`Subject: ${dbEmail.subject}`);
+    const fromEmail = dbEmail.fromEmail?.toLowerCase().trim();
+    const fromRole = fromEmail ? roles.get(fromEmail) : undefined;
+    const fromLabel = fromRole ? ` [${roleLabel(fromRole)}]` : '';
+    const fromName = dbEmail.fromName ? `${dbEmail.fromName} ` : '';
+    contextParts.push(`${marker}From: ${fromName}<${fromEmail || 'unknown'}>${fromLabel}`);
+
+    const toLine = formatAddressesWithRoles(dbEmail.tos, roles);
+    if (toLine) contextParts.push(`To: ${toLine}`);
+
+    const ccLine = formatAddressesWithRoles(dbEmail.ccs, roles);
+    if (ccLine) contextParts.push(`Cc: ${ccLine}`);
+
+    contextParts.push(`Subject: ${dbEmail.subject || ''}`);
+
     if (dbEmail.receivedAt) {
       contextParts.push(`Date: ${new Date(dbEmail.receivedAt).toISOString()}`);
     }
 
     if (dbEmail.body) {
-      const bodyPreview = dbEmail.body.length > MAX_BODY_PREVIEW_LENGTH
-        ? dbEmail.body.substring(0, MAX_BODY_PREVIEW_LENGTH) + '...'
-        : dbEmail.body;
-      contextParts.push(`Body: ${bodyPreview}`);
+      contextParts.push(`Body:\n${prepareThreadBody(dbEmail.body, dbEmail.messageId)}`);
     }
 
     contextParts.push('---');

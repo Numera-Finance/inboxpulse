@@ -1,4 +1,4 @@
-import { eq, and, sql, SQL } from 'drizzle-orm';
+import { eq, and, inArray, sql, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
 import { ScopedRepository } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
@@ -74,6 +74,42 @@ export class CustomerRepository extends ScopedRepository {
       .limit(1);
 
     return result[0];
+  }
+
+  /**
+   * Of the given customer-domain keys, return those that map to a *curated*
+   * customer — active, and not auto-created by the ingestion pipeline.
+   *
+   * The email pipeline mints an auto-created customer for every participant
+   * domain it sees, so simply having a customer row proves nothing about who
+   * the client is. `is_auto_created = false` is the only signal in the schema
+   * that a human confirmed the record, which makes it the basis for the
+   * `customer` participant role (see participant-roles.ts).
+   *
+   * Domains are matched lowercased on both sides. Returns an empty set for an
+   * empty input without hitting the database.
+   */
+  async findCuratedDomains(tenantId: string, domains: string[]): Promise<Set<string>> {
+    if (domains.length === 0) {
+      return new Set();
+    }
+
+    const normalized = [...new Set(domains.map((d) => d.toLowerCase()))];
+
+    const rows = await this.db
+      .select({ domain: customerDomains.domain })
+      .from(customerDomains)
+      .innerJoin(customers, eq(customers.id, customerDomains.customerId))
+      .where(
+        and(
+          eq(customerDomains.tenantId, tenantId),
+          inArray(customerDomains.domain, normalized),
+          eq(customers.isAutoCreated, false),
+          eq(customers.rowStatus, CustomerRowStatus.ACTIVE)
+        )
+      );
+
+    return new Set(rows.map((r) => r.domain));
   }
 
   async findById(id: string): Promise<Customer | undefined> {

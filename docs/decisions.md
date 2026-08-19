@@ -2012,3 +2012,72 @@ guard for it needed no schema.
   `set` block wrote every column unconditionally, so a partial upsert emitted
   `undefined` — NULL — over the existing customer link.
 
+### ADR-009: Sentiment gets participant roles and a committed target (2026-08-14)
+
+**Status:** Accepted
+
+**Context:**
+Users reported sentiment marking interactions negative when the dissatisfaction
+was aimed at someone other than us: a vendor pressing our client for an overdue
+balance while we sat on Cc; a client flagging an error in a *prior* provider's
+tax return; a client mentioning they would consult another vendor about an SSN
+workaround. Every one of these auto-created an escalation task, because
+`maybeCreateTaskForNegativeEmail` fires on `sentiment.value === 'negative'`
+alone.
+
+The prompt was written entirely in terms of "US" and "our firm" — including a
+carve-out for "frustration aimed at a third party" — but the model was never
+told who any of that referred to. `buildEmailContext` sent only From, Subject,
+Body and Signature; `tos`/`ccs` were on the wire but dropped at prompt-build
+time, and thread context was `From`-only as well. The third-party rule was
+therefore unenforceable, and "who is this about" was left to inference over
+domain names.
+
+A second problem blocked the obvious fix. Deciding "is this address the
+customer?" from `customer_domains` does not work: the ingestion pipeline
+auto-creates a customer row for *every* participant domain it sees, so the
+vendor in the first example is already a customer record.
+
+**Decision:**
+1. **Participant roster, computed in apps/api, scoped to the thread.** Every
+   address on the analysed email and the thread messages sent with it is
+   labelled `us` (tenant domain), `customer` (maps to a customer with
+   `is_auto_created = false`), or `unknown_external` (everything else). The
+   roster covers only addresses appearing on those messages — never a dump of
+   tenant contacts or the customer list. Roles are resolved deterministically
+   from tenant domains and curated customer records; the LLM never infers them.
+2. **`unknown_external` is a distinct tier, not a synonym for "third party".**
+   Auto-created customer rows prove an address appeared on an email, nothing
+   more. The prompt treats `unknown_external` senders as possible customers —
+   an explicit complaint about us still counts — so patchy curation costs
+   sensitivity rather than silently zeroing it.
+3. **`sentiment.target` is required.** The model must commit to `us` /
+   `third_party` / `none` before it may return a value, and `negative` and
+   `positive` both require `target: us`. Attribution becomes an auditable field
+   instead of an assumption folded into `value`.
+4. **Thread fidelity raised to 8 messages with no character cap**, with bodies
+   run through `htmlToText` and dequoted per message. The old 5×300-char window
+   truncated raw Gmail HTML, so thread context was mostly markup.
+
+**Consequences:**
+- New column `email_analyses.sentiment_target` (migration 016) plus a
+  `(sentiment_value, sentiment_target)` index. NULL means *not attributed* —
+  historical rows and keyword-matched sentiment — and must never be read as
+  "aimed at us". Any consumer gating on it decides explicitly how it treats
+  NULL.
+- `analyze` requests carry an optional `participants` array. Optional so a
+  caller predating the roster still works; analyses then reason without roles.
+- `executeAnalysis` now accepts raw `threadEmails` and builds both the roster
+  and the thread context itself, instead of each caller pre-building a context
+  string. This removed a verbatim duplicate of `buildThreadContext` that lived
+  in the Inngest function — the ingestion path had been using the copy, not the
+  shared helper.
+- Dequoting thread bodies is load-bearing, not a nicety: without it, 8 messages
+  means 8 copies of the chain, since every turn embeds the prior one.
+- Sentiment prompt bumped to v1.6. Existing analyses are not re-run; the change
+  applies to newly analysed email.
+- **Not addressed here.** The escalation gate still keys on
+  `value === 'negative'` alone and does not yet consult `target`; the keyword
+  path (`analysis_keywords`) still short-circuits the LLM entirely and sets
+  `negative` at confidence 1.0 from a word-boundary match on subject + body,
+  leaving `target` NULL. Both are follow-ups.

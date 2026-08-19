@@ -38,6 +38,21 @@ export const sentimentSchema = z.object({
   value: z.enum(['positive', 'negative', 'neutral']),
   confidence: z.number().min(0).max(1),
   reason: llmOptional(z.string()),
+  /**
+   * Who the sentiment is directed at.
+   *
+   * Multi-party threads routinely carry strong sentiment aimed at someone other
+   * than us — a vendor chasing our client for payment, a client faulting a prior
+   * provider's work — while we sit on Cc. Forcing the model to name the target
+   * turns that judgement into an auditable field instead of an assumption baked
+   * into `value`, and lets consumers (escalation creation, dashboards) filter on
+   * it without re-running analysis.
+   *
+   * - `us`           — directed at the tenant's own firm.
+   * - `third_party`  — directed at anyone else on or named in the thread.
+   * - `none`         — no directed sentiment (the neutral default).
+   */
+  target: z.enum(['us', 'third_party', 'none']),
 });
 
 export type SentimentResult = z.infer<typeof sentimentSchema>;

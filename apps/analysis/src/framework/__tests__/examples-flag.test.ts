@@ -125,7 +125,9 @@ describe('buildBatchedPrompt', () => {
 
   it('places examples between the instructions and the email', async () => {
     const defs = [{ name: 'Sentiment', module: { name: 'sentiment', instructions: 'RULES' } }] as never;
-    const out = String(executor().buildBatchedPrompt(defs, email, undefined, 'EXAMPLES-HERE'));
+    // buildBatchedPrompt gained a `participants` roster ahead of `examples` when
+    // the participant-roster branch merged; this call names the slot it means.
+    const out = String(executor().buildBatchedPrompt(defs, email, undefined, undefined, 'EXAMPLES-HERE'));
     expect(out.indexOf('RULES')).toBeLessThan(out.indexOf('EXAMPLES-HERE'));
     expect(out.indexOf('EXAMPLES-HERE')).toBeLessThan(out.indexOf('Re: close'));
   });

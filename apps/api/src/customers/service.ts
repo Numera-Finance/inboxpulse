@@ -920,7 +920,6 @@ export class CustomerService {
     return created;
   }
 
-
   /**
    * Replace a customer's domain list, taking the contacts on those domains
    * along with them.
@@ -968,6 +967,15 @@ export class CustomerService {
     tx?: Transaction
   ): Promise<Customer | undefined> {
     return this.customerRepository.findByDomain(tenantId, domain, tx);
+  }
+
+  /**
+   * Of the given customer-domain keys, return those mapping to a curated
+   * (human-confirmed, non auto-created) active customer. Used to assign the
+   * `customer` participant role when building the analysis prompt roster.
+   */
+  async findCuratedDomains(tenantId: string, domains: string[]): Promise<Set<string>> {
+    return this.customerRepository.findCuratedDomains(tenantId, domains);
   }
 
   /**

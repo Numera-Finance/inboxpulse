@@ -26,6 +26,12 @@ export function extractAnalysisFields(
       if ('value' in result && typeof result.value === 'string') {
         extracted.sentimentValue = result.value;
       }
+      // Absent on keyword-matched sentiment, which sets a value without
+      // establishing who the sentiment is aimed at — left NULL rather than
+      // guessed, so consumers can tell "not attributed" from "aimed at us".
+      if ('target' in result && typeof result.target === 'string') {
+        extracted.sentimentTarget = result.target;
+      }
       break;
 
     case 'escalation':

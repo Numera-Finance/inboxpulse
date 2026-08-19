@@ -60,6 +60,7 @@ describe('Analysis Modules', () => {
       const testData = {
         value: 'positive',
         confidence: 0.9,
+        target: 'us',
       };
       expect(() => sentimentModule.schema.parse(testData)).not.toThrow();
     });
@@ -190,6 +191,7 @@ describe('Analysis Modules', () => {
       const result = {
         value: 'positive',
         confidence: 0.85,
+        target: 'us',
       };
       expect(() => sentimentModule.schema.parse(result)).not.toThrow();
     });
