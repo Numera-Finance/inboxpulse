@@ -297,3 +297,29 @@ participant inside a single transaction, so one transaction can hold advisory
 locks for several domains until it commits. That widens the window this incident
 walked through. Holding each lock for the shortest span, or moving customer
 creation out of the per-message transaction, is the real fix and is not done.
+
+### It came back, and CPU throttling was not the whole story
+
+`--no-cpu-throttling` was applied to crm-api and the jam returned within the
+hour: 44 sessions on the advisory lock again, endpoints timing out again. Two
+things were wrong with the first diagnosis.
+
+First, **the CI deploy silently reset `--min-instances` to 0**, because
+`deploy.yml` hard-codes it and the setting had only been applied by hand. That is
+the same failure as `ADDON_AUDIENCE` earlier in 2026. Both flags now live in
+`deploy.yml`.
+
+Second, and more important: with CPU always allocated, a frozen handler is no
+longer the mechanism, and the pile-up happened anyway. The logs show the real
+one — `POST /api/internal/emails/first-reply-markers` returning **200 in 109
+seconds**, and the analysis path opening a transaction per message that calls
+`ensureCustomerForEmail` once per participant. Those transactions are genuinely
+long, and every advisory lock they take is held until the whole thing commits.
+Nothing has to freeze for that to block the panel; it only has to be slow while
+many messages arrive at once.
+
+**So the outstanding fix is unchanged and is now the only one left:** hold each
+advisory lock for the shortest possible span, or move customer creation out of
+the per-message transaction entirely. Until then, `--min-instances 1` and CPU
+allocation reduce how often this bites, and restarting crm-api is the way to
+clear it when it does.

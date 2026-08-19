@@ -115,6 +115,13 @@ jobs:
         run: |
           SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
 
+          # --min-instances 1 and --no-cpu-throttling below are load-bearing, not tuning.
+          # A request killed at the 300s ceiling on a CPU-throttled instance freezes
+          # mid-transaction while still holding pg_advisory_xact_lock, and every other
+          # request queues behind it until the panel is down. Both were applied by hand
+          # on 2026-08-19 and the next CI deploy reset min-instances to 0 — the same way
+          # ADDON_AUDIENCE was reset earlier. Settings that keep production up belong
+          # here rather than in a shell history.
           gcloud run deploy crm-api \
             --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-api:${{ github.sha }}" \
             --platform managed \
@@ -138,7 +145,8 @@ jobs:
           CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
           CLOUDSQL_CLIENT_CERT=CLOUDSQL_CLIENT_CERT:latest,\
           CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
-            --min-instances 0 \
+            --min-instances 1 \
+            --no-cpu-throttling \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \
