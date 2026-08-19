@@ -1,0 +1,3263 @@
+/* Define on :host as well as :root: when this stylesheet is loaded into a
+   shadow root via <link>, `:root` doesn't match the shadow tree's root, so
+   variables can fail to resolve and rules like `background: var(--negative)`
+   silently fall back to transparent. */
+:root, :host {
+  --bg: #ffffff;
+  --bg-muted: #f7f8fa;
+  --bg-hover: #f0f2f5;
+  --bg-selected: #e8f0fe;
+  --border: #e3e5e8;
+  --text: #1f2328;
+  --text-muted: #5f6368;
+  --text-faint: #8a8f95;
+  --accent: #1a73e8;
+  --positive: #137333;
+  --negative: #b3261e;
+  --neutral: #5f6368;
+  --upsell: #1d4ed8;
+  --churn: #111827;
+}
+
+* { box-sizing: border-box; }
+
+:host {
+  display: block;
+  height: 100%;
+}
+
+.numera-app {
+  margin: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ----- Header ----- */
+
+.app-header {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px 10px;
+  flex-shrink: 0;
+  background: var(--bg-muted);
+}
+
+.app-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.app-title h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.app-title__icon {
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filters input,
+.filters select,
+.filters button {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.filters input[type="search"] {
+  flex: 1;
+  min-width: 200px;
+}
+
+.filters button {
+  cursor: pointer;
+  background: var(--bg);
+}
+.filters button:hover { background: var(--bg-hover); }
+
+/* ----- Body shell ----- */
+
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The two views are mutually exclusive; the inactive one is `hidden`. We use
+   :not([hidden]) on the layout-defining rules so the attribute can fully
+   suppress display (otherwise display:flex would beat the UA display:none). */
+.inbox-view:not([hidden]),
+.thread-view:not([hidden]) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ----- Inbox view ----- */
+
+.inbox-view__meta {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+}
+
+.inbox-view__page {
+  margin-left: auto;
+}
+
+.inbox-view__pager {
+  display: flex;
+  gap: 4px;
+}
+.inbox-view__pager button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0;
+  line-height: 1;
+}
+.inbox-view__pager button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.inbox-view__pager button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.email-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.email-list__item {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+}
+.email-list__item:hover { background: var(--bg-hover); }
+.email-list__item[aria-selected="true"] { background: var(--bg-selected); }
+
+.email-list__avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: #5f6368;
+  margin-top: 2px;
+}
+
+.email-list__avatar[data-color="0"] { background: #1d4ed8; } /* blue */
+.email-list__avatar[data-color="1"] { background: #15803d; } /* green */
+.email-list__avatar[data-color="2"] { background: #7c3aed; } /* violet */
+.email-list__avatar[data-color="3"] { background: #be185d; } /* magenta */
+.email-list__avatar[data-color="4"] { background: #0f766e; } /* teal */
+.email-list__avatar[data-color="5"] { background: #c2410c; } /* orange */
+.email-list__avatar[data-color="6"] { background: #4338ca; } /* indigo */
+.email-list__avatar[data-color="7"] { background: #b45309; } /* amber */
+
+.email-list__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.email-list__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.email-list__from {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-list__time {
+  font-size: 12px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.email-list__subject {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-list__snippet {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-list__customer {
+  font-size: 12px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-list__signals {
+  margin-top: 2px;
+}
+
+.email-list__signals:empty {
+  display: none;
+}
+
+.list-empty,
+.list-error {
+  padding: 24px 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.list-error { color: var(--negative); }
+
+/* ----- Thread view ----- */
+
+.thread-view__topbar {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-muted);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Push the resolve button to the right side of the topbar so it sits at
+   the top of the email regardless of viewport width. */
+.thread-view__resolve {
+  margin-left: auto;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--positive);
+  background: var(--positive);
+  color: #fff;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.thread-view__resolve:hover:not(:disabled) {
+  background: #0e5a26;
+  border-color: #0e5a26;
+}
+.thread-view__resolve:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* "Reopen" variant — neutral styling because the task is already done
+   and we don't want the button to feel like the destructive action. */
+.thread-view__resolve[data-state="done"] {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+.thread-view__resolve[data-state="done"]:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+.thread-view__back {
+  background: none;
+  border: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.thread-view__back:hover { background: var(--bg-hover); }
+
+.thread-error {
+  margin: 24px;
+  padding: 14px 16px;
+  border: 1px solid #f5c2c0;
+  background: #fce8e6;
+  color: var(--negative);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.thread-content:not([hidden]) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.thread-content__header {
+  flex-shrink: 0;
+  padding: 6px 24px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-muted);
+  display: flex;
+  flex-direction: column;
+}
+
+.thread-content__header.is-collapsed {
+  padding: 4px 24px;
+}
+
+/* Override the original single-message paddings; these elements now live
+   inside `.thread-content__header` which provides its own padding. */
+.thread-content__header .thread-content__signals { padding: 0; }
+.thread-content__header .thread-content__subject { padding: 0; margin: 2px 0 6px; font-size: 17px; }
+.thread-content__header .thread-content__meta,
+.thread-content__header .thread-content__task {
+  padding: 4px 0 0;
+  border-top: 0;
+  font-size: 12.5px;
+}
+.thread-content__header .thread-content__task {
+  border-top: 1px dashed var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.thread-content__header-details:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-content__toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 6px;
+  margin: 0 0 2px -6px;
+  border-radius: 4px;
+}
+.thread-content__toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.thread-content__toggle-caret {
+  font-size: 11px;
+  transition: transform 120ms ease;
+}
+.thread-content__toggle[aria-expanded="false"] .thread-content__toggle-caret {
+  transform: rotate(-90deg);
+}
+
+/* Guard `display: flex` behind :not([hidden]) so the `hidden` attribute can
+   actually hide this strip. Without the guard the collapsed-view subject
+   would render alongside the expanded details (duplicate subject + a header
+   tall enough to crowd out the message list). */
+.thread-content__header-collapsed:not([hidden]) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.thread-content__subject-collapsed {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.thread-content__messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ----- Individual message block ----- */
+
+.thread-message {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+  /* The parent `.thread-content__messages` is a column flex container with
+     `overflow-y: auto`. Flex items default to `flex-shrink: 1`, so when 28
+     messages exceed the visible height the browser compresses every row to
+     fit instead of letting the container scroll. Pin shrink to 0 so each
+     message keeps its natural height and the outer container actually
+     scrolls. */
+  flex-shrink: 0;
+  /* Pin width so every message in a long thread renders at the same
+     left-to-right size — protects against any nested-block content trying
+     to make successive messages narrower. */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-self: stretch;
+}
+
+/* Two stacked rows: `__header-main` carries avatar / sender / date / caret,
+   and the signal badges get the full width beneath it. See renderMessageBlock
+   for why they are not on the same line. */
+.thread-message__header {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.thread-message__header:hover { background: var(--bg-hover); }
+
+.thread-message__header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Collapsed: show the inline "Name snippet…" line and hide the expanded
+   name/email pair. Expanded: do the opposite. The button's aria-expanded
+   attribute is the single source of truth so the DOM doesn't need two
+   separate rendering paths. */
+.thread-message__header .thread-message__collapsed-line { display: flex; }
+.thread-message__header .thread-message__name--full,
+.thread-message__header .thread-message__addr { display: none; }
+.thread-message__header[aria-expanded="true"] .thread-message__collapsed-line { display: none; }
+.thread-message__header[aria-expanded="true"] .thread-message__name--full { display: block; }
+.thread-message__header[aria-expanded="true"] .thread-message__addr { display: block; }
+
+.thread-message__avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: #5f6368;
+}
+.thread-message__avatar[data-color="0"] { background: #1d4ed8; }
+.thread-message__avatar[data-color="1"] { background: #15803d; }
+.thread-message__avatar[data-color="2"] { background: #7c3aed; }
+.thread-message__avatar[data-color="3"] { background: #be185d; }
+.thread-message__avatar[data-color="4"] { background: #0f766e; }
+.thread-message__avatar[data-color="5"] { background: #c2410c; }
+.thread-message__avatar[data-color="6"] { background: #4338ca; }
+.thread-message__avatar[data-color="7"] { background: #b45309; }
+
+.thread-message__sender {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Single-line "Name snippet…" layout for the collapsed state. The snippet
+   gets the remaining width and ellipses if the row overflows. */
+.thread-message__collapsed-line {
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Per-message subject line — always visible (collapsed and expanded) so a
+   reply ("Re:") is distinguishable from a forward ("Fwd:") at a glance. */
+.thread-message__subject {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.thread-message__name {
+  font-weight: 600;
+  font-size: 13px;
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+.thread-message__snippet {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Clip rather than spill. Without this the name overflows its flex item and
+   paints under whatever follows it in the header. */
+.thread-message__name--full {
+  font-weight: 600;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.thread-message__addr {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Indented to line up with the sender text above (32px avatar + 12px gap)
+   rather than with the avatar, so the row reads as belonging to the message
+   rather than starting a new column. */
+.thread-message__badges {
+  padding-left: 44px;
+}
+.thread-message__badges:empty { display: none; }
+
+.thread-message__date {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+.thread-message__caret {
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+.thread-message__header[aria-expanded="true"] .thread-message__caret {
+  transform: rotate(180deg);
+}
+
+.thread-message__body-wrap {
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+/* To / Cc / Bcc strip shown at the top of an expanded message, above the
+   body iframe. Kept compact and muted so it reads as metadata, not content. */
+.thread-message__recipients {
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-hover);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.thread-message__recipients-row {
+  display: flex;
+  gap: 6px;
+}
+
+.thread-message__recipients-label {
+  flex: 0 0 auto;
+  min-width: 28px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.thread-message__recipients-value {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.thread-message__recipient {
+  cursor: default;
+  white-space: nowrap;
+}
+
+.thread-message__recipient-email {
+  color: var(--text-muted);
+}
+
+.thread-message__body {
+  display: block;
+  width: 100%;
+  border: 0;
+  min-height: 80px;
+}
+
+/* Single-message thread view: the only block grows to fill the remaining
+   height of `.thread-content__messages`, and its body iframe inside grows
+   with it. When the user collapses the details header up top, this is what
+   makes the email extend down to cover the rest of the screen. */
+.thread-content__messages.is-single-message .thread-message--fills {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.thread-message--fills .thread-message__body-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.thread-message--fills .thread-message__body {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  /* JS sets min-height to the natural content size so short emails don't
+     visually collapse, but flex-grow lets the iframe expand into all the
+     space the surrounding column has to spare. */
+}
+
+.thread-content__signals {
+  padding: 16px 24px 0;
+  flex-shrink: 0;
+}
+.thread-content__signals:empty {
+  display: none;
+}
+
+.thread-content__subject {
+  margin: 12px 0 6px;
+  padding: 0 24px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  word-wrap: break-word;
+  flex-shrink: 0;
+}
+
+.thread-content__summary {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 24px;
+  margin: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+}
+.thread-content__summary:hover { background: var(--bg-hover); }
+
+.thread-content__summary-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.thread-content__summary-text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.thread-content__summary-sep {
+  margin: 0 8px;
+  color: var(--text-faint);
+}
+
+.thread-content__caret {
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+.thread-content__summary[aria-expanded="true"] .thread-content__caret {
+  transform: rotate(180deg);
+}
+
+.thread-content__details {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-muted);
+}
+
+.thread-content__meta,
+.thread-content__task {
+  padding: 12px 24px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  font-size: 13px;
+  align-items: baseline;
+}
+
+.thread-content__task {
+  border-top: 1px dashed var(--border);
+}
+
+.thread-content__meta > div,
+.thread-content__task > div {
+  display: contents;
+}
+
+.kv-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+[data-el="thread-body"] {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+/* ----- Signal badges ----- */
+
+.signal-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.signal-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* Hex literals — these need to render correctly even if the variable
+   indirection fails for any reason, because white-on-transparent would be
+   invisible. */
+.signal-badge[data-kind="positive"]  { background: #137333; color: #fff; border-color: transparent; }
+.signal-badge[data-kind="negative"]  { background: #b3261e; color: #fff; border-color: transparent; }
+.signal-badge[data-kind="neutral"]   { background: #5f6368; color: #fff; border-color: transparent; }
+.signal-badge[data-kind="upsell"]    { background: #1d4ed8; color: #fff; border-color: transparent; }
+.signal-badge[data-kind="churn"]     { background: #111827; color: #fff; border-color: transparent; }
+
+/* Slightly larger badges in the thread header so they read as a heading. */
+.thread-content__signals .signal-badge {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+/* ===========================================================================
+   InboxPulse shell
+   =========================================================================== */
+
+.ip-app {
+  margin: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: row;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.ip-sidebar {
+  flex: 0 0 200px;
+  background: #0f172a;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 0;
+}
+
+.ip-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 18px 22px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ip-sidebar__brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ip-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ip-sidebar__nav-item {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: #cbd5e1;
+  font: inherit;
+  padding: 9px 18px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ip-sidebar__nav-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.ip-sidebar__nav-item.active {
+  background: rgba(26, 115, 232, 0.16);
+  border-left-color: var(--accent);
+  color: #fff;
+}
+
+.ip-sidebar__nav-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ip-sidebar__nav-soon {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+}
+
+.ip-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ip-topbar {
+  flex-shrink: 0;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 22px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Each row of the topbar is its own flex container so we get a deterministic
+   two-line layout regardless of viewport width. Row 1 holds the section
+   title and the customer/user dropdowns; row 2 holds the date controls,
+   preset chips, and the Reset button. */
+.ip-topbar__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ip-topbar__row--secondary {
+  justify-content: flex-end;
+}
+
+.ip-topbar__title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.ip-topbar__filters {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ip-topbar__row--secondary .ip-topbar__filters {
+  margin-left: 0;
+}
+
+.ip-topbar__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ip-topbar__field input[type="date"] {
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.ip-topbar__presets {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.ip-topbar__presets button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ip-topbar__presets button:hover { background: var(--bg-hover); }
+.ip-topbar__presets button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.ip-topbar__select {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  max-width: 180px;
+}
+
+.ip-topbar__reset {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.ip-topbar__reset:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ip-section-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ip-section {
+  height: 100%;
+  overflow: auto;
+}
+
+.ip-section[hidden] { display: none; }
+
+/* The AI Analysis section reuses .numera-app layout, but its host needs the
+   right height so the inner flex chain works. */
+.ip-section .numera-app {
+  height: 100%;
+}
+
+/* AI Analysis manages its own scrolling internally. `.ip-section`'s default
+   `overflow: auto` breaks the flex chain that sizes the email body iframe,
+   so override it on the section that gets the `.numera-app` class. */
+.ip-section.numera-app {
+  overflow: hidden;
+}
+
+/* ===========================================================================
+   Dashboard
+   =========================================================================== */
+
+.ip-dashboard-host {
+  display: block;
+  height: 100%;
+}
+
+.ip-dashboard {
+  padding: 18px 22px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ip-tile-row {
+  display: grid;
+  gap: 16px;
+}
+
+.ip-tile-row--kpi      { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ip-tile-row--attention{ grid-template-columns: 1.4fr 1fr 1fr; }
+.ip-tile-row--metrics  { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ip-tile-row--charts2  { grid-template-columns: 1fr 1fr; }
+
+@media (max-width: 1100px) {
+  .ip-tile-row--kpi      { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ip-tile-row--attention{ grid-template-columns: 1fr; }
+  .ip-tile-row--metrics  { grid-template-columns: 1fr; }
+  .ip-tile-row--charts2  { grid-template-columns: 1fr; }
+}
+
+/* ----- KPI cards ----- */
+
+.ip-kpi {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+/* `<button>` variants used for clickable KPI tiles (Active Escalations,
+   Upsell Opportunities). The button gets buttonish defaults, which we
+   neutralize so they look identical to the read-only KPI div. */
+button.ip-kpi {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.ip-kpi--link:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.ip-kpi__label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ip-kpi__value {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ip-kpi__sub {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ----- Tile shell ----- */
+
+.ip-tile {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ip-tile--wide { grid-column: 1 / -1; }
+
+.ip-tile header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ip-tile__sub {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.ip-empty {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  padding: 12px 4px;
+}
+
+/* Why the dashboard is blank. Carries the transport's own wording — most often
+   "start the gcloud proxy" — because empty tiles alone are indistinguishable
+   from a tenant with no data. */
+.ip-load-error {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #8a2c1b;
+  background: #fdf1ee;
+  border: 1px solid #f2c6bb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+}
+
+.ip-load-error[hidden] {
+  display: none;
+}
+
+/* ----- Metric tiles (avg response / resolution time) ----- */
+
+.ip-metric {
+  justify-content: flex-start;
+}
+
+.ip-metric__value {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin-top: auto;
+}
+
+.ip-metric__sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* ----- Avatars (shared) ----- */
+
+.ip-avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: #5f6368;
+}
+
+.ip-avatar--lg { width: 42px; height: 42px; font-size: 14px; }
+
+.ip-avatar[data-color="0"] { background: #1d4ed8; }
+.ip-avatar[data-color="1"] { background: #15803d; }
+.ip-avatar[data-color="2"] { background: #7c3aed; }
+.ip-avatar[data-color="3"] { background: #be185d; }
+.ip-avatar[data-color="4"] { background: #0f766e; }
+.ip-avatar[data-color="5"] { background: #c2410c; }
+.ip-avatar[data-color="6"] { background: #4338ca; }
+.ip-avatar[data-color="7"] { background: #b45309; }
+
+/* ----- Critical Escalations tile ----- */
+
+.ip-critical__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ip-critical__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+/* Clickable variants used when the tile has an email to link to. */
+button.ip-critical__row,
+button.ip-examine__card {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+button.ip-critical__row:hover,
+button.ip-examine__card:hover {
+  background: var(--bg-hover);
+}
+
+button.ip-critical__row {
+  padding: 6px;
+  margin: -6px;
+}
+
+button.ip-examine__card {
+  padding: 8px;
+  margin: 0 -8px;
+}
+
+.ip-critical__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ip-critical__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ip-critical__name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.ip-critical__duration {
+  font-size: 12px;
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.ip-critical__subject {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-critical__track {
+  position: relative;
+  height: 8px;
+  background: var(--bg-muted);
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+.ip-critical__bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #b3261e, #ef4444);
+  border-radius: 4px;
+}
+
+.ip-critical__dates {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+/* ----- Team Members · Largest Response Delays tile -----
+   Shares the escalation/critical-bar color scheme (red gradient + negative
+   accent) so it reads as part of the same "slow / at-risk" visual family. */
+
+.ip-team-delays__list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ip-team-delays__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+/* Clickable variant — drills into AI Analysis filtered to the member. */
+button.ip-team-delays__row {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  margin: -6px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+button.ip-team-delays__row:hover {
+  background: var(--bg-hover);
+}
+
+.ip-team-delays__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ip-team-delays__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ip-team-delays__name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-team-delays__value {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.ip-team-delays__track {
+  position: relative;
+  height: 8px;
+  background: var(--bg-muted);
+  border-radius: 4px;
+  margin-top: 2px;
+}
+
+.ip-team-delays__bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #b3261e, #ef4444);
+  border-radius: 4px;
+}
+
+.ip-team-delays__sub {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+/* ----- Response-delay histograms (aggregate + per-member) ----- */
+
+/* Headline stats above the aggregate histogram. */
+.ip-hist__headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+}
+
+.ip-hist__stat {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ip-hist__stat strong {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.ip-hist__stat--primary strong { color: var(--accent); }
+.ip-hist__stat--muted { color: var(--text-faint); margin-left: auto; }
+
+/* Bar chart. Columns flex to equal width so two charts with the same bucket
+   count line up column-for-column. */
+.ip-hist__chart {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 140px;
+}
+
+.ip-hist__chart--labels-only { height: auto; }
+
+.ip-hist__col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ip-hist__barwrap {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  min-height: 0;
+}
+
+.ip-hist__bar {
+  width: 100%;
+  min-height: 2px;
+  background: linear-gradient(180deg, #ef4444, #b3261e);
+  border-radius: 3px 3px 0 0;
+  transition: opacity 120ms ease;
+}
+
+.ip-hist__bar.is-zero { min-height: 0; background: transparent; }
+.ip-hist__bar.is-overflow { background: linear-gradient(180deg, #a855f7, #7e22ce); }
+.ip-hist__barwrap:hover .ip-hist__bar { opacity: 0.82; }
+
+.ip-hist__label {
+  font-size: 9.5px;
+  line-height: 1.2;
+  color: var(--text-faint);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Per-member histogram rows: avatar | name+stat | mini chart, all sharing one
+   x-axis rendered once at the bottom. The grid columns match the axis grid so
+   the mini charts and the axis labels align. */
+.ip-memberhist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ip-memberhist__row {
+  display: grid;
+  grid-template-columns: 32px 200px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+button.ip-memberhist__row { font: inherit; color: inherit; cursor: pointer; }
+.ip-memberhist__row--link:hover { background: var(--bg-hover); }
+
+.ip-memberhist__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ip-memberhist__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ip-memberhist__email,
+.ip-memberhist__role {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ip-memberhist__role { color: var(--text-faint); font-style: italic; }
+
+.ip-memberhist__stat {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.ip-memberhist__chart .ip-hist__chart { height: 52px; }
+
+.ip-memberhist__axis {
+  display: grid;
+  grid-template-columns: 32px 200px 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.ip-memberhist__axis-spacer { grid-column: 1 / 3; }
+
+/* ----- Most Escalated Customers tile ----- */
+
+.ip-most-escalated {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ip-most-escalated__row {
+  display: block;
+}
+
+.ip-most-escalated__btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  margin: -6px;
+  border-radius: 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ip-most-escalated__btn:hover:not(:disabled) { background: var(--bg-hover); }
+.ip-most-escalated__btn:disabled { cursor: default; }
+
+.ip-most-escalated__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ip-most-escalated__name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-most-escalated__stats {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.ip-meter {
+  margin-top: 4px;
+  height: 6px;
+  background: var(--bg-muted);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ip-meter__bar {
+  height: 100%;
+  background: var(--negative);
+}
+
+/* ----- Please Examine Opportunity tile ----- */
+
+.ip-examine__card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 2px;
+}
+
+.ip-examine__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ip-examine__name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-examine__subject {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-examine__meta {
+  font-size: 11.5px;
+  color: var(--upsell);
+  margin-top: 3px;
+  font-weight: 600;
+}
+
+/* ----- Churn Level tile ----- */
+
+.ip-churn__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ip-churn__row {
+  display: grid;
+  grid-template-columns: 80px 1fr 40px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ip-churn__row:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.ip-churn__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ip-churn__label[data-level="critical"] { color: #7f1d1d; }
+.ip-churn__label[data-level="high"]     { color: #ef4444; }
+.ip-churn__label[data-level="medium"]   { color: #f87171; }
+.ip-churn__label[data-level="low"]      { color: #000000; }
+
+.ip-churn__bar {
+  display: block;
+  height: 8px;
+  background: var(--bg-muted);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ip-churn__bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: #5f6368;
+  transition: width 160ms ease;
+}
+.ip-churn__bar[data-level="critical"] .ip-churn__bar-fill { background: #7f1d1d; }
+.ip-churn__bar[data-level="high"]     .ip-churn__bar-fill { background: #ef4444; }
+.ip-churn__bar[data-level="medium"]   .ip-churn__bar-fill { background: #f87171; }
+.ip-churn__bar[data-level="low"]      .ip-churn__bar-fill { background: #000000; }
+
+.ip-churn__count {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Charts ----- */
+
+.ip-chart-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 220px;
+}
+
+.ip-chart-wrap--compact {
+  min-height: 150px;
+  max-height: 170px;
+}
+
+.ip-chart-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ----- Tables (Recent Escalations, TAT) ----- */
+
+.ip-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.ip-table thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ip-table tbody td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.ip-table tbody tr:last-child td { border-bottom: 0; }
+
+.ip-table .num { text-align: right; }
+.ip-table .muted { color: var(--text-muted); }
+.ip-table .ellipsis {
+  max-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ip-tat__cust {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ip-table .breach { color: var(--negative); font-weight: 600; }
+
+/* ===========================================================================
+   Customers section
+   =========================================================================== */
+
+.ip-customers-host {
+  display: block;
+  height: 100%;
+}
+
+.ip-customers {
+  padding: 18px 22px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.ip-customers__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ip-customers__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ip-customers__title h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.ip-customers__count {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ip-customers__tools {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.ip-customers__tools input[type="search"] {
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  width: 280px;
+}
+
+.ip-customers__select {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  max-width: 200px;
+}
+
+.ip-detail__role-select {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  min-width: 160px;
+}
+.ip-detail__role-select:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* Team-role cell: display + pen icon by default; the editor swaps in
+   <select> + save/cancel only after the pen is clicked. Keeps accidental
+   clicks from mutating anyone's role. */
+.ip-detail__role-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ip-detail__role-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-muted);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.ip-detail__role-edit-btn,
+.ip-detail__role-save-btn,
+.ip-detail__role-cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+.ip-detail__role-edit-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ip-detail__role-save-btn {
+  color: var(--positive);
+  border-color: #b6e0c2;
+}
+.ip-detail__role-save-btn:hover:not(:disabled) {
+  background: #ecfdf5;
+  color: var(--positive);
+}
+.ip-detail__role-cancel-btn:hover {
+  background: #fef2f2;
+  color: var(--negative);
+  border-color: #f5c2c0;
+}
+.ip-detail__role-save-btn:disabled,
+.ip-detail__role-cancel-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ip-customers__table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.ip-customers__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ip-customers__table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-muted);
+  z-index: 1;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.ip-customers__table thead th.num { text-align: right; }
+.ip-customers__table thead th.sortable { cursor: pointer; user-select: none; }
+.ip-customers__table thead th.sortable:hover { color: var(--text); }
+
+.ip-customers__table thead th.sortable::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-left: 4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  vertical-align: middle;
+  opacity: 0.35;
+}
+.ip-customers__table thead th.sortable.asc::after  { border-bottom: 5px solid currentColor; opacity: 1; }
+.ip-customers__table thead th.sortable.desc::after { border-top:    5px solid currentColor; opacity: 1; }
+
+.ip-customers__table tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.ip-customers__table tbody tr:last-child td { border-bottom: 0; }
+.ip-customers__table tbody tr:hover { background: var(--bg-hover); }
+
+.ip-customers__name-line {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.ip-customers__domain {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.ip-customers__table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.ip-customers__table .muted { color: var(--text-muted); }
+
+.ip-signal--upsell   { color: #22c55e; font-weight: 600; }
+.ip-signal--churn    { color: #f97316; font-weight: 600; }
+.ip-signal--negative { color: var(--negative); font-weight: 600; }
+.ip-signal--positive { color: var(--accent); font-weight: 600; }
+.ip-customers__emails { color: #3b82f6; font-weight: 600; }
+
+.ip-customers__pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ip-customers__pager button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  cursor: pointer;
+  margin-left: 4px;
+  color: var(--text-muted);
+}
+
+.ip-customers__pager button:hover:not(:disabled) { background: var(--bg-hover); }
+.ip-customers__pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.ip-customers__row { cursor: pointer; }
+
+/* ----- Customer detail view ----- */
+
+.ip-detail__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.ip-detail__back:hover { background: var(--bg-hover); }
+
+.ip-detail__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 2px 14px;
+}
+
+.ip-detail__heading h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.ip-detail__domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ip-detail__domain-chip {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.ip-detail__tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+
+.ip-detail__tabs button {
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.ip-detail__tabs button:hover { color: var(--text); }
+.ip-detail__tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.ip-detail__tabs button span { color: var(--text-faint); font-weight: 400; margin-left: 4px; }
+
+.ip-detail__panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ip-detail__email-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ip-detail__email {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.ip-detail__email:hover { background: var(--bg-hover); }
+
+.ip-detail__email-left { min-width: 0; }
+.ip-detail__email-subject {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ip-detail__email-from {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ip-detail__email-date {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.ip-detail__table {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.ip-detail__table thead th {
+  background: var(--bg-muted);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.ip-detail__table tbody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ip-detail__table tbody tr:last-child td { border-bottom: 0; }
+
+.ip-contact__email {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Detail-view toolbars (Emails / Contacts / Team) ----- */
+
+.ip-detail__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 12px;
+  flex-wrap: wrap;
+}
+
+.ip-detail__toolbar input[type="search"] {
+  flex: 1;
+  min-width: 220px;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.ip-detail__toolbar select {
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.ip-detail__toolbar-label {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.ip-detail__primary-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.ip-detail__primary-btn:hover:not(:disabled) { background: #1660cb; border-color: #1660cb; }
+.ip-detail__primary-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.ip-detail__ghost-btn {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  margin-left: 6px;
+}
+.ip-detail__ghost-btn:hover { background: var(--bg-hover); }
+
+.ip-detail__add-row td {
+  background: rgba(26, 115, 232, 0.04);
+}
+
+.ip-detail__add-row select {
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  max-width: 100%;
+}
+
+.ip-detail__add-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ===========================================================================
+   Users section
+   =========================================================================== */
+
+.ip-users-host {
+  display: block;
+  height: 100%;
+}
+
+.ip-users {
+  padding: 18px 22px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  box-sizing: border-box;
+  position: relative; /* drawer is positioned inside */
+}
+
+.ip-users__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ip-users__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.ip-users__title h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.ip-users__count {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ip-users__tools {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.ip-users__status {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.ip-users__status button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.ip-users__status button.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+}
+
+.ip-users__tools input[type="search"] {
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  width: 280px;
+}
+
+.ip-users__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ip-users__table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-muted);
+  z-index: 1;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: left;
+}
+.ip-users__table thead th.num { text-align: right; }
+.ip-users__table thead th.sortable { cursor: pointer; user-select: none; }
+.ip-users__table thead th.sortable::after {
+  content: '';
+  display: inline-block;
+  width: 0; height: 0;
+  margin-left: 4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  vertical-align: middle;
+  opacity: 0.35;
+}
+.ip-users__table thead th.sortable.asc::after  { border-bottom: 5px solid currentColor; opacity: 1; }
+.ip-users__table thead th.sortable.desc::after { border-top:    5px solid currentColor; opacity: 1; }
+
+.ip-users__table tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ip-users__table tbody tr:last-child td { border-bottom: 0; }
+.ip-users__row { cursor: pointer; }
+.ip-users__row:hover { background: var(--bg-hover); }
+
+.ip-users__name { font-weight: 500; }
+.ip-users__email { font-size: 11.5px; }
+.ip-users__table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.ip-users__table .muted { color: var(--text-muted); }
+
+.ip-users__badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+.ip-users__badge--s0 { background: #dcfce7; color: #15803d; }
+.ip-users__badge--s1 { background: #fee2e2; color: #b91c1c; }
+.ip-users__badge--s2 { background: #e5e7eb; color: #4b5563; }
+
+/* ----- Edit drawer (overlay) ----- */
+
+/* `:not([hidden])` guards the display rule so the browser's default
+   `[hidden] { display: none }` actually wins when we close the drawer. */
+.ip-drawer:not([hidden]) {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ip-drawer__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.ip-drawer__panel {
+  position: relative;
+  width: min(440px, 95%);
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(15, 23, 42, 0.1);
+  display: flex;
+  flex-direction: column;
+}
+
+.ip-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ip-drawer__header h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.ip-drawer__close {
+  background: none;
+  border: 0;
+  font-size: 22px;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 6px;
+}
+.ip-drawer__close:hover { color: var(--text); }
+
+.ip-drawer__body {
+  flex: 1;
+  overflow: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ip-drawer__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ip-drawer__field label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ip-drawer__field input,
+.ip-drawer__field select {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  color: var(--text);
+}
+.ip-drawer__field input:disabled {
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+
+.ip-drawer__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.ip-drawer__meta {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 4px;
+}
+
+.ip-drawer__footer {
+  border-top: 1px solid var(--border);
+  padding: 12px 22px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ip-drawer__btn-ghost,
+.ip-drawer__btn-primary {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.ip-drawer__btn-ghost {
+  background: var(--bg);
+  color: var(--text);
+}
+.ip-drawer__btn-ghost:hover { background: var(--bg-hover); }
+
+.ip-drawer__btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+.ip-drawer__btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.ip-drawer__btn-primary:hover:not(:disabled) { background: #1660cb; border-color: #1660cb; }
+
+/* ----- Edit User drawer extras (header avatar, toggle, popovers) ----- */
+
+.ip-drawer__header--user {
+  padding: 18px 22px;
+}
+
+.ip-drawer__title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ip-avatar--xl {
+  width: 52px;
+  height: 52px;
+  font-size: 16px;
+  background: #dbeafe;
+  color: var(--accent);
+}
+
+.ip-drawer__avatar {
+  /* The avatar in the header uses a soft tint regardless of palette index. */
+  background: #dbeafe !important;
+  color: var(--accent) !important;
+}
+
+.ip-form__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.ip-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ip-form__field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.ip-form__field--inline label { margin-bottom: 0; }
+
+.ip-form__field label {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ip-form__field input,
+.ip-form__field select {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  color: var(--text);
+}
+.ip-form__field input:disabled {
+  background: var(--bg-muted);
+  color: var(--text-faint);
+}
+
+/* Toggle row (Can Login). */
+.ip-form__row-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+.ip-form__row-toggle-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ip-form__row-toggle-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.ip-toggle {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+}
+.ip-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.ip-toggle__track {
+  position: absolute;
+  inset: 0;
+  background: #cbd5e1;
+  border-radius: 999px;
+  transition: background 120ms ease;
+}
+.ip-toggle__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 120ms ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+.ip-toggle input:checked + .ip-toggle__track {
+  background: var(--accent);
+}
+.ip-toggle input:checked + .ip-toggle__track .ip-toggle__thumb {
+  transform: translateX(16px);
+}
+
+/* Reports-To combobox + popover. */
+.ip-form__combobox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.ip-form__combobox:hover { background: var(--bg-hover); }
+.ip-form__combobox .is-placeholder { color: var(--text-muted); }
+.ip-form__combobox-caret { color: var(--text-muted); margin-left: 6px; }
+
+.ip-form__popover {
+  position: relative;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 4px 16px rgba(15,23,42,0.12);
+  max-height: 280px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ip-form__popover[hidden] { display: none; }
+
+.ip-form__popover-search {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 11px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+.ip-form__popover-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.ip-form__popover-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.ip-form__popover-row:hover { background: var(--bg-hover); }
+
+.ip-form__popover-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ip-form__popover-row-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.ip-form__popover-empty {
+  padding: 18px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.ip-form__checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  color: transparent;
+  flex-shrink: 0;
+}
+.ip-form__checkbox.is-checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.ip-form__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.ip-form__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-muted);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.ip-form__chip button {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.ip-form__chip button:hover { color: var(--negative); }
+
+/* Assigned customers list */
+.ip-form__assignments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ip-form__assignment-row {
+  display: grid;
+  grid-template-columns: 1fr 140px auto;
+  gap: 6px;
+}
+
+.ip-form__assignment-select,
+.ip-form__assignment-role {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.ip-form__assignment-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  width: 32px;
+  line-height: 1;
+}
+.ip-form__assignment-remove:hover { color: var(--negative); border-color: var(--negative); }
+
+.ip-form__add-btn {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.ip-form__add-btn:hover { background: var(--bg-hover); }
+
+/* ===========================================================================
+   Sidebar layout overrides
+   ---------------------------------------------------------------------------
+   Everything above was written for a full browser pane. Inside Gmail's right
+   rail the shell gets roughly 350-450px, so the wide layouts are collapsed to
+   a single column here rather than edited in place — keeping the original
+   rules intact and the diff against the standalone dashboard readable.
+
+   These are NOT in a media query on purpose. The panel lives in a shadow root
+   inside Gmail, and @media resolves against the viewport, not the container —
+   on a 1920px monitor a `max-width: 1100px` rule never fires no matter how
+   narrow the rail actually is. Container queries would work, but every rule
+   below applies unconditionally in the sidebar build anyway, so the scope
+   class carries it instead.
+   =========================================================================== */
+
+.ip-app--sidebar {
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+/* ----- shell chrome: brand row, tab strip, filter drawer ----- */
+
+.ip-shell__head {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.ip-shell__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ip-shell__brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ip-shell__brand-name { flex: 1; }
+
+.ip-shell__filter-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.ip-shell__filter-toggle:hover { background: var(--bg-hover); }
+.ip-shell__filter-toggle[aria-expanded="true"] {
+  background: var(--bg-selected);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ip-shell__filter-toggle[hidden] { display: none; }
+
+/* Tabs WRAP rather than scroll sideways.
+   The first cut used `overflow-x: auto`, which made the last tab unreachable:
+   a vertical mouse wheel does not scroll a horizontal container, and at rail
+   width there is no visible scrollbar to drag, so "Users" simply could not be
+   opened. Wrapping to a second row costs ~28px of height and guarantees every
+   tab is clickable with no scroll gesture at all. */
+.ip-shell__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 8px;
+}
+
+.ip-shell__tab {
+  flex: 0 1 auto;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ip-shell__tab:hover:not(:disabled) { color: var(--text); }
+.ip-shell__tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.ip-shell__tab:disabled { opacity: 0.4; cursor: default; }
+
+.ip-shell__filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-muted);
+}
+.ip-shell__filters[hidden] { display: none; }
+
+.ip-shell__presets { display: flex; gap: 4px; }
+
+.ip-shell__presets button {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.ip-shell__presets button:hover { background: var(--bg-hover); }
+.ip-shell__presets button.active {
+  background: var(--bg-selected);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ip-shell__reset { flex: 0 0 auto !important; padding: 4px 10px !important; }
+
+.ip-shell__dates { display: flex; gap: 8px; }
+
+.ip-shell__field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ip-shell__field input[type="date"] {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.ip-shell__select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* ----- section host ----- */
+
+.ip-app--sidebar .ip-section-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ip-app--sidebar .ip-section {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ----- collapse every multi-column grid to one column ----- */
+
+.ip-app--sidebar .ip-tile-row--kpi,
+.ip-app--sidebar .ip-tile-row--attention,
+.ip-app--sidebar .ip-tile-row--metrics,
+.ip-app--sidebar .ip-tile-row--charts2,
+.ip-app--sidebar .ip-form__grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ip-app--sidebar .ip-tile-row { gap: 10px; }
+
+/* The name column was a fixed 200px, which left the sparkline ~120px at rail
+   width. Let it shrink with the container instead. */
+.ip-app--sidebar .ip-memberhist__row,
+.ip-app--sidebar .ip-memberhist__axis {
+  grid-template-columns: 24px minmax(0, 96px) minmax(0, 1fr);
+  gap: 8px;
+}
+
+/* Assignment controls stack; the 140px middle column forced overflow. */
+.ip-app--sidebar .ip-form__assignment-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ip-app--sidebar .thread-content__meta,
+.ip-app--sidebar .thread-content__task {
+  padding: 10px 12px;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 3px 8px;
+}
+
+/* ----- tighten the full-pane paddings ----- */
+
+.ip-app--sidebar .thread-content__header,
+.ip-app--sidebar .ip-customers__header,
+.ip-app--sidebar .ip-detail__header {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* ----- tables: scroll sideways rather than squeeze columns illegibly -------
+   The scroll container must be the table's WRAPPER, not the table. `overflow`
+   has no effect on a `display: table` box, so the previous rule on .ip-table /
+   .ip-detail__table was inert while the min-width below still pushed the table
+   past the rail — where .ip-section's `overflow-x: hidden` simply cut it off.
+   That is why Recent Escalations showed a clipped Subject column and no way to
+   reach it. The dashboard's two tables are rendered straight into .ip-recent /
+   .ip-tat, so those hosts become the scrollers. */
+
+.ip-app--sidebar .ip-customers__table-wrap,
+.ip-app--sidebar .ip-recent,
+.ip-app--sidebar .ip-tat {
+  overflow-x: auto;
+}
+
+.ip-app--sidebar .ip-customers__table,
+.ip-app--sidebar .ip-table {
+  min-width: 460px;
+  font-size: 12px;
+}
+
+/* The wrapper must never grow to fit its table — if it does, the overflow
+   moves up to .ip-section (overflow-x: hidden) and is silently cut off
+   instead of producing a scrollbar here. Pin it to the rail and let it
+   scroll. */
+.ip-app--sidebar .ip-customers__table-wrap {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* ----- keep the horizontal scrollbar on screen -------------------------
+   The list pane is built to scroll internally: a full-height flex column
+   whose table wrap is `flex: 1; min-height: 0; overflow: auto`, with the
+   header above it and the pager below. But .ip-section also scrolls
+   vertically, so the whole pane could simply get taller instead — the wrap
+   grew to fit all 50 rows and took its horizontal scrollbar down to the foot
+   of the list, reachable only after scrolling past every row.
+
+   Making the section itself stop scrolling hands that job back to the wrap,
+   so both of its scrollbars sit at the edges of the visible pane. The
+   Customers DETAIL view is the exception: it is a plain block whose panels
+   have no bounded height of their own, so it still needs the section to
+   scroll. customers-ui toggles `--detail` between the two. */
+.ip-app--sidebar .ip-section[data-section="customers"]:not(.ip-customers-host--detail),
+.ip-app--sidebar .ip-section[data-section="users"] {
+  overflow: hidden;
+}
+
+/* Customers wraps its list in an extra <section data-el="list-view"> so it can
+   swap in the detail view; Users has no such wrapper and puts its table wrap
+   straight into the pane's flex column. That one level of nesting is why the
+   same rules fixed Users and did nothing here: a plain block with auto height
+   gives `flex: 1; min-height: 0` on the wrap nothing to resolve against, so the
+   wrap grew to fit all 50 rows and took its scrollbar down with it. Make the
+   wrapper the full-height flex column that `.ip-users` already is. */
+.ip-app--sidebar .ip-customers > [data-el="list-view"] {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 460px was a single figure for every table, and it is far too little for
+   these two: eight columns at ~57px each squeezed "Avg TAT" onto two lines and
+   left nothing to scroll to. Size each to its own column count so the columns
+   are legible and the wrapper genuinely has somewhere to scroll. */
+.ip-app--sidebar .ip-customers__table {
+  min-width: 660px;
+}
+
+.ip-app--sidebar .ip-users__table {
+  min-width: 560px;
+}
+
+/* Column headers stay on one line; a wrapped header is the symptom of a table
+   being squeezed rather than scrolled. */
+.ip-app--sidebar .ip-customers__table thead th,
+.ip-app--sidebar .ip-users__table thead th {
+  white-space: nowrap;
+}
+
+/* Subject is `max-width: 0` so it ellipsises — which also lets it collapse to a
+   few characters once Customer / Created / Assigned To take their intrinsic
+   widths. Give it a floor (min-width beats max-width) and let the row scroll. */
+.ip-app--sidebar .ip-recent .ellipsis {
+  min-width: 200px;
+}
+
+/* ----- charts must never force the column wider than the rail ----- */
+
+.ip-app--sidebar .ip-chart-wrap,
+.ip-app--sidebar .ip-chart-wrap canvas {
+  max-width: 100%;
+}
+
+/* ----- header control rows: stack instead of overflowing -------------------
+   .ip-customers__tools / .ip-users__tools are flex rows holding a select
+   (max-width 200px) and a search input (fixed width 280px). At 488px plus gap
+   they run past a 400px rail — the search box was clipped mid-placeholder.
+   Let the row wrap and both controls take the full width. */
+
+.ip-app--sidebar .ip-customers__tools,
+.ip-app--sidebar .ip-users__tools {
+  margin-left: 0;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.ip-app--sidebar .ip-customers__tools > *,
+.ip-app--sidebar .ip-users__tools > * {
+  flex: 1 1 100%;
+  min-width: 0;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+.ip-app--sidebar .ip-customers__header,
+.ip-app--sidebar .ip-users__header {
+  gap: 8px;
+}
+
+/* ----- session gate on the manager sections ------------------------------- */
+
+.ip-authgate {
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.ip-authgate__title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ip-authgate__body {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ip-authgate__btn {
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+
+.ip-authgate__btn:hover { filter: brightness(0.94); }

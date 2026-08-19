@@ -26,14 +26,182 @@ interface ApiResponse<T> {
 - Zod validation errors should map to clear field-level error messages
 - Background job failures must store structured errors and notify users
 
+## A Gate Is Only a Gate If Nothing It Governs Runs Above It
+
+The consent check `hasConsent` was correct, was called, and was bypassed: in
+`/gmail/analyse` it guarded the deep read while `classifyThreadMode` sent the
+same thread to the same model twenty-two lines earlier. Three sibling endpoints
+never checked at all. Mail was read while the panel truthfully displayed *"Your
+mail is not being read"*.
+
+So for anything that gates a side effect — reading mail, writing a label,
+spending a model call, disclosing a name:
+
+- **Assert the ORDER, not the presence.** A test that the handler calls the gate
+  passes against this bug. `consent-gate.test.ts` compares source offsets.
+- **Derive the governed set, never enumerate it.** That test reads the async
+  exports of `live-analysis.ts`, so a model call added next month is policed
+  without anyone remembering the test exists.
+- **Gate before the fetch, not before the use.** With reading off there is no
+  reason to pull the thread into the process at all.
+- **A cache is downstream of the gate, not around it.** Revocation governs what
+  is shown, not only what is newly fetched.
+- **Say the thing was declined.** A withheld analysis and a missing one render
+  identically, and only one of them is fixed by pressing a button. Same rule as
+  the empty-section failure below.
+
+## Refusals Carry the Envelope Too
+
+`ApiResponse.error` is a `StructuredError`, and `c.json` will accept anything.
+The auth middlewares returned `error` as a bare string for as long as they
+existed, so `error.message` was `undefined` on every 401 and the add-on logged
+`json body, no error object` — the reason was in the response and thrown away by
+the caller that needed it. Build refusals through a helper typed
+`ApiResponse<never>` so the compiler refuses the next bare string.
+
+## Writing Into the User's Mailbox
+
+Labels are the only sanctioned mailbox write (ADR-005), and the policy is
+**label only when it makes sense** — enforced in `apps/api/src/labels/policy.ts`,
+not left to judgement at the call site.
+
+Four rules, each derived from measuring the corpus rather than from taste:
+
+1. **A label that fires on more than 5% of mail carries no information.**
+   Checked at RUN TIME against the actual mailbox, not just asserted — the
+   corpus that set a threshold is one tenant's mail. `Automated` was 51.7%.
+2. **Never duplicate what Gmail already does.** Automated / Marketing /
+   Transactional / Spam are Gmail's own categories; a second, worse copy spends
+   credibility for nothing.
+3. **A label that has never fired is not a label.** Kudos and Escalation were 0
+   rows in 125,685.
+4. **One label per message.** A message wearing three coloured tags is
+   decorated, not triaged.
+
+The deeper test, and the one to apply to anything new: **would seeing this
+change what the user does?** Not "is it true", not "is it available". A label's
+job is to make someone open a message sooner, or not at all. `Churn risk` means
+call them; `Upsell` means follow up when you have energy to sell; `Negative`
+means read this now. A tag that only describes the message has no claim on the
+mailbox. Same bar as the connector spec in `apps/addon/src/services/connectors.ts`.
+
+**Rules for any mailbox write:**
+- Namespace everything (`InboxPulse/`) so the whole set is removable in one
+  operation, and **ship the remover with the writer** — `remove-gmail-labels.ts`
+  did not exist until ~103,000 labels were already applied.
+- No default target. `INTEGRATION_ID` must be explicit; it once defaulted to a
+  colleague's live mailbox.
+- `DRY_RUN` first, always, and print whose mailbox is about to change.
+- **Absence in `emails.labels` is not evidence a label was never applied.** That
+  column is our ingested copy of Gmail's labels, written at sync time, holding
+  only system values. Writes via `users.messages.modify` never touch it. Check
+  Gmail, not the mirror.
+
+## Two Email-Reduction Paths, Not One
+
+Trimming an email before it reaches a model is implemented **twice, in two code
+paths that never meet**. Attribute costs and credit to the right one.
+
+| Path | Code | Used by |
+|------|------|---------|
+| `extractor.ts` | `apps/api/src/emails/extraction/` | the corpus analysis pipeline |
+| `htmlToText` + `stripQuotedReply` | `apps/addon/src/gmail/gmail-api.ts` | the Gmail add-on |
+
+The add-on fetches bodies from Gmail directly and never calls the API's
+extractor, so **add-on token costs are governed entirely by
+`gmail-api.ts`**. Measured over 400 real messages, its stripping cuts billed
+characters by **51%** — median body 17,274 chars raw, 1,232 stripped — and
+leaves only 16% of messages reaching the 4,000-char cap.
+
+Estimating add-on cost from `emails.body` overstates it roughly 2x: that column
+holds the raw HTML and the full quoted chain, neither of which is ever sent.
+
+## Judging With More Than One Model
+
+When several models vote on a label, **oppose their priors, never their
+questions** (ADR-023). Judges given the same instructions make the same mistakes,
+so unanimity understates how often they are jointly wrong; judges asked
+*different* questions cannot vote at all, and a panel scoring stance, consequence
+and repetition separately hit 33% precision where all three agreed — below every
+judge alone. Votes combine only when they are votes on one proposition.
+
+The same model told "missing a quiet grievance is the unforgivable error" and
+told "crying wolf is" spans 43–88% precision on identical inputs, which is a
+bigger lever than swapping models. Use both ends: defenders agreeing builds
+positives, advocates agreeing on nothing builds negatives, and the disagreement
+band stays **unlabelled** rather than guessed.
+
+Check independence before combining. `qwen2.5:32b`'s YES set was a strict subset
+of `gemma3:27b`'s — their AND was just qwen and their OR was just gemma, so the
+panel was one judge wearing two hats.
+
+## Measuring a Shipped Model
+
+**A model refit on all rows before shipping cannot be scored against any of
+them.** `berne-whiskers.json` carries coefficients fit on the whole corpus —
+correct for deployment, and fatal to measure. Scoring them back over that corpus
+reports 91% on the train portion and 89% on the "held-out" portion, and a flat
+line across the split reads like strong generalisation when it is memorisation.
+An honest fit that never saw the test mail catches **69%** at the same send
+fraction, not 89%.
+
+So: quote `metrics`, which comes from a separate held-out fit, and never a number
+you produced by scoring the shipped coefficients. To re-derive, refit on the
+first 75% by date and score the rest. The file records `coefficientsFitOn` and
+`metricsMeasuredOn` for exactly this reason.
+
+Two related traps in this corpus:
+- **Split temporally, never randomly.** A random split put halves of the same
+  thread — same client, same dispute — on both sides and flattered PR-AUC by 45%.
+- **Mine features on the training half only.** Phrases mined over everything
+  score well and mean nothing.
+
+## Never Measure a Signal Backwards
+
+Every panel signal is a posterior: **P(trouble next week | what we can see)**.
+Measure it as the alert it will actually be — fire it on every client-week, then
+count what followed — and report lift against the base rate. The base rate is
+**5.7%** of client-weeks followed by a complaint.
+
+The failure mode is to select on the outcome and measure toward the past.
+"Volume rose in 180 of 265 clients who complained — 68%" is
+P(volume rose | complained), which no panel row can act on. The same rule run
+forward caught 7.5% of complaints at 15.7% precision. At a 5.7% prior, measuring
+backwards will make almost anything look strong.
+
+Two checks before believing a signal:
+- **Did the population get chosen by the outcome?** If the denominator is
+  "clients who complained", the number is describing history, not predicting it.
+- **Does it survive conditioning on what you already show?** Volume looked worth
+  1.3× and went to nothing once engagement was known. A flat lift curve across
+  thresholds (1.5× volume and 3× volume both landing at ~7.2%) means something
+  correlated with the signal is carrying it, not the signal.
+
+And keep the anti-signals: **volume with nobody replying runs 4.4%, below base
+rate.** An unattended spike is a notification stream, not a person getting angry.
+
 ## Export Rules
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.
+
+## Ported Manager Endpoints (`/api/manager/*`)
+
+- **A `/api/manager/*` handler must return the exact field names its sidebar section reads, and run the same SQL crm-manager ran.** `apps/manager/src/server.js` is the reference implementation; `apps/chrome-extension/manager/*.js` is the UI, ported verbatim from it and never adapted to crm-api.
+- Nothing validates the shape at that seam — a section reads bare JSON, so a renamed or missing field renders as `0`, `—` or `Unassigned` instead of failing. A section showing zeros while the KPI row above it shows real numbers is a **shape mismatch**, not empty data. Diff the crm-api method against its `server.js` twin before looking at the database.
+- The rewrite is also a chance to silently change meaning. Keep the crm-manager SQL close to verbatim; the only things that should differ are tenant scoping, `user_accessible_customers` scoping, and tenant domains.
 
 ## Project Overview
 
 Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer management, email sync (Gmail), AI-powered email analysis, task management, dashboards, and notifications.
 
+- **GCP Project**: `project-y-email-sentiment` (region `us-central1`). All Cloud Run
+  services live here — `crm-api`, `crm-addon`, `crm-web`, `crm-gmail`, `crm-analysis`.
+  **`health-474623` is retired.** It is still named throughout
+  `docs/GMAIL-OAUTH-SETUP.md`, and the OAuth client id beginning `505023465535-`
+  belongs to it; the live client is `crm-oauth` (`203731638840-…`). Pointing
+  gcloud at the old project fails as a *permission* error, not a "no such
+  project" one — `grastogi@mystartupcfo.com` can only see the live project — so
+  the symptom reads like missing IAM rather than a wrong id.
 - **GCP Project**: `project-y-email-sentiment` (project number `203731638840`) — the Cloud Run deploy target for all services, supplied to CI as the `GCP_PROJECT_ID` secret. The older `health-474623` project still hosts stale copies of the `crm-*` services; do NOT read logs, revisions, or deploy state from it.
 - **Runtime**: Bun (backend services), Vite (frontend dev), Nginx (frontend prod)
 - **Database**: PostgreSQL (Neon) with Drizzle ORM
@@ -71,6 +239,12 @@ crm/
 ├── pnpm-workspace.yaml  # pnpm workspaces (apps/*, packages/*, packages/cloud/*)
 └── tsconfig.json        # Base TS config with path aliases
 ```
+
+## Chrome Extension Builds
+
+- **Build the extension with `pnpm --filter @crm/chrome-extension build:clone`, never plain `build`.** `wxt.config.ts` sets `outDir: 'output'`, so every mode writes to the same `output/chrome-mv3` directory Chrome loads unpacked — a plain `wxt build` silently replaces a working build.
+- Only `.env.clone` carries `WXT_SERVICE_API_KEY`, `WXT_TENANT_ID` and `WXT_FLAGS_API_URL`. `.env.production` does not, and `.env` has no `WXT_*` vars at all.
+- Without those, `SERVICE_API_KEY`/`TENANT_ID` are empty strings and **every** `INTERNAL_FETCH` in `entrypoints/background.ts` returns `internal auth not configured`. The sidebar still renders and still looks signed in; it just reports `N messages sent · 0 matched · 0 with a customer` and drops the trend, flagged messages, stats, activity and contacts at once. Treat "everything thread-scoped vanished together" as a build/env symptom, not a data one.
 
 ## Development Commands
 
@@ -309,11 +483,6 @@ Drizzle schemas live in `apps/api/src/{module}/schema.ts`. Key tables:
 2. Create SQL migration file in `apps/api/sql/` (or `apps/api/sql/migrations/` for incremental)
 3. Run `pnpm db:push` to apply schema to database
 4. Update `apps/api/sql/README.md` with execution order
-
-### Reading affected-row counts
-
-- To find out how many rows a `db.execute(sql\`...\`)` write touched, use `affectedRows(result)` from `@crm/database`. **Never read `result.rowCount` directly** — the postgres.js driver this project uses reports the count as `count`, so `rowCount` is always `undefined` and the usual `?? 0` fallback turns it into a silent, plausible-looking zero. See ADR-002.
-- This counts rows *written*, not rows *returned*. For statements with a `RETURNING` clause, use the length of the returned rows instead.
 
 ### Migration Rules
 

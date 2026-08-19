@@ -8,6 +8,30 @@ import { AnalysisRegistry } from './registry';
 import type { AnalysisDefinition, AnalysisResult, BatchAnalysisResult, ThreadContext } from './types';
 import type { ParticipantRole, RosterEntry } from '@crm/clients';
 import { logger } from '../utils/logger';
+import { retrieveExamplesForEmail, formatExamples } from '../analyses/retrieval';
+
+/**
+ * Render a recipient list as one prompt line: `Nina Patel <nina@acme.com>, ops@acme.com`.
+ *
+ * Bcc is deliberately never rendered by the caller. A blind recipient is
+ * invisible to everyone on the thread, and a search string built from one would
+ * leak that they were copied the moment a reader saw the results.
+ */
+function formatAddressList(
+  addresses: Array<{ name?: string; email: string }> | undefined
+): string {
+  if (!addresses?.length) return '';
+
+  return addresses
+    .map((a) => {
+      const email = a.email?.trim();
+      if (!email) return '';
+      const name = a.name?.trim();
+      return name ? `${name} <${email}>` : email;
+    })
+    .filter(Boolean)
+    .join(', ');
+}
 
 /** Prompt-facing labels for participant roles. */
 const ROLE_LABELS: Record<ParticipantRole, string> = {
@@ -77,7 +101,7 @@ export class AnalysisExecutor {
 
       return {
         type,
-        result: result.object,
+        result: this.applyPostProcess(definition, result.object, email, tenantId),
         modelUsed: modelConfig.primary.model,
         reasoning: result.reasoning,
         usage: result.usage && result.usage.totalTokens !== undefined
@@ -118,7 +142,8 @@ export class AnalysisExecutor {
     definitions: AnalysisDefinition[],
     email: Email,
     threadContext?: ThreadContext,
-    participants?: RosterEntry[]
+    participants?: RosterEntry[],
+    examples?: string
   ): string | PromptMessage[] {
     // Combine all module instructions
     const instructions = definitions
@@ -128,10 +153,61 @@ export class AnalysisExecutor {
     // Build email context
     const emailContext = this.buildEmailContext(email, threadContext, participants);
 
-    // Combine into final prompt
-    const prompt = `${instructions}\n\n${emailContext}`;
+    // Worked examples sit AFTER the instructions and BEFORE the email, so the
+    // model reads the rule, then how the rule was actually applied in this
+    // mailbox, then the message. They are added rather than substituted: on 49
+    // human-judged emails the instructions and the examples score the same, so
+    // there is no evidence for dropping the instructions, and doing it in the
+    // same change would make a regression impossible to attribute.
+    const prompt = examples
+      ? `${instructions}\n\n${examples}\n\n${emailContext}`
+      : `${instructions}\n\n${emailContext}`;
 
     return prompt;
+  }
+
+  /**
+   * Already-judged emails from this mailbox, or undefined.
+   *
+   * Returns undefined for every reason that is not a working set of examples:
+   * the flag is off, sentiment is not among the analyses being run, the email
+   * has no stored vector yet, the tenant has no judged history, or the query
+   * failed. Each of those means "use the written instructions", which is what
+   * production does today, so the fallback is the current behaviour rather than
+   * a degraded one.
+   *
+   * Never throws. An analysis that would have succeeded must not fail because a
+   * retrieval meant to improve it did.
+   */
+  private async buildExamples(
+    definitions: AnalysisDefinition[],
+    email: Email,
+    tenantId: string
+  ): Promise<string | undefined> {
+    // Read straight from process.env rather than through getEnv(). getEnv()
+    // validates the WHOLE environment and calls process.exit(1) when anything
+    // required is missing — it does not throw, so no try/catch can contain it.
+    // Routing an optional feature flag through that would give this feature the
+    // power to kill the service on a cold path, which is the opposite of the
+    // guarantee below.
+    if (process.env.SENTIMENT_EXAMPLES_ENABLED !== 'true') return undefined;
+    if (!definitions.some((d) => d.module.name === 'sentiment')) return undefined;
+    if (!email.messageId) return undefined;
+
+    const count = Number(process.env.SENTIMENT_EXAMPLES_COUNT) || 10;
+
+    try {
+      const found = await retrieveExamplesForEmail(tenantId, email.messageId, count);
+      const rendered = formatExamples(found);
+      logger.debug(
+        { tenantId, emailId: email.messageId, retrieved: found.length, used: rendered.length > 0 },
+        'sentiment examples'
+      );
+      return rendered || undefined;
+    } catch (error) {
+      logger.warn({ err: error, tenantId }, 'example lookup failed; using written instructions');
+      return undefined;
+    }
   }
 
   /**
@@ -159,7 +235,8 @@ export class AnalysisExecutor {
 
     // Build batched schema and prompt
     const batchedSchema = this.buildBatchedSchema(definitions);
-    const batchedPrompt = this.buildBatchedPrompt(definitions, email, threadContext, participants);
+    const examples = await this.buildExamples(definitions, email, tenantId);
+    const batchedPrompt = this.buildBatchedPrompt(definitions, email, threadContext, participants, examples);
 
     logger.debug(
       {
@@ -198,7 +275,7 @@ export class AnalysisExecutor {
         if (moduleResult !== undefined) {
           batchResult.set(definition.type, {
             type: definition.type,
-            result: moduleResult,
+            result: this.applyPostProcess(definition, moduleResult, email, tenantId),
             modelUsed: modelConfig.primary.model,
             reasoning: result.reasoning,
             usage: result.usage && result.usage.totalTokens !== undefined
@@ -364,6 +441,38 @@ export class AnalysisExecutor {
   }
 
   /**
+   * Run a module's optional correction pass over its own output.
+   *
+   * Never allowed to fail the analysis: a postProcess that throws leaves an
+   * otherwise-valid result unusable, so the raw model output is kept and the
+   * fault is logged. The hook is a safety net, not a gate.
+   */
+  private applyPostProcess(
+    definition: AnalysisDefinition,
+    result: unknown,
+    email: Email,
+    tenantId: string
+  ): unknown {
+    const postProcess = definition.module.postProcess;
+    if (!postProcess) return result;
+
+    try {
+      return postProcess(result, email);
+    } catch (error: any) {
+      logger.error(
+        {
+          error: error.message,
+          tenantId,
+          emailId: email.messageId,
+          analysisType: definition.type,
+        },
+        'postProcess threw — keeping the raw model output'
+      );
+      return result;
+    }
+  }
+
+  /**
    * Helper: Build email context string
    * - Participants: roster of every address on this email and its thread, each
    *                labelled US / CUSTOMER / UNKNOWN_EXTERNAL. Analyses written
@@ -372,6 +481,11 @@ export class AnalysisExecutor {
    * - From/To/Cc: addressing structure of THIS message, role-labelled. Whether
    *              we are addressed directly or merely copied is the difference
    *              between a complaint aimed at us and one we are observing.
+   *              These lines are also read directly: context-search-string
+   *              builds queries around the participants, upsell's "is this
+   *              service already in flight" rule looks for our own staff on
+   *              To and Cc, and signature-extraction's ownership rule reads
+   *              From.
    * - Body: dequoted reply content
    * - Signature: dequoted reply with signature attached, for signature-extraction to find
    *             the signature within

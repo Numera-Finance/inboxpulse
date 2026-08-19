@@ -1,6 +1,54 @@
 @import "tailwindcss";
 
-:root {
+/*
+ * This stylesheet is injected INTO A SHADOW ROOT (see mountThreadSection in
+ * entrypoints/content.ts), which breaks two Tailwind v4 assumptions. Both
+ * failures are silent — the utility class is emitted, matches, and then
+ * computes to nothing — so they read as "the style just doesn't work".
+ *
+ * 1. `:root` matches the document's <html>. A stylesheet inside a shadow root
+ *    can only style elements in that shadow tree, so a bare `:root` block
+ *    matches NOTHING and every theme variable stays undefined. `:host` is the
+ *    shadow-tree equivalent, and custom properties set there inherit down to
+ *    the whole panel. Keep both selectors: `:root` for any document-level use,
+ *    `:host` for the shadow root we actually mount in.
+ *
+ * 2. Tailwind v4 gives `--tw-*` variables their defaults via `@property {
+ *    initial-value }`. Property registration is document-global and is NOT
+ *    honored from a stylesheet inside a shadow root, so those variables are
+ *    undefined here. A declaration like `border-top-style: var(--tw-border-style)`
+ *    then fails substitution and, since border-style is not inherited, falls
+ *    back to its INITIAL value — `none`. That is why `border-t` drew no line
+ *    while `<hr>` did: preflight styles `hr` with a plain `border-top-width`
+ *    and no var(), so it was the one divider that survived.
+ *
+ * Tailwind already ships this exact fallback block, but wrapped in an
+ * `@supports` test for Safari, so Chrome never applies it. Re-declare it
+ * unconditionally in `base`, where the utilities layer still overrides it.
+ */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop {
+    --tw-border-style: solid;
+    --tw-space-y-reverse: 0;
+    --tw-divide-y-reverse: 0;
+    --tw-shadow: 0 0 #0000;
+    --tw-shadow-alpha: 100%;
+    --tw-inset-shadow: 0 0 #0000;
+    --tw-inset-shadow-alpha: 100%;
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-inset-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-width: 0px;
+    --tw-ring-offset-color: #fff;
+    --tw-ring-offset-shadow: 0 0 #0000;
+    --tw-drop-shadow-alpha: 100%;
+  }
+}
+
+:root,
+:host {
   --background: oklch(0.985 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

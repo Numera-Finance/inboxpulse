@@ -51,6 +51,29 @@ export class EmailThreadRepository {
   /**
    * Find thread by provider thread ID and integration ID
    */
+  /**
+   * Resolve a DB thread id from just the tenant + provider (Gmail) thread id,
+   * without knowing the integration. Used by the add-on, which only has the open
+   * thread's Gmail id from the event — so it can show thread-level trend/flagged
+   * even when the open message itself isn't a tracked customer email.
+   */
+  async findIdByProviderThreadId(
+    tenantId: string,
+    providerThreadId: string
+  ): Promise<{ id: string } | null> {
+    const result = await this.db
+      .select({ id: emailThreads.id })
+      .from(emailThreads)
+      .where(
+        and(
+          eq(emailThreads.tenantId, tenantId),
+          eq(emailThreads.providerThreadId, providerThreadId)
+        )
+      )
+      .limit(1);
+    return result[0] || null;
+  }
+
   async findByProviderThreadId(
     tenantId: string,
     integrationId: string,

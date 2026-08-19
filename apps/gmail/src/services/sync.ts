@@ -131,6 +131,60 @@ export class SyncService {
   }
 
   /**
+   * Perform a bounded backfill of the last `sinceDays` days.
+   *
+   * Same listing/filter/parse/insert path as initialSync, but with a caller-set
+   * window and WITHOUT advancing the integration's incremental checkpoint
+   * (lastRunToken) — a manual backfill must not disturb the live push-driven
+   * cursor. Returns the processed/inserted/skipped counts.
+   */
+  async syncSince(
+    integration: Integration,
+    runId: string,
+    sinceDays: number
+  ): Promise<{ processed: number; inserted: number; skipped: number }> {
+    const { id: integrationId, tenantId } = integration;
+    const since = new Date();
+    since.setDate(since.getDate() - sinceDays);
+    const query = `after:${Math.floor(since.getTime() / 1000)}`;
+
+    logger.info({ integrationId, runId, sinceDays, query }, 'Starting windowed backfill sync');
+
+    // Newest-first across pages; process oldest-first so a customer email is
+    // stored before the reply that answers it (preserves first_reply_at / TAT).
+    const allMessageIds: string[] = [];
+    let pageToken: string | undefined;
+    do {
+      const { messages, nextPageToken } = await this.gmailService.listMessages(tenantId, {
+        query,
+        maxResults: 100,
+        pageToken,
+      });
+      for (const m of messages) {
+        if (m.id) allMessageIds.push(m.id);
+      }
+      pageToken = nextPageToken;
+    } while (pageToken);
+    allMessageIds.reverse();
+
+    logger.info({ integrationId, messageCount: allMessageIds.length }, 'Windowed backfill: listed messages');
+
+    const result = await this.processMessageIds(integration, runId, allMessageIds, {
+      advanceCheckpoint: false,
+    });
+
+    await this.runClient.update(runId, {
+      status: 'completed',
+      completedAt: new Date(),
+      itemsProcessed: result.processed,
+      itemsInserted: result.inserted,
+      itemsSkipped: result.skipped,
+    });
+
+    return result;
+  }
+
+  /**
    * Process message IDs in chunks with checkpointing
    * Uses two-phase fetch when blacklist is configured:
    * 1. Fetch headers only to check sender
@@ -139,10 +193,13 @@ export class SyncService {
   private async processMessageIds(
     integration: Integration,
     runId: string,
-    messageIds: string[]
+    messageIds: string[],
+    opts: { advanceCheckpoint?: boolean } = {}
   ): Promise<{ processed: number; inserted: number; skipped: number }> {
     const { id: integrationId, tenantId } = integration;
     const CHUNK_SIZE = 50;
+    // A manual backfill (syncSince) must not move the live incremental cursor.
+    const advanceCheckpoint = opts.advanceCheckpoint !== false;
 
     if (messageIds.length === 0) {
       return { processed: 0, inserted: 0, skipped: 0 };
@@ -244,7 +301,7 @@ export class SyncService {
       // Phase 2: Fetch full content only for non-blacklisted messages
       if (filteredMessageIds.length === 0) {
         // All messages were blacklisted, still checkpoint
-        if (highestHistoryId) {
+        if (highestHistoryId && advanceCheckpoint) {
           await this.integrationClient.updateRunState(integrationId, {
             lastRunToken: highestHistoryId,
             lastRunAt: new Date(),
@@ -284,7 +341,7 @@ export class SyncService {
         ? highestHistoryId
         : lastMessage.historyId;
 
-      if (checkpointHistoryId) {
+      if (checkpointHistoryId && advanceCheckpoint) {
         await this.integrationClient.updateRunState(integrationId, {
           lastRunToken: checkpointHistoryId,
           lastRunAt: new Date(),

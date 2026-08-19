@@ -36,7 +36,14 @@ export function useAuth(): AuthState {
       const json = (await response.json()) as { success: boolean; data?: UserResponse };
       return json.data ?? null;
     },
-    retry: false,
+    // One retry, not zero. The request travels through the MV3 background
+    // worker, which Chrome evicts when idle — the first call after a quiet
+    // spell can lose its response through no fault of the API. Retrying once
+    // wakes the worker and succeeds; without it a single eviction left the
+    // panel showing a sign-in prompt to an already-signed-in user until they
+    // hit refresh. Bounded at one so a genuinely failing /me cannot spin.
+    retry: 1,
+    retryDelay: 1_000,
     staleTime: 5_000,
     // Poll every 3s only when we got a definitive "not logged in" (queryFn
     // returned null on a 401), so the panel auto-updates after login. On a

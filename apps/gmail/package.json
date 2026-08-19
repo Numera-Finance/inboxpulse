@@ -7,8 +7,9 @@
     "dev": "bun --watch src/index.ts",
     "build": "tsup src/index.ts --format esm --target node22",
     "start": "bun dist/index.js",
-    "test": "vitest",
-    "lint": "tsc --noEmit"
+    "test": "vitest run --passWithNoTests",
+    "lint": "tsc --noEmit",
+    "test:watch": "vitest --passWithNoTests"
   },
   "dependencies": {
     "@crm/clients": "workspace:*",

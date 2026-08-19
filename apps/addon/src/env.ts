@@ -1,0 +1,277 @@
+import { z } from 'zod';
+
+const envSchema = z.object({
+  // Server
+  PORT: z.coerce.number().default(4005),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  LOG_LEVEL: z.string().default('info'),
+
+  // InboxPulse API (called via the internal service path)
+  SERVICE_API_URL: z.string().default('http://localhost:4001'),
+  // Needed to call /api/internal/*. Blank => the add-on runs in "preview mode"
+  // (renders cards with no live data) so the scaffold boots with zero config.
+  SERVICE_API_KEY: z.string().default(''),
+
+  // Public base URL of THIS add-on service (used to build button action URLs
+  // that Google calls back). In prod this is the Cloud Run URL; in dev it's the
+  // tunnel URL (ngrok/cloudflared) or http://localhost:4005 for local curl.
+  ADDON_BASE_URL: z.string().default('http://localhost:4005'),
+
+  // Local-dev convenience: pin a tenant/user so cards show real clone data
+  // without a full Gmail-user -> tenant resolution (that lands in a later phase).
+  ADDON_DEV_TENANT_ID: z.string().optional(),
+  ADDON_DEV_USER_ID: z.string().optional(),
+
+  // Verify Google's signed ID token on inbound requests. MUST be 'true' before
+  // any public deployment; left 'false' for local curl testing. See auth/verify.ts.
+  ADDON_VERIFY_ID_TOKEN: z.string().default('false'),
+
+  // Expected audience of the inbound Authorization bearer token (this add-on's
+  // public URL). When set, it's enforced; when blank, only Google's signature +
+  // issuer are checked. Set to the Cloud Run URL in prod.
+  ADDON_AUDIENCE: z.string().default(''),
+
+  // The add-on's OAuth client id — the audience of event.userIdToken (which
+  // carries the signed-in user's email).
+  //
+  // This must be the client the MARKETPLACE SDK created for the add-on
+  // ("Google Workspace Add-ons", visible under Marketplace SDK > Credentials >
+  // Authorization Resource), NOT crm-oauth. Google mints event.userIdToken for
+  // the add-on's own client, so verifying against the CRM client checks the
+  // wrong audience. The earlier "reuses the CRM Google client" default predates
+  // the dedicated client existing.
+  GOOGLE_CLIENT_ID: z.string().default(''),
+
+  // ---------------------------------------------------------------------------
+  // Live analysis (demo / dogfooding path)
+  //
+  // When set, a thread that InboxPulse has NOT ingested is analysed in-request
+  // against an OpenAI-compatible endpoint and the result is rendered and thrown
+  // away. Nothing is written to the database and nothing enters the shared
+  // tenant. This exists so an inbox that is deliberately excluded from ingestion
+  // -- any internal/leadership mailbox -- can still show a real panel.
+  //
+  // Blank (the default) disables it entirely, so production behaviour is
+  // unchanged unless someone opts in.
+  //
+  // NOTE: if the endpoint is on a private network (e.g. a Tailscale address),
+  // this add-on must run on a host that can reach it. Cloud Run cannot.
+  // ---------------------------------------------------------------------------
+  LIVE_ANALYSIS_URL: z.string().default(''),
+  /**
+   * The model doing structured extraction. gemma3:12b locally.
+   *
+   * Measured on the deep read, three runs each, M5 Pro / 48GB. "when" is the
+   * field the calendar reminder is built on, so losing it silently removes the
+   * Remind button:
+   *
+   *   gemma3:12b     6.2-7.3s    commit 3/3   when 3/3
+   *   gemma3:27b    20.3-29.7s   commit 3/3   when 0/3
+   *   qwen2.5:32b   23.5-31.8s   commit 3/3   when 3/3
+   *
+   * Bigger is not better here. gemma3:27b is 3x slower AND drops "when" every
+   * time; qwen2.5:32b matches 12b's quality at 3.5x the wait. Do not re-litigate
+   * this by intuition -- the 12b is the right choice on this hardware, and it is
+   * the fastest option that gets every field right.
+   *
+   * Llama 4 does not fit: Scout is 67.4GB against 48GB of RAM (~36GB addressable
+   * by the GPU), and Maverick is 244.8GB. Its MoE shape (17B active) is exactly
+   * what this workload wants, so it is worth revisiting on a larger machine.
+   */
+  LIVE_ANALYSIS_MODEL: z.string().default('gpt-4o-mini'),
+  /**
+   * A faster model for jobs that are pure prose and need no structure.
+   *
+   * Measured on this machine, generation rate is the whole story:
+   *   gemma3:12b                       31.9 tok/s
+   *   nemotron-3.5-lightning:30b-mlx   81.3 tok/s
+   *
+   * But faster is not better everywhere. On the same thread, three runs each,
+   * nemotron found the commitment 1/0/1 times against gemma3's 3/3, never
+   * populated the `when` field at all -- which is what the calendar reminder is
+   * built on, so "Remind me" simply disappears -- and missed the open question
+   * every time. It is 3x quicker at losing the fields the card is
+   * differentiated by.
+   *
+   * So the split is by JOB, not by preference: structured extraction stays on
+   * the accurate model, and writing a reply -- where there is no schema to get
+   * wrong and the only measure is whether the prose is good -- goes here.
+   * Blank falls back to LIVE_ANALYSIS_MODEL.
+   *
+   * Turning nemotron's reasoning ON does not recover the lost fields, it just
+   * fails: three runs of the deep read all ran past 120s and aborted, returning
+   * nothing at all. A reasoning model handed six structured instructions spends
+   * its budget reasoning about the schema. See LIVE_ANALYSIS_THINK.
+   */
+  LIVE_ANALYSIS_FAST_MODEL: z.string().default(''),
+  LIVE_ANALYSIS_KEY: z.string().default(''),
+  /**
+   * Hard ceiling on the in-request LLM call; the card renders without it on
+   * timeout.
+   *
+   * 20s, not 8s. The deep read measures 8.4-8.8s against gemma3:12b with history
+   * and reply options, and a 12s ceiling aborted it outright on a long thread —
+   * which costs the user the entire reading, not a slower one. The first paint
+   * is 0.26s and this only runs behind an explicit "Read this thread", so the
+   * user is already waiting deliberately; failing them at 12s to save 8s of
+   * patience is the wrong trade.
+   */
+  /**
+   * Where to persist analysed threads so they survive a restart. BLANK = off,
+   * and off is the default.
+   *
+   * The in-memory cache dies with the process, so a code change, a tunnel
+   * reconnect or closing the laptop re-analyses every thread already read --
+   * which on a personal mailbox is the common case, not the rare one.
+   *
+   * Setting this is a DELIBERATE relaxation of "Analysed live. Not stored".
+   * Only point it at a directory on the operator's own machine, never at shared
+   * or synced storage (no Drive, no Dropbox, no network mount). It holds only
+   * threads that operator personally opened, files are written 0600 with
+   * sha256-hashed names so no address appears in a filename, and the whole
+   * directory is destroyed by a single clear().
+   *
+   * It is NEVER wired to the tenant database. The entire reason a personal
+   * mailbox can be analysed at all is that its contents do not enter the shared
+   * system, and a cache is not an exception to that.
+   *
+   * Suggested: ~/.inboxpulse-cache
+   */
+  /**
+   * Salt for pseudonymising identifiers in logs. From Secret Manager.
+   *
+   * Without it, identifiers are logged as 'redacted' rather than as a weak
+   * digest — a bare hash of a work email is a lookup table with extra steps,
+   * since the candidate space is a few hundred `firstname@company.com`. Salting
+   * means reversing a log line needs both the logs and the secret, which are
+   * different grants.
+   *
+   * Rotating it breaks correlation with older log lines. That is the intended
+   * trade, not a bug.
+   */
+  /**
+   * The web dashboard, for deep links out of the panel.
+   *
+   * The card summarises; the charts live here. CardService has no canvas and no
+   * SVG, so a sentiment trend cannot be drawn in the panel — and a second copy
+   * of the dashboard in a 400px column would be the same mistake as summarising
+   * a thread Gemini already summarises.
+   *
+   * Points at the WEB APP, not the Chrome extension's manager sections. That is
+   * forced rather than preferred: a card button can only open a URL, and the
+   * extension's manager UI is reached through a localhost gcloud proxy. There
+   * is nothing to link to.
+   */
+  WEB_URL: z.string().default('https://inboxpulse.mystartupcfo.com'),
+
+  LOG_SALT: z.string().default(''),
+
+
+  /**
+   * Show a "Show as" row that re-renders the open thread in each of the five
+   * modes. OFF by default and must stay off for real users.
+   *
+   * Demos could not show the modal design at all: it needs a complaint thread,
+   * then a scheduling thread, then an opportunity thread, found live in front of
+   * an audience -- and `opportunity` has never once fired on 169 real threads,
+   * so one of the five was undemonstrable by any amount of hunting.
+   *
+   * Forcing the mode re-renders the SAME thread's REAL analysis in a different
+   * shape. Nothing is fabricated, which is why this is acceptable at all: the
+   * alternative -- a preview card filled with invented commitments and quotes --
+   * would put sample values on a surface whose whole argument is that its
+   * numbers can be trusted.
+   *
+   * Free, too: the reading is already cached by thread content, so switching
+   * mode costs a re-render and no model call.
+   */
+  ADDON_DEMO_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
+
+  LIVE_ANALYSIS_TIMEOUT_MS: z.coerce.number().default(20000),
+
+  // 'ollama' uses the NATIVE /api/chat endpoint, which is the only way to turn a
+  // reasoning model's thinking off. Ollama's OpenAI-compatible route silently
+  // ignores the flag and reasons anyway — measured on
+  // nemotron-3.5-lightning:30b-mlx, that is the difference between 0.84s and
+  // 6.4s in the card render path. 'openai' is the portable default for LiteLLM
+  // or any hosted provider.
+  LIVE_ANALYSIS_PROVIDER: z.enum(['openai', 'ollama', 'gemini']).default('openai'),
+
+  /**
+   * Gemini's OpenAI-compatible base. RUNTIME USES THIS -- the local Ollama
+   * models are the demo path only.
+   *
+   * A separate provider from 'openai' because the path differs: Google documents
+   * the compat API at .../v1beta/openai/chat/completions, while the 'openai'
+   * branch appends /v1/chat/completions to its base.
+   *
+   * NOTHING ON THIS PATH IS VERIFIED AGAINST THE LIVE API -- no key was
+   * reachable (gcloud auth had expired and no secret was readable). Google
+   * rejects on the missing Authorization header before routing, so even the URL
+   * could not be confirmed by probing. Treat the first real call as the test.
+   */
+  LIVE_ANALYSIS_GEMINI_URL: z
+    .string()
+    .default('https://generativelanguage.googleapis.com/v1beta/openai'),
+
+  /**
+   * Thinking budget for Gemini 2.5 models, as OpenAI-compat reasoning_effort.
+   *
+   * 'none' by default and that is a deliberate default, not a shrug: 2.5 Flash
+   * thinks by default, and thinking is billed as output tokens on top of the
+   * latency. Locally the same setting was worth 7.6x on a reasoning model, and
+   * turning it ON for structured extraction was catastrophic -- three runs of
+   * the deep read all ran past 120s and returned nothing, because a reasoning
+   * model handed a six-field schema spends its budget reasoning about the
+   * schema.
+   *
+   * Raise it only for a job that is genuinely a judgement call, never for
+   * extraction.
+   */
+  /**
+   * 'unset' omits the field entirely. Necessary, not cosmetic: several
+   * flash-lite variants REJECT reasoning_effort outright with "Request contains
+   * an invalid argument" -- verified against the live API on
+   * gemini-3.5-flash-lite and gemini-flash-lite-latest. gemini-3.1-flash-lite
+   * accepts it, which is one reason it is the default.
+   */
+  LIVE_ANALYSIS_REASONING: z.enum(['none', 'low', 'medium', 'high', 'unset']).default('none'),
+  /**
+   * Only honoured when provider is 'ollama'. Off by default: 7.6x faster on a
+   * reasoning model, and Ollama REJECTS the field outright for models that
+   * cannot think ("gemma3:12b does not support thinking", HTTP 400).
+   *
+   * Parsed as a string compared to 'true', NOT z.coerce.boolean(). Coercion
+   * would make this permanently true: Boolean('false') === true, so every
+   * non-empty value — including the literal string "false" — coerces to true.
+   * This is why the rest of this file uses the string-compare pattern.
+   */
+  LIVE_ANALYSIS_THINK: z
+    .string()
+    .default('false')
+    .transform((v) => v.toLowerCase() === 'true'),
+
+  // Google Chat incoming webhook for "Share to Chat". A webhook needs NO Google
+  // OAuth scope on the add-on — it is a plain HTTPS POST — which is why this is
+  // buildable today while draft-reply is not. Blank disables the button.
+  CHAT_WEBHOOK_URL: z.string().default(''),
+});
+
+export type Env = z.infer<typeof envSchema>;
+
+let _env: Env | null = null;
+
+export function getEnv(): Env {
+  if (!_env) {
+    const result = envSchema.safeParse(process.env);
+    if (!result.success) {
+      console.error('Invalid environment variables:');
+      for (const issue of result.error.issues) {
+        console.error(`  ${issue.path.join('.')}: ${issue.message}`);
+      }
+      process.exit(1);
+    }
+    _env = result.data;
+  }
+  return _env;
+}

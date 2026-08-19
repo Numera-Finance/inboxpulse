@@ -83,3 +83,22 @@ tmp/
 # Local integration scripts with credentials
 scripts/insert-gmail-integration.sql
 scripts/insert-gmail-integration.sh
+.env*
+!.env.example
+
+# Local screenshots
+.shots/
+.shots*.png
+
+# Tunnel URL changes every run; the deployment file is generated from it
+apps/addon/deployment.live-local.json
+
+# Test sets built from real client mail. `sentiment-harness.py build`
+# regenerates them from the database in about a minute; committing them would
+# put client correspondence in every clone of this repository, permanently.
+apps/api/scripts/sentiment-testset.jsonl
+apps/api/scripts/*-testset.jsonl
+
+# Python bytecode from the labelling scripts in apps/api/scripts
+__pycache__/
+*.pyc

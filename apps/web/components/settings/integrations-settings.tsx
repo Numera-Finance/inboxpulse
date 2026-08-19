@@ -5,13 +5,12 @@ import { useSearchParams, useNavigate } from "react-router-dom"
 import { GmailIntegrationCard } from "@/components/integrations/gmail-card"
 import { useGmailIntegration, useDisconnectIntegration, integrationKeys } from "@/lib/hooks"
 import { useAuth } from "@/src/contexts/AuthContext"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { useQueryClient } from "@tanstack/react-query"
 
 export function IntegrationsSettings() {
   const { user } = useAuth()
   const tenantId = user?.tenantId || ''
-  const { toast } = useToast()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -29,20 +28,13 @@ export function IntegrationsSettings() {
     const error = searchParams.get('error')
 
     if (oauthStatus === 'success') {
-      toast({
-        title: "Gmail Connected",
-        description: "Your Gmail account has been connected successfully.",
-      })
+      toast.success("Gmail Connected", { description: "Your Gmail account has been connected successfully." })
       // Refresh integration data
       queryClient.invalidateQueries({ queryKey: integrationKeys.byTenantAndSource(tenantId, 'gmail') })
       // Clear URL params
       navigate('/settings?tab=integrations', { replace: true })
     } else if (oauthStatus === 'error' || error) {
-      toast({
-        title: "Connection Failed",
-        description: error || "Failed to connect your Gmail account. Please try again.",
-        variant: "destructive",
-      })
+      toast.error("Connection Failed", { description: error || "Failed to connect your Gmail account. Please try again." })
       // Clear URL params
       navigate('/settings?tab=integrations', { replace: true })
     }
@@ -57,17 +49,10 @@ export function IntegrationsSettings() {
       { tenantId, source: 'gmail' },
       {
         onSuccess: () => {
-          toast({
-            title: "Gmail Disconnected",
-            description: "Your Gmail account has been disconnected.",
-          })
+          toast.success("Gmail Disconnected", { description: "Your Gmail account has been disconnected." })
         },
         onError: (error) => {
-          toast({
-            title: "Disconnect Failed",
-            description: error.message || "Failed to disconnect Gmail. Please try again.",
-            variant: "destructive",
-          })
+          toast.error("Disconnect Failed", { description: error.message || "Failed to disconnect Gmail. Please try again." })
         },
       }
     )

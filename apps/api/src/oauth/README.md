@@ -15,7 +15,7 @@ Initiates the OAuth authorization flow. Redirects the user to Google's consent s
 **Example:**
 
 ```
-https://crm-api-505023465535.us-central1.run.app/oauth/gmail/authorize?tenantId=019a8e88-7fcb-7235-b427-25b77fed0563
+https://crm-api-yn7zwaf2za-uc.a.run.app/oauth/gmail/authorize?tenantId=019a8e88-7fcb-7235-b427-25b77fed0563
 ```
 
 **Flow:**
@@ -42,7 +42,7 @@ OAuth callback endpoint. Google redirects here after user authorization.
 
 ### Environment Variables
 
-- `SERVICE_API_URL`: The base URL of your API service (e.g., `https://crm-api-505023465535.us-central1.run.app`)
+- `SERVICE_API_URL`: The base URL of your API service (e.g., `https://crm-api-yn7zwaf2za-uc.a.run.app`)
   - Used to construct the OAuth redirect URI
   - Defaults to `http://localhost:{PORT}` if not set
 
@@ -56,7 +56,7 @@ To use these OAuth endpoints in production, you need to add the callback URL to 
 4. Click on your OAuth 2.0 Client ID
 5. Under **Authorized redirect URIs**, add:
    ```
-   https://crm-api-505023465535.us-central1.run.app/oauth/gmail/callback
+   https://crm-api-yn7zwaf2za-uc.a.run.app/oauth/gmail/callback
    ```
 6. Click **Save**
 
@@ -87,7 +87,7 @@ Add an "Authorize Gmail" button in your web UI:
 
 ```html
 <a
-  href="https://crm-api-505023465535.us-central1.run.app/oauth/gmail/authorize?tenantId=YOUR_TENANT_ID"
+  href="https://crm-api-yn7zwaf2za-uc.a.run.app/oauth/gmail/authorize?tenantId=YOUR_TENANT_ID"
 >
   Authorize Gmail Access
 </a>

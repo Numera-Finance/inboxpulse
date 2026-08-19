@@ -1,6 +1,7 @@
 import { useRecentEmails } from '../hooks/useRecentEmails';
 import { Mail, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { Block } from './Section';
 
 interface ActivityFeedProps {
   customerId: string;
@@ -10,11 +11,7 @@ export function ActivityFeed({ customerId }: ActivityFeedProps): React.ReactElem
   const { emails, isLoading } = useRecentEmails(customerId);
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-        Recent Activity
-      </h3>
-
+    <Block title="Recent Activity">
       {isLoading ? (
         <div className="flex items-center justify-center py-3">
           <Loader2 size={16} className="animate-spin text-muted-foreground" />
@@ -40,6 +37,6 @@ export function ActivityFeed({ customerId }: ActivityFeedProps): React.ReactElem
           ))}
         </div>
       )}
-    </div>
+    </Block>
   );
 }

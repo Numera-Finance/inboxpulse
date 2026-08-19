@@ -1,4 +1,5 @@
 import type { Customer } from '@crm/clients';
+import { Block } from './Section';
 
 interface FieldsSectionProps {
   customer: Customer;
@@ -13,11 +14,7 @@ export function FieldsSection({ customer }: FieldsSectionProps): React.ReactElem
   }
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-        Details
-      </h3>
-
+    <Block title="Details">
       <div className="space-y-1">
         {hasIndustry && (
           <div className="flex items-center justify-between text-xs">
@@ -32,6 +29,6 @@ export function FieldsSection({ customer }: FieldsSectionProps): React.ReactElem
           </div>
         )}
       </div>
-    </div>
+    </Block>
   );
 }

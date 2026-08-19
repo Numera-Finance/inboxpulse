@@ -16,17 +16,6 @@ import type { Customer as ClientCustomer, CreateCustomerRequest, MergeCustomerRe
 import type { CustomerImportResult, CustomerExportData } from './import-export';
 
 /**
- * True when `err` is a PostgreSQL unique-constraint violation (SQLSTATE 23505).
- * postgres.js surfaces the code on the error; check `cause` too in case a
- * wrapper re-threw it.
- */
-function isUniqueViolation(err: unknown): boolean {
-  const code = (err as { code?: string })?.code
-    ?? (err as { cause?: { code?: string } })?.cause?.code;
-  return code === '23505';
-}
-
-/**
  * Convert internal Customer (from database) to client-facing Customer
  * Serializes customer_domains table to domains array
  * Uses pre-fetched domains map to avoid N+1 queries
@@ -786,14 +775,10 @@ export class CustomerService {
    *   - Exists & auto-created & name matches → no-op
    *   - Exists & manually created    → leave alone, just return
    *
-   * Race safety: relies on the `uniq_customer_domains_tenant_domain` unique
-   * index rather than an advisory lock. Concurrent calls for the same domain
-   * race to insert; the loser catches the unique violation (23505) and
-   * re-reads the winner's row. The insert is wrapped in a SAVEPOINT so the
-   * violation rolls back only the failed insert, not the caller's transaction.
-   * This avoids serializing the whole enclosing transaction (customers +
-   * contacts + analysis writes) on a per-domain lock, which was a source of
-   * lock-wait contention on high-volume mailboxes.
+   * Race safety: requires a transaction (`tx`) and acquires an advisory
+   * transaction lock keyed on (tenantId, domain). Concurrent calls for the
+   * same domain serialize on the lock, so no two concurrent transactions can
+   * both insert and conflict on the unique constraint.
    *
    * The "(Auto)" suffix is always applied via `withAutoSuffix` — never built inline.
    */
@@ -801,7 +786,7 @@ export class CustomerService {
     tx: Transaction,
     tenantId: string,
     domain: string,
-    options: { signatureCompany?: string | null; defaultName?: string }
+    options: { signatureCompany?: string | null; defaultName?: string; threadAddresses?: string[] }
   ): Promise<Customer> {
     const normalizedDomain = domain.toLowerCase();
     const proposedRaw = options.signatureCompany?.trim() || options.defaultName?.trim() || '';
@@ -809,6 +794,11 @@ export class CustomerService {
       throw new ValidationError('ensureCustomerForEmail requires at least one of defaultName or signatureCompany');
     }
     const proposedName = withAutoSuffix(proposedRaw);
+
+    // Serialize concurrent calls for the same (tenant, domain) within their
+    // transactions. The lock auto-releases at end of transaction.
+    const lockKey = `customer:${tenantId}:${normalizedDomain}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
 
     const existing = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
 
@@ -839,41 +829,95 @@ export class CustomerService {
       return existing;
     }
 
-    // No advisory lock: race on the unique index instead. Wrap the insert in a
-    // SAVEPOINT (nested tx) so a duplicate-key violation rolls back only this
-    // insert, leaving the caller's transaction usable to re-read the winner.
-    try {
-      const created = await tx.transaction((sp) =>
-        this.customerRepository.create(
+    // DOES AN EXISTING CLIENT ALREADY OWN THIS COMPANY?
+    //
+    // Creating a customer per unrecognised domain is what stranded Hammerhead:
+    // "Hammerhead AI, Inc" holds hammerhead.io and six allocated people, the
+    // client writes from hammerheadco.ai, and that domain got a fresh record
+    // with nobody on it. The panel then showed a fire with no owner while six
+    // people were assigned to that very company. Across this tenant, 3,897
+    // customers carry a domain and 2 of the auto-created ones have an owner.
+    //
+    // The evidence is a convention the firm already keeps: a per-client alias at
+    // our own domain — hammerheadai@ — riding that client's threads, whose local
+    // part identifies the client in the allocation sheet. Checked on THIS email,
+    // which is far stronger than the aggregate correlations that were measured
+    // and rejected: name prefixes pair "Americanexpress" with "AMERICAN
+    // NUTRITION ALLIANCE INC.", and domain-base prefixes pair "Prismahealth"
+    // with "Prisma Data, Inc.".
+    //
+    // Attaches ONLY when exactly one allocated client is identified. A wrong
+    // domain attributes a client's mail to another company, which is worse than
+    // an orphan, so ambiguity falls through to creating the record as before.
+    if (options.threadAddresses?.length) {
+      const claimants = await tx.execute<{ customer_id: string; name: string; alias: string }>(sql`
+        WITH ours AS (
+          SELECT split_part(lower(u.email), '@', 2) AS dom
+          FROM users u
+          WHERE u.tenant_id = ${tenantId} AND u.email LIKE '%@%'
+          GROUP BY 1 HAVING count(*) >= 3
+        )
+        , addr AS (
+          SELECT lower(a) AS email FROM unnest(${sql.raw(
+            `ARRAY[${options.threadAddresses.map((a) => `'${a.toLowerCase().replace(/'/g, "''")}'`).join(',')}]::text[]`
+          )}) AS a
+        )
+        SELECT DISTINCT ca.customer_id::text AS customer_id, c.name, addr.email AS alias
+        FROM addr
+        JOIN ours ON ours.dom = split_part(addr.email, '@', 2)
+        JOIN customer_allocations ca
+          ON ca.tenant_id = ${tenantId}
+         AND ca.customer_id IS NOT NULL
+         AND ca.client_key LIKE split_part(addr.email, '@', 1) || '%'
+        JOIN customers c ON c.id = ca.customer_id
+        WHERE length(split_part(addr.email, '@', 1)) >= 4
+      `);
+      const rows = claimants as unknown as Array<{ customer_id: string; name: string; alias: string }>;
+      const distinct = [...new Map(rows.map((r) => [r.customer_id, r])).values()];
+      if (distinct.length === 1) {
+        const owner = distinct[0];
+        await tx.execute(sql`
+          INSERT INTO customer_domains (customer_id, tenant_id, domain, verified)
+          VALUES (${owner.customer_id}, ${tenantId}, ${normalizedDomain}, false)
+          ON CONFLICT DO NOTHING
+        `);
+        logger.info(
           {
             tenantId,
-            name: proposedName,
-            isAutoCreated: true,
+            customerId: owner.customer_id,
+            customerName: owner.name,
             domain: normalizedDomain,
-          } as NewCustomer & { domain: string },
-          sp
-        )
-      );
-      logger.info(
-        {
-          tenantId,
-          customerId: created.id,
-          domain: normalizedDomain,
-          name: proposedName,
-          source: options.signatureCompany ? 'signature' : 'domain',
-          logType: 'CUSTOMER_AUTO_CREATED',
-        },
-        'Auto-created customer from email'
-      );
-      return created;
-    } catch (err) {
-      // A concurrent call inserted this (tenant, domain) first. Re-read its row.
-      if (isUniqueViolation(err)) {
-        const winner = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
-        if (winner) return winner;
+            viaAlias: owner.alias,
+            logType: 'CUSTOMER_DOMAIN_CLAIMED',
+          },
+          'Domain attached to an existing allocated client instead of creating a new customer'
+        );
+        const claimed = await this.customerRepository.findById(owner.customer_id);
+        if (claimed) return claimed;
       }
-      throw err;
     }
+
+    const created = await this.customerRepository.create(
+      {
+        tenantId,
+        name: proposedName,
+        isAutoCreated: true,
+        domain: normalizedDomain,
+      } as NewCustomer & { domain: string },
+      tx
+    );
+    logger.info(
+      {
+        tenantId,
+        customerId: created.id,
+        domain: normalizedDomain,
+        name: proposedName,
+        source: options.signatureCompany ? 'signature' : 'domain',
+        logType: 'CUSTOMER_AUTO_CREATED',
+      },
+      'Auto-created customer from email'
+    );
+    return created;
   }
 
   /**

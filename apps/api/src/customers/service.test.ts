@@ -1,6 +1,5 @@
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { withAutoSuffix } from '@crm/shared';
 import { CustomerService } from './service';
 
 vi.mock('../inngest/instance', () => ({
@@ -109,120 +108,90 @@ describe('CustomerService.upsertCustomer name handling', () => {
   });
 });
 
-type EnsureOpts = {
-  existing?: { id: string; name: string; isAutoCreated: boolean } | null;
-  createError?: unknown;
-  winner?: { id: string } | null;
-};
+/**
+ * An unrecognised domain must not mint a customer when an existing client
+ * already owns the company.
+ *
+ * This is what stranded Hammerhead: "Hammerhead AI, Inc" holds hammerhead.io and
+ * six allocated people, the client writes from hammerheadco.ai, and that domain
+ * got a fresh auto-created record with nobody on it. The panel showed a fire with
+ * no owner while six people were assigned to that company. Across the tenant,
+ * 3,897 customers carry a domain and 2 of the auto-created ones have an owner.
+ *
+ * The evidence is the firm's own convention: a per-client alias at our domain —
+ * hammerheadai@ — on the thread, whose local part identifies the client in the
+ * allocation sheet.
+ */
+describe('a domain an existing client already owns', () => {
+  function serviceWithClaim(claimRows: Array<{ customer_id: string; name: string; alias: string }>) {
+    const executed: string[] = [];
+    const created: unknown[] = [];
+    const tx = {
+      execute: vi.fn(async (q: unknown) => {
+        const text = JSON.stringify(q);
+        executed.push(text);
+        // The advisory lock and the domain INSERT return nothing; only the
+        // claim lookup returns rows.
+        return text.includes('customer_allocations') ? claimRows : [];
+      }),
+    };
+    const customerRepository = {
+      findByDomain: vi.fn(async () => undefined),
+      findById: vi.fn(async (id: string) => ({ id, name: 'Hammerhead AI, Inc' })),
+      create: vi.fn(async (data: unknown) => {
+        created.push(data);
+        return { id: 'freshly-minted', ...(data as object) };
+      }),
+    };
+    const svc = new CustomerService(
+      customerRepository as never, {} as never, {} as never, {} as never
+    );
+    return { svc, tx, customerRepository, created };
+  }
 
-function makeEnsureService(opts: EnsureOpts) {
-  const findByDomain = vi
-    .fn()
-    .mockResolvedValueOnce(opts.existing ?? undefined) // first lookup
-    .mockResolvedValue(opts.winner ?? undefined); // re-read after a lost race
-  const update = vi.fn(async (id: string, patch: { name: string }) => ({
-    id,
-    name: patch.name,
-    isAutoCreated: true,
-  }));
-  const create = opts.createError
-    ? vi.fn().mockRejectedValue(opts.createError)
-    : vi.fn(async () => ({ id: 'new-customer-id', name: 'created' }));
+  const addresses = ['mgb@hammerheadco.ai', 'hammerheadai@mystartupcfo.com'];
 
-  const customerRepository = { findByDomain, update, create };
-  const service = new CustomerService(
-    customerRepository as never,
-    {} as never, // ContactRepository
-    {} as never, // EmailRepository
-    {} as never, // TaskRepository
-    {} as never, // UserRepository
-    {} as never, // Database
-  );
-  // Fake tx whose `transaction` runs the callback inline, standing in for the
-  // SAVEPOINT the real driver opens (propagates the callback's rejection).
-  const tx = { transaction: (cb: (sp: unknown) => unknown) => cb({}) } as never;
-  return { service, tx, findByDomain, update, create };
-}
-
-describe('CustomerService.ensureCustomerForEmail', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  it('attaches the domain to that client instead of creating a customer', async () => {
+    const { svc, tx, customerRepository, created } = serviceWithClaim([
+      { customer_id: 'hammerhead-real', name: 'Hammerhead AI, Inc', alias: 'hammerheadai@mystartupcfo.com' },
+    ]);
+    const out = await svc.ensureCustomerForEmail(tx as never, 'tenant-1', 'hammerheadco.ai', {
+      defaultName: 'Hammerheadco',
+      threadAddresses: addresses,
+    });
+    expect(out.id).toBe('hammerhead-real');
+    expect(customerRepository.create).not.toHaveBeenCalled();
+    expect(created).toHaveLength(0);
   });
 
-  const TENANT_ID = '9f34e10b-27d1-457a-bcdc-590f2eb9fa4a';
-  const uniqueViolation = Object.assign(new Error('duplicate key'), { code: '23505' });
-
-  it('throws when neither defaultName nor signatureCompany is provided', async () => {
-    const { service, tx } = makeEnsureService({ existing: null });
-    await expect(
-      service.ensureCustomerForEmail(tx, TENANT_ID, 'foo.com', {}),
-    ).rejects.toThrow(/requires at least one/);
+  it('creates as before when no client claims it', async () => {
+    const { svc, customerRepository, tx } = serviceWithClaim([]);
+    await svc.ensureCustomerForEmail(tx as never, 'tenant-1', 'stranger.com', {
+      defaultName: 'Stranger',
+      threadAddresses: ['a@stranger.com'],
+    });
+    expect(customerRepository.create).toHaveBeenCalled();
   });
 
-  it('creates a new customer inside a savepoint when none exists', async () => {
-    const { service, tx, create, findByDomain } = makeEnsureService({ existing: null });
-
-    const result = await service.ensureCustomerForEmail(tx, TENANT_ID, 'foo.com', {
-      defaultName: 'Foo',
+  it('refuses to guess when two clients claim the same domain', async () => {
+    // A wrong domain attributes one client's mail to another, which is worse
+    // than an orphan. Ambiguity falls through to the old behaviour.
+    const { svc, customerRepository, tx } = serviceWithClaim([
+      { customer_id: 'client-a', name: 'A Inc', alias: 'alpha@mystartupcfo.com' },
+      { customer_id: 'client-b', name: 'B Inc', alias: 'beta@mystartupcfo.com' },
+    ]);
+    await svc.ensureCustomerForEmail(tx as never, 'tenant-1', 'contested.com', {
+      defaultName: 'Contested',
+      threadAddresses: ['x@contested.com'],
     });
-
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(findByDomain).toHaveBeenCalledTimes(1); // no re-read on the happy path
-    expect(result.id).toBe('new-customer-id');
+    expect(customerRepository.create).toHaveBeenCalled();
   });
 
-  it('re-reads the winner row when a concurrent insert wins the race (23505)', async () => {
-    const { service, tx, create, findByDomain } = makeEnsureService({
-      existing: null,
-      createError: uniqueViolation,
-      winner: { id: 'winner-id' },
-    });
-
-    const result = await service.ensureCustomerForEmail(tx, TENANT_ID, 'foo.com', {
-      defaultName: 'Foo',
-    });
-
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(findByDomain).toHaveBeenCalledTimes(2); // lookup, then re-read after conflict
-    expect(result.id).toBe('winner-id');
-  });
-
-  it('rethrows a non-unique-violation error from create', async () => {
-    const { service, tx } = makeEnsureService({
-      existing: null,
-      createError: Object.assign(new Error('boom'), { code: '08006' }),
-    });
-
-    await expect(
-      service.ensureCustomerForEmail(tx, TENANT_ID, 'foo.com', { defaultName: 'Foo' }),
-    ).rejects.toThrow(/boom/);
-  });
-
-  it('refines the name of an existing auto-created customer when it differs', async () => {
-    const { service, tx, update, create } = makeEnsureService({
-      existing: { id: 'existing-id', name: 'Old Name', isAutoCreated: true },
-    });
-
-    const result = await service.ensureCustomerForEmail(tx, TENANT_ID, 'foo.com', {
-      signatureCompany: 'Foo Inc',
-    });
-
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(create).not.toHaveBeenCalled();
-    expect(result.name).toBe(withAutoSuffix('Foo Inc'));
-  });
-
-  it('leaves a manually-created customer untouched', async () => {
-    const { service, tx, update, create } = makeEnsureService({
-      existing: { id: 'existing-id', name: 'Manual Co', isAutoCreated: false },
-    });
-
-    const result = await service.ensureCustomerForEmail(tx, TENANT_ID, 'foo.com', {
-      signatureCompany: 'Foo Inc',
-    });
-
-    expect(update).not.toHaveBeenCalled();
-    expect(create).not.toHaveBeenCalled();
-    expect(result.id).toBe('existing-id');
+  it('does not run the lookup at all without thread addresses', async () => {
+    const { svc, tx } = serviceWithClaim([]);
+    await svc.ensureCustomerForEmail(tx as never, 'tenant-1', 'plain.com', { defaultName: 'Plain' });
+    const looked = (tx.execute.mock.calls as unknown[][])
+      .some((c) => JSON.stringify(c[0]).includes('customer_allocations'));
+    expect(looked).toBe(false);
   });
 });

@@ -13,7 +13,8 @@ export type AnalysisType =
   | 'churn'
   | 'kudos'
   | 'competitor'
-  | 'signature-extraction';
+  | 'signature-extraction'
+  | 'context-search-string';
 
 /**
  * Union type for all analysis result structures
@@ -78,6 +79,12 @@ export type AnalysisResult =
       website?: string;
       linkedin?: string;
       twitter?: string;
+    }
+  | {
+      // Context search string
+      intent: string;
+      query: string;
+      confidence: number;
     };
 
 /**
@@ -116,6 +123,13 @@ export const emailAnalyses = pgTable(
     // at. NULL for other analysis types, and for keyword-matched sentiment
     // (which sets a value without establishing a target).
     sentimentTarget: varchar('sentiment_target', { length: 20 }),
+
+    // User-submitted corrections. A human reviewing the message in Gmail can
+    // suggest an alternative tag; it lands here instead of overwriting the
+    // model's verdict above, so the two stay comparable. The analysis pipeline
+    // never writes these (see analysis-repository.upsertAnalysis's update set).
+    userSubmittedRiskLevel: varchar('user_submitted_risk_level', { length: 20 }), // For churn
+    userSubmittedSentimentValue: varchar('user_submitted_sentiment_value', { length: 20 }), // For sentiment
 
     // Metadata
     modelUsed: varchar('model_used', { length: 100 }), // Which model was used (primary or fallback)
@@ -164,6 +178,9 @@ export const emailAnalyses = pgTable(
       table.riskLevel
     ), // For querying churn risk
     index('idx_email_analyses_created_at').on(table.createdAt),
+    // Partial in SQL (WHERE ... IS NOT NULL) — Drizzle records the column only.
+    index('idx_email_analyses_user_submitted_risk_level').on(table.userSubmittedRiskLevel),
+    index('idx_email_analyses_user_submitted_sentiment_value').on(table.userSubmittedSentimentValue),
   ]
 );
 

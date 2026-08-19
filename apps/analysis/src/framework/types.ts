@@ -13,6 +13,20 @@ export interface AnalysisModule {
   instructions: string;  // Concise prompt instructions for the LLM
   schema: z.ZodSchema<any>;  // Zod schema for output validation
   version?: string;  // Optional version for tracking (e.g., 'v1.0')
+
+  /**
+   * Optional correction pass over the model's output, run after schema
+   * validation and before the result is returned or stored.
+   *
+   * This exists for checks the schema cannot make because they depend on the
+   * email rather than the shape of the answer — e.g. confirming that addresses
+   * the model wrote into a search query actually belong to the participants it
+   * was shown. Runs on both the batched and the individual execution paths.
+   *
+   * Must be pure and total: it is given a schema-valid result and must return
+   * one. Throwing here would fail an analysis that already succeeded.
+   */
+  postProcess?: (result: unknown, email: Email) => unknown;
 }
 
 /**

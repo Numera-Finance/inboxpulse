@@ -1,0 +1,26 @@
+{
+  "_comment": "Google Workspace Add-on deployment (HTTP/alternate runtime) TEMPLATE. Replace REPLACE_ADDON_URL with this service's public HTTPS base (Cloud Run URL in prod, or an ngrok/cloudflared tunnel for dev-in-Gmail). Register via the Google Workspace Marketplace SDK / `gcloud workspace-add-ons deployments`. Scopes below are read-only for v1; add gmail.modify / gmail.labels when Phase 3 (labels) lands, and Chat scopes if Phase 4 is revived.",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "addOns": {
+    "common": {
+      "name": "InboxPulse",
+      "logoUrl": "https://crm-addon-yn7zwaf2za-uc.a.run.app/logo.png",
+      "homepageTrigger": {
+        "runFunction": "REPLACE_ADDON_URL/homepage"
+      }
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "REPLACE_ADDON_URL/gmail/contextual"
+        }
+      ]
+    }
+  }
+}

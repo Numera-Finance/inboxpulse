@@ -1,0 +1,12 @@
+# Cloud Build config to build the CRM API image from the monorepo.
+# Context is the repo root; Dockerfile is apps/api/Dockerfile.
+#   gcloud builds submit --config=apps/api/cloudbuild.yaml \
+#     --substitutions=_IMAGE=us-central1-docker.pkg.dev/project-y-email-sentiment/crm/crm-api:clone .
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'apps/api/Dockerfile', '-t', '${_IMAGE}', '.']
+images:
+  - '${_IMAGE}'
+options:
+  machineType: 'E2_HIGHCPU_8'
+timeout: '1800s'

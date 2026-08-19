@@ -1,5 +1,13 @@
 # Gmail OAuth Setup Guide
 
+> **Corrected 2026-08-18.** Every command in this file used to name the
+> **retired** project `health-474623`, and the tooling it calls still runs — so
+> following it executed real commands against a dead project. Pointing gcloud
+> there fails as a *permission* error rather than "no such project", because
+> the account can only see the live one, so the symptom reads like missing IAM.
+> The live project is `project-y-email-sentiment` (`203731638840`) and the live
+> OAuth client is `crm-oauth` (`203731638840-…`), not `505023465535-…`.
+
 This guide helps you set up Gmail API access using OAuth for personal Gmail accounts without publishing an app.
 
 ## Overview
@@ -21,7 +29,7 @@ This guide covers Personal Mode setup.
 This creates the Pub/Sub topic and grants Gmail permission to publish notifications.
 
 ```bash
-./scripts/setup-gmail-pubsub.sh health-474623
+./scripts/setup-gmail-pubsub.sh project-y-email-sentiment
 ```
 
 **Note**: You'll create the subscription later once you have the Cloud Run URL.
@@ -30,7 +38,7 @@ This creates the Pub/Sub topic and grants Gmail permission to publish notificati
 
 ### 2.1 Configure OAuth Consent Screen
 
-1. Go to [APIs & Credentials](https://console.cloud.google.com/apis/credentials?project=health-474623)
+1. Go to [APIs & Credentials](https://console.cloud.google.com/apis/credentials?project=project-y-email-sentiment)
 2. Click **"OAuth consent screen"** in the left sidebar
 3. Choose **"External"** user type (required for personal Gmail)
 4. Fill in the required fields:
@@ -67,7 +75,7 @@ This script will:
 3. Store credentials in Secret Manager
 
 ```bash
-pnpm oauth:setup ~/Downloads/gmail-oauth-credentials.json health-474623 default
+pnpm oauth:setup ~/Downloads/gmail-oauth-credentials.json project-y-email-sentiment default
 ```
 
 Follow the prompts:
@@ -92,7 +100,7 @@ CLOUD_RUN_URL=$(gcloud run services describe crm-gmail --region us-central1 --fo
 gcloud pubsub subscriptions create gmail-notifications-sub \
   --topic=gmail-notifications \
   --push-endpoint=${CLOUD_RUN_URL}/webhooks/gmail \
-  --project=health-474623
+  --project=project-y-email-sentiment
 ```
 
 ## Step 5: Set Up Gmail Watch
