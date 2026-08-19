@@ -2,7 +2,13 @@ import { injectable, inject } from 'tsyringe';
 import type { Database } from '@crm/database';
 import { sql } from '@crm/database';
 import { logger } from '../utils/logger';
-import { DangerPulseService, StirringService, SlowRespondersService } from './account-context';
+import {
+  DangerPulseService,
+  StirringService,
+  SlowRespondersService,
+  FiresService,
+  WaitingClientsService,
+} from './account-context';
 
 /**
  * Precomputed tenant-wide panel sections.
@@ -17,10 +23,22 @@ import { DangerPulseService, StirringService, SlowRespondersService } from './ac
  * Precomputing decouples the cost from the number of readers. Two hundred users
  * were paying two hundred times for one answer that changes a few times an hour.
  *
- * Deliberately NOT here: `fires` and `waiting`. Those are scoped to the viewer's
- * entitlements, so there is one answer per user rather than per tenant, and they
- * already answer in 125-256ms. Precomputing per user would trade a fast query
- * for a large table and a staleness problem.
+ * `fires` and `waiting` are here too, and the reason is worth stating because an
+ * earlier version of this comment said the opposite. They LOOK per-viewer, but
+ * reading both services shows the viewer appears exactly once in each: a
+ * `customer_id IN (SELECT ... FROM user_accessible_customers)` clause. Every
+ * aggregate — negative counts, unanswered, oldest, arc, engagement, owner — is a
+ * property of the CUSTOMER and is identical for everyone who can see it.
+ *
+ * So the expensive part is tenant-wide and the entitlement is a mask applied at
+ * the end. We precompute the unmasked superset once and filter it per viewer
+ * against their accessible-customer set, which is ~19 rows per user. Measured:
+ * the fires query spends ~750ms in its `engagement` (382ms) and `monthly`
+ * (334ms) CTEs; filtering a cached superset is single-digit milliseconds.
+ *
+ * The ordering keys are per-customer, so filtering a sorted superset yields the
+ * same order as filtering inside the query — the mask cannot reorder what
+ * survives it.
  */
 @injectable()
 export class PanelSnapshotService {
@@ -32,6 +50,21 @@ export class PanelSnapshotService {
       { kind: 'pulse', run: () => new DangerPulseService(this.db).get(tenantId, windowDays) },
       { kind: 'stirring', run: () => new StirringService(this.db).get(tenantId) },
       { kind: 'slow_responders', run: () => new SlowRespondersService(this.db).get(tenantId, windowDays) },
+      // Computed AS AN ADMIN and unlimited: this is the superset every viewer's
+      // list is a subset of. Never served to a viewer without the mask below.
+      {
+        kind: 'fires',
+        run: () => new FiresService(this.db).get(tenantId, { userId: '', isAdmin: true }, windowDays, 200),
+      },
+      {
+        kind: 'waiting',
+        run: () =>
+          new WaitingClientsService(this.db).find(
+            tenantId,
+            { userId: '', isAdmin: true },
+            { days: 30, limit: 200, ownDomains: ['mystartupcfo.com', 'numerafinance.com'] },
+          ),
+      },
     ];
 
     const done: { kind: string; ms: number }[] = [];
@@ -83,6 +116,36 @@ export class PanelSnapshotService {
     if (!row) return null;
     if (Number(row.age_ms) > maxAgeMs) return null;
     return row.payload;
+  }
+
+  /**
+   * The customers this viewer may see, as a Set for filtering a superset.
+   *
+   * Admins get null, meaning "no mask" — distinct from an empty Set, which means
+   * "entitled to nothing" and must yield an empty list rather than everything.
+   * Conflating those two is how an entitlement check becomes a data leak.
+   */
+  async accessibleCustomerIds(userId: string, isAdmin: boolean): Promise<Set<string> | null> {
+    if (isAdmin) return null;
+    const rows = await this.db.execute<{ customer_id: string }>(sql`
+      SELECT customer_id::text AS customer_id
+      FROM user_accessible_customers
+      WHERE user_id = ${userId}
+    `);
+    return new Set((rows as unknown as Array<{ customer_id: string }>).map((r) => r.customer_id));
+  }
+
+  /** Apply the entitlement mask to a precomputed superset, then cap it. */
+  maskAndLimit<T extends { customerId: string | null }>(
+    rows: T[],
+    allowed: Set<string> | null,
+    limit: number,
+  ): T[] {
+    if (allowed === null) return rows.slice(0, limit);
+    // A row with no customer is not attributable to an entitlement, so a
+    // non-admin does not see it — the same behaviour as the SQL `IN`, which
+    // never matches NULL.
+    return rows.filter((r) => r.customerId !== null && allowed.has(r.customerId)).slice(0, limit);
   }
 
   /** Every tenant with a connected mailbox — the set worth precomputing for. */

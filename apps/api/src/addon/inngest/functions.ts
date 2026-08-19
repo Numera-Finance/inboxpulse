@@ -6,7 +6,7 @@ import { PanelSnapshotService } from '../snapshot-service';
 /**
  * Keep the panel's tenant-wide sections warm.
  *
- * These three queries are 90-day aggregates identical for every viewer, and
+ * These queries are 90-day aggregates identical for every viewer, and
  * recomputing them per panel open did not survive two dozen concurrent users:
  * `stirring` exceeded the add-on's 6s abort on 65% of calls, `pulse` on 57%.
  * An aborted section renders as absent, and absent reads as calm.
@@ -15,6 +15,12 @@ import { PanelSnapshotService } from '../snapshot-service';
  * the readers accept — a cron that misses one run must not push a tenant over
  * the edge into recomputing live during the morning peak, which is precisely
  * when it could least afford to.
+ *
+ * `fires` and `waiting` are computed here UNMASKED — as an admin, unlimited —
+ * because the entitlement filter is a mask over the result rather than part of
+ * the computation. The mask is applied per request in `routes.ts`, never in the
+ * add-on, so a superset spanning the whole tenant does not cross the wire to a
+ * viewer entitled to part of it.
  *
  * Tenants are refreshed sequentially. Fanning out would finish sooner and would
  * put every tenant's three heavy queries on the database at the same instant,

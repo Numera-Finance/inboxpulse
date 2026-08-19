@@ -15,6 +15,29 @@ export const addonRoutes = new Hono();
  * a snapshot passes its age bound, so nothing here can quietly serve last
  * week's answer.
  */
+/**
+ * Serve an entitlement-scoped section from the precomputed tenant-wide superset.
+ *
+ * The mask is applied HERE, in the API, never in the add-on: the superset is
+ * every customer in the tenant, and it must not cross the wire to a viewer who
+ * is only entitled to some of it. On a snapshot miss this falls through to the
+ * live query, which does its own scoping in SQL.
+ */
+async function fromScopedSnapshot<T extends { customerId: string | null }>(
+  tenantId: string,
+  kind: string,
+  windowDays: number,
+  viewer: { userId: string; isAdmin: boolean },
+  limit: number,
+  live: () => Promise<T[]>,
+): Promise<T[]> {
+  const snapshots = container.resolve(PanelSnapshotService);
+  const superset = await snapshots.read<T[]>(tenantId, kind, windowDays);
+  if (superset === null) return live();
+  const allowed = await snapshots.accessibleCustomerIds(viewer.userId, viewer.isAdmin);
+  return snapshots.maskAndLimit(superset, allowed, limit);
+}
+
 async function fromSnapshot<T>(tenantId: string, kind: string, windowDays: number, live: () => Promise<T>): Promise<T> {
   const snapshots = container.resolve(PanelSnapshotService);
   const hit = await snapshots.read<T>(tenantId, kind, windowDays);
@@ -125,16 +148,18 @@ addonRoutes.get('/waiting', async (c) => {
   const service = container.resolve(WaitingClientsService);
   return c.json({
     success: true,
-    data: await service.find(
-      tenantId,
-      { userId, isAdmin },
-      {
-        days,
-        limit: 8,
-        // Our own company appears as a customer in email_participants, so
-        // without this the list is topped by us being unhappy with ourselves.
-        ownDomains: ['mystartupcfo.com', 'numerafinance.com'],
-      },
+    data: await fromScopedSnapshot(tenantId, 'waiting', 30, { userId, isAdmin }, 8, () =>
+      service.find(
+        tenantId,
+        { userId, isAdmin },
+        {
+          days,
+          limit: 8,
+          // Our own company appears as a customer in email_participants, so
+          // without this the list is topped by us being unhappy with ourselves.
+          ownDomains: ['mystartupcfo.com', 'numerafinance.com'],
+        },
+      ),
     ),
   });
 });
@@ -180,9 +205,17 @@ addonRoutes.get('/fires', async (c) => {
   const days = Math.min(180, Math.max(1, Number(c.req.query('days') ?? 90)));
   return c.json({
     success: true,
-    data: await container
-      .resolve(FiresService)
-      .get(tenantId, { userId, isAdmin: c.req.query('isAdmin') === 'true' }, days),
+    data: await fromScopedSnapshot(
+      tenantId,
+      'fires',
+      days,
+      { userId, isAdmin: c.req.query('isAdmin') === 'true' },
+      6,
+      () =>
+        container
+          .resolve(FiresService)
+          .get(tenantId, { userId, isAdmin: c.req.query('isAdmin') === 'true' }, days),
+    ),
   });
 });
 
