@@ -234,13 +234,43 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Update email signals after analysis
-   * Sets the signals array with all detected signals
+   * Update email signals after analysis, unless they've been manually overridden.
+   *
+   * A single conditional UPDATE (`WHERE signals_overridden = false`) enforces the
+   * lock without an extra read on the hot path: an overridden email simply matches
+   * no rows and is left untouched.
+   *
+   * @param emailId - Email UUID
+   * @param signals - Array of Signal integers (from @crm/shared Signal constants)
+   * @param tx - Optional transaction context
+   * @returns true if signals were written, false if skipped due to an override
+   */
+  async updateSignalsUnlessOverridden(
+    emailId: string,
+    signals: number[],
+    tx?: Transaction
+  ): Promise<boolean> {
+    const db = tx ?? this.db;
+    const rows = await db
+      .update(emails)
+      .set({
+        signals,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(emails.id, emailId), eq(emails.signalsOverridden, false)))
+      .returning({ id: emails.id });
+    return rows.length > 0;
+  }
+
+  /**
+   * Manually override an email's signals and lock them.
+   * Sets `signalsOverridden = true` so the analysis pipeline will skip
+   * overwriting these signals on any future re-analysis.
    * @param emailId - Email UUID
    * @param signals - Array of Signal integers (from @crm/shared Signal constants)
    * @param tx - Optional transaction context
    */
-  async updateSignals(
+  async overrideSignals(
     emailId: string,
     signals: number[],
     tx?: Transaction
@@ -250,6 +280,7 @@ export class EmailRepository extends ScopedRepository {
       .update(emails)
       .set({
         signals,
+        signalsOverridden: true,
         updatedAt: new Date(),
       })
       .where(eq(emails.id, emailId));

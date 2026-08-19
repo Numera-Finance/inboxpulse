@@ -31,6 +31,7 @@ import {
   TaskResolutionInfo,
   type TaskFilter,
 } from "@/components/tasks"
+import { SignalEditor } from "@/components/inbox/signal-editor"
 import {
   useMarkTaskDone,
   useCustomers,
@@ -54,6 +55,10 @@ export default function EscalationsPage() {
 
   // Dialog state for mark done
   const [doneDialogTaskId, setDoneDialogTaskId] = React.useState<string | null>(null)
+
+  // Bumped after a manual tag/sentiment override to remount InboxView and
+  // refetch the list + open detail with the corrected signals.
+  const [refreshNonce, setRefreshNonce] = React.useState(0)
 
   // Get filter state from URL search params
   // Default to "all" if no status specified (since we now show all analyzed emails)
@@ -351,22 +356,30 @@ export default function EscalationsPage() {
     const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
     const hasTask = email?.taskId !== null
     const showDone = (isNegative || isTatView) && hasTask && item.status !== "resolved"
-    if (!showDone) return null
     return (
-      <Button
-        className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
-        onClick={() => {
-          if (!email?.taskId) return
-          if (isTatView) {
-            handleResolve(email.taskId, '', '')
-          } else {
-            setDoneDialogTaskId(email.taskId)
-          }
-        }}
-      >
-        <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
-        Resolve
-      </Button>
+      <div className="flex items-center gap-2">
+        <SignalEditor
+          emailId={item.id}
+          signals={email?.signals ?? []}
+          onSaved={() => setRefreshNonce((n) => n + 1)}
+        />
+        {showDone && (
+          <Button
+            className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-sm"
+            onClick={() => {
+              if (!email?.taskId) return
+              if (isTatView) {
+                handleResolve(email.taskId, '', '')
+              } else {
+                setDoneDialogTaskId(email.taskId)
+              }
+            }}
+          >
+            <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
+            Resolve
+          </Button>
+        )}
+      </div>
     )
   }, [isTatView, handleResolve])
 
@@ -588,7 +601,7 @@ export default function EscalationsPage() {
         {/* Main Content - InboxView */}
         <div className="flex-1 overflow-hidden">
           <InboxView
-            key={searchParams.toString()}
+            key={`${searchParams.toString()}:${refreshNonce}`}
             config={inboxConfig}
             callbacks={inboxCallbacks}
             initialSelectedId={emailIdFromUrl}

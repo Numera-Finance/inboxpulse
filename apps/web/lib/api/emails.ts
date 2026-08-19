@@ -1,7 +1,18 @@
 import { getEmailClient } from './clients';
-import type { EmailsByCustomerResponse, EmailResponse, TATMetricRow } from '@crm/clients';
+import type { EmailsByCustomerResponse, EmailResponse, TATMetricRow, UpdateEmailSignalsRequest, UpdateEmailSignalsResponse } from '@crm/clients';
 
 export type { EmailsByCustomerResponse, EmailResponse, TATMetricRow };
+
+/**
+ * Manually override an email's signals (sentiment / churn / tags).
+ * Replaces the signal set, locks it against re-analysis, and logs the change.
+ */
+export async function updateEmailSignals(
+  emailId: string,
+  request: UpdateEmailSignalsRequest
+): Promise<UpdateEmailSignalsResponse> {
+  return getEmailClient().updateSignals(emailId, request);
+}
 
 /**
  * Get emails for a customer (via domain matching)

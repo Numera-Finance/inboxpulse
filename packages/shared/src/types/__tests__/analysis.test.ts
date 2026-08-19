@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ANALYSIS_TYPES, analysisTypeSchema } from '../analysis';
+import { ANALYSIS_TYPES, analysisTypeSchema, Signal, validateSignalSelection } from '../analysis';
 
 describe('analysisTypeSchema', () => {
   it('accepts every value in ANALYSIS_TYPES', () => {
@@ -38,5 +38,53 @@ describe('analysisTypeSchema', () => {
       const formatted = JSON.stringify(result.error.issues);
       expect(formatted).toMatch(/sentiment|escalation|signature-extraction/);
     }
+  });
+});
+
+describe('validateSignalSelection', () => {
+  it('accepts an empty selection', () => {
+    expect(validateSignalSelection([])).toBeNull();
+  });
+
+  it('accepts the customer-complaint case: negative sentiment without churn', () => {
+    expect(validateSignalSelection([Signal.SENTIMENT_NEGATIVE])).toBeNull();
+  });
+
+  it('accepts one signal from each single-select group plus boolean tags', () => {
+    expect(
+      validateSignalSelection([
+        Signal.SENTIMENT_NEGATIVE,
+        Signal.CHURN_LOW,
+        Signal.CLASSIFICATION_BUSINESS,
+        Signal.UPSELL,
+        Signal.ESCALATION,
+      ])
+    ).toBeNull();
+  });
+
+  it('rejects unknown signal values', () => {
+    expect(validateSignalSelection([9999])).toMatch(/unknown/i);
+  });
+
+  it('rejects duplicate signals', () => {
+    expect(
+      validateSignalSelection([Signal.SENTIMENT_NEGATIVE, Signal.SENTIMENT_NEGATIVE])
+    ).toMatch(/duplicate/i);
+  });
+
+  it('rejects more than one sentiment', () => {
+    expect(
+      validateSignalSelection([Signal.SENTIMENT_POSITIVE, Signal.SENTIMENT_NEGATIVE])
+    ).toMatch(/sentiment/i);
+  });
+
+  it('rejects more than one churn level', () => {
+    expect(validateSignalSelection([Signal.CHURN_LOW, Signal.CHURN_HIGH])).toMatch(/churn/i);
+  });
+
+  it('rejects more than one classification', () => {
+    expect(
+      validateSignalSelection([Signal.CLASSIFICATION_SPAM, Signal.CLASSIFICATION_BUSINESS])
+    ).toMatch(/classification/i);
   });
 });

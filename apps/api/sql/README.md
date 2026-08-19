@@ -107,6 +107,10 @@ psql $DATABASE_URL -f apps/api/sql/migrations/014_threads_tenant_provider_thread
 # (tenant, source, mailbox). Reconnecting a mailbox must revive the existing row,
 # never insert a second one — duplicates fragment email_threads (ADR-006).
 psql $DATABASE_URL -f apps/api/sql/migrations/015_integrations_unique_connected_mailbox.sql
+
+# Add emails.signals_overridden lock flag + email_signal_overrides audit/learning
+# log for manual sentiment/tag corrections
+psql $DATABASE_URL -f apps/api/sql/migrations/018_email_signal_overrides.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

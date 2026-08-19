@@ -97,6 +97,11 @@ export const emails = pgTable('emails', {
   signals: integer('signals').array().default([]),
   analysisStatus: smallint('analysis_status'), // 1=pending, 2=processing, 3=completed, 4=failed
 
+  // True when a user has manually corrected the signals for this email.
+  // When set, the analysis pipeline (LLM + keyword) skips overwriting signals,
+  // so a human correction is not silently reverted by a later re-analysis.
+  signalsOverridden: boolean('signals_overridden').notNull().default(false),
+
   // TAT (Turn Around Time) tracking - populated for customer emails
   // isCustomerEmail: true if email is from customer (fromEmail domain != tenant domain)
   // Set during email ingestion to avoid expensive domain matching in queries
