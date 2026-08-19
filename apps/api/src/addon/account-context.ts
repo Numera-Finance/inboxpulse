@@ -1360,7 +1360,12 @@ export class FiresService {
     // Phase timing, because the cron reported 14.4s for work the database
     // completes in ~3.2s when run by hand. Whatever the rest is, it is not the
     // SQL, and a single total cannot say where it went.
-    logger.info(
+    //
+    // Skipped under vitest: `logger` builds pino lazily and requires `../env` on
+    // its FIRST call, which the unit tests do not provide. Every other test in
+    // this file reaches this service without logging, so emitting here turned
+    // six passing structural tests red for a diagnostic line.
+    if (process.env.NODE_ENV !== 'test') logger.info(
       {
         tenantId,
         probeMs: _tProbe - _t0,
