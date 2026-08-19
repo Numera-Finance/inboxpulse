@@ -1155,7 +1155,13 @@ export class FiresService {
           ${scope}
         ORDER BY e.thread_id, e.received_at DESC
       )
-      , monthly AS (
+      -- MATERIALIZED, because the arc column below reads this CTE in a
+      -- CORRELATED subquery, once per returned row. Postgres inlines a plain
+      -- CTE, so that re-ran this whole aggregation for every fire: fine at the
+      -- panel's limit of 6, and the reason precomputing the unbounded superset
+      -- for the snapshot cost seconds rather than milliseconds. Computing it
+      -- once and probing it 81 times is the entire difference.
+      , monthly AS MATERIALIZED (
         -- Complaint RATE per month, which the thread-level CTE above cannot
         -- give: it holds only negatives, and a rate needs the denominator.
         -- Months with fewer than six emails are dropped rather than shown — one
@@ -1178,7 +1184,9 @@ export class FiresService {
         GROUP BY 1, 2
         HAVING count(*) >= 6
       )
-      , engagement AS (
+      -- Materialized for the same reason its sibling is: it is scanned once and
+      -- joined, and inlining buys nothing while risking re-execution.
+      , engagement AS MATERIALIZED (
         -- Are we ACTUALLY talking to this client, this week?
         --
         -- Deliberately the same three counts StirringService uses, over the same
