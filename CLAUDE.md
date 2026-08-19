@@ -26,6 +26,39 @@ interface ApiResponse<T> {
 - Zod validation errors should map to clear field-level error messages
 - Background job failures must store structured errors and notify users
 
+## A Gate Is Only a Gate If Nothing It Governs Runs Above It
+
+The consent check `hasConsent` was correct, was called, and was bypassed: in
+`/gmail/analyse` it guarded the deep read while `classifyThreadMode` sent the
+same thread to the same model twenty-two lines earlier. Three sibling endpoints
+never checked at all. Mail was read while the panel truthfully displayed *"Your
+mail is not being read"*.
+
+So for anything that gates a side effect — reading mail, writing a label,
+spending a model call, disclosing a name:
+
+- **Assert the ORDER, not the presence.** A test that the handler calls the gate
+  passes against this bug. `consent-gate.test.ts` compares source offsets.
+- **Derive the governed set, never enumerate it.** That test reads the async
+  exports of `live-analysis.ts`, so a model call added next month is policed
+  without anyone remembering the test exists.
+- **Gate before the fetch, not before the use.** With reading off there is no
+  reason to pull the thread into the process at all.
+- **A cache is downstream of the gate, not around it.** Revocation governs what
+  is shown, not only what is newly fetched.
+- **Say the thing was declined.** A withheld analysis and a missing one render
+  identically, and only one of them is fixed by pressing a button. Same rule as
+  the empty-section failure below.
+
+## Refusals Carry the Envelope Too
+
+`ApiResponse.error` is a `StructuredError`, and `c.json` will accept anything.
+The auth middlewares returned `error` as a bare string for as long as they
+existed, so `error.message` was `undefined` on every 401 and the add-on logged
+`json body, no error object` — the reason was in the response and thrown away by
+the caller that needed it. Build refusals through a helper typed
+`ApiResponse<never>` so the compiler refuses the next bare string.
+
 ## Writing Into the User's Mailbox
 
 Labels are the only sanctioned mailbox write (ADR-005), and the policy is

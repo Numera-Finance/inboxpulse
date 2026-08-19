@@ -1885,3 +1885,37 @@ ever becomes the bottleneck, the answer is to cache the session lookup, not to
 reopen stateless tokens: `tenant_id` and the permission set are resolved in the
 same middleware and would have to ride inside any token, which is precisely the
 staleness problem that made revocation hard in the first place.
+
+### ADR-029: The consent gate is tested on ordering, not on presence (2026-08-18)
+**Status:** Accepted
+**Context:** `hasConsent` existed, was correct, and was called — and mail was
+still read without consent. `/gmail/analyse` bound `mayRead` and guarded the deep
+read with it, but `classifyThreadMode` sent the same thread text to the same
+model twenty-two lines earlier. Three other paths — `/gmail/stance`,
+`/gmail/triage`, and the contextual live analysis — never checked at all. The
+comment above the gate claimed it was "the last point at which 'we have not read
+your mail' is still true", which was false when it was written.
+
+Nothing could have caught this. Every test passed, every card rendered, and the
+only trace was a model call in a log. A test asserting that the handler *calls*
+`hasConsent` would have passed against the bug.
+**Decision:** The property under test is order: within a request handler, no call
+to a model may appear at a lower source offset than the consent check. The list
+of model functions is derived from the async exports of `live-analysis.ts` rather
+than enumerated, so one added tomorrow is policed tomorrow. `consent-gate.test.ts`
+was confirmed to fail against the pre-fix source, naming all four sites
+separately.
+
+Where reading is declined, the card says so and offers the switch, rather than
+rendering as though the message had nothing to report — an absent analysis and a
+declined one otherwise look identical, and only one is fixed by pressing a
+button.
+**Consequences:** `/gmail/triage` and `/gmail/stance` now refuse outright with
+reading off, and gate before fetching from Gmail rather than before the model
+call, so the thread is not pulled into the process either. Cached readings are
+withheld once consent is revoked: the switch governs what is shown, not only what
+is fetched. The cost is one `labels.list` call on paths that previously made
+none.
+
+This is a structural test on source text, and it cannot see whether the consent
+value is used or merely computed early. It buys ordering, which is what broke.

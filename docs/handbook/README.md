@@ -66,7 +66,6 @@ times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md
 | what | where |
 |---|---|
 | `first_reply_by_id` is computed and then discarded — 16,290 rows have a reply time, 2,065 an author | `05-PIPELINE.md` |
-| Four model call sites bypass the consent gate | `03-ARCHITECTURE.md` |
 | `/stirring` names customers without viewer scoping, where `/fires` withholds them | `03-ARCHITECTURE.md` |
 | Drizzle and SQL disagree about several columns and indexes | `04-DATA-MODEL.md` |
 | Hammerhead's six allocated people are unreachable via `hammerheadco.ai` | `09-DEAD-ENDS.md` |
