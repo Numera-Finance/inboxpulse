@@ -550,5 +550,6 @@ POST /api/customers/search
 ## Related Documents
 
 - [ACCESS_CONTROL_DESIGN.md](./ACCESS_CONTROL_DESIGN.md) - Scoped queries and access control
-- [EMPLOYEE_SCHEMA_DESIGN.md](./EMPLOYEE_SCHEMA_DESIGN.md) - Employee hierarchy and closure table
+- Employee hierarchy and closure table: the `employees` entity was merged into
+  `users`; see `apps/api/src/users/schema.ts` and `docs/handbook/04-DATA-MODEL.md`.
 - [API_CONVENTIONS.md](./API_CONVENTIONS.md) - General API conventions

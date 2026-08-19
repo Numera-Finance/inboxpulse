@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq, and, sql, type SQL, type Column } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
-import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission, NotFoundError, InvalidInputError } from '@crm/shared';
+import { type RequestHeader, getServiceAuthHeaders, CUSTOMER_ROLES, Permission } from '@crm/shared';
 import type { Database } from '@crm/database';
 import { TaskRepository, type TaskWithRelations, type TaskCommentWithUser } from './repository';
 import { TaskStatus, type Task, type TaskComment, tasks } from './schema';
@@ -259,9 +259,6 @@ export class TaskService {
   async create(header: RequestHeader, request: CreateTaskRequest): Promise<Task> {
     logger.info({ customerId: request.customerId, title: request.title }, 'Creating task');
 
-    // Same hole as reassign(): the schema only checks the id parses as a UUID.
-    await this.assertAssignableUser(header, request.assignedToId ?? null);
-
     const task = await this.taskRepository.create({
       tenantId: header.tenantId,
       customerId: request.customerId,
@@ -271,10 +268,9 @@ export class TaskService {
       createdBySystem: false,
     });
 
-    // Send notification if task is assigned. Unscoped read for the same reason
-    // as reassign(): the assignee may sit outside the creator's hierarchy.
+    // Send notification if task is assigned
     if (task.assignedToId) {
-      const taskWithRelations = await this.taskRepository.findByIdWithRelations(header, task.id);
+      const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
       if (taskWithRelations) {
         // Get assigner name (the user who created the task)
         const assigner = await this.userRepository.findById(header.userId);
@@ -335,14 +331,9 @@ export class TaskService {
     emailId: string
   ): Promise<void> {
     try {
-      // Active members only — getUsersByCustomer does not filter on rowStatus,
-      // and reassign() now rejects a deactivated assignee, so an offboarded
-      // Controller would otherwise block auto-assignment for the whole customer
-      // instead of falling through to the Account Manager.
-      const teamMembers = (await this.userRepository.getUsersByCustomer(customerId))
-        .filter(member => member.rowStatus === 0);
+      const teamMembers = await this.userRepository.getUsersByCustomer(customerId);
       if (teamMembers.length === 0) {
-        logger.debug({ taskId, customerId }, 'No active team members for customer, skipping auto-assign');
+        logger.debug({ taskId, customerId }, 'No team members for customer, skipping auto-assign');
         return;
       }
 
@@ -400,83 +391,23 @@ export class TaskService {
   async reassign(header: RequestHeader, id: string, assignedToId: string | null): Promise<TaskWithRelations | undefined> {
     logger.info({ taskId: id, assignedToId }, 'Reassigning task');
 
-    // The route only validates that assignedToId parses as a UUID, and the
-    // repository authorizes the caller against the task, never the assignee.
-    // Without this the column's FK (users.id, which is not tenant-scoped)
-    // accepts a deactivated user — leaving the escalation with an assignee who
-    // cannot log in — or a user from another tenant, whose address would then
-    // receive an assignment email naming this tenant's customer and subject.
-    await this.assertAssignableUser(header, assignedToId);
+    const task = await this.taskRepository.reassign(header, id, assignedToId);
+    if (!task) return undefined;
 
-    const result = await this.taskRepository.reassign(header, id, assignedToId);
-    if (!result) return undefined;
-
-    const { previousAssigneeId } = result;
-
-    // Fetch full task with relations (customerName, assignedToName, etc.).
-    // Deliberately unscoped: reassign() already authorized the caller against
-    // the *pre-update* task, and handing an escalation to someone outside the
-    // caller's hierarchy would now fail a scoped re-read — silently dropping
-    // both the response and the assignment notification.
-    const taskWithRelations = await this.taskRepository.findByIdWithRelations(header, result.id);
+    // Fetch full task with relations (customerName, assignedToName, etc.)
+    const taskWithRelations = await this.taskRepository.findByIdScoped(header, task.id);
     if (!taskWithRelations) return undefined;
 
-    // Name of whoever performed the change, for either notification.
-    const actor = await this.userRepository.findById(header.userId);
-    const actorName = actor ? `${actor.firstName} ${actor.lastName}` : undefined;
-
-    // Both ends of the move are notified independently, because both change
-    // hands. Neither fires when the actor is also the subject — taking an
-    // escalation or dropping one you hold are things you just did on screen —
-    // and neither fires when the assignee did not actually change.
-    const incomingChanged = assignedToId && assignedToId !== previousAssigneeId;
-    const outgoingChanged = previousAssigneeId && previousAssigneeId !== assignedToId;
-
-    if (incomingChanged && assignedToId !== header.userId) {
+    // Send notification if task is reassigned to someone
+    if (assignedToId) {
+      // Get assigner name (the user who reassigned the task)
+      const assigner = await this.userRepository.findById(header.userId);
+      const assignerName = assigner ? `${assigner.firstName} ${assigner.lastName}` : undefined;
       // Fire and forget - don't block on notification
-      this.sendTaskAssignedNotification(taskWithRelations, actorName).catch(() => { });
-    }
-
-    if (outgoingChanged && previousAssigneeId !== header.userId) {
-      // Tell whoever was holding it, on removal *and* on hand-off to someone
-      // else — they lose the escalation either way. Being assigned is one of
-      // the two ways a user reaches an escalation, so for an assignee outside
-      // the customer's team this is the only signal they get: it has just
-      // disappeared from every list they can see.
-      this.sendTaskUnassignedNotification(
-        taskWithRelations,
-        previousAssigneeId,
-        actorName,
-        // Non-null only on a hand-off, and read after the write, so it names
-        // the person who holds it now.
-        assignedToId ? taskWithRelations.assignedToName : null
-      ).catch(() => { });
+      this.sendTaskAssignedNotification(taskWithRelations, assignerName).catch(() => { });
     }
 
     return taskWithRelations;
-  }
-
-  /**
-   * Reject an assignment target that is not an active user of this tenant.
-   *
-   * `null` (removing the assignment) is always allowed. Anything else must
-   * resolve to a live user in the caller's tenant: `tasks.assigned_to_id`
-   * references `users.id`, which is shared across tenants, so the FK alone
-   * permits both cross-tenant ids and deactivated accounts.
-   */
-  private async assertAssignableUser(
-    header: RequestHeader,
-    assignedToId: string | null
-  ): Promise<void> {
-    if (assignedToId === null) return;
-
-    const assignee = await this.userRepository.findById(assignedToId, header);
-    if (!assignee) {
-      throw new NotFoundError('User', assignedToId);
-    }
-    if (assignee.rowStatus !== 0) {
-      throw new InvalidInputError('Cannot assign to a deactivated user');
-    }
   }
 
   /**
@@ -1004,86 +935,6 @@ export class TaskService {
       }
     } catch (error) {
       logger.error({ taskId: task.id, error }, 'Error sending task-assigned notification');
-      return false;
-    }
-  }
-
-  /**
-   * Send task-unassigned notification to the user an escalation was taken from,
-   * whether it was cleared outright or handed to someone else.
-   *
-   * `task` is the row *after* the write, so the recipient is looked up from the
-   * id the update reported, not from the task's own assignee fields.
-   *
-   * Unlike the assigned notification there is no openable-escalation gate,
-   * because this email carries no deep link: the recipient may have just lost
-   * the only access path they had to that escalation, so a link would 404 for
-   * exactly the people who most need telling.
-   *
-   * @param reassignedToName who holds it now, or null if it was left unassigned
-   */
-  async sendTaskUnassignedNotification(
-    task: TaskWithRelations,
-    previousAssigneeId: string,
-    removedByName?: string,
-    reassignedToName?: string | null
-  ): Promise<boolean> {
-    const recipient = await this.userRepository.findById(previousAssigneeId);
-    if (!recipient?.email) {
-      logger.warn(
-        { taskId: task.id, previousAssigneeId },
-        'No email for previous assignee, skipping unassignment notification'
-      );
-      return false;
-    }
-
-    const notificationsUrl = getEnv().SERVICE_NOTIFICATIONS_URL;
-
-    try {
-      const response = await fetch(
-        `${notificationsUrl}/api/notifications/send`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-tenant-id': task.tenantId,
-            'x-user-id': previousAssigneeId,
-            ...getServiceAuthHeaders(),
-          },
-          body: JSON.stringify({
-            templateName: 'task.unassigned',
-            recipientEmail: recipient.email,
-            data: {
-              task: {
-                id: task.id,
-                customer: task.customerName || 'Unknown Customer',
-                subject: task.title,
-                dateOpened: format(new Date(task.createdAt), 'MMM d, yyyy'),
-                removedBy: removedByName || null,
-                reassignedTo: reassignedToName || null,
-              },
-              recipientName: recipient.firstName || 'there',
-            },
-          }),
-        }
-      );
-
-      if (response.ok) {
-        logger.info(
-          { taskId: task.id, previousAssigneeId },
-          'Sent task-unassigned notification'
-        );
-        return true;
-      }
-
-      const errorData = await response.json().catch(() => ({}));
-      logger.error(
-        { taskId: task.id, status: response.status, error: errorData },
-        'Failed to send task-unassigned notification'
-      );
-      return false;
-    } catch (error) {
-      logger.error({ taskId: task.id, error }, 'Error sending task-unassigned notification');
       return false;
     }
   }

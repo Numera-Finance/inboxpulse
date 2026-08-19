@@ -2,5 +2,9 @@
   "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
     "jsx": "react-jsx"
-  }
+  },
+  // *.domtest.ts are standalone `bun` scripts, not part of the extension bundle.
+  // They import linkedom straight out of the pnpm store (it's a transitive dep,
+  // not a declared one), which tsc can't resolve and wxt never bundles.
+  "exclude": ["**/*.domtest.ts"]
 }

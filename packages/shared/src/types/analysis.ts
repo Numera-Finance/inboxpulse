@@ -138,6 +138,55 @@ export function getSignalFromClassification(classification: EmailClassification)
   }
 }
 
+// All known signal integer values (used to validate manual overrides)
+export const ALL_SIGNALS: SignalType[] = Object.values(Signal) as SignalType[];
+
+// All sentiment signals
+export const SENTIMENT_SIGNALS = [
+  Signal.SENTIMENT_POSITIVE,
+  Signal.SENTIMENT_NEGATIVE,
+  Signal.SENTIMENT_NEUTRAL,
+] as const;
+
+/**
+ * Validate a manually supplied signals array for a signal override.
+ *
+ * Rules mirror the invariants the analysis pipeline produces:
+ * - every value must be a known Signal
+ * - no duplicates
+ * - at most one sentiment signal
+ * - at most one churn-risk level
+ * - at most one classification
+ *
+ * Returns an error message when invalid, or null when the selection is valid.
+ */
+export function validateSignalSelection(signals: number[]): string | null {
+  const seen = new Set<number>();
+  for (const s of signals) {
+    if (!ALL_SIGNALS.includes(s as SignalType)) {
+      return `Unknown signal value: ${s}`;
+    }
+    if (seen.has(s)) {
+      return `Duplicate signal value: ${s}`;
+    }
+    seen.add(s);
+  }
+
+  const countIn = (group: readonly number[]): number =>
+    signals.filter((s) => group.includes(s)).length;
+
+  if (countIn(SENTIMENT_SIGNALS) > 1) {
+    return 'Only one sentiment signal is allowed';
+  }
+  if (countIn(CHURN_SIGNALS) > 1) {
+    return 'Only one churn-risk level is allowed';
+  }
+  if (countIn(CLASSIFICATION_SIGNALS) > 1) {
+    return 'Only one classification is allowed';
+  }
+  return null;
+}
+
 // =============================================================================
 
 /**
@@ -159,6 +208,7 @@ export const ANALYSIS_TYPES = [
   'churn',                 // Conditional (if enabled)
   'kudos',                 // Conditional (if enabled)
   'competitor',            // Conditional (if enabled)
+  'context-search-string', // Conditional (if enabled)
 ] as const;
 
 export type AnalysisType = (typeof ANALYSIS_TYPES)[number];
@@ -214,6 +264,7 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'churn': true,                    // Enable churn risk assessment
     'kudos': false,                   // Enable kudos detection
     'competitor': false,              // Enable competitor mentions
+    'context-search-string': true,    // Enable related-context search string
   },
   modelConfigs: {
     'signature-extraction': {
@@ -244,6 +295,10 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
       primary: DEFAULT_LLM_MODEL,
       fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
+    'context-search-string': {
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
+    },
   },
   promptVersions: {
     'signature-extraction': 'v1.0',
@@ -253,6 +308,7 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'churn': 'v1.0',
     'kudos': 'v1.0',
     'competitor': 'v1.0',
+    'context-search-string': 'v1.1',
   },
   analysisSettings: {
     'signature-extraction': {
@@ -275,5 +331,8 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'competitor': {
       minConfidenceThreshold: 0.6,
     },
+    // No minimum confidence: a weak query is still worth running, and the
+    // retrieval step judges the string by what it actually returns.
+    'context-search-string': {},
   },
 };

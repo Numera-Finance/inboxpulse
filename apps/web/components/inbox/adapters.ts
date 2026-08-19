@@ -7,7 +7,7 @@
 
 import type { Email as FrontendEmail } from "@/lib/types"
 import type { Escalation } from "@/lib/data"
-import type { Task, TaskComment, AnalyzedEmail, AnalyzedEmailListItem } from "@crm/clients"
+import type { Task, TaskComment, AnalyzedEmail, AnalyzedEmailListItem, EmailThread } from "@crm/clients"
 import { Signal, hasSignal } from "@crm/shared"
 import type {
   InboxItem,
@@ -299,6 +299,7 @@ export const apiEmailToInboxItem: InboxItemAdapter<ApiEmailResponse> = (
     sentiment: parseSentiment(email.sentiment, email.sentimentScore),
     classification: parseClassification(email.signals),
     isEscalation: email.isEscalation ?? false,
+    signals: email.signals ?? undefined,
     originalData: email,
   }
 }
@@ -320,18 +321,16 @@ export const apiEmailToInboxContent: InboxContentAdapter<ApiEmailResponse> = (
       name: email.fromName || extractNameFromEmail(email.fromEmail),
       email: email.fromEmail,
     },
-    // Same rule as the analyzed-email adapter: fall back to the address rather
-    // than inventing a name from it — both feed the same detail panel.
     to: email.tos?.map((to) => ({
-      name: to.name || to.email,
+      name: to.name || extractNameFromEmail(to.email),
       email: to.email,
     })),
     cc: email.ccs?.map((cc) => ({
-      name: cc.name || cc.email,
+      name: cc.name || extractNameFromEmail(cc.email),
       email: cc.email,
     })),
     bcc: email.bccs?.map((bcc) => ({
-      name: bcc.name || bcc.email,
+      name: bcc.name || extractNameFromEmail(bcc.email),
       email: bcc.email,
     })),
     timestamp,
@@ -550,8 +549,6 @@ export const apiTaskToInboxContent: InboxContentAdapter<TaskWithComments> = (
  * Convert AnalyzedEmail to InboxItem
  * Uses the email as the primary data source with task info overlaid
  */
-// Takes the list row rather than the full AnalyzedEmail: the list never renders
-// recipients, so the search response omits them.
 export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmailListItem> = (
   email
 ): InboxItem<AnalyzedEmailListItem> => {
@@ -578,6 +575,7 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmailListItem> =
       ? (email.taskStatus === 1 ? "resolved" : "open")
       : undefined,
     classification: classification?.value === 'transactional' ? classification : undefined,
+    signals: email.signals ?? undefined,
     customerId: email.customerId,
     customerName: email.customerName || undefined,
     originalData: email,
@@ -589,9 +587,11 @@ export const analyzedEmailToInboxItem: InboxItemAdapter<AnalyzedEmailListItem> =
  */
 export const analyzedEmailToInboxContent = (
   email: AnalyzedEmail,
-  comments?: TaskComment[]
+  comments?: TaskComment[],
+  thread?: EmailThread | null
 ): InboxItemContent => {
   const timestamp = new Date(email.receivedAt)
+  const focused = thread?.messages.find((m) => m.isFocused) ?? null
 
   const inboxComments = comments?.map((comment) => ({
     id: comment.id,
@@ -610,21 +610,12 @@ export const analyzedEmailToInboxContent = (
       name: email.fromName || extractNameFromEmail(email.fromEmail),
       email: email.fromEmail,
     },
-    // The message's own recipients, not the escalation assignee — the assignee
-    // is already shown in the meta grid above the message. Names fall back to
-    // the address rather than a name derived from it: "Pjain" invented from
-    // pjain@… reads as a real person's name while being made up.
-    // Guarded despite the schema declaring these required: responses are cast,
-    // not parsed, so a web build that reaches production ahead of the API would
-    // otherwise dereference undefined here.
-    to: (email.tos ?? []).map((recipient) => ({
-      name: recipient.name || recipient.email,
-      email: recipient.email,
-    })),
-    cc: (email.ccs ?? []).map((recipient) => ({
-      name: recipient.name || recipient.email,
-      email: recipient.email,
-    })),
+    // Real recipients off the thread. This used to be the task's assignee,
+    // which has no address at all — so the panel rendered "To:" followed by
+    // nothing, and a reader could not tell who the mail had actually gone to.
+    to: focused?.to.map((p) => ({ name: p.name ?? p.email, email: p.email })) ?? [],
+    cc: focused?.cc.map((p) => ({ name: p.name ?? p.email, email: p.email })) ?? [],
+    thread: thread ?? undefined,
     timestamp,
     comments: inboxComments,
     metadata: {

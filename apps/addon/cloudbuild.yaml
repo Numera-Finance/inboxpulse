@@ -1,0 +1,15 @@
+# Cloud Build config: builds the InboxPulse add-on image from the monorepo.
+# Build context is the repo ROOT (the trailing '.' in the submit command);
+# the Dockerfile lives at apps/addon/Dockerfile and copies packages/ + apps/addon.
+#
+#   gcloud builds submit --config=apps/addon/cloudbuild.yaml \
+#     --substitutions=_IMAGE=us-central1-docker.pkg.dev/project-y-email-sentiment/crm/crm-addon:demo \
+#     .
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'apps/addon/Dockerfile', '-t', '${_IMAGE}', '.']
+images:
+  - '${_IMAGE}'
+options:
+  machineType: 'E2_HIGHCPU_8'
+timeout: '1200s'

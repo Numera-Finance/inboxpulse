@@ -339,6 +339,6 @@ export class ContactRepository extends ScopedRepository {
       SET customer_id = ${targetCustomerId}, updated_at = NOW()
       WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
     `);
-    return affectedRows(result);
+    return (result as any).rowCount ?? 0;
   }
 }

@@ -1,6 +1,6 @@
 import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
-import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker } from './types';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, EmailThread, FirstReplyMarker, UpdateEmailSignalsRequest, UpdateEmailSignalsResponse } from './types';
 
 /**
  * Email input type for bulk insert API
@@ -368,6 +368,41 @@ export class EmailClient extends BaseClient {
   async getAnalyzedById(emailId: string, signal?: AbortSignal): Promise<AnalyzedEmail | null> {
     const response = await this.get<ApiResponse<AnalyzedEmail>>(
       `/api/emails/analyzed/${encodeURIComponent(emailId)}`,
+      signal
+    );
+
+    return response?.data ?? null;
+  }
+
+  /**
+   * Manually override an email's signals (sentiment / churn / tags).
+   * Replaces the signal set, locks it against re-analysis, and logs the change.
+   */
+  async updateSignals(
+    emailId: string,
+    request: UpdateEmailSignalsRequest,
+    signal?: AbortSignal
+  ): Promise<UpdateEmailSignalsResponse> {
+    const response = await this.patch<ApiResponse<UpdateEmailSignalsResponse>>(
+      `/api/emails/${encodeURIComponent(emailId)}/signals`,
+      request,
+      signal
+    );
+
+    if (!response?.data) {
+      throw new Error(response?.error?.message ?? 'Failed to update email signals');
+    }
+    return response.data;
+  }
+
+  /**
+   * The whole thread around one message: every participant, in order, with the
+   * gap between messages. This is what makes an escalation legible — a body on
+   * its own says nothing about whose turn it is.
+   */
+  async getThread(emailId: string, signal?: AbortSignal): Promise<EmailThread | null> {
+    const response = await this.get<ApiResponse<EmailThread>>(
+      `/api/emails/${encodeURIComponent(emailId)}/thread`,
       signal
     );
 

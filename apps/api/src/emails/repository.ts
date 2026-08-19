@@ -11,9 +11,6 @@ import { eq, and, desc, asc, sql, inArray, or, ilike, isNotNull, SQL } from 'dri
 import { logger } from '../utils/logger';
 import type { AnalyzedEmail, AnalyzedEmailListItem, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
 
-// Re-export TATMetricRow from shared
-export type { TATMetricRow } from '@crm/shared';
-
 /**
  * One outbound reply, as far as first-reply (TAT) attribution is concerned.
  * Reply messages are never stored, so this is all we carry into the UPDATE.
@@ -64,6 +61,9 @@ function participantAddressPredicate(match: ParticipantAddressMatch): SQL {
     OR LOWER(ep.email) LIKE ${'%@%.' + domain} ESCAPE '\\')`;
 }
 
+// Re-export TATMetricRow from shared
+export type { TATMetricRow } from '@crm/shared';
+
 // Helper to build signal containment condition
 // PostgreSQL: signals @> ARRAY[signalValue]
 function signalContains(signalValue: number): SQL {
@@ -78,6 +78,18 @@ function signalOverlaps(signalValues: number[]): SQL {
 
 @injectable()
 export class EmailRepository extends ScopedRepository {
+  /**
+   * Render a reply's recipient list as a typed Postgres array literal. An empty
+   * list yields `ARRAY[]::text[]`, which matches nothing under the originator
+   * rule — the correct outcome for a reply with no addressable recipients.
+   */
+  private static recipientsArray(recipients: string[]): SQL {
+    return sql`ARRAY[${sql.join(
+      recipients.map((r) => sql`${r}`),
+      sql`, `
+    )}]::text[]`;
+  }
+
   constructor(@inject('Database') db: Database) {
     super(db);
   }
@@ -179,6 +191,72 @@ export class EmailRepository extends ScopedRepository {
    * Note: tenantId will be extracted from the email record
    * Future: tenant isolation will be handled via requestHeader middleware
    */
+  /**
+   * Every message on the thread that holds `emailId`, with everyone addressed
+   * on each one.
+   *
+   * Two round trips rather than one join: joining a per-participant table onto
+   * a per-message query fans out — one message with four recipients returns
+   * four rows, and the counts downstream are silently wrong. That mistake has
+   * already been made once in this codebase (501 threads became 2,089), so the
+   * participants are fetched separately and grouped in memory.
+   *
+   * Tenant-scoped on the emails query. Participants are then constrained to the
+   * ids that query returned, so they inherit the same scope.
+   */
+  async findThreadWithParticipants(tenantId: string, emailId: string) {
+    const focused = await this.db
+      .select({ threadId: emails.threadId })
+      .from(emails)
+      .where(and(eq(emails.id, emailId), eq(emails.tenantId, tenantId)))
+      .limit(1);
+
+    const threadId = focused[0]?.threadId ?? null;
+
+    // A message with no thread_id is its own thread of one. Falling back to the
+    // email id keeps the panel working rather than rendering an empty rail.
+    const messages = await this.db
+      .select({
+        id: emails.id,
+        subject: emails.subject,
+        body: emails.body,
+        fromEmail: emails.fromEmail,
+        fromName: emails.fromName,
+        receivedAt: emails.receivedAt,
+      })
+      .from(emails)
+      .where(
+        and(
+          eq(emails.tenantId, tenantId),
+          threadId ? eq(emails.threadId, threadId) : eq(emails.id, emailId)
+        )
+      )
+      .orderBy(asc(emails.receivedAt));
+
+    if (messages.length === 0) return { threadId, messages: [], participants: [] };
+
+    const participants = await this.db
+      .select({
+        emailId: emailParticipants.emailId,
+        email: emailParticipants.email,
+        name: emailParticipants.name,
+        direction: emailParticipants.direction,
+        participantType: emailParticipants.participantType,
+      })
+      .from(emailParticipants)
+      .where(
+        and(
+          eq(emailParticipants.tenantId, tenantId),
+          inArray(
+            emailParticipants.emailId,
+            messages.map((m) => m.id)
+          )
+        )
+      );
+
+    return { threadId, messages, participants };
+  }
+
   async findById(emailId: string) {
     const result = await this.db
       .select()
@@ -190,13 +268,43 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Update email signals after analysis
-   * Sets the signals array with all detected signals
+   * Update email signals after analysis, unless they've been manually overridden.
+   *
+   * A single conditional UPDATE (`WHERE signals_overridden = false`) enforces the
+   * lock without an extra read on the hot path: an overridden email simply matches
+   * no rows and is left untouched.
+   *
+   * @param emailId - Email UUID
+   * @param signals - Array of Signal integers (from @crm/shared Signal constants)
+   * @param tx - Optional transaction context
+   * @returns true if signals were written, false if skipped due to an override
+   */
+  async updateSignalsUnlessOverridden(
+    emailId: string,
+    signals: number[],
+    tx?: Transaction
+  ): Promise<boolean> {
+    const db = tx ?? this.db;
+    const rows = await db
+      .update(emails)
+      .set({
+        signals,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(emails.id, emailId), eq(emails.signalsOverridden, false)))
+      .returning({ id: emails.id });
+    return rows.length > 0;
+  }
+
+  /**
+   * Manually override an email's signals and lock them.
+   * Sets `signalsOverridden = true` so the analysis pipeline will skip
+   * overwriting these signals on any future re-analysis.
    * @param emailId - Email UUID
    * @param signals - Array of Signal integers (from @crm/shared Signal constants)
    * @param tx - Optional transaction context
    */
-  async updateSignals(
+  async overrideSignals(
     emailId: string,
     signals: number[],
     tx?: Transaction
@@ -206,6 +314,7 @@ export class EmailRepository extends ScopedRepository {
       .update(emails)
       .set({
         signals,
+        signalsOverridden: true,
         updatedAt: new Date(),
       })
       .where(eq(emails.id, emailId));
@@ -243,16 +352,37 @@ export class EmailRepository extends ScopedRepository {
     const limit = options?.limit || 50;
     const offset = options?.offset || 0;
 
+    // ATTRIBUTED TWO WAYS, BECAUSE THE PANEL AND THIS PAGE DISAGREED.
+    //
+    // This filtered on email_participants.customer_id alone. "Where the fires
+    // are" counts by SENDER DOMAIN, because participant attribution credits a
+    // client for mail they merely received — of 1,484 participant rows behind
+    // that population, only 275 were cases where the customer actually wrote.
+    //
+    // The panel was fixed and this was not, so a row reading "Berolzheimer, 3
+    // unanswered" linked to a page that answered "No analyzed emails found":
+    // six emails by sender domain, one by participant link, zero after the
+    // status and date filters. A destination that contradicts the row it came
+    // from is worse than no link.
+    //
+    // Both paths are kept rather than swapping to domain alone: participant
+    // links are often wrong but not always absent, and narrowing this would
+    // silently drop mail the page shows today.
+    const attributedToCustomer = or(
+      eq(emailParticipants.customerId, customerId),
+      sql`EXISTS (
+        SELECT 1 FROM customer_domains cd
+        WHERE cd.customer_id = ${customerId}
+          AND cd.tenant_id = ${emails.tenantId}
+          AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+      )`
+    );
+
     return this.db
       .selectDistinct({ emails })
       .from(emails)
-      .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, tenantId),
-          eq(emailParticipants.customerId, customerId)
-        )
-      )
+      .leftJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
+      .where(and(eq(emails.tenantId, tenantId), attributedToCustomer))
       .orderBy(desc(emails.receivedAt))
       .limit(limit)
       .offset(offset)
@@ -263,16 +393,37 @@ export class EmailRepository extends ScopedRepository {
    * Count emails by customer using email_participants
    */
   async countByCustomer(tenantId: string, customerId: string): Promise<number> {
+    // ATTRIBUTED TWO WAYS, BECAUSE THE PANEL AND THIS PAGE DISAGREED.
+    //
+    // This filtered on email_participants.customer_id alone. "Where the fires
+    // are" counts by SENDER DOMAIN, because participant attribution credits a
+    // client for mail they merely received — of 1,484 participant rows behind
+    // that population, only 275 were cases where the customer actually wrote.
+    //
+    // The panel was fixed and this was not, so a row reading "Berolzheimer, 3
+    // unanswered" linked to a page that answered "No analyzed emails found":
+    // six emails by sender domain, one by participant link, zero after the
+    // status and date filters. A destination that contradicts the row it came
+    // from is worse than no link.
+    //
+    // Both paths are kept rather than swapping to domain alone: participant
+    // links are often wrong but not always absent, and narrowing this would
+    // silently drop mail the page shows today.
+    const attributedToCustomer = or(
+      eq(emailParticipants.customerId, customerId),
+      sql`EXISTS (
+        SELECT 1 FROM customer_domains cd
+        WHERE cd.customer_id = ${customerId}
+          AND cd.tenant_id = ${emails.tenantId}
+          AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+      )`
+    );
+
     const result = await this.db
       .select({ count: sql<number>`count(DISTINCT ${emails.id})::int` })
       .from(emails)
-      .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
-      .where(
-        and(
-          eq(emails.tenantId, tenantId),
-          eq(emailParticipants.customerId, customerId)
-        )
-      );
+      .leftJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
+      .where(and(eq(emails.tenantId, tenantId), attributedToCustomer));
 
     return result[0]?.count || 0;
   }
@@ -545,7 +696,31 @@ export class EmailRepository extends ScopedRepository {
     // Build base conditions
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      eq(emailParticipants.customerId, customerId),
+      // ATTRIBUTED BY PARTICIPANT LINK **OR** SENDER DOMAIN, matching
+      // findByCustomer and matching the add-on panel.
+      //
+      // The panel attributes a fire by who WROTE the mail, via the sender's
+      // domain. This filtered on the participant link alone, so a row claiming
+      // "Berolzheimer, 3 unanswered" led to a page saying "No analyzed emails
+      // found" — the panel reading as though it had made the client up.
+      //
+      // The participant link is not merely absent, it is usually pointing
+      // somewhere else: of five negative Berolzheimer emails, ONE carries a
+      // participant row for Berolzheimer and the rest name Mystartupcfo (us) or
+      // an unrelated auto-created record.
+      //
+      // Both paths are kept rather than swapping to domain alone: participant
+      // links are often wrong but not always absent, and narrowing to one would
+      // silently drop mail this page shows today.
+      or(
+        eq(emailParticipants.customerId, customerId),
+        sql`EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = ${customerId}
+            AND cd.tenant_id = ${emails.tenantId}
+            AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+        )`
+      )!,
     ];
 
     // Add text search filter (ILIKE on subject, from name/email)
@@ -642,7 +817,31 @@ export class EmailRepository extends ScopedRepository {
     // Build base conditions
     const conditions: SQL[] = [
       eq(emails.tenantId, header.tenantId),
-      eq(emailParticipants.customerId, customerId),
+      // ATTRIBUTED BY PARTICIPANT LINK **OR** SENDER DOMAIN, matching
+      // findByCustomer and matching the add-on panel.
+      //
+      // The panel attributes a fire by who WROTE the mail, via the sender's
+      // domain. This filtered on the participant link alone, so a row claiming
+      // "Berolzheimer, 3 unanswered" led to a page saying "No analyzed emails
+      // found" — the panel reading as though it had made the client up.
+      //
+      // The participant link is not merely absent, it is usually pointing
+      // somewhere else: of five negative Berolzheimer emails, ONE carries a
+      // participant row for Berolzheimer and the rest name Mystartupcfo (us) or
+      // an unrelated auto-created record.
+      //
+      // Both paths are kept rather than swapping to domain alone: participant
+      // links are often wrong but not always absent, and narrowing to one would
+      // silently drop mail this page shows today.
+      or(
+        eq(emailParticipants.customerId, customerId),
+        sql`EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = ${customerId}
+            AND cd.tenant_id = ${emails.tenantId}
+            AND lower(cd.domain) = split_part(lower(${emails.fromEmail}), '@', 2)
+        )`
+      )!,
     ];
 
     // Add text search filter (ILIKE on subject, from name/email)
@@ -705,11 +904,19 @@ export class EmailRepository extends ScopedRepository {
    * and sentiment signals. Used by the Gmail extension to map an open thread to
    * a customer authoritatively (by the stored email→customer link) instead of by
    * guessing from the sender's domain. Access-scoped to the requesting user.
+   *
+   * Also returns each message's envelope (from / to / cc / subject / date). The
+   * Gmail sidebar's "Selected" block needs those for the open message, and Gmail
+   * itself cannot supply them: InboxSDK's MessageView exposes only a single flat
+   * `getRecipients()` list with no to/cc distinction. The stored row does keep
+   * them apart, and this call already fetches the thread's messages, so the block
+   * costs no extra round trip.
    */
   async findByMessageIdsScoped(
     header: RequestHeader,
     provider: string,
-    messageIds: string[]
+    messageIds: string[],
+    rfcMessageIds: string[] = []
   ): Promise<
     Array<{
       id: string;
@@ -719,9 +926,22 @@ export class EmailRepository extends ScopedRepository {
       receivedAt: Date | null;
       signals: number[] | null;
       customerId: string;
+      fromEmail: string | null;
+      fromName: string | null;
+      tos: Array<{ email: string; name?: string }> | null;
+      ccs: Array<{ email: string; name?: string }> | null;
     }>
   > {
-    if (messageIds.length === 0) return [];
+    // Match on the provider message-id OR the stable RFC 2822 Message-ID. Provider
+    // ids are per-mailbox (the same email has a different Gmail id in each
+    // participant's mailbox), so an add-on user viewing a thread that was ingested
+    // from a teammate's mailbox can only match via the cross-mailbox-stable RFC id
+    // — which the add-on reads off the open message and passes in here.
+    const idClauses: SQL[] = [];
+    if (messageIds.length) idClauses.push(inArray(emails.messageId, messageIds));
+    if (rfcMessageIds.length) idClauses.push(inArray(emails.rfcMessageId, rfcMessageIds));
+    if (idClauses.length === 0) return [];
+    const idMatch = idClauses.length === 1 ? idClauses[0] : or(...idClauses);
 
     const rows = await this.db
       .selectDistinct({
@@ -732,6 +952,10 @@ export class EmailRepository extends ScopedRepository {
         receivedAt: emails.receivedAt,
         signals: emails.signals,
         customerId: emailParticipants.customerId,
+        fromEmail: emails.fromEmail,
+        fromName: emails.fromName,
+        tos: emails.tos,
+        ccs: emails.ccs,
       })
       .from(emails)
       .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
@@ -739,7 +963,7 @@ export class EmailRepository extends ScopedRepository {
         and(
           eq(emails.tenantId, header.tenantId),
           eq(emails.provider, provider),
-          inArray(emails.messageId, messageIds),
+          idMatch,
           // Resolve the customer from the external SENDER only. Recipients (to/cc)
           // are full of internal teammates linked to the tenant's own org, and
           // internal 'user' participants carry that org's customerId — both would
@@ -761,6 +985,10 @@ export class EmailRepository extends ScopedRepository {
       receivedAt: Date | null;
       signals: number[] | null;
       customerId: string;
+      fromEmail: string | null;
+      fromName: string | null;
+      tos: Array<{ email: string; name?: string }> | null;
+      ccs: Array<{ email: string; name?: string }> | null;
     }>;
   }
 
@@ -1412,6 +1640,78 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Per-customer signal counts over a date range, for the Gmail sidebar's Stats
+   * block.
+   *
+   * The `customers` table carries precomputed rollups (emailCount,
+   * escalationCount, …) which is what the sidebar showed before, but those are
+   * all-time by construction — there is no date dimension to filter. Recomputing
+   * from `emails` is what makes "last 30 days" answerable at all. The counts are
+   * built from `emails.signals`, which has a GIN index, so the containment and
+   * overlap tests below are index-served rather than a scan per chip.
+   *
+   * Deliberately NOT returning averageTat: `customers.averageTat` is an all-time
+   * rollup and the TAT machinery buckets business-day lag rather than producing
+   * a mean, so there is no honest range-scoped equivalent to hand back. The
+   * caller shows that chip only for the all-time view.
+   */
+  async getCustomerSignalStatsScoped(
+    header: RequestHeader,
+    customerId: string,
+    filters?: { dateFrom?: string; dateTo?: string }
+  ): Promise<{
+    emailCount: number;
+    escalationCount: number;
+    upsellCount: number;
+    churnCount: number;
+    positiveCount: number;
+    lastContactDate: string | null;
+  }> {
+    const conditions: SQL[] = [
+      eq(emails.tenantId, header.tenantId),
+      eq(emailParticipants.customerId, customerId),
+      this.customerAccessFilter(emailParticipants.customerId, header),
+    ];
+
+    if (filters?.dateFrom) {
+      conditions.push(sql`${emails.receivedAt} >= ${filters.dateFrom}::timestamptz`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`${emails.receivedAt} <= ${filters.dateTo}::timestamptz`);
+    }
+
+    // DISTINCT throughout: the email_participants join multiplies a row by its
+    // participant count, so a plain count would report a message once per
+    // recipient.
+    const [row] = await this.db
+      .select({
+        emailCount: sql<number>`count(DISTINCT ${emails.id})::int`,
+        escalationCount: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.ESCALATION)})::int`,
+        upsellCount: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.UPSELL)})::int`,
+        churnCount: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalOverlaps([
+          Signal.CHURN_LOW,
+          Signal.CHURN_MEDIUM,
+          Signal.CHURN_HIGH,
+          Signal.CHURN_CRITICAL,
+        ])})::int`,
+        positiveCount: sql<number>`count(DISTINCT ${emails.id}) FILTER (WHERE ${signalContains(Signal.SENTIMENT_POSITIVE)})::int`,
+        lastContactDate: sql<string | null>`max(${emails.receivedAt})`,
+      })
+      .from(emails)
+      .innerJoin(emailParticipants, eq(emails.id, emailParticipants.emailId))
+      .where(and(...conditions));
+
+    return {
+      emailCount: row?.emailCount ?? 0,
+      escalationCount: row?.escalationCount ?? 0,
+      upsellCount: row?.upsellCount ?? 0,
+      churnCount: row?.churnCount ?? 0,
+      positiveCount: row?.positiveCount ?? 0,
+      lastContactDate: row?.lastContactDate ?? null,
+    };
+  }
+
+  /**
    * Get sentiment distribution for dashboard chart with access control
    * Returns counts for positive, neutral, and negative sentiment
    * Uses emails.signals array instead of email_analyses table
@@ -1633,9 +1933,8 @@ export class EmailRepository extends ScopedRepository {
    *
    * Mirrors the AI Analysis drilldown query (`searchAnalyzedEmails` with
    * `signal=upsell&status=open`) so the tile and the drilldown list always
-   * agree: distinct analyzed emails with the UPSELL signal that the caller can
-   * reach (`analyzedEmailAccessFilter` — accessible customer, or the escalation
-   * is assigned to them) AND that have an open task (t.status = 0).
+   * agree: distinct analyzed emails with the UPSELL signal whose sender is a
+   * customer the caller can access AND that have an open task (t.status = 0).
    * Upsell emails without a task (e.g. pure-upsell with no negative sentiment)
    * are not auto-created today, so they are not "open" and don't count here.
    */
@@ -1655,9 +1954,11 @@ export class EmailRepository extends ScopedRepository {
       sql`t.status = 0`,
     ];
 
-    const accessFilter = this.analyzedEmailAccessFilter(header);
-    if (accessFilter) {
-      whereParts.push(accessFilter);
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
     }
 
     if (filters?.customerId) {
@@ -1730,33 +2031,6 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Access predicate for the analyzed-email (escalations) queries.
-   *
-   * A user sees an analyzed email when the sender's customer is accessible to
-   * them, OR when the escalation's task is assigned to them directly. The
-   * second arm exists because an escalation can be assigned to anyone in the
-   * tenant — the assignee must be able to open the one escalation they own
-   * even when they are not on that customer's team. It grants no access to
-   * the customer's other emails.
-   *
-   * Assumes the query aliases the sender participant as `ep` and LEFT JOINs
-   * tasks as `t`. Returns null for admins, who bypass access filters.
-   */
-  private analyzedEmailAccessFilter(header: RequestHeader): SQL | null {
-    if (isAdmin(header.permissions)) {
-      return null;
-    }
-
-    return sql`(
-      ep.customer_id IN (
-        SELECT uac.customer_id FROM user_accessible_customers uac
-        WHERE uac.user_id = ${header.userId}
-      )
-      OR t.assigned_to_id = ${header.userId}
-    )`;
-  }
-
-  /**
    * Search analyzed emails with optional task overlay
    * Returns emails that have been analyzed (analysis_status = 3)
    * with LEFT JOIN to tasks for task overlay information
@@ -1780,10 +2054,12 @@ export class EmailRepository extends ScopedRepository {
       sql`ep.customer_id IS NOT NULL`,
     ];
 
-    // Access filter — sender's customer accessible, or assigned to the caller.
-    const accessFilter = this.analyzedEmailAccessFilter(header);
-    if (accessFilter) {
-      whereParts.push(accessFilter);
+    // Customer access filter — sender's customer must be accessible.
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
     }
 
     // Signal filter
@@ -1809,9 +2085,31 @@ export class EmailRepository extends ScopedRepository {
       }
     }
 
-    // Customer filter — matches the sender's customer (ep is sender only).
+    // Customer filter — the sender's participant link OR the sender's DOMAIN.
+    //
+    // This is the query behind AI Analysis, and it is what the add-on panel
+    // links a fire row into. The panel attributes by who WROTE the mail, via the
+    // sender's domain; this matched only the participant link, so a row reading
+    // "Berolzheimer — 3 unanswered" landed on "No analyzed emails found" and the
+    // panel read as though it had invented the client.
+    //
+    // The link is not merely absent, it usually points elsewhere: of six negative
+    // Berolzheimer emails, ONE carries a participant row naming Berolzheimer and
+    // the rest name Mystartupcfo (us) or an unrelated auto-created record.
+    // Measured with the page's own filters: 1 -> 5.
+    //
+    // Both paths are kept. Participant links are often wrong but not always
+    // absent, and narrowing to domain alone would drop mail this page shows.
     if (request.customerId) {
-      whereParts.push(sql`ep.customer_id = ${request.customerId}`);
+      whereParts.push(sql`(
+        ep.customer_id = ${request.customerId}
+        OR EXISTS (
+          SELECT 1 FROM customer_domains cd
+          WHERE cd.customer_id = ${request.customerId}
+            AND cd.tenant_id = e.tenant_id
+            AND lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+        )
+      )`);
     }
 
     // Date range filters
@@ -1956,9 +2254,11 @@ export class EmailRepository extends ScopedRepository {
       sql`ep.customer_id IS NOT NULL`,
     ];
 
-    const accessFilter = this.analyzedEmailAccessFilter(header);
-    if (accessFilter) {
-      whereParts.push(accessFilter);
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
     }
 
     if (request.signal && request.signal !== 'all') {
@@ -2142,9 +2442,11 @@ export class EmailRepository extends ScopedRepository {
       sql`ep.customer_id IS NOT NULL`,
     ];
 
-    const accessFilter = this.analyzedEmailAccessFilter(header);
-    if (accessFilter) {
-      whereParts.push(accessFilter);
+    if (!isAdmin(header.permissions)) {
+      whereParts.push(sql`ep.customer_id IN (
+        SELECT uac.customer_id FROM user_accessible_customers uac
+        WHERE uac.user_id = ${header.userId}
+      )`);
     }
 
     const whereClause = sql.join(whereParts, sql` AND `);
@@ -2412,129 +2714,126 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
-   * Shared core for the first-reply UPDATEs. For each customer email it records
-   * the EARLIEST qualifying reply that arrived strictly after it — both the
-   * timestamp (`first_reply_at`, the time-to-response anchor) and who sent it
-   * (`first_reply_by_id`), taken from that same winning reply.
+   * Update first reply info for customer emails in a thread
+   * Called when a new email is inserted that's a reply from tenant domain
    *
-   * The caller supplies the JOIN fragment that relates a
-   * `r(…, reply_at, recipients, replied_by_id)` VALUES table to `emails e2`
-   * (directly by thread_id, or via email_threads by provider id). Every fragment
-   * must carry the two matching predicates — `reply_at > e2.received_at` and the
-   * originator rule below — so that only genuine answers qualify.
+   * @param tenantId - Tenant ID
+   * @param threadId - Thread ID
+   * @param replyEmailId - ID of the reply email
+   * @param replyReceivedAt - Timestamp of when the reply was received
+   * @param _tenantDomains - Unused (kept for backwards compatibility)
+   */
+  /**
+   * Set first_reply_at on customer emails for a batch of (thread, reply-timestamp)
+   * pairs in a single set-based UPDATE.
    *
-   * The originator rule: a reply counts for a customer email only if it is
-   * addressed to that email's own sender (`lower(e2.from_email) = ANY(recipients)`,
-   * where recipients are the reply's To + Cc). Replies that go only to colleagues
-   * or to a different contact on the thread are ignored.
-   *
-   * `DISTINCT ON (e2.id) … ORDER BY e2.id, r.reply_at` (rather than MIN + GROUP BY)
-   * keeps the timestamp and the replier from the same row; the `replied_by_id`
-   * tiebreaker makes the pick deterministic when two replies share a timestamp.
-   *
+   * For each customer email we record the EARLIEST reply that arrived strictly
+   * after it (MIN(reply_at) WHERE reply_at > received_at) — i.e. the time-to-response.
    * The `first_reply_at IS NULL` guard means an earlier batch's value is never
    * overwritten, so this is safe to call repeatedly as replies trickle in.
-   * Reply emails themselves are never stored — only this trace of them survives.
+   *
+   * Reply emails themselves are never stored (first_reply_email_id stays null);
+   * we only persist their timestamp on the customer email they answered.
+   *
+   * @param threadIds         Internal thread UUIDs, parallel to replyReceivedAts
+   * @param replyReceivedAts  Reply timestamps, parallel to threadIds
+   */
+  /**
+   * Shared core for the first-reply UPDATEs. Sets first_reply_at on customer
+   * emails to the earliest reply that arrived strictly after them. The caller
+   * supplies the JOIN fragment that relates a `r(…, reply_at)` VALUES table to
+   * `emails e2` (directly by thread_id, or via email_threads by provider id);
+   * everything else — the guards, MIN/GROUP BY, and logging — is identical.
    */
   private async runFirstReplyUpdate(
     tenantId: string,
     joinFragment: SQL,
     logContext: Record<string, unknown>,
-    message: string
+    message: string,
+    /**
+     * Whether `joinFragment`'s VALUES table carries a `replied_by_id` column.
+     *
+     * The two callers differ: the marker path resolves the sender to a user and
+     * passes it, the thread-id path has only timestamps. Rather than force a
+     * NULL column into the second one, the winning row's author is written only
+     * where it exists.
+     */
+    carriesAuthor = false
   ): Promise<number> {
+    // DISTINCT ON, NOT MIN() ... GROUP BY.
+    //
+    // Both forms pick the earliest qualifying reply, and only one of them can
+    // also say WHO sent it. An aggregate collapses the rows it is choosing
+    // between, so the author of the winning reply is not available to the SET
+    // clause -- and `first_reply_by_id` was therefore computed and thrown away.
+    // attributeRepliesToUsers resolved it, the VALUES row carried it, and the
+    // UPDATE never referenced it again.
+    //
+    // Measured on this tenant before the fix: 16,290 emails carried a reply time
+    // and 2,065 an author, the remainder written by a build that predated the
+    // regression. Downstream had already adapted -- the slow-responder section
+    // attributes by the allocation sheet rather than by who actually replied,
+    // because this column could not be relied on.
+    //
+    // The regression arrived with the squashed port 72f8231, which replaced a
+    // DISTINCT ON form with this aggregate. It is restored here.
+    //
+    // ORDER BY reply_at then replied_by_id NULLS LAST: on the rare tie, prefer
+    // the row that can name a person over one that cannot.
+    const authorSelect = carriesAuthor ? sql`, r.replied_by_id` : sql`, NULL::uuid AS replied_by_id`;
+    const authorOrder = carriesAuthor ? sql`, r.replied_by_id NULLS LAST` : sql``;
     const result = await this.db.execute(sql`
       UPDATE emails e
       SET
-        first_reply_at = sub.reply_at,
-        first_reply_by_id = sub.replied_by_id,
+        first_reply_at = sub.min_reply,
+        first_reply_by_id = COALESCE(sub.replied_by_id, e.first_reply_by_id),
         updated_at = NOW()
       FROM (
         SELECT DISTINCT ON (e2.id)
-          e2.id AS email_id,
-          r.reply_at,
-          r.replied_by_id
+               e2.id AS email_id, r.reply_at AS min_reply${authorSelect}
         FROM emails e2
         ${joinFragment}
         WHERE e2.tenant_id = ${tenantId}
           AND e2.is_customer_email = true
           AND e2.first_reply_at IS NULL
-        ORDER BY e2.id, r.reply_at, r.replied_by_id NULLS LAST
+        ORDER BY e2.id, r.reply_at${authorOrder}
       ) sub
       WHERE e.id = sub.email_id
     `);
 
-    const rowCount = affectedRows(result);
+    const rowCount = (result as any).rowCount || 0;
 
-    // Log both numbers, ALWAYS. `replyCount` is what we offered; `updatedCount` is
-    // what actually matched a customer email. The gap between them is the only
-    // visibility we have into the originator rule rejecting replies, because
-    // rejection happens inside the join — reply messages are never stored, so a
-    // reply that matches nothing leaves no trace anywhere else.
-    //
-    // Suppressing this when rowCount is 0 (as it used to) hid exactly the case
-    // worth seeing: a batch where every reply was rejected looked identical to a
-    // batch with no replies at all.
-    //
-    // Counts only — never the addresses. Recipient lists are customer PII and
-    // must not be shipped to Cloud Logging.
-    const context = { tenantId, ...logContext, updatedCount: rowCount };
-    if (rowCount === 0) {
-      logger.warn(context, `${message}: no customer email matched any submitted reply`);
-    } else {
-      logger.info(context, message);
+    if (rowCount > 0) {
+      logger.info({ tenantId, ...logContext, updatedCount: rowCount }, message);
     }
 
     return rowCount;
   }
 
-  /**
-   * Render a reply's recipient list as a typed Postgres array literal. An empty
-   * list yields `ARRAY[]::text[]`, which matches nothing under the originator
-   * rule — the correct outcome for a reply with no addressable recipients.
-   */
-  private static recipientsArray(recipients: string[]): SQL {
-    return sql`ARRAY[${sql.join(
-      recipients.map((r) => sql`${r}`),
-      sql`, `
-    )}]::text[]`;
-  }
-
-  /**
-   * Set first_reply_at / first_reply_by_id on customer emails from a batch of
-   * replies keyed by internal thread UUID, in a single set-based UPDATE.
-   *
-   * See {@link runFirstReplyUpdate} for the matching rules (earliest reply after
-   * the email, addressed to that email's own sender, never overwritten).
-   */
   async setFirstReplyForThreads(
     tenantId: string,
-    replies: Array<{ threadId: string } & FirstReplyCandidate>
+    threadIds: string[],
+    replyReceivedAts: Date[]
   ): Promise<number> {
-    if (replies.length === 0) {
+    if (threadIds.length === 0 || threadIds.length !== replyReceivedAts.length) {
       return 0;
     }
 
-    // Build a VALUES list of (thread_id, reply_at, recipients, replied_by_id)
-    // rows. The casts on the row fragments establish the column types for the
-    // VALUES-derived table.
-    const rows = replies.map(
-      (r) => sql`(
-        ${r.threadId}::uuid,
-        ${r.receivedAt.toISOString()}::timestamp,
-        ${EmailRepository.recipientsArray(r.recipients)},
-        ${r.repliedById}::uuid
-      )`
+    // Build a VALUES list of (thread_id, reply_at) pairs. The casts on the row
+    // fragments establish the column types for the VALUES-derived table.
+    const pairs = threadIds.map(
+      (threadId, i) => sql`(${threadId}::uuid, ${replyReceivedAts[i].toISOString()}::timestamp)`
     );
+    const valuesList = sql.join(pairs, sql`, `);
     const joinFragment = sql`
-      JOIN (VALUES ${sql.join(rows, sql`, `)}) AS r(thread_id, reply_at, recipients, replied_by_id)
+      JOIN (VALUES ${valuesList}) AS r(thread_id, reply_at)
         ON r.thread_id = e2.thread_id
-       AND r.reply_at > e2.received_at
-       AND LOWER(e2.from_email) = ANY(r.recipients)`;
+       AND r.reply_at > e2.received_at`;
 
     return this.runFirstReplyUpdate(
       tenantId,
       joinFragment,
-      { threadCount: new Set(replies.map((r) => r.threadId)).size, replyCount: replies.length },
+      { threadCount: new Set(threadIds).size, replyCount: threadIds.length },
       'Updated firstReplyAt for customer emails'
     );
   }
@@ -2604,7 +2903,10 @@ export class EmailRepository extends ScopedRepository {
         threadCount: new Set(replies.map((r) => r.providerThreadId)).size,
         replyCount: replies.length,
       },
-      'Updated firstReplyAt for customer emails (from reply markers)'
+      'Updated firstReplyAt for customer emails (from reply markers)',
+      // This path resolved the sender to a user id, so the winning reply can
+      // name a person.
+      true
     );
   }
 
@@ -2712,6 +3014,6 @@ export class EmailRepository extends ScopedRepository {
       SET customer_id = ${targetCustomerId}
       WHERE customer_id = ${sourceCustomerId} AND tenant_id = ${tenantId}
     `);
-    return affectedRows(result);
+    return (result as any).rowCount ?? 0;
   }
 }

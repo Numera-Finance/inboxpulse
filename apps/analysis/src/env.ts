@@ -20,6 +20,13 @@ const envSchema = z.object({
 
   // HuggingFace (optional - used for free email classification stages)
   HUGGINGFACE_API_TOKEN: z.string().optional(),
+
+  // Show the sentiment classifier already-judged emails from the same mailbox
+  // rather than relying only on the written instructions. Off unless explicitly
+  // 'true', so the code ships dead and turning it back off is an env change on a
+  // running service, not a rollback deploy.
+  SENTIMENT_EXAMPLES_ENABLED: z.string().optional(),
+  SENTIMENT_EXAMPLES_COUNT: z.coerce.number().default(10),
 });
 
 export type Env = z.infer<typeof envSchema>;

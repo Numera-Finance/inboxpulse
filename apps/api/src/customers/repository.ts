@@ -1,6 +1,6 @@
 import { eq, and, sql, SQL } from 'drizzle-orm';
 import { injectable, inject } from 'tsyringe';
-import { ScopedRepository, affectedRows } from '@crm/database';
+import { ScopedRepository } from '@crm/database';
 import type { Database, Transaction } from '@crm/database';
 import type { RequestHeader } from '@crm/shared';
 import { customers, customerDomains, CustomerRowStatus, type Customer, type NewCustomer, type NewCustomerDomain } from './schema';
@@ -645,7 +645,7 @@ export class CustomerRepository extends ScopedRepository {
       DELETE FROM customer_domains
       WHERE customer_id = ${sourceId} AND tenant_id = ${tenantId}
     `);
-    return affectedRows(result);
+    return (result as any).rowCount ?? 0;
   }
 
 

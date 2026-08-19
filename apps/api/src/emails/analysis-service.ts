@@ -3,10 +3,11 @@ import { AnalysisClient, type ClassificationResult, type ExtractedPayload } from
 import type { Database, Transaction } from '@crm/database';
 import { EmailAnalysisRepository } from './analysis-repository';
 import { EmailRepository } from './repository';
+import { EmailSignalOverrideRepository } from './signal-override-repository';
 import { ThreadAnalysisService } from './thread-analysis-service';
 import { createEmailAnalysisRecord } from './analysis-utils';
-import type { Email, AnalysisType } from '@crm/shared';
-import { Signal, resolveCustomerKeyForEmail } from '@crm/shared';
+import type { Email, AnalysisType, RequestHeader } from '@crm/shared';
+import { Signal, resolveCustomerKeyForEmail, validateSignalSelection, NotFoundError, InvalidInputError } from '@crm/shared';
 import type { AnalysisType as EmailAnalysisType } from './analysis-schema';
 import { EmailAnalysisStatus, type NewEmailParticipant } from './schema';
 import { UserService } from '../users/service';
@@ -17,6 +18,7 @@ import { TenantService } from '../tenants/service';
 import { KeywordService } from '../keywords/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply } from './extraction/extractor';
+import { isCustomerTraffic } from './prefilter/third-party';
 
 // =============================================================================
 // Types
@@ -114,6 +116,7 @@ export class EmailAnalysisService {
     @inject(AnalysisClient) private analysisClient: AnalysisClient,
     private analysisRepo: EmailAnalysisRepository,
     private emailRepo: EmailRepository,
+    private signalOverrideRepo: EmailSignalOverrideRepository,
     private threadAnalysisService: ThreadAnalysisService,
     private userService: UserService,
     private contactService: ContactService,
@@ -208,6 +211,26 @@ export class EmailAnalysisService {
     //          without an LLM call).
     const keywordResults = await this.runKeywordAnalysis(ctx);
     const excludeTypes = new Set(Object.keys(keywordResults));
+
+    // Step 2c: a client's CUSTOMERS never reach the model.
+    //
+    // We keep the books for operating businesses, so their customer-facing
+    // systems copy us on traffic that has nothing to do with our work.
+    // poolbrain.com is one client's field-service platform, and homeowners reply
+    // to it — unhappily, sometimes — about pool cleaning. Those are real
+    // complaints and none of them is a complaint about us.
+    //
+    // The category filter below already discards their RESULTS, but it runs
+    // after the call, so the tokens were spent and the rows stored anyway. This
+    // is the gate ADR-020 said belonged here: skip the call entirely.
+    if (isCustomerTraffic(ctx.email.from?.email ?? '', ctx.email.body ?? '')) {
+      logger.info(
+        { emailId: ctx.emailId, tenantId: ctx.tenantId },
+        'customer traffic — skipping analysis, no model call'
+      );
+      data.analysisResults = {};
+      return data;
+    }
 
     // Step 2d: ONE call to apps/analysis. Returns:
     //          - extracted: { domains, contacts } — used by Phase 2 to ensure customers/contacts.
@@ -690,7 +713,17 @@ export class EmailAnalysisService {
                 tx,
                 tenantId,
                 lookupDomain,
-                { defaultName: participant.name?.trim() || lookupDomain }
+                // The thread's own addresses let ensureCustomerForEmail spot a
+                // per-client alias — hammerheadai@ — and attach the domain to
+                // that client instead of minting another auto-created customer.
+                // Passed from memory because the participant rows are not
+                // written yet.
+                {
+                  defaultName: participant.name?.trim() || lookupDomain,
+                  threadAddresses: participantsToEnsure
+                    .map((pt) => pt.email)
+                    .filter((e): e is string => Boolean(e)),
+                }
               );
             }
             customerId = customer.id;
@@ -892,6 +925,84 @@ export class EmailAnalysisService {
   }
 
   /**
+   * Apply a manual, user-supplied correction of an email's signals
+   * (sentiment / churn / tags), locking them against future re-analysis and
+   * recording the before/after in the override audit + learning log.
+   *
+   * The original `email_analyses` rows are intentionally left untouched so the
+   * model's verdict is preserved for prompt evaluation.
+   */
+  async applyManualSignalOverride(
+    requestHeader: RequestHeader,
+    emailId: string,
+    signals: number[],
+    reason?: string
+  ): Promise<{ emailId: string; signals: number[]; signalsOverridden: boolean }> {
+    const { tenantId, userId } = requestHeader;
+
+    // Tenant-scoped existence check
+    const email = await this.emailRepo.findById(emailId);
+    if (!email || email.tenantId !== tenantId) {
+      throw new NotFoundError('Email', emailId);
+    }
+
+    // De-duplicate and validate the requested signal set against the same
+    // invariants the analysis pipeline enforces.
+    const newSignals = [...new Set(signals)];
+    const validationError = validateSignalSelection(newSignals);
+    if (validationError) {
+      throw new InvalidInputError(validationError);
+    }
+
+    const previousSignals = email.signals ?? [];
+
+    // Snapshot what the model said, so a correction can be correlated to the
+    // exact analysis output that produced it.
+    const analyses = await this.analysisRepo.getAnalysesByEmail(emailId);
+    const analysisSnapshot: Record<string, unknown> = {
+      analyses: analyses.map((a) => ({
+        analysisType: a.analysisType,
+        result: a.result,
+        confidence: a.confidence,
+        riskLevel: a.riskLevel,
+        sentimentValue: a.sentimentValue,
+        modelUsed: a.modelUsed,
+        reasoning: a.reasoning,
+      })),
+    };
+
+    await this.db.transaction(async (tx) => {
+      await this.emailRepo.overrideSignals(emailId, newSignals, tx);
+      await this.signalOverrideRepo.insert(
+        {
+          tenantId,
+          emailId,
+          previousSignals,
+          newSignals,
+          reason: reason ?? null,
+          analysisSnapshot,
+          editedByUserId: userId,
+        },
+        tx
+      );
+    });
+
+    logger.info(
+      {
+        tenantId,
+        emailId,
+        userId,
+        previousSignals,
+        newSignals,
+        logType: 'EMAIL_SIGNALS_OVERRIDDEN',
+      },
+      'Applied manual signal override'
+    );
+
+    return { emailId, signals: newSignals, signalsOverridden: true };
+  }
+
+  /**
    * Update email signals from all analysis results (within transaction)
    * Converts analysis results to Signal integers and updates the signals array
    */
@@ -947,8 +1058,13 @@ export class EmailAnalysisService {
     }
 
     // Churn
+    //
+    // 'none' carries no signal. Before the enum had it, the lowest value the
+    // model could return was 'low', so 87% of all mail arrived here carrying
+    // CHURN_LOW — a risk level on seven messages in eight is a field, not a
+    // finding. The switch falls through for 'none' and nothing is pushed.
     const churnResult = analysisResults['churn'];
-    if (churnResult?.riskLevel) {
+    if (churnResult?.riskLevel && churnResult.riskLevel !== 'none') {
       switch (churnResult.riskLevel) {
         case 'low':
           signals.push(Signal.CHURN_LOW);
@@ -977,12 +1093,19 @@ export class EmailAnalysisService {
       signals.push(Signal.COMPETITOR);
     }
 
-    // Update signals array
-    await this.emailRepo.updateSignals(emailId, signals, tx);
+    // Update signals array — respecting manual overrides. This is the single
+    // choke point through which both the LLM and keyword paths write signals, so
+    // the conditional write here locks a human correction against re-analysis.
+    const written = await this.emailRepo.updateSignalsUnlessOverridden(emailId, signals, tx);
 
     logger.info(
-      { emailId, signals, classification: classificationResult?.category, logType: 'EMAIL_SIGNALS_UPDATED' },
-      'Updated email signals'
+      {
+        emailId,
+        signals,
+        classification: classificationResult?.category,
+        logType: written ? 'EMAIL_SIGNALS_UPDATED' : 'EMAIL_SIGNALS_SKIPPED_OVERRIDDEN',
+      },
+      written ? 'Updated email signals' : 'Skipping signal update — signals manually overridden'
     );
   }
 
@@ -1174,6 +1297,18 @@ export class EmailAnalysisService {
       const email = await this.emailRepo.findById(ctx.emailId);
       if (!email) {
         logger.warn({ emailId: ctx.emailId }, 'Email not found for task creation');
+        return;
+      }
+
+      // Respect manual signal overrides. If a user corrected this email's signals,
+      // the displayed sentiment may no longer be negative even though the model
+      // still reports negative on re-analysis. Creating a task off the stale model
+      // verdict would contradict the corrected signals, so skip.
+      if (email.signalsOverridden) {
+        logger.debug(
+          { emailId: ctx.emailId, logType: 'SKIP_TASK_CREATION_SIGNALS_OVERRIDDEN' },
+          'Skipping task creation — signals manually overridden'
+        );
         return;
       }
 

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { formatDistanceToNow, formatDistance, format } from "date-fns"
-import { Building2, User, Clock, Pencil, Loader2, Check, CheckCircle2, UserMinus } from "lucide-react"
+import { Building2, User, Clock, Pencil, Loader2, Check, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -20,12 +20,6 @@ import {
 import { cn } from "@/lib/utils"
 import { useAssignableUsers, useReassignTask, useTask } from "@/lib/hooks"
 import { TaskStatus } from "@crm/clients"
-
-/** A dropdown choice — `id: null` is the "Unassigned" entry. */
-interface AssignOption {
-  id: string | null
-  name: string
-}
 
 interface TaskMetaInfoProps {
   taskId: string
@@ -89,20 +83,22 @@ export function TaskMetaInfo({
     name: assigneeName ?? "Unassigned",
   }
 
-  // Filter users by search term. The list includes the current user, so
-  // taking an escalation back is just picking your own name. Removing the
-  // assignment is a pinned action below the list, not a row in it.
+  // Filter users by search term
   const filteredUsers = React.useMemo(() => {
     if (!assigneeSearch) return assignableUsers
     const searchLower = assigneeSearch.toLowerCase()
-    return assignableUsers.filter((u) =>
-      u.name.toLowerCase().includes(searchLower)
+    return assignableUsers.filter((user) =>
+      user.name.toLowerCase().includes(searchLower)
     )
   }, [assignableUsers, assigneeSearch])
 
-  const handleAssign = async (option: AssignOption) => {
-    // Optimistically update local state
-    setLocalAssignee({ id: option.id, name: option.name })
+  const handleAssign = async (userId: string) => {
+    // Find the user name for optimistic update
+    const user = assignableUsers.find((u) => u.id === userId)
+    if (user) {
+      // Optimistically update local state
+      setLocalAssignee({ id: userId, name: user.name })
+    }
 
     setAssigneeOpen(false)
     setAssigneeSearch("")
@@ -110,7 +106,7 @@ export function TaskMetaInfo({
 
     try {
       // useReassignTask.onSuccess already updates the cache and invalidates lists
-      await reassign.mutateAsync({ id: taskId, assignedToId: option.id })
+      await reassign.mutateAsync({ id: taskId, assignedToId: userId })
     } catch (error) {
       console.error("Failed to assign:", error)
       // Revert optimistic update on error
@@ -180,13 +176,13 @@ export function TaskMetaInfo({
                   <CommandList>
                     <CommandEmpty>No users found.</CommandEmpty>
                     <CommandGroup>
-                      {filteredUsers.map((option) => {
-                        const isSelected = displayAssignee.id === option.id
+                      {filteredUsers.map((user) => {
+                        const isSelected = displayAssignee.id === user.id
                         return (
                           <CommandItem
-                            key={option.id}
-                            value={option.id}
-                            onSelect={() => handleAssign(option)}
+                            key={user.id}
+                            value={user.id}
+                            onSelect={() => handleAssign(user.id)}
                           >
                             <Check
                               className={cn(
@@ -194,31 +190,13 @@ export function TaskMetaInfo({
                                 isSelected ? "opacity-100" : "opacity-0"
                               )}
                             />
-                            {option.name}
+                            {user.name}
                           </CommandItem>
                         )
                       })}
                     </CommandGroup>
                   </CommandList>
                 </Command>
-                {/* Pinned below the list rather than placed in it: with a
-                    tenant-sized user list, a row at the bottom would need
-                    scrolling to reach and a row at the top reads as just
-                    another name. Removing an assignment is an action, so it
-                    is worded and styled as one. */}
-                {displayAssignee.id && (
-                  <div className="border-t p-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-start font-normal text-muted-foreground hover:text-destructive"
-                      onClick={() => handleAssign({ id: null, name: "Unassigned" })}
-                    >
-                      <UserMinus className="mr-2 h-4 w-4" />
-                      Remove assignment
-                    </Button>
-                  </div>
-                )}
               </PopoverContent>
             </Popover>
           )}

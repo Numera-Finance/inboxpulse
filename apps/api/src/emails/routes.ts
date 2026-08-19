@@ -3,14 +3,15 @@ import { container } from 'tsyringe';
 import { z } from 'zod';
 import { EmailService } from './service';
 import { EmailAnalysisService } from './analysis-service';
+import { ContextSearchService } from './context-search-service';
 import { RunService } from '../runs/service';
 import { dbEmailToEmail } from './converter';
 import { buildThreadContext } from './thread-context';
 import type { NewEmail } from './schema';
-import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError } from '@crm/shared';
-import { analyzedEmailSearchRequestSchema, firstReplyMarkersRequestSchema } from '@crm/clients';
+import { emailCollectionSchema, type EmailCollection, type AnalysisType, type RequestHeader, InvalidInputError, InternalError, NotFoundError, ValidationError, ForbiddenError } from '@crm/shared';
+import { analyzedEmailSearchRequestSchema, firstReplyMarkersRequestSchema, updateEmailSignalsRequestSchema, submitTagSuggestionRequestSchema } from '@crm/clients';
 import { logger } from '../utils/logger';
-import { handleApiRequest, handleGetRequest, handleGetRequestWithParams } from '../utils/api-handler';
+import { handleApiRequest, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 
 const app = new Hono();
 
@@ -310,6 +311,24 @@ app.post('/analyzed/export', async (c) => {
 /**
  * GET /api/emails/analyzed/:emailId - Get single analyzed email with task overlay
  */
+/**
+ * GET /api/emails/:emailId/thread - the whole conversation, for triage.
+ *
+ * Separate from /analyzed/:emailId rather than folded into it: the search
+ * endpoint returns many rows, and attaching every thread's participants to each
+ * would multiply the payload for a panel that only ever shows one at a time.
+ */
+app.get('/:emailId/thread', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ emailId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      return service.getEmailThread(requestHeader, params.emailId);
+    }
+  );
+});
+
 app.get('/analyzed/:emailId', async (c) => {
   return handleGetRequestWithParams(
     c,
@@ -368,10 +387,153 @@ app.get('/customer/:customerId', async (c) => {
 });
 
 /**
+ * GET /api/emails/customer/:customerId/stats - Signal counts for one customer,
+ * optionally restricted to a date range. Powers the Gmail sidebar's Stats block,
+ * whose figures previously came from the all-time rollups on the customers table
+ * and so could not be narrowed to a period.
+ *
+ * Query params:
+ *   - from: ISO timestamp (optional) - inclusive lower bound on received_at
+ *   - to:   ISO timestamp (optional) - inclusive upper bound on received_at
+ *
+ * Omitting both returns the all-time figures, which should agree with the
+ * customer record. Avg TAT is deliberately absent — see the repository method.
+ *
+ * Registered before /customer/:customerId only for readability; the two differ
+ * in segment count, so Hono cannot confuse them.
+ */
+app.get('/customer/:customerId/stats', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ customerId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      return await service.getCustomerSignalStats(requestHeader, params.customerId, {
+        dateFrom: c.req.query('from') || undefined,
+        dateTo: c.req.query('to') || undefined,
+      });
+    }
+  );
+});
+
+/**
+ * GET /api/emails/thread/by-provider/:providerThreadId - Resolve a DB thread id
+ * from a Gmail (provider) thread id. Lets the add-on show thread-level
+ * trend/flagged even on an untracked open message. Registered before /:emailId.
+ */
+app.get('/thread/by-provider/:providerThreadId', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ providerThreadId: z.string().min(1).max(500) }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      return await service.resolveThreadIdByProvider(requestHeader, params.providerThreadId);
+    }
+  );
+});
+
+/**
+ * GET /api/emails/thread/:threadId/trend - Per-message sentiment trend for a
+ * thread. Powers the add-on sidebar "Trend, this thread" chart (design §5).
+ * Returns analyzed messages oldest→newest, each with a 0–100 sentiment score.
+ * Registered before /:emailId so the literal "thread" segment isn't captured as
+ * an email id.
+ */
+app.get('/thread/:threadId/trend', async (c) => {
+  return handleGetRequestWithParams(
+    c,
+    z.object({ threadId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      return await service.getThreadSentimentTrend(requestHeader, params.threadId);
+    }
+  );
+});
+
+/**
+ * GET /api/emails/thread/:threadId/messages - Every stored message in a thread,
+ * oldest first. Powers the Gmail extension's in-thread search box, which filters
+ * the list client-side and jumps Gmail to the message the reader picks.
+ *
+ * `?includeBody=true` adds each message's text as plain text — the field that
+ * makes searching within one conversation useful. Registered before /:emailId.
+ */
+app.get('/thread/:threadId/messages', async (c) => {
+  const includeBody =
+    c.req.query('includeBody') === 'true' || c.req.query('includeBody') === '1';
+  return handleGetRequestWithParams(
+    c,
+    z.object({ threadId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      return await service.getThreadMessages(requestHeader, params.threadId, {
+        includeBody,
+      });
+    }
+  );
+});
+
+/**
+ * GET /api/emails/thread/:threadId/flagged - Flagged messages in a thread for the
+ * add-on sidebar "Flagged messages" section (design §6). One item per message
+ * with an actionable flag, most-severe first, each with its "why" reason and
+ * provenance (keyword-rule vs AI %). Registered before /:emailId.
+ *
+ * `?includeBody=true` adds a plain-text preview of each message, for the Gmail
+ * extension's drill-down view. Off by default: the summary callers fetch this on
+ * every open conversation and only need the flags.
+ */
+app.get('/thread/:threadId/flagged', async (c) => {
+  const includeBody =
+    c.req.query('includeBody') === 'true' || c.req.query('includeBody') === '1';
+  return handleGetRequestWithParams(
+    c,
+    z.object({ threadId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(EmailService);
+      return await service.getThreadFlaggedMessages(requestHeader, params.threadId, {
+        includeBody,
+      });
+    }
+  );
+});
+
+/**
+ * GET /api/emails/thread/:threadId/context - Related conversations for the
+ * sidebar's context drop bar.
+ *
+ * Runs the query stored by the `context-search-string` analysis against the
+ * reader's live Gmail and returns up to five OTHER threads worth reading
+ * alongside this one. The open conversation is excluded server-side — a query
+ * built from this email's own participants and subject matches its own thread
+ * first, so most of a raw result set is the thread already on screen.
+ *
+ * `?viewer=` names the mailbox to search. A tenant can have several active
+ * Gmail integrations, and searching the wrong one returns a stranger's mail
+ * rather than nothing. Registered before /:emailId, like the flagged route.
+ */
+app.get('/thread/:threadId/context', async (c) => {
+  const viewer = c.req.query('viewer') ?? undefined;
+  return handleGetRequestWithParams(
+    c,
+    z.object({ threadId: z.uuid() }),
+    async (requestHeader: RequestHeader, params) => {
+      const service = container.resolve(ContextSearchService);
+      return await service.getThreadContext(requestHeader, params.threadId, viewer);
+    }
+  );
+});
+
+/**
  * POST /api/emails/resolve-by-messages - Resolve emails by provider message IDs.
  * Returns each matched email's linked customer and sentiment signals so the Gmail
  * extension can map an open thread to a customer authoritatively (by the stored
  * email→customer link) rather than guessing from the sender's domain.
+ *
+ * Each row also carries its envelope (fromEmail / fromName / tos / ccs, alongside
+ * the subject and receivedAt already returned), which the extension's "Selected"
+ * block renders for the open message. Gmail cannot supply that itself: InboxSDK
+ * exposes one flat recipient list with no to/cc distinction.
  *
  * Authorization: like every other email read route, this is gated by the session
  * middleware (authenticated user + tenant) plus per-row access control inside
@@ -384,6 +546,9 @@ app.post('/resolve-by-messages', async (c) => {
     c,
     z.object({
       messageIds: z.array(z.string()).min(1).max(100),
+      // Stable RFC 2822 Message-ID header value(s) — cross-mailbox-stable, so a
+      // thread ingested from a teammate's mailbox still resolves for this viewer.
+      rfcMessageIds: z.array(z.string()).max(100).optional(),
       provider: z.string().optional(),
     }),
     async (requestHeader: RequestHeader, body) => {
@@ -391,11 +556,37 @@ app.post('/resolve-by-messages', async (c) => {
       const emails = await service.resolveByMessageIds(
         requestHeader,
         body.provider ?? 'gmail',
-        body.messageIds
+        body.messageIds,
+        body.rfcMessageIds ?? []
+      );
+      logger.info(
+        { messageIds: body.messageIds, rfcMessageIds: body.rfcMessageIds ?? [], matched: emails.length },
+        'resolve-by-messages debug',
       );
       return { emails };
     }
   );
+});
+
+/**
+ * POST /api/emails/tag-suggestion - Record a user's suggested alternative
+ * analysis tags for one message, from the Gmail extension's flag-chip dropdown.
+ *
+ * Writes ONLY email_analyses.user_submitted_risk_level /
+ * user_submitted_sentiment_value — the AI's own risk_level / sentiment_value /
+ * result are never modified, so a suggestion can never change what the rest of
+ * the product (chips, dashboards, digests) reports.
+ *
+ * Authorization: same model as the read routes — session middleware on the
+ * /api/emails mount (or the internal key on /api/internal/emails) plus per-row
+ * customer access control inside findByMessageIdsScoped. Registered before
+ * /:emailId so the literal segment isn't captured as an email id.
+ */
+app.post('/tag-suggestion', async (c) => {
+  return handleApiRequest(c, submitTagSuggestionRequestSchema, async (requestHeader: RequestHeader, body) => {
+    const service = container.resolve(EmailService);
+    return await service.submitTagSuggestion(requestHeader, body);
+  });
 });
 
 /**
@@ -513,6 +704,41 @@ app.post('/:emailId/analyze', async (c) => {
       contacts: result.contacts || [],
     },
   });
+});
+
+/**
+ * Manually override an email's signals (sentiment / churn / tags)
+ * PATCH /api/emails/:emailId/signals
+ *
+ * Body: { signals: number[]; reason?: string }
+ *
+ * Replaces the email's signal set with the user-supplied one, locks it against
+ * future re-analysis, and records the before/after in the override audit log.
+ * Available to any user with email access (authed /api/emails mount only).
+ *
+ */
+app.patch('/:emailId/signals', async (c) => {
+  // This router is mounted at both /api/emails (session auth) and
+  // /api/internal/emails (service-key auth). Reject the internal mount: the
+  // override is a user-attributed write and must not trust a caller-supplied
+  // x-user-id for the audit log.
+  if (c.req.path.startsWith('/api/internal/')) {
+    throw new ForbiddenError('Signal overrides are not available over the internal API');
+  }
+  return handleApiRequestWithParams(
+    c,
+    z.object({ emailId: z.string().uuid() }),
+    updateEmailSignalsRequestSchema,
+    async (requestHeader, params, request) => {
+      const analysisService = container.resolve(EmailAnalysisService);
+      return await analysisService.applyManualSignalOverride(
+        requestHeader,
+        params.emailId,
+        request.signals,
+        request.reason
+      );
+    }
+  );
 });
 
 export default app;

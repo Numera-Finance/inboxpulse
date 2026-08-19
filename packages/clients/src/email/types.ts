@@ -114,6 +114,30 @@ export const analyzedEmailExportItemSchema = z.object({
 export type AnalyzedEmailExportItem = z.infer<typeof analyzedEmailExportItemSchema>;
 
 /**
+ * Request body for PATCH /api/emails/:emailId/signals — a manual correction of
+ * an email's signals (sentiment / churn / tags). `signals` is the full desired
+ * set of Signal integers (see @crm/shared Signal constants); it replaces the
+ * existing set. `reason` is an optional note on why the correction was made.
+ */
+export const updateEmailSignalsRequestSchema = z.object({
+  signals: z.array(z.number().int()).max(20),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export type UpdateEmailSignalsRequest = z.infer<typeof updateEmailSignalsRequestSchema>;
+
+/**
+ * Response for a signal override — the persisted signals and the lock flag.
+ */
+export const updateEmailSignalsResponseSchema = z.object({
+  emailId: z.string().uuid(),
+  signals: z.array(z.number()).default([]),
+  signalsOverridden: z.boolean(),
+});
+
+export type UpdateEmailSignalsResponse = z.infer<typeof updateEmailSignalsResponseSchema>;
+
+/**
  * First-reply marker — a header-only signal that the company replied in a thread.
  *
  * Emitted by the Gmail sync for outbound/reply messages it drops at the
@@ -152,3 +176,104 @@ export const firstReplyMarkersRequestSchema = z.object({
 });
 
 export type FirstReplyMarkersRequest = z.infer<typeof firstReplyMarkersRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// User-submitted tag suggestions (Gmail extension → email_analyses)
+// ---------------------------------------------------------------------------
+
+/** Churn risk levels a user can suggest — mirrors the churn analysis result. */
+export const userSubmittedRiskLevelSchema = z.enum(['low', 'medium', 'high', 'critical']);
+export type UserSubmittedRiskLevel = z.infer<typeof userSubmittedRiskLevelSchema>;
+
+/** Sentiment values a user can suggest — mirrors the sentiment analysis result. */
+export const userSubmittedSentimentSchema = z.enum(['positive', 'negative', 'neutral']);
+export type UserSubmittedSentiment = z.infer<typeof userSubmittedSentimentSchema>;
+
+/**
+ * Request body for POST /api/emails/tag-suggestion (and the internal mount).
+ *
+ * Identifies the message the way the Gmail surfaces already do — by provider
+ * message id, since neither the extension nor the add-on knows our email UUID.
+ * At least one of `riskLevel` / `sentimentValue` must be present; `null` clears
+ * a previously submitted suggestion, `undefined` (omitted) leaves it untouched.
+ */
+export const submitTagSuggestionRequestSchema = z
+  .object({
+    /** Provider (Gmail) message id of the message being re-tagged. */
+    messageId: z.string().min(1).max(500),
+    /** Defaults to 'gmail' server-side when omitted. */
+    provider: z.string().min(1).max(50).optional(),
+    /** Suggested churn risk → email_analyses.user_submitted_risk_level. */
+    riskLevel: userSubmittedRiskLevelSchema.nullish(),
+    /** Suggested sentiment → email_analyses.user_submitted_sentiment_value. */
+    sentimentValue: userSubmittedSentimentSchema.nullish(),
+  })
+  .refine((v) => v.riskLevel !== undefined || v.sentimentValue !== undefined, {
+    message: 'At least one of riskLevel or sentimentValue must be provided',
+  });
+
+export type SubmitTagSuggestionRequest = z.infer<typeof submitTagSuggestionRequestSchema>;
+
+/** What was persisted, echoed back so the UI can render the saved state. */
+export const submitTagSuggestionResponseSchema = z.object({
+  emailId: z.string().uuid(),
+  messageId: z.string(),
+  /** Suggestion now stored on the churn row (null = none). */
+  userSubmittedRiskLevel: userSubmittedRiskLevelSchema.nullable(),
+  /** Suggestion now stored on the sentiment row (null = none). */
+  userSubmittedSentimentValue: userSubmittedSentimentSchema.nullable(),
+});
+
+export type SubmitTagSuggestionResponse = z.infer<typeof submitTagSuggestionResponseSchema>;
+
+/* ------------------------------------------------------------------------- *
+ * Thread view — the whole conversation, so a reader can triage it
+ *
+ * A single message with no recipients answers none of the questions triage
+ * actually asks: who is on this, whose turn is it, and how long has it sat.
+ * `analyzedEmailSchema` carries only `fromEmail`, which is why the detail
+ * panel's "To:" line rendered empty — there was never a field behind it.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One address on a message.
+ *
+ * `isStaff` mirrors `email_participants.participant_type = 'user'`. It is the
+ * single most useful bit on this object: "who is us and who is them" is the
+ * first thing a reader needs and the slowest thing to work out by squinting at
+ * domains.
+ */
+export const threadParticipantSchema = z.object({
+  email: z.string(),
+  name: z.string().nullable(),
+  isStaff: z.boolean(),
+});
+
+export type ThreadParticipant = z.infer<typeof threadParticipantSchema>;
+
+/** One message in the conversation, with everyone it was addressed to. */
+export const threadMessageSchema = z.object({
+  id: z.string().uuid(),
+  subject: z.string(),
+  receivedAt: z.coerce.date(),
+  from: threadParticipantSchema,
+  to: z.array(threadParticipantSchema).default([]),
+  cc: z.array(threadParticipantSchema).default([]),
+  /** First ~200 chars of the body, for the timeline rail. */
+  snippet: z.string(),
+  /** True for the message the reader opened, so the rail can mark it. */
+  isFocused: z.boolean(),
+  /** True when nobody from the firm is on `from` — i.e. they wrote, not us. */
+  inbound: z.boolean(),
+  /** Hours since the previous message. Null on the first. The gap is the story. */
+  hoursSincePrevious: z.number().nullable(),
+});
+
+export type ThreadMessage = z.infer<typeof threadMessageSchema>;
+
+export const emailThreadSchema = z.object({
+  threadId: z.string().nullable(),
+  messages: z.array(threadMessageSchema),
+});
+
+export type EmailThread = z.infer<typeof emailThreadSchema>;

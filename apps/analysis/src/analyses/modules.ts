@@ -1,5 +1,8 @@
 import { z } from 'zod';
+import type { Email } from '@crm/shared';
 import type { AnalysisModule } from '../framework/types';
+import { logger } from '../utils/logger';
+import { sanitizeGmailQuery, participantAddresses } from './query-sanitizer';
 import {
   sentimentSchema,
   escalationSchema,
@@ -8,6 +11,7 @@ import {
   kudosSchema,
   competitorSchema,
   signatureSchema,
+  contextSearchStringSchema,
 } from './schemas';
 
 /**
@@ -22,7 +26,13 @@ Analyze the emotional tone of this email from a customer relationship perspectiv
 Return:
 - value: positive|negative|neutral
 - confidence: 0-1 (how confident you are in the sentiment classification)
-- reason: one short sentence (max ~160 characters) justifying the classification, quoting or paraphrasing the specific phrase that drove it. Always provide this.
+- reason: one short sentence (max ~160 characters) justifying the classification, naming the specific phrase that drove it. Always provide this.
+
+QUOTATION MARKS MEAN VERBATIM. If you put text in quotes it must appear in the email
+character for character. If you are summarising or paraphrasing, write it without
+quotation marks. A reader is shown this sentence to learn how displeasure is worded in
+American business English, so a phrase they study and memorise must be one the client
+actually wrote.
 
 CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) are NEUTRAL. Only classify as POSITIVE when the PRIMARY PURPOSE of the email is to express genuine satisfaction, praise, or heartfelt gratitude — not as a side effect of politeness.
 
@@ -55,7 +65,9 @@ CRITICAL RULE: Default to NEUTRAL. The vast majority of business emails (95%+) a
 
 Classify as NEGATIVE only when the customer ASSERTS that we did something wrong, failed them, or caused them harm — not when they merely ask, request, or rush us. The complaint must be aimed at our firm and be the main point of the email, not a passing remark in an otherwise operational message.
 
-The key test is ASSERTION vs. INQUIRY. Saying "this is wrong / this is missing / you never did X" is dissatisfaction. Asking "is this right? / can you confirm X? / any update on X?" is NOT — it is a neutral question even if it voices mild doubt.
+The key test is ASSERTION vs. INQUIRY. Saying "this is wrong / this is missing / you never did X" is dissatisfaction. Asking "is this right? / can you confirm X?" is NOT — it is a neutral question even if it voices mild doubt.
+
+ONE EXCEPTION, and it is the most common complaint we receive: "any update on X?" where X is work ALREADY OURS. That is not an inquiry, it is a chase. See ASKING WHEN below.
 
 NEGATIVE signals — the customer ASSERTS a problem with us (NOT EXHAUSTIVE — reason about cases not listed here):
 - States our work is wrong or does not match reality ("this is incorrect", "the numbers don't match", "you booked this to the wrong account")
@@ -69,18 +81,78 @@ URGENCY IS NOT ESCALATION. A deadline, due date, or a request to prioritize or e
 
 NEUTRAL even when worded strongly or with time-pressure (NOT EXHAUSTIVE — reason about cases not listed here):
 - A request to send, prepare, fix, update, process, or grant access to something — even if marked urgent or carrying a deadline ("please share the W9 by tomorrow", "give KK QBO access on priority")
-- A question, clarification, status check, or request for confirmation — even if it voices mild uncertainty ("can you confirm the fee?", "I'm not sure I see the confirmation", "is this right?", "any update on the open items?")
+- A question, clarification, or request for confirmation — even if it voices mild uncertainty ("can you confirm the fee?", "I'm not sure I see the confirmation", "is this right?"). NOT a status check on work we already hold — see ASKING WHEN below.
 - A price, fee, quote, or scope discussion ("we don't want to pay for that twice")
 - Frustration aimed at a third party (a bank, the IRS, a vendor, another provider) — even if forwarded to us — UNLESS the customer explicitly blames US or asks us to fix OUR OWN failure
 - The customer explaining or apologizing for their OWN delay, mistake, or missing information ("sorry I couldn't get to it earlier", "I don't have the 2022 W-2")
 - The customer disagreeing with a correction we proposed, or saying a change is not needed — this is a discussion, not dissatisfaction
 - An informational or operational notice — a company winding down, a routine AR/AP review, providing documents we requested, or looping in a colleague to coordinate
 
-DOUBLE-CHECK before finalizing your classification. Re-read the email and ask:
-"Is the customer ASSERTING that WE did something wrong, failed them, or caused harm — as the MAIN point of this email?"
-- If YES → NEGATIVE.
-- If they are only requesting, asking, clarifying, confirming, negotiating price, venting about a third party, owning their own delay, or applying time-pressure without a complaint about us → NEUTRAL.
-Revise your initial classification if this check disagrees with it.
+THE ONE QUESTION. Everything above is detail; this is the decision:
+
+"Does the client state or imply that WE did something wrong, failed to deliver,
+missed something, were too slow, or caused them a problem?"
+
+- YES → NEGATIVE. This holds even when they are polite, even when it is phrased
+  as a question ("why is this missing?", "I don't see the return"), and even
+  when they are chasing us again about something still outstanding.
+- NO → NEUTRAL.
+
+A REQUEST CAN BE A COMPLAINT. This is the single most common mistake: the
+client wraps a failure in a polite ask, and the classifier reads the grammar
+instead of the content. Look at WHAT is being asked for, not how.
+
+- "Please send me the reports" → NEUTRAL. New work.
+- "No vendor bills entered. Please send me the reports" → NEGATIVE. Work we
+  already owed is missing, and they are telling us so.
+- "Can you set up the payroll account?" → NEUTRAL. New work.
+- "Please reconcile and FIX the LiveARR row" → NEGATIVE. Fixing implies we got
+  it wrong.
+- "Can you share a timeline?" → NEUTRAL, but ONLY for work that has not started.
+- "Can you share a timeline for what Drew asked for last week?" → NEGATIVE.
+  They are chasing something already promised.
+- "Could you provide an UPDATE on the expected timeline for the FY2025-26
+  financials?" → NEGATIVE, even though nothing is named as late and the tone is
+  courteous. An update can only be asked for on work already underway, so the
+  word presupposes waiting. Nobody asks how long something will take unless they
+  have started minding.
+
+ASKING WHEN IS A COMPLAINT WHEN THE WORK IS ALREADY OURS. Distinguish by what is
+being asked about, not by whether a previous request is mentioned:
+- timeline for work not yet started → NEUTRAL, they are planning.
+- timeline, status, or "any update" on work we already hold → NEGATIVE, they are
+  waiting and have decided to say so.
+This is the politest form a complaint takes, and the easiest to miss: no failure
+is named, no one is blamed, and every word is courteous.
+- "Please check why the balance is off" → NEGATIVE. They found a discrepancy in
+  our work.
+- "It was accidentally enabled and we incurred big fees" → NEGATIVE. We caused
+  a cost, however calmly they describe it.
+
+The test: does the request point at work we ALREADY owed, delivered wrongly, or
+left incomplete? Then it is NEGATIVE, no matter how courteous the wording. Only
+a request for genuinely NEW work is NEUTRAL.
+
+Four cases are commonly mistaken for YES. Each is NEUTRAL *on its own* — but
+each becomes NEGATIVE the moment the client also alleges a failure on our side.
+Do not stop at the first match; ask whether we are blamed as well.
+
+- Frustration aimed at a THIRD PARTY (Gusto, Deel, a bank, the IRS, a state
+  agency, their own auditor or team). NEUTRAL — unless they say we caused it,
+  or that we failed to handle it.
+- A fee, price, quote or scope discussion. NEUTRAL — unless the complaint is
+  that we billed for work we did not do, or delivered less than we charged for.
+- Time-pressure alone: "ASAP", "by Friday", "please prioritise". NEUTRAL —
+  unless the urgency exists because we already missed something.
+- Not about our firm: forwarded notices, portal alerts, feedback forms about
+  someone else's business. NEUTRAL — no exception; this one really is not ours.
+
+Measured on 120 production negatives, the classifier is right about 72% of the
+time and over-fires on the rest, concentrated in exactly these four cases. It
+does not under-fire: a search of mail labelled neutral found the complaint
+language there belongs to third parties and automated notices, not to missed
+complaints. Correct the over-firing WITHOUT becoming reluctant — a missed
+complaint costs more than a false one.
 
 EXAMPLES - Classify as NEUTRAL (NOT positive):
 - "Yes, that works. Thank you." → NEUTRAL (simple acknowledgment)
@@ -104,7 +176,26 @@ KEY TEST: Ask yourself — "Is the primary purpose of this email to express posi
 
 Remember: "Thank you" or "thank you so much" alone is NEVER sufficient for positive. Exclamation marks do NOT change neutral to positive. Scheduling, requests, operational updates, and confirmations are ALWAYS neutral regardless of politeness level.`,
   schema: sentimentSchema,
-  version: 'v1.5',
+  // v1.7 added "a request can be a complaint". v1.8 added the chase: asking WHEN
+  // about work we already hold, which v1.7 explicitly taught was neutral. v1.9
+  // stopped inviting the model to put paraphrases inside quotation marks.
+  //
+  // v1.9 is NOT backed by a measurement. An attempt to A/B it against v1.8 was
+  // abandoned as unsound: reproducing the prompt outside the structured-output
+  // path required bolting a "return JSON" instruction onto it, which changed
+  // behaviour enough that a third of responses failed to parse and the OLD
+  // prompt appeared to quote nothing at all — against production data showing it
+  // quotes in 83% of complaints. The harness was measuring itself.
+  //
+  // The change is kept because it is better specified, not because it was shown
+  // to work: v1.8 literally said "quoting or paraphrasing", so a paraphrase in
+  // quotation marks was compliance. What actually protects the reader is
+  // checkQuotes() at display time, which verifies against the body regardless of
+  // what the model does.
+  //
+  // The version is written onto every stored analysis, so changing the prompt
+  // without bumping it makes two different classifiers indistinguishable.
+  version: 'v1.9',
 };
 
 /**
@@ -205,23 +296,39 @@ export const churnModule: AnalysisModule = {
   name: 'churn',
   description: 'Assess customer churn risk',
   instructions: `## Churn Risk Assessment
-Assess the risk level that this customer will churn.
+Assess whether this email carries evidence that the customer may leave.
 
 Return:
-- riskLevel: low|medium|high|critical
+- riskLevel: none|low|medium|high|critical
 - confidence: 0-1
-- indicators: array of specific phrases or behaviors indicating churn risk
+- indicators: array of the specific phrases that drove the level. MUST be empty when riskLevel is none.
 - reason: summary explanation (optional)
 
-Churn risk indicators:
-- Threats to cancel or switch providers
-- Mentioning competitors positively
-- Repeated complaints or unresolved issues
-- Loss of trust or confidence
-- Price sensitivity concerns
-- Feature gaps compared to competitors`,
+CRITICAL RULE: Default to NONE. The overwhelming majority of business email
+carries no churn signal at all. Return NONE unless the email contains at least
+one of the indicators below — an ordinary request, invoice, scheduling note or
+status update is NONE, not low.
+
+Do not treat routine operational friction as churn risk. A client asking where
+something is, correcting a figure, or chasing a deadline is doing business with
+us, not leaving us.
+
+Churn risk indicators — return a level above NONE only if one is present:
+- Threats to cancel, switch providers, or not renew
+- Mentioning competitors positively, or saying they are evaluating alternatives
+- Repeated complaints about the same unresolved issue
+- Explicit loss of trust or confidence in us
+- Disputing our fees as poor value, or asking to reduce scope to cut cost
+- Naming a capability gap as a reason to look elsewhere
+
+Level guide:
+- none: no indicator present. This is the default and the most common answer.
+- low: one indicator, stated mildly and in passing
+- medium: an indicator stated directly, or more than one present
+- high: explicit dissatisfaction with our value, or an alternative being considered
+- critical: a stated intention to leave, cancel, or escalate to termination`,
   schema: churnSchema,
-  version: 'v1.0',
+  version: 'v1.1',
 };
 
 /**
@@ -316,6 +423,74 @@ Other rules:
 };
 
 /**
+ * Context Search String Module
+ *
+ * Unlike every other module here, the output is not a verdict about the email —
+ * it is an instruction for retrieving other emails. The reader never sees the
+ * string itself; it is run against the mailbox and only the results surface.
+ */
+export const contextSearchStringModule: AnalysisModule = {
+  name: 'context-search-string',
+  description: 'Generate a Gmail search string that finds context for this email',
+  instructions: `## Context Search String
+Given this email's sender, receiver, CCs, subject, and body, generate a search
+string (such as with "ands" and "ors") that can be entered into a Gmail-like
+search bar to find context that could aid with understanding the email.
+
+Return:
+- intent: one sentence (max ~160 characters) naming what would count as useful
+  context for this email — the specific decision, obligation, request or thread
+  of work a reader would be trying to catch up on. Retrieved candidates are
+  later scored against this sentence, so name the thing at stake rather than
+  restating the subject line.
+- query: the search string
+- confidence: 0-1 (how likely this string is to surface genuinely related email)
+
+Rules:
+- If the email only includes acknowledgements or similar gestures such as "ok,
+  thanks" or "will do", center the string primarily around the participants and
+  the subject. State the intent in terms of what the acknowledgement is
+  answering — the underlying request or proposal, not the acknowledgement.
+- Keep the elements in the string at a maximum of three terms.`,
+  schema: contextSearchStringSchema,
+  version: 'v1.1',
+
+  /**
+   * Make the generated query runnable before it is stored.
+   *
+   * Two corrections, both for failures Gmail reports as silence rather than as
+   * an error: addresses the model invented (`sandeep@mystartupcfo.com` on a
+   * thread whose participant is `sshroff@mystartupcfo.com`), and conjunctions
+   * pinning both ends of the conversation, which describe the email being read
+   * instead of searching around it. Either one makes the panel read as "no
+   * context exists". Correcting here means the stored query is the one that
+   * will actually be run.
+   */
+  postProcess: (result: unknown, email: Email): unknown => {
+    const parsed = contextSearchStringSchema.safeParse(result);
+    if (!parsed.success) return result;
+
+    const { query, removed } = sanitizeGmailQuery(
+      parsed.data.query,
+      participantAddresses(email)
+    );
+    if (removed.length === 0) return result;
+
+    logger.warn(
+      {
+        emailId: email.messageId,
+        removed,
+        before: parsed.data.query,
+        after: query,
+      },
+      'context-search-string: repaired an unrunnable query'
+    );
+
+    return { ...parsed.data, query };
+  },
+};
+
+/**
  * All analysis modules (LLM analyses only — domain and contact extraction are
  * pure regex on the analyze handler, not analyses).
  */
@@ -327,6 +502,7 @@ export const allModules: AnalysisModule[] = [
   kudosModule,
   competitorModule,
   signatureModule,
+  contextSearchStringModule,
 ];
 
 /**
@@ -340,4 +516,5 @@ export const modulesByName: Record<string, AnalysisModule> = {
   'kudos': kudosModule,
   'competitor': competitorModule,
   'signature-extraction': signatureModule,
+  'context-search-string': contextSearchStringModule,
 };

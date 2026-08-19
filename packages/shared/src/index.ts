@@ -7,3 +7,4 @@ export * from './search/types';
 export * from './oauth';
 export * from './di';
 export * from './middleware';
+export * from './register';
