@@ -608,6 +608,11 @@ jobs:
         run: |
           SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
 
+          # Gmail waits for this card synchronously, so a cold start is dead time the
+          # user watches. Observed 2026-08-19: 'Starting new instance ... AUTOSCALING'
+          # at 05:51:58, container ready 05:52:10 — 12 seconds before the request even
+          # began, on a render that then took 3. One warm instance costs a few dollars
+          # a month and removes half the panel's perceived load time.
           gcloud run deploy crm-addon \
             --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/crm-addon:${{ github.sha }}" \
             --platform managed \
@@ -630,7 +635,8 @@ jobs:
             --update-secrets "\
           SERVICE_API_KEY=SERVICE_API_KEY:latest,\
           LIVE_ANALYSIS_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest" \
-            --min-instances 0 \
+            --min-instances 1 \
+            --no-cpu-throttling \
             --max-instances 10 \
             --memory 512Mi \
             --cpu 1 \

@@ -1039,12 +1039,37 @@ app.post('/homepage', async (c) => {
   const stats = null;
   // Resolve the real viewer before asking — the query is entitlement-scoped and
   // "who is unhappy" must not become a way to read accounts they cannot open.
-  const whoLookup = tenantId && verified.email ? await resolveViewer(tenantId, verified.email) : null;
+  //
+  // THREE ROUNDS, NOT SEVEN CALLS.
+  //
+  // These ran strictly sequentially, so a panel open cost the SUM of every
+  // call. Only two real dependencies exist: everything needs `tenantId`, and
+  // the two entitlement-scoped sections need the resolved viewer. Everything
+  // else was waiting its turn for no reason.
+  //
+  //   round 1  tenantId                    (already resolved above)
+  //   round 2  viewer + the three tenant-wide sections, together
+  //   round 3  waiting + fires, which need the viewer
+  //
+  // `Promise.all` and not sequential awaits: measured on the thread card
+  // earlier in this build, two model calls issued together finished in the time
+  // of the slower one while the same two awaited in turn cost their sum. The
+  // same arithmetic applies to HTTP.
+  //
+  // Each call keeps its own 6s abort, so one slow section still cannot hold the
+  // panel past its own budget — and now it no longer delays the others either.
+  const [whoLookup, pulse, slow, stirring] = await Promise.all([
+    tenantId && verified.email ? resolveViewer(tenantId, verified.email) : Promise.resolve(null),
+    tenantId ? getDangerPulse(tenantId) : Promise.resolve(null),
+    tenantId ? getSlowResponders(tenantId) : Promise.resolve([]),
+    tenantId ? getStirring(tenantId) : Promise.resolve([]),
+  ]);
   const who = whoLookup?.status === 'found' ? whoLookup.viewer : null;
-  const waiting = tenantId && who ? await getWaitingClients(tenantId, who.userId, who.isAdmin) : [];
-  const pulse = tenantId ? await getDangerPulse(tenantId) : null;
   // Both are management views: where the fires are, and who to ask about them.
-  const fires = tenantId && who ? await getFires(tenantId, who.userId, who.isAdmin) : [];
+  const [waiting, fires] = await Promise.all([
+    tenantId && who ? getWaitingClients(tenantId, who.userId, who.isAdmin) : Promise.resolve([]),
+    tenantId && who ? getFires(tenantId, who.userId, who.isAdmin) : Promise.resolve([]),
+  ]);
   // A viewer with no admin permission and no assigned customers sees nothing in
   // the entitlement-scoped sections. That must be stated on the card, not left
   // as an absent section that reads as "nothing is wrong".
@@ -1063,9 +1088,6 @@ app.post('/homepage', async (c) => {
   // We could not ask. Said out loud, because an unscoped panel that stays silent
   // reads as "nothing is on fire".
   const viewerUncheckable = whoLookup?.status === 'unreachable';
-  const slow = tenantId ? await getSlowResponders(tenantId) : [];
-  // The only section that fires before a complaint is written.
-  const stirring = tenantId ? await getStirring(tenantId) : [];
   // The working set is the reason to open the panel without a message: it is
   // the only view of what the user marked, since nothing was written to Gmail.
   workingSet.prune();
