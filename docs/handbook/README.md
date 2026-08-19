@@ -81,6 +81,9 @@ tokens, which were never implemented (see ADR-028), and a separate `employees`
 entity, since merged into `users`. Two of what remains are worth your time:
 
 - **`docs/decisions.md`** — the ADR log, append-only. Read ADR-005 and ADR-020.
+- **`13-PERFORMANCE.md`** (in this handbook) — the load-test rig, every
+  measurement it produced, and three hypotheses that turned out wrong. Read
+  before optimising anything on the panel path.
 - **`docs/API-STANDARD.md`** — binding rules for any new endpoint or panel
   producer: the envelope, identity, versioning, the layout budget, the image
   contract. Read before building an integration.
