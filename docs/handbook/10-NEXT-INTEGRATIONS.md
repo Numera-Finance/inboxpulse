@@ -3,6 +3,13 @@
 *A design brief, not a description. Nothing here is built. It records the
 intent and the constraints so whoever builds it does not rediscover them.*
 
+> **The open questions below are now answered in `docs/API-STANDARD.md`** — the
+> envelope, the identity model, versioning, the layout budget, the image
+> contract, and how a producer says it is broken. Read the standard to build
+> against; read this for why each rule exists.
+> Step 1 of the suggested order, closing the consent gap, is done (ADR-029).
+> **Step 2, identity, blocks issuing a second service key.**
+
 ## The intent
 
 InboxPulse becomes the sidebar for **many internal company actions**, not just

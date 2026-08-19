@@ -2081,3 +2081,36 @@ vendor in the first example is already a customer record.
   path (`analysis_keywords`) still short-circuits the LLM entirely and sets
   `negative` at confidence 1.0 from a word-boundary match on subject + body,
   leaving `target` NULL. Both are follow-ups.
+
+### ADR-030: Authorization inputs are never request inputs (2026-08-18)
+**Status:** Accepted
+**Context:** `/api/internal/addon/account-context` reads `isAdmin` from a query
+parameter and `tenantId` from another, while a valid service key already grants
+`ALL_PERMISSIONS`. Any holder of the key can therefore pass `isAdmin=true` and
+read every customer in the tenant. This was safe in the sense that mattered —
+one key, one consumer, both written by the same team — and it stops being safe
+the moment a second team holds a key, which is the explicit plan for this
+surface.
+
+The same shape recurs in the panel: producers were going to be trusted to render
+whatever they liked into a surface whose credibility is shared. A single producer
+asserting "this client is unhappy" spends trust earned by every producer that
+reported a number.
+**Decision:** `docs/API-STANDARD.md` is the binding contract for new endpoints
+and panel producers. Its load-bearing rule is that a caller may state who it is
+and may never state what it may see: the service key authenticates the system,
+the viewer arrives as a verified identity, and `userId`, `isAdmin`, `tenantId`
+and permissions are resolved server-side per request. `/viewer` already does
+this honestly and is the pattern to generalize.
+
+The panel half sets a layout budget (3 rows, 2 sections above the fold,
+host-owned ordering, visible truncation), requires every producer to be able to
+say it could not answer, and keeps the `bar.ts` image properties as rules:
+host-rendered, no data in the URL, no external hosts, carrying no information.
+**Consequences:** The eight existing addon routes are non-conforming and stay
+that way until a second consumer exists — rewriting eight working handlers to
+satisfy a table is how a working panel breaks. Until identity is fixed, **the
+service key is a tenant-wide admin credential** and is treated as one: one
+holder, rotated on staff change. Fixing identity blocks issuing a second key,
+and that ordering is the point of writing this down before the integration
+rather than after it.

@@ -79,6 +79,9 @@ tokens, which were never implemented (see ADR-028), and a separate `employees`
 entity, since merged into `users`. Two of what remains are worth your time:
 
 - **`docs/decisions.md`** — the ADR log, append-only. Read ADR-005 and ADR-020.
+- **`docs/API-STANDARD.md`** — binding rules for any new endpoint or panel
+  producer: the envelope, identity, versioning, the layout budget, the image
+  contract. Read before building an integration.
 - **`docs/EXPERIMENTS.md`** — every approach tried, with its measured result.
 - **`docs/RETIRED-BRANCHES.md`** — the ten branches deleted in August 2026,
   each with the evidence for deleting it and the SHA to restore it from. Read
