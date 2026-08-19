@@ -69,6 +69,7 @@ times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md
 | `/stirring` names customers without viewer scoping, where `/fires` withholds them | `03-ARCHITECTURE.md` |
 | Drizzle and SQL disagree about several columns and indexes | `04-DATA-MODEL.md` |
 | Hammerhead's six allocated people are unreachable via `hammerheadco.ai` | `09-DEAD-ENDS.md` |
+| Migrations are applied by hand and nothing detects drift — merging a migration does not run it | `04-DATA-MODEL.md` |
 
 ## The other documents in `docs/`
 

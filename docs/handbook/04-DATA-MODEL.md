@@ -212,3 +212,40 @@ These are real and will bite:
 
 Also vestigial: `emails.first_reply_email_id`, created by migration 001, present
 in the database and in neither schema source.
+
+## Merging a migration does not run it
+
+There is no migration runner and no applied-migrations table. `apps/api/sql/`
+holds the files, `sql/README.md` states the order, and somebody runs `psql -f` by
+hand. Nothing compares what the schema has to what the code expects, and nothing
+fails when they differ.
+
+This bit in August 2026. Migrations 018 (`emails.signals_overridden` plus the
+`email_signal_overrides` table) and 019 (`email_analyses.sentiment_target`)
+merged with their features and deployed to Cloud Run, while production had
+neither. The code was live and the columns were not, so the signal-override
+editor and sentiment attribution would have thrown against a real mailbox. Both
+were applied by hand once the drift was noticed; the checks below are what
+noticed it.
+
+The failure is quiet in the usual way: deploys go green, because CI never touches
+the database, and the panel keeps rendering everything that does not depend on
+the new column.
+
+**Check drift directly, against the database rather than the repo:**
+
+```sql
+select 'signals_overridden', count(*) from information_schema.columns
+  where table_name='emails' and column_name='signals_overridden'
+union all
+select 'sentiment_target', count(*) from information_schema.columns
+  where table_name='email_analyses' and column_name='sentiment_target';
+```
+
+Production is `:5434`, and it is the one with roughly 139,000 emails — `:5433`
+is a clone and is usually not even running, so a connection that succeeds is not
+evidence you reached the right one. `apps/api/.env.local` points at `:5433`.
+
+**When adding a migration, applying it is part of shipping it,** in the same
+sitting as the merge. Until a runner exists, the only thing standing between a
+deployed feature and a missing column is whoever remembers.
