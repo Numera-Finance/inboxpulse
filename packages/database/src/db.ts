@@ -72,7 +72,35 @@ function getClient() {
     }
 
     const ssl = getSslOptions();
-    client = postgres(connectionString, ssl ? { ssl } : {});
+    client = postgres(connectionString, {
+      ...(ssl ? { ssl } : {}),
+      connection: {
+        /**
+         * Reap a transaction the application has stopped talking to.
+         *
+         * On 2026-08-19 a single connection sat `idle in transaction` for 46
+         * minutes holding `pg_advisory_xact_lock` — the lock
+         * `ensureCustomerForEmail` takes to serialize customer creation per
+         * (tenant, domain). Because it is an *xact* lock it is only released at
+         * commit, and the commit never came: Cloud Run had killed the request at
+         * its 300s ceiling and throttled the instance's CPU, freezing the code
+         * mid-transaction. 74 sessions queued behind that lock, exhausted the
+         * pool, and every add-on endpoint — including `/viewer`, a single indexed
+         * lookup — hung for three hours.
+         *
+         * The database had `idle_in_transaction_session_timeout = 0`, so nothing
+         * ever reclaimed it. It is set here rather than only on the server so the
+         * guarantee travels with the code and survives a database that has been
+         * reprovisioned or is configured by someone else.
+         *
+         * This kills only sessions idle BETWEEN statements inside a transaction,
+         * which is never legitimate. It is deliberately not `statement_timeout`:
+         * that would also kill the long backfills and embedding jobs that share
+         * this package and are supposed to take minutes.
+         */
+        idle_in_transaction_session_timeout: 120_000,
+      },
+    });
   }
   return client;
 }

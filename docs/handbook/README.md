@@ -70,6 +70,7 @@ times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md
 | Drizzle and SQL disagree about several columns and indexes | `04-DATA-MODEL.md` |
 | Hammerhead's six allocated people are unreachable via `hammerheadco.ai` | `09-DEAD-ENDS.md` |
 | Migrations are applied by hand and nothing detects drift — merging a migration does not run it | `04-DATA-MODEL.md` |
+| One leaked transaction can hold `pg_advisory_xact_lock` and hang every panel endpoint | `04-DATA-MODEL.md` |
 
 ## The other documents in `docs/`
 

@@ -249,3 +249,51 @@ evidence you reached the right one. `apps/api/.env.local` points at `:5433`.
 **When adding a migration, applying it is part of shipping it,** in the same
 sitting as the merge. Until a runner exists, the only thing standing between a
 deployed feature and a missing column is whoever remembers.
+
+## One stuck transaction takes the whole panel down
+
+On 2026-08-19 every add-on endpoint returned 504 for three hours. The panel was
+not slow — each request hung to exactly 300.000s, the Cloud Run ceiling.
+
+The chain:
+
+1. `ensureCustomerForEmail` takes `pg_advisory_xact_lock(hashtext('customer:<tenant>:<domain>'))`
+   to serialize customer creation per domain. It is an **xact** lock, released
+   only at commit.
+2. One request was killed at Cloud Run's 300s limit. Cloud Run throttles an
+   instance's CPU outside request scope, so the code froze mid-transaction —
+   after the lock, after `findByDomain`, before any commit.
+3. The connection sat `idle in transaction` for 46 minutes, still holding the
+   lock. `idle_in_transaction_session_timeout` was `0`, so nothing reclaimed it.
+4. **74 sessions** queued on that lock, exhausting the pool. After that every
+   endpoint hung, including `/viewer`, which is one indexed lookup and touches
+   neither customers nor the lock — it simply could not get a connection.
+
+**The diagnostic that finds this in one query.** A hang is a lock wait; look for
+the session blocking others that is blocked by nobody:
+
+```sql
+select pid, state, now()-xact_start as age, wait_event_type, wait_event,
+       left(regexp_replace(query,'\s+',' ','g'), 90)
+from pg_stat_activity a
+where datname = current_database()
+  and cardinality(pg_blocking_pids(pid)) = 0
+  and exists (select 1 from pg_stat_activity b where a.pid = any(pg_blocking_pids(b.pid)));
+```
+
+`state = 'idle in transaction'` with `wait_event = ClientRead` means the
+application stopped talking mid-transaction. Terminating that pid rolls back work
+that was never going to commit and drains the queue behind it.
+
+**What now prevents the three-hour version.** `packages/database/src/db.ts` sets
+`idle_in_transaction_session_timeout` to 120s on every connection, so Postgres
+reclaims a frozen transaction by itself. It is set in code rather than only on the
+server so the guarantee travels with the deployment. It is deliberately **not**
+`statement_timeout`, which would kill the long backfills and embedding jobs that
+share this package.
+
+**What is still true.** The analysis path calls `ensureCustomerForEmail` once per
+participant inside a single transaction, so one transaction can hold advisory
+locks for several domains until it commits. That widens the window this incident
+walked through. Holding each lock for the shortest span, or moving customer
+creation out of the per-message transaction, is the real fix and is not done.
