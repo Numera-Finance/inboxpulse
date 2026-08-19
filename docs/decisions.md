@@ -1920,6 +1920,98 @@ none.
 This is a structural test on source text, and it cannot see whether the consent
 value is used or merely computed early. It buys ordering, which is what broke.
 
+### ADR-008: Contact link outranks the domain when resolving an email's customer (2026-08-14)
+
+**Status:** Accepted
+
+**Context:** A missing contact meant emails never reached the right customer.
+The pipeline resolves a participant's customer by looking up
+`customer_domains` first and consulting the contact's own `customerId` only
+when that finds nothing (`ensureContactsInTransaction`). When neither hits, it
+auto-creates a `"<domain> (Auto)"` placeholder and stamps it onto
+`email_participants.customer_id` — a value written once during analysis and
+never revisited. So an unknown sender produced a junk customer, every past
+email stayed pinned to it, and letting a user add the contact would have fixed
+nothing: the domain lookup still won on the sender's next email and dragged
+them straight back.
+
+Domain-first made sense while contacts were purely derived — the pipeline
+creates them itself, copying `customerId` from the domain result, so the two
+agree for almost every row and the order was immaterial. It stops being
+immaterial the moment a human sets a contact's customer.
+
+**Decision:**
+1. Resolution consults the contact's `customerId` before the domain lookup. A
+   contact is a fact about a person; a domain is a heuristic about an
+   organization, so the specific one wins.
+2. Whenever a domain changes hands, the contacts on it move with it. This is
+   the invariant that makes (1) safe — see Consequences. `mergeCustomer`
+   already did this; `replaceDomains` and the new assignment path now do too.
+3. `POST /api/contacts/assign-customer` (gated on `CUSTOMER_EDIT`) links the
+   contact, claims the domain when it is unowned or held by an `isAutoCreated`
+   placeholder, rewrites past `email_participants` rows, and creates the
+   escalation tasks that were skipped for emails that had no customer.
+
+Rejected: an `is_manually_assigned` column to mark human-set links as
+outranking the domain. It was aimed at `bob@contractor.com` working for Acme —
+but if a real customer owns `contractor.com`, the email is *already* attributed
+correctly and nobody is there reassigning it. The case does not arise, and the
+guard for it needed no schema.
+
+**Consequences:**
+- A contact's `customerId` is written at creation and only ever backfilled when
+  null — never refreshed. Under contact-first a stale link is therefore
+  permanent, which is why point 2 is a requirement and not a nicety. Any future
+  code that moves a domain between customers must move its contacts too.
+- Personal addresses skip the domain step entirely. Their key is a per-address
+  pseudo-domain (`bob@gmail.com` → `bob-gmail.com`), so there are no colleagues
+  to catch and nothing meaningful to attach to a real customer. Contact-first is
+  what makes these assignments hold; under domain-first they would have reverted
+  unless the pseudo-domain were moved or deleted.
+- Claiming a domain reassigns the sender's colleagues as well. That is wider
+  than the user literally asked for, so the toast names the scope
+  ("Assigned all of acme.com to …") rather than implying one address moved.
+- The auto-created placeholder is left in place, not archived or merged. It may
+  end up owning no domains and no emails. Cleaning it up is a separate
+  decision.
+- `replaceDomains` cannot take a domain from another customer —
+  `(tenant_id, domain)` is unique and the insert has no `ON CONFLICT`, so it
+  raises 23505. It only drops its own domains or claims unowned ones. The
+  contact reassignment there covers the claim case.
+- Retroactive task creation is deliberately narrow: only emails whose sender
+  participant was `NULL` before the update, filtered to negative sentiment and
+  excluding spam/marketing/transactional/automated. Those are the emails that
+  were invisible on the analyzed-email views (which all require
+  `ep.customer_id IS NOT NULL`) and that `maybeCreateTaskForNegativeEmail`
+  skipped with `SKIP_TASK_CREATION_NO_CUSTOMER`. It runs outside the
+  transaction, since `createFromEmail` also auto-assigns and notifies, and is
+  idempotent per email. It is dispatched to Inngest
+  (`contact/customer.assigned` -> `create-retroactive-escalations`) rather than
+  run inline: claiming a busy domain can surface hundreds of eligible emails,
+  each of which inserts a task, auto-assigns it and notifies, which would
+  exceed the request timeout long after the reassignment had committed — the
+  user would see a failure for work that had succeeded. Batched at 200 emails
+  per event to stay inside the payload ceiling, and limited to one run per
+  tenant at a time so correcting several senders in a row does not fan out into
+  concurrent notification bursts. Nothing is dropped regardless of volume.
+- The API therefore reports `tasksQueued`, not `tasksCreated`, and the UI says
+  "queued" — the tasks do not exist yet when the response returns.
+- The tenant's own domain can never be claimed. Internal senders appear in the
+  analyzed-email list, so the endpoint is reachable for one, and claiming that
+  domain would hand every colleague — including `participant_type = 'user'`
+  rows — to a customer. Same `tenant.domains` guard the analysis pipeline
+  applies before auto-creating an escalation.
+- Domain ownership is decided on an unlocked read, keeping the participant scan
+  out of the write transaction; the transaction re-checks the owner and raises
+  `ConflictError` if it moved, rather than letting `moveDomain` displace an
+  owner that changed underneath it.
+- Domain values reaching a `LIKE` pattern go through `escapeLikeLiteral`. The
+  `domains` field on the customer PATCH is validated only as a string, so an
+  unescaped `%` would have matched every address in the tenant.
+- No schema change. `ContactRepository.upsert` was fixed as part of this: its
+  `set` block wrote every column unconditionally, so a partial upsert emitted
+  `undefined` — NULL — over the existing customer link.
+
 ### ADR-009: Sentiment gets participant roles and a committed target (2026-08-14)
 
 **Status:** Accepted

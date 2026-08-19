@@ -31,6 +31,7 @@ import {
   TaskResolutionInfo,
   type TaskFilter,
 } from "@/components/tasks"
+import { AssignCustomerDialog } from "@/components/escalations/assign-customer-dialog"
 import { SignalEditor } from "@/components/inbox/signal-editor"
 import {
   useMarkTaskDone,
@@ -55,6 +56,13 @@ export default function EscalationsPage() {
 
   // Dialog state for mark done
   const [doneDialogTaskId, setDoneDialogTaskId] = React.useState<string | null>(null)
+
+  // Sender being reassigned to a customer, or null when the dialog is closed.
+  const [assignTarget, setAssignTarget] = React.useState<{
+    email: string
+    name?: string
+    currentCustomerName?: string
+  } | null>(null)
 
   // Bumped after a manual tag/sentiment override to remount InboxView and
   // refetch the list + open detail with the corrected signals.
@@ -387,16 +395,34 @@ export default function EscalationsPage() {
     const email = item.originalData as AnalyzedEmail
     const isNegative = hasSignal(email?.signals, Signal.SENTIMENT_NEGATIVE)
     const showTaskMeta = isNegative && email?.taskId
+
+    // The sender is what the customer is keyed on, so that is what gets
+    // reassigned — not the email, and not the task.
+    const openAssign = email?.fromEmail
+      ? () => setAssignTarget({
+          email: email.fromEmail,
+          name: email.fromName || undefined,
+          currentCustomerName: item.customerName,
+        })
+      : undefined
+
     if (!showTaskMeta) {
       // Not negative or no task - show minimal meta info (just customer and date)
       return (
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-          {item.customerName && (
-            <>
-              <span className="text-muted-foreground">Customer</span>
-              <span>{item.customerName}</span>
-            </>
-          )}
+          <span className="text-muted-foreground">Customer</span>
+          <span className="flex items-center gap-2">
+            <span className="truncate">{item.customerName || "Unassigned"}</span>
+            {openAssign && (
+              <button
+                type="button"
+                onClick={openAssign}
+                className="text-xs text-primary hover:underline flex-shrink-0"
+              >
+                Change
+              </button>
+            )}
+          </span>
           <span className="text-muted-foreground">Received</span>
           <span>{item.timestamp.toLocaleDateString()}</span>
         </div>
@@ -409,6 +435,7 @@ export default function EscalationsPage() {
         assigneeId={email.assignedToId || undefined}
         assigneeName={email.assignedToName || undefined}
         createdAt={item.timestamp}
+        onChangeCustomer={openAssign}
       />
     )
   }, [])
@@ -614,6 +641,16 @@ export default function EscalationsPage() {
             renderSidePanel={renderSidePanel}
           />
         </div>
+
+        {assignTarget && (
+          <AssignCustomerDialog
+            open
+            senderEmail={assignTarget.email}
+            senderName={assignTarget.name}
+            currentCustomerName={assignTarget.currentCustomerName}
+            onClose={() => setAssignTarget(null)}
+          />
+        )}
 
         <MarkDoneDialog
           open={!!doneDialogTaskId}

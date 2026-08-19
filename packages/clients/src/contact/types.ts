@@ -23,6 +23,21 @@ export const createContactRequestSchema = z.object({
 export type CreateContactRequest = z.infer<typeof createContactRequestSchema>;
 
 /**
+ * Assign an email address to a customer.
+ *
+ * Distinct from a plain contact create: this also re-links the sender's past
+ * emails to the customer and, when the domain is unowned or held only by an
+ * auto-created placeholder, takes the domain too.
+ */
+export const assignContactCustomerRequestSchema = z.object({
+  email: z.string().email().max(500),
+  customerId: z.uuid(),
+  name: z.string().max(500).optional(),
+});
+
+export type AssignContactCustomerRequest = z.infer<typeof assignContactCustomerRequestSchema>;
+
+/**
  * Zod schema for Contact response
  */
 export const contactSchema = z.object({
@@ -44,3 +59,18 @@ export const contactSchema = z.object({
 });
 
 export type Contact = z.infer<typeof contactSchema>;
+
+/**
+ * Result of an assignment. `emailsReassigned` counts the distinct emails
+ * re-linked, `tasksQueued` the escalation tasks handed to the background worker
+ * (queued, not yet created), and `domainMoved` is the domain that changed
+ * hands, or null when only this one address was affected.
+ */
+export const assignContactCustomerResponseSchema = z.object({
+  contact: contactSchema,
+  emailsReassigned: z.number().int(),
+  tasksQueued: z.number().int(),
+  domainMoved: z.string().nullable(),
+});
+
+export type AssignContactCustomerResponse = z.infer<typeof assignContactCustomerResponseSchema>;

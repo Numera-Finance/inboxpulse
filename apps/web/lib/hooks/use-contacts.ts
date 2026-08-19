@@ -1,6 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api';
-import type { Contact, CreateContactRequest } from '@crm/clients';
+import type {
+  AssignContactCustomerRequest,
+  AssignContactCustomerResponse,
+  Contact,
+  CreateContactRequest,
+} from '@crm/clients';
 
 // Query keys for cache management
 export const contactKeys = {
@@ -43,6 +48,27 @@ export function useUpsertContact() {
     onSuccess: (contact) => {
       // Invalidate related queries
       queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
+/**
+ * Hook to assign an email address to a customer.
+ *
+ * Broader invalidation than a plain contact write: the call re-links existing
+ * emails and may create tasks, so the analyzed-email lists, the customers list
+ * (escalation counts) and tasks are all stale afterwards.
+ */
+export function useAssignContactCustomer() {
+  const queryClient = useQueryClient();
+
+  return useMutation<AssignContactCustomerResponse, Error, AssignContactCustomerRequest>({
+    mutationFn: (data) => api.assignContactCustomer(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      queryClient.invalidateQueries({ queryKey: ['emails'] });
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
   });
 }

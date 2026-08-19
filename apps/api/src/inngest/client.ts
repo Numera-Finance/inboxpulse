@@ -3,6 +3,7 @@ import { createAnalyzeEmailFunction } from '../emails/inngest/functions';
 import { createRebuildAccessibleCustomersFunction } from '../users/inngest/functions';
 import { createEscalationNotificationCronFunction } from '../tasks/inngest/functions';
 import { createGmailWatchRenewalCronFunction } from '../integrations/inngest/functions';
+import { createRetroactiveEscalationsFunction } from '../contacts/inngest/functions';
 
 // Re-export inngest instance for backwards compatibility
 export { inngest };
@@ -20,4 +21,5 @@ export const inngestFunctions = [
   createRebuildAccessibleCustomersFunction(inngest),
   createEscalationNotificationCronFunction(inngest),
   createGmailWatchRenewalCronFunction(inngest),
+  createRetroactiveEscalationsFunction(inngest),
 ];

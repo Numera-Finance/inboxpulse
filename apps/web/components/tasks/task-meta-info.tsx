@@ -28,6 +28,12 @@ interface TaskMetaInfoProps {
   assigneeName?: string | null
   createdAt: Date
   className?: string
+  /**
+   * When provided, the customer becomes editable — a "Change" affordance
+   * appears beside it and calls this. Used where the customer may have been
+   * guessed rather than known, so the user can correct it in place.
+   */
+  onChangeCustomer?: () => void
 }
 
 /**
@@ -43,6 +49,7 @@ export function TaskMetaInfo({
   assigneeName,
   createdAt,
   className,
+  onChangeCustomer,
 }: TaskMetaInfoProps) {
   const { data: assignableUsers = [] } = useAssignableUsers()
   const { data: taskData } = useTask(taskId)
@@ -116,13 +123,24 @@ export function TaskMetaInfo({
         className
       )}
     >
-      {displayCustomerName && (
+      {(displayCustomerName || onChangeCustomer) && (
         <div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
             <Building2 className="h-3 w-3" />
             Customer
           </div>
-          <p className="font-medium">{displayCustomerName}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-medium truncate">{displayCustomerName || "Unassigned"}</p>
+            {onChangeCustomer && (
+              <button
+                type="button"
+                onClick={onChangeCustomer}
+                className="text-xs text-primary hover:underline flex-shrink-0"
+              >
+                Change
+              </button>
+            )}
+          </div>
         </div>
       )}
       <div>

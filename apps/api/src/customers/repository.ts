@@ -503,6 +503,7 @@ export class CustomerRepository extends ScopedRepository {
     return result[0];
   }
 
+
   /**
    * Replace all domains for a customer (delete existing, add new)
    * Used during import to fully replace domain list
@@ -682,6 +683,7 @@ export class CustomerRepository extends ScopedRepository {
     `);
     return (result as any).rowCount ?? 0;
   }
+
 
   /**
    * Point a single domain at `targetCustomerId`, whoever owned it before.

@@ -1,6 +1,11 @@
 import { getContactClient } from './clients';
 import type { SearchRequest, SearchResponse } from '@crm/shared';
-import type { Contact, CreateContactRequest } from '@crm/clients';
+import type {
+  AssignContactCustomerRequest,
+  AssignContactCustomerResponse,
+  Contact,
+  CreateContactRequest,
+} from '@crm/clients';
 
 /**
  * Get a contact by ID
@@ -58,6 +63,17 @@ export async function upsertContact(
   signal?: AbortSignal
 ): Promise<Contact> {
   return getContactClient().upsertContact(data, signal);
+}
+
+/**
+ * Assign an email address to a customer, retroactively re-linking that
+ * sender's existing emails.
+ */
+export async function assignContactCustomer(
+  data: AssignContactCustomerRequest,
+  signal?: AbortSignal
+): Promise<AssignContactCustomerResponse> {
+  return getContactClient().assignCustomer(data, signal);
 }
 
 /**
