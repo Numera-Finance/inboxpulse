@@ -4,6 +4,7 @@ import { createRebuildAccessibleCustomersFunction } from '../users/inngest/funct
 import { createEscalationNotificationCronFunction } from '../tasks/inngest/functions';
 import { createGmailWatchRenewalCronFunction } from '../integrations/inngest/functions';
 import { createRetroactiveEscalationsFunction } from '../contacts/inngest/functions';
+import { createPanelSnapshotCronFunction } from '../addon/inngest/functions';
 
 // Re-export inngest instance for backwards compatibility
 export { inngest };
@@ -17,6 +18,7 @@ export { inngest };
  * to avoid circular dependencies.
  */
 export const inngestFunctions = [
+  createPanelSnapshotCronFunction(inngest),
   createAnalyzeEmailFunction(inngest),
   createRebuildAccessibleCustomersFunction(inngest),
   createEscalationNotificationCronFunction(inngest),

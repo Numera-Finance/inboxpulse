@@ -1,9 +1,26 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
+import { PanelSnapshotService } from './snapshot-service';
 import { InvalidInputError } from '@crm/shared';
 import { AccountContextService, WaitingClientsService, DangerPulseService, FiresService, SlowRespondersService, StirringService } from './account-context';
 
 export const addonRoutes = new Hono();
+
+/**
+ * Serve a precomputed section, computing live only if the cron has not run.
+ *
+ * The fallback is what makes this safe to deploy before the cron has ever
+ * fired, and what makes a stopped cron degrade to the old behaviour — slow —
+ * rather than to stale numbers presented as current. `read()` returns null once
+ * a snapshot passes its age bound, so nothing here can quietly serve last
+ * week's answer.
+ */
+async function fromSnapshot<T>(tenantId: string, kind: string, windowDays: number, live: () => Promise<T>): Promise<T> {
+  const snapshots = container.resolve(PanelSnapshotService);
+  const hit = await snapshots.read<T>(tenantId, kind, windowDays);
+  if (hit !== null) return hit;
+  return live();
+}
 
 /**
  * GET /api/internal/addon/account-context?domain=&tenantId=
@@ -139,7 +156,9 @@ addonRoutes.get('/pulse', async (c) => {
   const days = Math.min(365, Math.max(7, Number(c.req.query('days') ?? 90)));
   return c.json({
     success: true,
-    data: await container.resolve(DangerPulseService).get(tenantId, days),
+    data: await fromSnapshot(tenantId, 'pulse', days, () =>
+      container.resolve(DangerPulseService).get(tenantId, days),
+    ),
   });
 });
 
@@ -185,7 +204,10 @@ addonRoutes.get('/stirring', async (c) => {
   if (!tenantId) throw new InvalidInputError('tenantId is required');
   return c.json({
     success: true,
-    data: await container.resolve(StirringService).get(tenantId),
+    // 90 is the stored window; stirring takes no days parameter.
+    data: await fromSnapshot(tenantId, 'stirring', 90, () =>
+      container.resolve(StirringService).get(tenantId),
+    ),
   });
 });
 
@@ -204,6 +226,8 @@ addonRoutes.get('/slow-responders', async (c) => {
   const days = Math.min(180, Math.max(1, Number(c.req.query('days') ?? 90)));
   return c.json({
     success: true,
-    data: await container.resolve(SlowRespondersService).get(tenantId, days),
+    data: await fromSnapshot(tenantId, 'slow_responders', days, () =>
+      container.resolve(SlowRespondersService).get(tenantId, days),
+    ),
   });
 });

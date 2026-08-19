@@ -117,6 +117,12 @@ psql $DATABASE_URL -f apps/api/sql/migrations/018_email_signal_overrides.sql
 # the participant-roster prompt change. NULL means "not attributed" (historical
 # rows and keyword-matched sentiment), never "aimed at us".
 psql $DATABASE_URL -f apps/api/sql/migrations/019_email_analyses_sentiment_target.sql
+
+# Precomputed tenant-wide panel sections. The pulse / stirring / slow-responder
+# queries are 90-day aggregates identical for every viewer, and at 25 concurrent
+# panel opens they timed out on 57-65% of calls. A cron fills this table; the
+# endpoints read it, so cost stops scaling with the number of readers.
+psql $DATABASE_URL -f apps/api/sql/migrations/020_panel_snapshots.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).

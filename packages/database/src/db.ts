@@ -100,6 +100,25 @@ function getClient() {
          */
         idle_in_transaction_session_timeout: 120_000,
       },
+      /**
+       * Bound the pool, because the ceiling is shared and small.
+       *
+       * postgres.js defaults to 10 connections per process and nothing set it.
+       * Six services touch this database and each scales to 10 instances
+       * (manager 5, embeddings 3), so full scale-out demands roughly 480
+       * connections against a `max_connections` of 300 — the cluster runs out
+       * before any single service thinks it is busy, and the symptom lands on
+       * whichever service happens to connect next rather than on the one that
+       * caused it.
+       *
+       * 5 x 48 possible instances = 240, leaving headroom for psql, migrations
+       * and cron. Override with DB_POOL_MAX where a service genuinely needs more.
+       */
+      max: Number(process.env.DB_POOL_MAX ?? 5),
+      /** Hand connections back rather than holding them across idle periods. */
+      idle_timeout: 30,
+      /** Fail fast instead of hanging when the cluster is already saturated. */
+      connect_timeout: 10,
     });
   }
   return client;

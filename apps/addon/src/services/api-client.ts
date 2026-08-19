@@ -564,7 +564,107 @@ export interface DangerPulse {
 }
 
 /** The number the product exists to move. Tenant-wide aggregate, no per-account detail. */
+/**
+ * A short-lived, single-flight cache for the panel's tenant-wide sections.
+ *
+ * Measured before this existed: 25 concurrent panel opens produced p50 2,634ms
+ * on `pulse` and 3,586ms on `stirring`, and 117 of 262 calls blew through the
+ * add-on's 6s abort. Users did not see a slow panel — they saw sections missing.
+ *
+ * Two separate problems, and caching alone only fixes one:
+ *
+ *   TTL removes the repeated work. `pulse`, `stirring` and `slow-responders`
+ *   are computed over 90-day windows and are IDENTICAL for every viewer in the
+ *   tenant, so 200 users were paying 200 times for one answer that moves a few
+ *   times an hour.
+ *
+ *   SINGLE FLIGHT removes the thundering herd. Without it, N simultaneous
+ *   misses all run the query at once, which is exactly the morning peak this
+ *   has to survive — everyone opens Gmail within the same few minutes, and a
+ *   cold cache would hand the database the whole spike anyway.
+ *
+ * Failures are deliberately NOT cached: a null from a timeout must not become
+ * the tenant's answer for the next three minutes.
+ */
+const TENANT_TTL_MS = 180_000;
+const VIEWER_TTL_MS = 60_000;
+const cacheStore = new Map<string, { value: unknown; expires: number }>();
+const inFlight = new Map<string, Promise<unknown>>();
+
+/**
+ * How long a stale answer may still be shown while a fresh one is computed.
+ *
+ * These sections are 90-day aggregates. A three-minute-old count of who is
+ * waiting is not meaningfully different from a current one, and it is
+ * enormously different from a section that renders nothing because the query
+ * took 4.5s and the panel gave up at 6s. Measured at 25 concurrent panels,
+ * `stirring` timed out on 65% of calls and `pulse` on 57%; the same data served
+ * stale answers in microseconds.
+ *
+ * The honesty constraint: stale is served only while a refresh is ACTUALLY
+ * running, and only up to this bound. Past it the value is dropped and the
+ * caller waits, so the panel can never quietly show last week's numbers because
+ * the refresh has been failing since Tuesday.
+ */
+const STALE_MAX_MS = 15 * 60 * 1000;
+
+async function cached<T>(key: string, ttlMs: number, isFailure: (v: T) => boolean, fn: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const hit = cacheStore.get(key);
+  if (hit && hit.expires > now) return hit.value as T;
+
+  // Expired but recent: hand back what we have and refresh behind it. The
+  // reader gets last cycle's numbers immediately instead of a missing section.
+  if (hit && now - hit.expires < STALE_MAX_MS) {
+    if (!inFlight.has(key)) {
+      const refresh = (async () => {
+        try {
+          const value = await fn();
+          if (!isFailure(value)) cacheStore.set(key, { value, expires: Date.now() + ttlMs });
+          return value;
+        } finally {
+          inFlight.delete(key);
+        }
+      })();
+      // Unhandled rejections must not take the process down; the stale value stands.
+      refresh.catch(() => undefined);
+      inFlight.set(key, refresh);
+    }
+    return hit.value as T;
+  }
+
+  const running = inFlight.get(key);
+  if (running) return running as Promise<T>;
+
+  const task = (async () => {
+    try {
+      const value = await fn();
+      // Only a real answer earns a TTL.
+      if (!isFailure(value)) cacheStore.set(key, { value, expires: Date.now() + ttlMs });
+      return value;
+    } finally {
+      inFlight.delete(key);
+      // Bound the map; these keys are per tenant and per viewer, not per thread.
+      if (cacheStore.size > 500) {
+        for (const [k, v] of cacheStore) if (v.expires <= Date.now()) cacheStore.delete(k);
+      }
+    }
+  })();
+  inFlight.set(key, task);
+  return task;
+}
+
+/** Exposed so a test can assert the cache is bypassed, and for /diagnostics. */
+export function clearPanelCache(): void {
+  cacheStore.clear();
+  inFlight.clear();
+}
+
 export async function getDangerPulse(tenantId: string, days = 90): Promise<DangerPulse | null> {
+  return cached(`pulse:${tenantId}:${days}`, TENANT_TTL_MS, (v: DangerPulse | null) => v === null, () => _uncached_getDangerPulse(tenantId, days));
+}
+
+async function _uncached_getDangerPulse(tenantId: string, days = 90): Promise<DangerPulse | null> {
   const env = getEnv();
   if (!env.SERVICE_API_KEY) return null;
   const res = await apiFetch(
@@ -660,6 +760,10 @@ export interface Stirring {
 
 /** Clients whose mail has doubled this week, before anyone has complained. */
 export async function getStirring(tenantId: string): Promise<Stirring[]> {
+  return cached(`stirring:${tenantId}`, TENANT_TTL_MS, (v: Stirring[]) => v.length === 0, () => _uncached_getStirring(tenantId));
+}
+
+async function _uncached_getStirring(tenantId: string): Promise<Stirring[]> {
   const env = getEnv();
   if (!env.SERVICE_API_KEY) return [];
   const res = await apiFetch(
@@ -684,6 +788,10 @@ export interface SlowResponder {
 
 /** Median hours to first reply on negative mail, per account manager. */
 export async function getSlowResponders(tenantId: string, days = 90): Promise<SlowResponder[]> {
+  return cached(`slow:${tenantId}:${days}`, TENANT_TTL_MS, (v: SlowResponder[]) => v.length === 0, () => _uncached_getSlowResponders(tenantId, days));
+}
+
+async function _uncached_getSlowResponders(tenantId: string, days = 90): Promise<SlowResponder[]> {
   const env = getEnv();
   if (!env.SERVICE_API_KEY) return [];
   const res = await apiFetch(
