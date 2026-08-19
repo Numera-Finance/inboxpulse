@@ -115,7 +115,15 @@ jobs:
         run: |
           SUBNET="projects/${{ env.PROJECT_ID }}/regions/${{ env.REGION }}/subnetworks/${{ env.SUBNET_NAME }}"
 
-          # --min-instances 1 and --no-cpu-throttling below are load-bearing, not tuning.
+          # --min-instances 3 and --no-cpu-throttling below are load-bearing, not tuning.
+          #
+          # THREE, not one, because the load is a burst. A 200-user morning arrives
+          # inside a couple of minutes; measured 2026-08-19, ramping to 200 against a
+          # single warm instance made Cloud Run start six more DURING the run, and
+          # 31-43% of calls queued past the add-on's 6s abort while the database sat
+          # idle at 10 connections. The same test against an already-warm fleet passed
+          # with zero timeouts — which is why the first measurement looked fine: it
+          # inherited warm instances from the run before it.
           # A request killed at the 300s ceiling on a CPU-throttled instance freezes
           # mid-transaction while still holding pg_advisory_xact_lock, and every other
           # request queues behind it until the panel is down. Both were applied by hand
@@ -133,7 +141,7 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             --update-env-vars "\
-          NODE_ENV=production,\
+          NODE_ENV=production,DB_POOL_MAX=15,\
           LOG_LEVEL=info" \
             --update-secrets "\
           DATABASE_URL=DATABASE_URL:latest,\
@@ -145,7 +153,7 @@ jobs:
           CLOUDSQL_SERVER_CA=CLOUDSQL_SERVER_CA:latest,\
           CLOUDSQL_CLIENT_CERT=CLOUDSQL_CLIENT_CERT:latest,\
           CLOUDSQL_CLIENT_KEY=CLOUDSQL_CLIENT_KEY:latest" \
-            --min-instances 1 \
+            --min-instances 3 \
             --no-cpu-throttling \
             --max-instances 10 \
             --memory 512Mi \
