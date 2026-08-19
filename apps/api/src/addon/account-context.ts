@@ -629,7 +629,6 @@ export class WaitingClientsService {
             )`;
 
     const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
-    const _tProbe = Date.now();
 
     // ARRAY[...]::text[], built one parameter at a time.
     //
@@ -1079,6 +1078,7 @@ export class FiresService {
   ): Promise<Fire[]> {
     const _t0 = Date.now();
     const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
+    const _tProbe = Date.now();
 
     // Same entitlement rule as the rest of the panel: a lead's view of "where
     // the fires are" must not become a way to read accounts they cannot open.
