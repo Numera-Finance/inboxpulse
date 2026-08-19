@@ -79,10 +79,19 @@ psql $DATABASE_URL -f apps/api/sql/migrations/009_auto_customer_name_suffix.sql
 # the Drizzle schema existed but the table was never created in production)
 psql $DATABASE_URL -f apps/api/sql/migrations/011_analysis_cache.sql
 
-# Add GIN index on integrations.parameters for JSONB containment (@>) email lookups
-# (Gmail webhook resolves integration by email; was full-table-scanning per call)
-psql $DATABASE_URL -f apps/api/sql/migrations/012_integrations_parameters_gin_index.sql
+# Add user_submitted_risk_level / user_submitted_sentiment_value to email_analyses
+# (human tag suggestions from the Gmail extension; never overwrite the AI columns)
+psql $DATABASE_URL -f apps/api/sql/migrations/012_email_analyses_user_submitted.sql
 
+# pg_trgm GIN indexes on emails.subject/body and email_participants.email/name.
+# Required by the AI Analysis search, which now matches message bodies —
+# an unanchored ILIKE that no B-tree can serve. Reads the whole emails table and
+# holds a table lock while building; see the file for the CONCURRENTLY variant.
+psql $DATABASE_URL -f apps/api/sql/migrations/016_emails_search_trgm_index.sql
+
+# Register the context-search-string analysis type. Comment-only: analysis_type
+# has no CHECK constraint, so the new type needs no DDL to start writing rows.
+psql $DATABASE_URL -f apps/api/sql/migrations/017_email_analyses_context_search_string.sql
 # Add emails.first_reply_by_id (who sent the first reply) + FK to users and index.
 # Ships with the originator matching rule: a reply only counts for a customer
 # email when it is addressed to that email's own sender. No backfill.
@@ -101,7 +110,7 @@ psql $DATABASE_URL -f apps/api/sql/migrations/015_integrations_unique_connected_
 
 # Add emails.signals_overridden lock flag + email_signal_overrides audit/learning
 # log for manual sentiment/tag corrections
-psql $DATABASE_URL -f apps/api/sql/migrations/016_email_signal_overrides.sql
+psql $DATABASE_URL -f apps/api/sql/migrations/018_email_signal_overrides.sql
 ```
 
 Migration files are idempotent (safe to run multiple times).
@@ -164,6 +173,28 @@ Or in PostgreSQL interactive mode (from project root):
 \i apps/api/sql/login_history.sql
 ```
 
+## Incremental migrations (`migrations/`)
+
+Applied after the base schema above, in this order. All are idempotent and safe
+to re-run.
+
+```bash
+\i apps/api/sql/migrations/customer_allocations.sql
+\i apps/api/sql/migrations/customer_relationships.sql
+\i apps/api/sql/migrations/customer_relationships_seed.sql   # optional — see below
+```
+
+| File | What it adds | Depends on |
+|------|-------------|-----------|
+| `customer_allocations.sql` | The firm's role-based client allocation, loaded from the operations spreadsheet. Who is accountable for which client, six roles. | `customers`, `users` |
+| `customer_relationships.sql` | Marks a customer as NOT a client — vendor, delivery partner, or one of our own entities. Only non-clients are ever inserted; absence means client. | `customers` |
+| `customer_relationships_seed.sql` | Known non-clients for the MyStartupCFO tenant, one row each with the reason and who confirmed it. | the two above |
+
+The seed is **judgements about one firm's counterparties, not schema**, and is
+kept separate so it can be reviewed — or rejected — on its own. Applying the
+table without the seed is a valid state: every customer is then treated as a
+client, which is the safe default. See ADR-020 and ADR-021.
+
 ## Verification Queries
 
 Check all tables:
@@ -180,3 +211,41 @@ Check all indexes:
 ```sql
 SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname;
 ```
+
+### Applying the add-on tables to a database that lacks them
+
+Symptom: `/api/internal/addon/fires`, `/slow-responders` and `/owner-load`
+return 500 while `/waiting` and `/pulse` return 200. Every failing endpoint
+joins `customer_allocations`; every working one does not. The table is missing.
+
+That failure is invisible in the panel — the add-on client swallows a non-OK
+response and returns `[]`, so the section renders empty, which reads as "nothing
+to report" rather than "this is broken". Check the endpoints directly, not the
+card.
+
+```bash
+psql "$DATABASE_URL" -f apps/api/sql/migrations/customer_allocations_data.sql
+psql "$DATABASE_URL" -f apps/api/sql/migrations/customer_relationships.sql
+psql "$DATABASE_URL" -f apps/api/sql/migrations/customer_relationships_seed.sql
+```
+
+`customer_allocations_data.sql` carries the schema AND the 4,724 grid rows, and
+resolves `customer_id`/`user_id` against the target database's own `customers`
+and `users` rather than copying ids from elsewhere — copied UUIDs would appear
+to work and join to nothing wherever two databases diverge.
+
+Expect `4724 rows | ~4270 matched_customer | ~4715 matched_user | 857 clients`.
+A much lower `matched_customer` means the customer names differ from the grid's
+normalised keys, not that the load failed.
+
+**Blast radius: none for existing users.** These files only CREATE TABLE IF NOT
+EXISTS, CREATE INDEX IF NOT EXISTS, INSERT into the two new tables, and UPDATE
+`customer_allocations` itself. There is no ALTER, DROP, TRUNCATE, foreign key or
+trigger touching any existing table; `customers`, `users` and `tenants` are read
+only. Nothing outside the add-on references either table, so no existing query
+can change behaviour. Both files are wrapped in a transaction and are safe to
+re-run — verified by running them twice against a clean database.
+
+Assumes a single-tenant deployment: the insert takes the OLDEST tenant
+(`ORDER BY created_at LIMIT 1`). Revisit before running on a multi-tenant
+database.

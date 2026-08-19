@@ -58,8 +58,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest",
-    "clean": "rm -rf dist"
+    "test": "vitest run",
+    "clean": "rm -rf dist",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.700.0",

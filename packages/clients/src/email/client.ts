@@ -1,6 +1,6 @@
 import type { EmailCollection, ApiResponse, TATMetricRow } from '@crm/shared';
 import { BaseClient } from '../base-client';
-import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, FirstReplyMarker, UpdateEmailSignalsRequest, UpdateEmailSignalsResponse } from './types';
+import type { AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmail, AnalyzedEmailExportItem, EmailThread, FirstReplyMarker, UpdateEmailSignalsRequest, UpdateEmailSignalsResponse } from './types';
 
 /**
  * Email input type for bulk insert API
@@ -393,6 +393,20 @@ export class EmailClient extends BaseClient {
       throw new Error(response?.error?.message ?? 'Failed to update email signals');
     }
     return response.data;
+  }
+
+  /**
+   * The whole thread around one message: every participant, in order, with the
+   * gap between messages. This is what makes an escalation legible — a body on
+   * its own says nothing about whose turn it is.
+   */
+  async getThread(emailId: string, signal?: AbortSignal): Promise<EmailThread | null> {
+    const response = await this.get<ApiResponse<EmailThread>>(
+      `/api/emails/${encodeURIComponent(emailId)}/thread`,
+      signal
+    );
+
+    return response?.data ?? null;
   }
 }
 

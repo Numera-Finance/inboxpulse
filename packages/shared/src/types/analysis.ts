@@ -208,6 +208,7 @@ export const ANALYSIS_TYPES = [
   'churn',                 // Conditional (if enabled)
   'kudos',                 // Conditional (if enabled)
   'competitor',            // Conditional (if enabled)
+  'context-search-string', // Conditional (if enabled)
 ] as const;
 
 export type AnalysisType = (typeof ANALYSIS_TYPES)[number];
@@ -263,6 +264,7 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'churn': true,                    // Enable churn risk assessment
     'kudos': false,                   // Enable kudos detection
     'competitor': false,              // Enable competitor mentions
+    'context-search-string': true,    // Enable related-context search string
   },
   modelConfigs: {
     'signature-extraction': {
@@ -293,6 +295,10 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
       primary: DEFAULT_LLM_MODEL,
       fallback: DEFAULT_LLM_FALLBACK_MODEL,
     },
+    'context-search-string': {
+      primary: DEFAULT_LLM_MODEL,
+      fallback: DEFAULT_LLM_FALLBACK_MODEL,
+    },
   },
   promptVersions: {
     'signature-extraction': 'v1.0',
@@ -302,6 +308,7 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'churn': 'v1.0',
     'kudos': 'v1.0',
     'competitor': 'v1.0',
+    'context-search-string': 'v1.1',
   },
   analysisSettings: {
     'signature-extraction': {
@@ -324,5 +331,8 @@ export const DEFAULT_ANALYSIS_CONFIG: Omit<AnalysisConfig, 'tenantId'> = {
     'competitor': {
       minConfidenceThreshold: 0.6,
     },
+    // No minimum confidence: a weak query is still worth running, and the
+    // retrieval step judges the string by what it actually returns.
+    'context-search-string': {},
   },
 };

@@ -7,13 +7,16 @@
     "dev": "wxt",
     "build": "wxt build",
     "zip": "wxt zip",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "build:clone": "wxt build -m clone",
+    "build:localapi": "wxt build -m localapi"
   },
   "dependencies": {
     "@crm/clients": "workspace:*",
     "@crm/shared": "workspace:*",
     "@inboxsdk/core": "^2.2.11",
     "@tanstack/react-query": "^5.62.16",
+    "chart.js": "^4.5.1",
     "clsx": "catalog:",
     "date-fns": "catalog:",
     "lucide-react": "^0.468.0",

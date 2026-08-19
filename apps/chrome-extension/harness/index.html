@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>InboxPulse sidebar layout harness</title>
+    <style>
+      /* Approximates Gmail's right-hand rail: a fixed ~400px column against a
+         page-coloured backdrop, so overflow past the panel edge is obvious. */
+      body {
+        margin: 0;
+        background: #e8eaed;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      #panel {
+        width: 400px;
+        height: 100vh;
+        background: #fff;
+        border-left: 1px solid #dadce0;
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="panel"></div>
+    <script>
+      // ?w=1200 widens the panel, so a narrow-layout regression can be told
+      // apart from a fault that reproduces at any width.
+      const w = new URLSearchParams(location.search).get('w');
+      if (w) document.getElementById('panel').style.width = `${parseInt(w, 10)}px`;
+    </script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

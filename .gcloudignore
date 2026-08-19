@@ -1,0 +1,37 @@
+# What NOT to upload as Cloud Build context.
+#
+# gcloud falls back to .gitignore when this file is absent — and this working
+# copy has no .git at all, so without this file the entire ~1GB tree (including
+# node_modules, live credentials, and TLS private keys) would be uploaded on
+# every `gcloud builds submit`.
+
+# --- credentials: never leave the machine ---------------------------------
+.env
+.env.*
+!.env.example
+certs/
+**/certs/
+*.pem
+*.key
+
+# --- dependencies and build output ----------------------------------------
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+**/.next/
+.turbo/
+**/.turbo/
+.wxt/
+**/.wxt/
+output/
+**/output/
+*.tsbuildinfo
+
+# --- vcs / editor ----------------------------------------------------------
+.git/
+.github/
+.vscode/
+.idea/
+*.log

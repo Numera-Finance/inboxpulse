@@ -17,6 +17,14 @@ export const GMAIL_OAUTH_SCOPES: OAuthScope[] = [
     description: 'Read your emails (read-only)',
   },
   {
+    // Write access — required to create InboxPulse labels and apply them to
+    // messages (labels.create + messages.modify). Grants read/write to the
+    // mailbox but NOT permanent delete. Enables surfacing analysis flags as
+    // native Gmail labels in the inbox.
+    url: 'https://www.googleapis.com/auth/gmail.modify',
+    description: 'Apply InboxPulse labels to your emails (create + label messages)',
+  },
+  {
     url: 'https://www.googleapis.com/auth/userinfo.email',
     description: 'Access your email address',
   },

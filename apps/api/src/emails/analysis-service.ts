@@ -18,6 +18,7 @@ import { TenantService } from '../tenants/service';
 import { KeywordService } from '../keywords/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply } from './extraction/extractor';
+import { isCustomerTraffic } from './prefilter/third-party';
 
 // =============================================================================
 // Types
@@ -210,6 +211,26 @@ export class EmailAnalysisService {
     //          without an LLM call).
     const keywordResults = await this.runKeywordAnalysis(ctx);
     const excludeTypes = new Set(Object.keys(keywordResults));
+
+    // Step 2c: a client's CUSTOMERS never reach the model.
+    //
+    // We keep the books for operating businesses, so their customer-facing
+    // systems copy us on traffic that has nothing to do with our work.
+    // poolbrain.com is one client's field-service platform, and homeowners reply
+    // to it — unhappily, sometimes — about pool cleaning. Those are real
+    // complaints and none of them is a complaint about us.
+    //
+    // The category filter below already discards their RESULTS, but it runs
+    // after the call, so the tokens were spent and the rows stored anyway. This
+    // is the gate ADR-020 said belonged here: skip the call entirely.
+    if (isCustomerTraffic(ctx.email.from?.email ?? '', ctx.email.body ?? '')) {
+      logger.info(
+        { emailId: ctx.emailId, tenantId: ctx.tenantId },
+        'customer traffic — skipping analysis, no model call'
+      );
+      data.analysisResults = {};
+      return data;
+    }
 
     // Step 2d: ONE call to apps/analysis. Returns:
     //          - extracted: { domains, contacts } — used by Phase 2 to ensure customers/contacts.
@@ -681,7 +702,16 @@ export class EmailAnalysisService {
               tx,
               tenantId,
               lookupDomain,
-              { defaultName: participant.name?.trim() || lookupDomain }
+              // The thread's own addresses let ensureCustomerForEmail spot a
+              // per-client alias — hammerheadai@ — and attach the domain to that
+              // client instead of minting another auto-created customer. Passed
+              // from memory because the participant rows are not written yet.
+              {
+                defaultName: participant.name?.trim() || lookupDomain,
+                threadAddresses: participantsToEnsure
+                  .map((p) => p.email)
+                  .filter((e): e is string => Boolean(e)),
+              }
             );
             customerId = customer.id;
           } else {
@@ -1017,8 +1047,13 @@ export class EmailAnalysisService {
     }
 
     // Churn
+    //
+    // 'none' carries no signal. Before the enum had it, the lowest value the
+    // model could return was 'low', so 87% of all mail arrived here carrying
+    // CHURN_LOW — a risk level on seven messages in eight is a field, not a
+    // finding. The switch falls through for 'none' and nothing is pushed.
     const churnResult = analysisResults['churn'];
-    if (churnResult?.riskLevel) {
+    if (churnResult?.riskLevel && churnResult.riskLevel !== 'none') {
       switch (churnResult.riskLevel) {
         case 'low':
           signals.push(Signal.CHURN_LOW);

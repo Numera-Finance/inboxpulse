@@ -4,6 +4,12 @@ import { emailAnalyses, type AnalysisType, type NewEmailAnalysis } from './analy
 import { eq, and } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 
+/**
+ * model_used marker on rows created purely to hold a user suggestion (no AI ran).
+ * Distinguishes them from real analyses in reporting.
+ */
+const USER_SUGGESTION_MODEL = 'user-suggestion';
+
 @injectable()
 export class EmailAnalysisRepository {
   constructor(@inject('Database') private db: Database) {}
@@ -94,6 +100,50 @@ export class EmailAnalysisRepository {
       },
       'Multiple analysis results saved/updated'
     );
+  }
+
+  /**
+   * Persist a user's suggested tag onto the analysis row for `analysisType`,
+   * writing ONLY the user_submitted_* column — the model's own verdict
+   * (result / risk_level / sentiment_value / confidence) is never touched.
+   *
+   * When no row exists yet for that type (e.g. the message has a sentiment
+   * analysis but was never scored for churn, and the user suggests a churn
+   * level) we insert a suggestion-only row: `result` is `{}` and every
+   * extracted column stays NULL, so existing readers — which all key off
+   * detected / risk_level / sentiment_value — treat it as absent.
+   *
+   * @param value The suggested value, or null to clear a previous suggestion.
+   */
+  async upsertUserSubmission(
+    emailId: string,
+    tenantId: string,
+    analysisType: Extract<AnalysisType, 'churn' | 'sentiment'>,
+    value: string | null
+  ): Promise<void> {
+    const column =
+      analysisType === 'churn'
+        ? { userSubmittedRiskLevel: value }
+        : { userSubmittedSentimentValue: value };
+
+    await this.db
+      .insert(emailAnalyses)
+      .values({
+        emailId,
+        tenantId,
+        analysisType,
+        // Suggestion-only placeholder; `result` is NOT NULL in the schema.
+        result: {} as NewEmailAnalysis['result'],
+        modelUsed: USER_SUGGESTION_MODEL,
+        ...column,
+      })
+      .onConflictDoUpdate({
+        target: [emailAnalyses.emailId, emailAnalyses.analysisType],
+        // Deliberately narrow: only the user column and updated_at.
+        set: { ...column, updatedAt: new Date() },
+      });
+
+    logger.info({ emailId, tenantId, analysisType, value }, 'User-submitted analysis tag saved');
   }
 
   /**

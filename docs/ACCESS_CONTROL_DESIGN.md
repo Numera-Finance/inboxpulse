@@ -14,56 +14,6 @@ An employee has access to:
 
 This allows managers to see all data related to their team's customers.
 
-### Direct Assignment (escalations and tasks)
-
-Hierarchical access is not the only path. A user also has access to **any single
-task/escalation assigned directly to them**, even when the underlying customer is
-outside their accessible set.
-
-This exists because an escalation can be assigned to *anyone* in the tenant —
-whoever is best placed to resolve it — not only to a subordinate or to a member
-of that customer's team. Without this arm, an assignee off the customer's team
-would receive the "Escalation Assigned to You" email and then find nothing when
-they logged in.
-
-The grant is deliberately narrow:
-
-| Granted | Not granted |
-|---------|-------------|
-| The assigned escalation in the AI Analysis list and detail view | The customer's other emails or escalations |
-| The assigned task in task search and the dashboard escalations tile | The customer record, contacts, or dashboard metrics |
-| Resolving, reopening, and commenting on that task | Any widening of `user_accessible_customers` |
-
-Enforced in:
-- `TaskRepository.buildTaskFilters` — `(hierarchy AND customer) OR assigned_to_id = me`
-- `TaskRepository.getRecentEscalationsScoped` — `customer OR assigned_to_id = me`
-- `EmailRepository.analyzedEmailAccessFilter` — `customer OR t.assigned_to_id = me`,
-  shared by `searchAnalyzedEmails`, `exportAnalyzedEmails`, and `getAnalyzedEmailById`
-- `TaskRepository.hasTaskAccess` — the mutation gate (reassign, resolve, reopen,
-  comment) — `customer access OR assigned_to_id = me`
-- `EmailRepository.getUpsellCountScoped` — shares `analyzedEmailAccessFilter` so
-  the dashboard tile and its AI Analysis drilldown keep agreeing
-
-**Act ⊆ see.** `hasTaskAccess` admits the *union* of what the two list surfaces
-show, and nothing more. The escalations page grants on `customer OR assigned`;
-the task list grants on `(hierarchy AND customer) OR assigned`. Their union is
-`customer OR assigned` — reporting hierarchy is deliberately **not** a third arm,
-because neither surface grants visibility on hierarchy alone, so admitting it
-would allow writes to tasks the caller cannot see.
-
-Before this, the gate was hierarchy-only, which left two dead ends once
-assignment went tenant-wide: an assignee off the customer's team could not hand
-an escalation back, and a user with customer access lost control of any task they
-assigned outside their own hierarchy — the escalations page still listed it for
-them, so every write 404'd on an escalation visible on screen.
-
-It also means an unassigned task now requires customer access to mutate —
-previously any user could, though no list ever surfaced it to them.
-
-Aggregate customer metrics (TAT, upsell counts, dashboard rollups) deliberately
-keep the customer-only filter: holding one escalation should not pull a
-customer's numbers into someone's dashboard.
-
 ### Data Flow
 
 ```
@@ -718,6 +668,7 @@ If performance becomes an issue:
 
 ## Related Documents
 
-- [EMPLOYEE_SCHEMA_DESIGN.md](./EMPLOYEE_SCHEMA_DESIGN.md) - Employee tables and closure table
+- Employee tables and closure table: the `employees` entity was merged into
+  `users`; see `apps/api/src/users/schema.ts` and `docs/handbook/04-DATA-MODEL.md`.
 - [SEARCH_API_DESIGN.md](./SEARCH_API_DESIGN.md) - Search API patterns
 - [API_CONVENTIONS.md](./API_CONVENTIONS.md) - API conventions including scoped queries
