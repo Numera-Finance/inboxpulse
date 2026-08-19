@@ -629,6 +629,7 @@ export class WaitingClientsService {
             )`;
 
     const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
+    const _tProbe = Date.now();
 
     // ARRAY[...]::text[], built one parameter at a time.
     //
@@ -1076,6 +1077,7 @@ export class FiresService {
     days = 90,
     limit = 6,
   ): Promise<Fire[]> {
+    const _t0 = Date.now();
     const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
 
     // Same entitlement rule as the rest of the panel: a lead's view of "where
@@ -1353,7 +1355,24 @@ export class FiresService {
       ownerPeers: Number(r.owner_peers ?? 1),
     }));
 
-    return this.nameWhoTalksToThem(tenantId, fires, days);
+    const _tQuery = Date.now();
+    const withOwners = await this.nameWhoTalksToThem(tenantId, fires, days);
+    // Phase timing, because the cron reported 14.4s for work the database
+    // completes in ~3.2s when run by hand. Whatever the rest is, it is not the
+    // SQL, and a single total cannot say where it went.
+    logger.info(
+      {
+        tenantId,
+        probeMs: _tProbe - _t0,
+        queryMs: _tQuery - _tProbe,
+        ownerMs: Date.now() - _tQuery,
+        totalMs: Date.now() - _t0,
+        fires: fires.length,
+        logType: 'FIRES_TIMING',
+      },
+      'fires phases',
+    );
+    return withOwners;
   }
 
   /**
