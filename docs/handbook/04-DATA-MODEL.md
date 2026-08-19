@@ -323,3 +323,35 @@ advisory lock for the shortest possible span, or move customer creation out of
 the per-message transaction entirely. Until then, `--min-instances 1` and CPU
 allocation reduce how often this bites, and restarting crm-api is the way to
 clear it when it does.
+
+## What made 200 users work
+
+Measured end to end against production on 2026-08-19 with
+`scripts/loadtest-panel.mjs`, 200 concurrent panel opens:
+
+| | before | after |
+|---|---|---|
+| `fires` | p50 1,976ms, p95 4,717ms | p50 95ms, p95 444ms |
+| `waiting` | p50 925ms | p50 170ms |
+| throughput | 26.4 renders/s, 16 timeouts | 87.4 renders/s, **zero** |
+
+Worst single call across ~32,000 requests: 795ms, against a 6s abort.
+
+The change that mattered was realising `fires` and `waiting` are **not**
+per-viewer computations. The viewer appears once in each, as
+`customer_id IN (SELECT ... FROM user_accessible_customers)`. Every aggregate is
+a property of the customer. So the expensive query is tenant-wide and the
+entitlement is a mask applied afterwards — precompute the superset, filter it
+against the viewer's ~19 accessible customers.
+
+**That moved an access-control decision out of SQL and into TypeScript**, which
+is why `snapshot-mask.test.ts` exists. The case to keep in mind is the empty
+set: `null` means admin and no mask, an empty `Set` means entitled to nothing,
+and one wrong falsy check shows a viewer every customer in the tenant. The
+superset never reaches the add-on; masking happens in the API route.
+
+**Still true and still unfixed:** precomputing `fires` takes 29 seconds, almost
+all of it `nameWhoTalksToThem` resolving owners through a LATERAL that scans 90
+days of mail per customer. It is a read, off the request path, holding no locks,
+so it is survivable — but it holds a connection for 29s out of every 300 and
+grows with ingestion.

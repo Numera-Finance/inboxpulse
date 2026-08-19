@@ -52,6 +52,19 @@ export class PanelSnapshotService {
       { kind: 'slow_responders', run: () => new SlowRespondersService(this.db).get(tenantId, windowDays) },
       // Computed AS AN ADMIN and unlimited: this is the superset every viewer's
       // list is a subset of. Never served to a viewer without the mask below.
+      // COSTS 29 SECONDS, measured on production with 81 fires.
+      //
+      // Not the aggregates — `nameWhoTalksToThem` resolves an owner for each
+      // fire that lacks one, via a LATERAL that scans 90 days of mail per
+      // customer. At the panel's limit of 6 that is a few hundred milliseconds;
+      // unbounded it is ~700ms x ~40 customers.
+      //
+      // Acceptable HERE and nowhere else: this is a read, off the request path,
+      // holding no locks, and MVCC means it blocks no writer. The 200-user load
+      // test passed with zero timeouts while this ran every five minutes. What
+      // it is not is free — it holds one connection for 29s of every 300, and
+      // that grows with ingestion. The fix is a set-based rewrite of the owner
+      // lookup rather than a LATERAL per customer, and it is not done.
       {
         kind: 'fires',
         run: () => new FiresService(this.db).get(tenantId, { userId: '', isAdmin: true }, windowDays, 200),
