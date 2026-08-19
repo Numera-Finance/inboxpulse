@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { container } from 'tsyringe';
-import { NotFoundError } from '@crm/shared';
+import { NotFoundError, Permission } from '@crm/shared';
 import { ContactService } from './service';
 import type { RequestHeader } from '@crm/shared';
-import { createContactRequestSchema } from '@crm/clients';
-import { handleApiRequestWithStatus, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
+import { assignContactCustomerRequestSchema, createContactRequestSchema } from '@crm/clients';
+import { requirePermission } from '../middleware/require-permission';
+import { handleApiRequest, handleApiRequestWithStatus, handleGetRequest, handleGetRequestWithParams, handleApiRequestWithParams } from '../utils/api-handler';
 import { z } from 'zod';
 
 export const contactRoutes = new Hono();
@@ -23,6 +24,28 @@ contactRoutes.post('/', async (c) => {
     async (requestHeader: RequestHeader, data) => {
       const contactService = container.resolve(ContactService);
       return await contactService.upsertContact(requestHeader.tenantId, data);
+    }
+  );
+});
+
+/**
+ * POST /api/contacts/assign-customer - Point an email address at a customer.
+ *
+ * Unlike a plain upsert this is retroactive: it re-links the sender's existing
+ * emails and, where the domain is unowned or held by an auto-created
+ * placeholder, moves the domain too so the assignment survives future emails.
+ * Requires CUSTOMER_EDIT — it changes which customer emails are attributed to,
+ * and therefore who can see them.
+ *
+ * Declared before `/:id` routes so the literal path is not swallowed by them.
+ */
+contactRoutes.post('/assign-customer', requirePermission(Permission.CUSTOMER_EDIT), async (c) => {
+  return handleApiRequest(
+    c,
+    assignContactCustomerRequestSchema,
+    async (requestHeader: RequestHeader, data) => {
+      const contactService = container.resolve(ContactService);
+      return await contactService.assignCustomer(requestHeader, data);
     }
   );
 });

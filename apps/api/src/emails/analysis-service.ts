@@ -672,15 +672,23 @@ export class EmailAnalysisService {
         let created = false;
 
         // Find customer for this participant.
-        // Priority: 1) Domain lookup (sees customers ensured in Step 1 via tx),
-        //           2) Existing contact's customer link (manual mapping),
+        // Priority: 1) The contact's own customer link. A contact is a fact
+        //              about a person; a domain is a heuristic about an
+        //              organization, so the specific one wins. This is what
+        //              lets a user reassign a single sender and have it hold.
+        //           2) Domain lookup (sees customers ensured in Step 1 via tx).
         //           3) Last-resort ensureCustomerForEmail (race-safe + suffixed
         //              — should rarely fire because Step 1 already ensured
         //              customers for every extracted domain).
+        //
+        // Safe only because a contact's link is never left stale: every path
+        // that moves a domain between customers moves that domain's contacts
+        // with it (see CustomerService.mergeCustomer / replaceDomains and
+        // ContactService.assignCustomer). Without that, a contact linked once
+        // would pin its participant forever — the link is written at creation
+        // and only ever backfilled when null, never refreshed.
         try {
-          let customer = await this.customerService.findByDomain(tenantId, lookupDomain, tx);
-
-          if (!customer && contact?.customerId) {
+          if (contact?.customerId) {
             customerId = contact.customerId;
             logger.info(
               {
@@ -691,30 +699,33 @@ export class EmailAnalysisService {
                 domain: lookupDomain,
                 logType: 'CUSTOMER_FROM_EXISTING_CONTACT',
               },
-              'Using customer from existing contact (domain lookup found no match)'
+              'Using customer from existing contact link (takes precedence over domain)'
             );
-          } else if (!customer) {
-            // Last-resort — Step 1 missed this domain. Same single entry
-            // point gives us the advisory lock, (Auto) suffix, idempotency.
-            // inferredName is recomputed from the domain as a last-resort
-            // fallback; typical path re-uses the row Step 1 just created.
-            customer = await this.customerService.ensureCustomerForEmail(
-              tx,
-              tenantId,
-              lookupDomain,
-              // The thread's own addresses let ensureCustomerForEmail spot a
-              // per-client alias — hammerheadai@ — and attach the domain to that
-              // client instead of minting another auto-created customer. Passed
-              // from memory because the participant rows are not written yet.
-              {
-                defaultName: participant.name?.trim() || lookupDomain,
-                threadAddresses: participantsToEnsure
-                  .map((p) => p.email)
-                  .filter((e): e is string => Boolean(e)),
-              }
-            );
-            customerId = customer.id;
           } else {
+            let customer = await this.customerService.findByDomain(tenantId, lookupDomain, tx);
+
+            if (!customer) {
+              // Last-resort — Step 1 missed this domain. Same single entry
+              // point gives us the advisory lock, (Auto) suffix, idempotency.
+              // inferredName is recomputed from the domain as a last-resort
+              // fallback; typical path re-uses the row Step 1 just created.
+              customer = await this.customerService.ensureCustomerForEmail(
+                tx,
+                tenantId,
+                lookupDomain,
+                // The thread's own addresses let ensureCustomerForEmail spot a
+                // per-client alias — hammerheadai@ — and attach the domain to
+                // that client instead of minting another auto-created customer.
+                // Passed from memory because the participant rows are not
+                // written yet.
+                {
+                  defaultName: participant.name?.trim() || lookupDomain,
+                  threadAddresses: participantsToEnsure
+                    .map((pt) => pt.email)
+                    .filter((e): e is string => Boolean(e)),
+                }
+              );
+            }
             customerId = customer.id;
           }
         } catch (customerError: any) {

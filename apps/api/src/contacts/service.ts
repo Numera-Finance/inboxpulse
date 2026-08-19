@@ -1,10 +1,22 @@
 import { injectable, inject } from 'tsyringe';
 import { z } from 'zod';
 import { ContactRepository } from './repository';
+import { CustomerRepository } from '../customers/repository';
+import { EmailRepository, type ParticipantAddressMatch } from '../emails/repository';
+import { inngest } from '../inngest/instance';
+import { TenantService } from '../tenants/service';
 import { logger } from '../utils/logger';
 import type { Contact, NewContact } from './schema';
 import type { Email, RequestHeader } from '@crm/shared';
-import type { Transaction } from '@crm/database';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+  isPersonalEmailDomain,
+  resolveCustomerKeyForEmail,
+} from '@crm/shared';
+import type { Database, Transaction } from '@crm/database';
 
 /**
  * Signature data extracted from email signatures
@@ -38,6 +50,23 @@ export const signatureEnrichmentResultSchema = z.object({
 export type SignatureEnrichmentResult = z.infer<typeof signatureEnrichmentResultSchema>;
 
 /**
+ * Outcome of a manual contact-to-customer assignment. `domainMoved` is set only
+ * when a real domain changed hands, so the UI can say "moved 14 emails from
+ * acme.com" and otherwise fall back to naming the single address.
+ */
+export interface AssignCustomerResult {
+  contact: Contact;
+  emailsReassigned: number;
+  /**
+   * Eligible emails handed to Inngest for escalation-task creation. Queued, not
+   * created: the tasks are made in the background, so this counts what was
+   * dispatched rather than what exists yet.
+   */
+  tasksQueued: number;
+  domainMoved: string | null;
+}
+
+/**
  * Sender ownership guard. Returns true when the LLM-extracted signature
  * appears to belong to the email's sender, false when it clearly belongs to
  * a different person (an embedded forwarded/quoted signature).
@@ -66,11 +95,210 @@ export function signatureBelongsToSender(
   return false;
 }
 
+/**
+ * Emails per `contact/customer.assigned` event.
+ *
+ * The eligible emails are handed to Inngest rather than processed inline, so
+ * nothing is dropped however many there are — but a single event payload has a
+ * size ceiling, so a large backfill is split across several events. Each is an
+ * independent, retryable unit of work.
+ */
+const RETROACTIVE_TASK_BATCH_SIZE = 200;
+
 @injectable()
 export class ContactService {
   constructor(
-    @inject(ContactRepository) private contactRepository: ContactRepository
+    @inject(ContactRepository) private contactRepository: ContactRepository,
+    @inject(CustomerRepository) private customerRepository: CustomerRepository,
+    @inject(EmailRepository) private emailRepository: EmailRepository,
+    @inject(TenantService) private tenantService: TenantService,
+    @inject('Database') private db: Database
   ) { }
+
+  /**
+   * Point an email address at a customer, and make it stick — backwards and
+   * forwards.
+   *
+   * Why this exists: `email_participants.customer_id` is stamped once during
+   * analysis and never revisited, so an email that arrived before we knew who
+   * the sender was keeps whatever customer the pipeline guessed — usually an
+   * auto-created "<domain> (Auto)" placeholder. Creating a contact alone leaves
+   * every past email pointing at it.
+   *
+   * So the assignment does three things:
+   *
+   *  1. Links the contact to the customer. This alone settles the sender's
+   *     future emails: analysis reads the contact link before the domain.
+   *  2. For a corporate address, also moves the domain onto that customer —
+   *     unless a real customer already owns it — and brings that domain's other
+   *     contacts along. Step 1 only covers this one address; the domain is what
+   *     catches colleagues we have never seen before, who would otherwise spawn
+   *     a fresh placeholder. An auto-created customer is not a real owner: it
+   *     exists only because we had nothing better to key on.
+   *     Personal addresses (gmail.com et al) skip this entirely — their key is
+   *     a per-address pseudo-domain, so there are no colleagues to catch and
+   *     nothing meaningful to attach to a real customer.
+   *  3. Rewrites past `email_participants` rows — the whole domain when step 2
+   *     claimed it, otherwise just this address — and creates the escalation
+   *     tasks that were skipped for emails that had no customer at all.
+   *
+   * The "real customer already owns it" branch is close to unreachable: if a
+   * real customer owned the domain, the email would already have been
+   * attributed to them and nobody would be here reassigning it. It is kept as a
+   * guard, and does nothing beyond linking the contact and rewriting this one
+   * address's history — the domain owner stays put.
+   */
+  async assignCustomer(
+    header: RequestHeader,
+    input: { email: string; customerId: string; name?: string }
+  ): Promise<AssignCustomerResult> {
+    const { tenantId } = header;
+    const contactEmail = input.email.trim().toLowerCase();
+
+    const customer = await this.customerRepository.findById(input.customerId);
+    if (!customer || customer.tenantId !== tenantId) {
+      throw new NotFoundError('Customer not found');
+    }
+    if (!(await this.contactRepository.canAccessCustomer(header, input.customerId))) {
+      throw new ForbiddenError('No access to this customer');
+    }
+
+    // The customer_domains key for this address: the registrable domain for a
+    // corporate address, a per-address pseudo-domain for a personal one.
+    const customerKey = resolveCustomerKeyForEmail(contactEmail, input.name);
+    if (!customerKey) {
+      throw new ValidationError('A valid email address is required');
+    }
+    const domainKey = customerKey.domain;
+    const rawDomain = contactEmail.split('@')[1];
+    const isPersonal = isPersonalEmailDomain(rawDomain);
+
+    // Never let a customer take the tenant's own domain. Internal senders show
+    // up in the analyzed-email list too, so this endpoint is reachable for one;
+    // claiming that domain would hand every colleague — and every
+    // participant_type='user' row on it — to a customer. Same guard the
+    // analysis pipeline applies before auto-creating an escalation.
+    const tenant = await this.tenantService.findById(tenantId);
+    const isTenantDomain = !!tenant?.domains?.some(
+      (d) => d.toLowerCase() === rawDomain || domainKey === d.toLowerCase()
+    );
+    if (isTenantDomain) {
+      throw new ValidationError(
+        'That address belongs to your own organization and cannot be assigned to a customer'
+      );
+    }
+
+    // Decide domain ownership up front. Personal addresses never move a domain
+    // — their key is a per-address pseudo-domain that means nothing to a real
+    // customer, so only the contact link is made.
+    const ownerBeforeTx = isPersonal
+      ? undefined
+      : await this.customerRepository.findByDomain(tenantId, domainKey);
+    const claimDomain =
+      !isPersonal &&
+      (!ownerBeforeTx || ownerBeforeTx.isAutoCreated) &&
+      ownerBeforeTx?.id !== input.customerId;
+
+    const match: ParticipantAddressMatch = claimDomain
+      ? { kind: 'domain', value: domainKey }
+      : { kind: 'address', value: contactEmail };
+
+    // Read before the update — these are the emails that had no customer at
+    // all, and so never got an escalation task. Deliberately outside the
+    // transaction: it scans email_participants (the predicate cannot use
+    // idx_ep_tenant_email_address), and holding a write transaction open across
+    // that scan would block the analysis pipeline's own participant writes.
+    const previouslyUnlinked = await this.emailRepository.findUnlinkedSenderEmailIds(
+      tenantId,
+      match
+    );
+
+    const result = await this.db.transaction(async (tx) => {
+      // The ownership decision above was made on an unlocked read. Re-check it
+      // here rather than let moveDomain displace an owner that changed in the
+      // meantime; the caller can safely retry.
+      if (!isPersonal) {
+        const owner = await this.customerRepository.findByDomain(tenantId, domainKey, tx);
+        if ((owner?.id ?? null) !== (ownerBeforeTx?.id ?? null)) {
+          throw new ConflictError('Domain ownership changed while assigning, please retry');
+        }
+      }
+
+      const contact = await this.contactRepository.upsert(
+        {
+          tenantId,
+          email: contactEmail,
+          customerId: input.customerId,
+          ...(input.name ? { name: input.name } : {}),
+        },
+        tx
+      );
+
+      if (claimDomain) {
+        await this.customerRepository.moveDomain(tenantId, domainKey, input.customerId, tx);
+        // The domain moved, so its contacts move with it. Analysis reads the
+        // contact link before the domain, so any sibling left behind — say
+        // alice@acme.com, still pointing at the placeholder — would keep
+        // resolving there forever.
+        await this.contactRepository.reassignByDomain(tenantId, domainKey, input.customerId, tx);
+      }
+
+      const emailsReassigned = await this.emailRepository.reassignParticipantsByAddress(
+        tenantId,
+        match,
+        input.customerId,
+        tx
+      );
+
+      return { contact, emailsReassigned };
+    });
+
+    const domainMoved = claimDomain ? domainKey : null;
+
+    // Filtering by signals only reads `emails`, so it needs neither the
+    // transaction nor to precede the update.
+    const taskEligible = await this.emailRepository.findTaskEligibleEmails(
+      tenantId,
+      previouslyUnlinked
+    );
+
+    // Task creation is handed to Inngest rather than run here. Each task also
+    // auto-assigns and sends a notification, and claiming a busy domain can
+    // surface hundreds of eligible emails — inline, that would exceed the
+    // request timeout long after the reassignment had committed, so the user
+    // would see a failure for work that actually succeeded. The reassignment is
+    // durable by this point; the tasks follow behind it.
+    for (let i = 0; i < taskEligible.length; i += RETROACTIVE_TASK_BATCH_SIZE) {
+      await inngest.send({
+        name: 'contact/customer.assigned',
+        data: {
+          tenantId,
+          customerId: input.customerId,
+          emails: taskEligible.slice(i, i + RETROACTIVE_TASK_BATCH_SIZE),
+        },
+      });
+    }
+
+    logger.info(
+      {
+        tenantId,
+        email: contactEmail,
+        customerId: input.customerId,
+        emailsReassigned: result.emailsReassigned,
+        tasksQueued: taskEligible.length,
+        domainMoved,
+        logType: 'CONTACT_ASSIGNED_TO_CUSTOMER',
+      },
+      'Manually assigned contact to customer'
+    );
+
+    return {
+      contact: result.contact,
+      emailsReassigned: result.emailsReassigned,
+      tasksQueued: taskEligible.length,
+      domainMoved,
+    };
+  }
 
   // ===========================================================================
   // Access-Controlled Methods

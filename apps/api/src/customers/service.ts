@@ -920,8 +920,38 @@ export class CustomerService {
     return created;
   }
 
+
+  /**
+   * Replace a customer's domain list, taking the contacts on those domains
+   * along with them.
+   *
+   * Analysis resolves a participant by the contact's own customer link before
+   * the domain lookup, and that link is written once and never refreshed — so a
+   * domain claimed here whose contacts still point at some earlier customer
+   * would keep sending those senders to the wrong place indefinitely. Merge
+   * already moves domains and contacts together; this keeps the same invariant.
+   */
   async replaceDomains(customerId: string, tenantId: string, domains: string[]): Promise<void> {
-    return this.customerRepository.replaceDomains(customerId, tenantId, domains);
+    await this.db.transaction(async (tx) => {
+      await this.customerRepository.replaceDomains(customerId, tenantId, domains, tx);
+
+      let contactsReassigned = 0;
+      for (const domain of domains) {
+        contactsReassigned += await this.contactRepository.reassignByDomain(
+          tenantId,
+          domain,
+          customerId,
+          tx
+        );
+      }
+
+      if (contactsReassigned > 0) {
+        logger.info(
+          { customerId, tenantId, contactsReassigned, logType: 'CONTACTS_FOLLOWED_DOMAIN' },
+          'Reassigned contacts to follow their customer domains'
+        );
+      }
+    });
   }
 
   // ===========================================================================
