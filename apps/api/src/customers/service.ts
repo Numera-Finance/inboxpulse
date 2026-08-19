@@ -759,6 +759,20 @@ export class CustomerService {
   }
 
   /**
+   * Whether an existing auto-created customer should have its name rewritten.
+   *
+   * Extracted so the pre-lock fast path and the locked path cannot drift: if
+   * these two ever disagree, a row would be returned unrefined by one and
+   * rewritten by the other depending only on timing.
+   */
+  private needsNameRefinement(existing: Customer, proposedName: string): boolean {
+    return (
+      Boolean(existing.isAutoCreated) &&
+      (existing.name ?? '').trim().toLowerCase() !== proposedName.toLowerCase()
+    );
+  }
+
+  /**
    * Single entry point for customer creation/refinement from the email pipeline.
    *
    * Both the eager domain-extraction step (no signature info) and the
@@ -795,18 +809,42 @@ export class CustomerService {
     }
     const proposedName = withAutoSuffix(proposedRaw);
 
-    // Serialize concurrent calls for the same (tenant, domain) within their
-    // transactions. The lock auto-releases at end of transaction.
+    // READ BEFORE LOCKING.
+    //
+    // The lock exists to make check-then-INSERT race-safe. A read that finds the
+    // row does not need it — and almost every call is that read: this tenant has
+    // 5,522 customer domains, so a genuinely new one is a handful a day while
+    // every message was taking the lock regardless.
+    //
+    // That cost two outages on 2026-08-19. `pg_advisory_xact_lock` is
+    // transaction-scoped, this runs inside the per-message analysis transaction,
+    // and that transaction goes on to write contacts, participants, signals and
+    // analyses before committing — so one message held a lock per extracted
+    // domain for the length of all of it. Convoys of 44 to 106 sessions built up
+    // on the lock, exhausted the pool, and the panel went down while the
+    // database itself was answering in milliseconds.
+    //
+    // Correctness is unchanged: the lock still serializes check-then-insert for
+    // the domains that reach it, the re-check below closes the window between
+    // this read and the lock, and `uniq_customer_domains_tenant_domain` is the
+    // backstop underneath both.
     const lockKey = `customer:${tenantId}:${normalizedDomain}`;
+    const preLock = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
+
+    if (preLock && !this.needsNameRefinement(preLock, proposedName)) {
+      return preLock;
+    }
+
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
 
+    // Re-read under the lock: another transaction may have created the row
+    // between the read above and the lock being granted. This is the check that
+    // makes the fast path safe rather than merely fast.
     const existing = await this.customerRepository.findByDomain(tenantId, normalizedDomain, tx);
 
     if (existing) {
-      if (
-        existing.isAutoCreated &&
-        (existing.name ?? '').trim().toLowerCase() !== proposedName.toLowerCase()
-      ) {
+      // Same predicate as the pre-lock fast path, via the same method.
+      if (this.needsNameRefinement(existing, proposedName)) {
         const updated = await this.customerRepository.update(
           existing.id,
           { name: proposedName },

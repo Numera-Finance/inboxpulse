@@ -463,6 +463,26 @@ export async function getWaitingClients(
   isAdmin: boolean,
   days = 30,
 ): Promise<WaitingClient[]> {
+  return cached(
+    `waiting:${tenantId}:${userId}:${isAdmin}:${days}`,
+    VIEWER_TTL_MS,
+    (v: WaitingClient[]) => v.length === 0,
+    () => _uncachedWaitingClients(tenantId, userId, isAdmin, days),
+  );
+}
+
+/**
+ * Keyed by viewer, so 200 users are 200 keys and this does nothing for a cold
+ * morning peak — that is what the precomputed snapshots are for. What it does
+ * remove is the repeat cost of re-opening the panel, which is the common case
+ * during a working session.
+ */
+async function _uncachedWaitingClients(
+  tenantId: string,
+  userId: string,
+  isAdmin: boolean,
+  days: number,
+): Promise<WaitingClient[]> {
   const env = getEnv();
   const url =
     `${env.SERVICE_API_URL}/api/internal/addon/waiting` +
@@ -515,6 +535,17 @@ export type ViewerLookup =
   | { status: 'unreachable' };
 
 export async function resolveViewer(tenantId: string, email: string): Promise<ViewerLookup> {
+  return cached(
+    `viewer:${tenantId}:${email.toLowerCase()}`,
+    VIEWER_TTL_MS,
+    // Never cache "we could not ask" — that is a transient fact about us, and
+    // caching it would keep telling the reader we cannot identify them.
+    (v: ViewerLookup) => v.status === 'unreachable',
+    () => _uncachedResolveViewer(tenantId, email),
+  );
+}
+
+async function _uncachedResolveViewer(tenantId: string, email: string): Promise<ViewerLookup> {
   const env = getEnv();
   // No key or no address: we cannot ask, which is not the same as an answer.
   if (!env.SERVICE_API_KEY || !email) return { status: 'unreachable' };
@@ -725,6 +756,20 @@ export async function getFires(
   userId: string,
   isAdmin: boolean,
   days = 90,
+): Promise<Fire[]> {
+  return cached(
+    `fires:${tenantId}:${userId}:${isAdmin}:${days}`,
+    VIEWER_TTL_MS,
+    (v: Fire[]) => v.length === 0,
+    () => _uncachedFires(tenantId, userId, isAdmin, days),
+  );
+}
+
+async function _uncachedFires(
+  tenantId: string,
+  userId: string,
+  isAdmin: boolean,
+  days: number,
 ): Promise<Fire[]> {
   const env = getEnv();
   if (!env.SERVICE_API_KEY) return [];
