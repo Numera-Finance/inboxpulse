@@ -2962,6 +2962,10 @@ button.ip-memberhist__row { font: inherit; color: inherit; cursor: pointer; }
   padding: 0 8px;
 }
 
+/* `display: flex` outranks the UA [hidden] rule, so hiding the strip needs
+   this as well as the attribute — same reason .ip-shell__filters has one. */
+.ip-shell__tabs[hidden] { display: none; }
+
 .ip-shell__tab {
   flex: 0 1 auto;
   background: transparent;

@@ -8,6 +8,7 @@ import {
   DangerPulseService,
   SlowRespondersService,
   FiresService,
+  NegativeShareService,
   __resetRelationshipsTableCache,
 } from './account-context';
 
@@ -574,5 +575,114 @@ describe('the entitlement clause cannot name a table the query dropped', () => {
     const { db, sql } = recordingDb();
     await new FiresService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90, 6);
     expect(sql()).not.toContain('user_accessible_customers');
+  });
+});
+
+/**
+ * The unhappiest-clients ranking must carry every exclusion itself.
+ *
+ * This is the test that exists because the SQL it guards was DERIVED from the
+ * `monthly` CTE inside FiresService, which computes almost exactly this rate and
+ * applies none of these predicates. `monthly` is safe there only because it is
+ * probed as `WHERE m.customer_id = c.id` against a CTE that has already excluded
+ * everything; lifted out, it ranks our own domains at the top of a section
+ * headed "where clients are unhappiest".
+ *
+ * Structural, and for the usual reason: every predicate below returns MORE rows
+ * when it is missing, never zero and never an error. There is nothing to notice.
+ */
+describe('NegativeShareService carries its own exclusions', () => {
+  it('applies every predicate the fires query gets from its outer CTE', async () => {
+    const { db, sql } = recordingDb();
+    await new NegativeShareService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90, 30);
+    const text = sql();
+
+    // Item 1 — somebody from the firm on the thread, or we measure the client's
+    // own support desk and bill it to an account manager.
+    expect(text).toContain('participant_type');
+    expect(text).toContain('e2.thread_id');
+    // Item 3 — a customer claims gmail.com, and would answer for every consumer
+    // sender in the corpus.
+    expect(text).toContain('googlemail.com');
+    // Item 4 — derived from staff count, never a hardcoded list. Without it the
+    // top of the ranking is us, unhappy with ourselves.
+    expect(text).toContain('HAVING count(*) >=');
+    // Item 5 — non-clients are recorded, not guessed.
+    expect(text).toContain('customer_relationships');
+    // Item 8 — the floor, pinned to the ANALYSED count and nothing else.
+    // `toContain('>=')` would pass against every query in this file.
+    expect(text).toMatch(/HAVING count\(DISTINCT m\.email_id\) FILTER \(WHERE m\.analysed\) >= /);
+    // Item 9 — a rate is a rate. A ranking with no denominator is a volume
+    // ranking, and this section's entire claim is that it is not one.
+    expect(text).toContain('rate_of_analysed');
+  });
+
+  /**
+   * The floor must be the caller's, not a constant that looks like one.
+   *
+   * Asserting the default `30` appears proves nothing — 30 could be hardcoded in
+   * the SQL and the parameter ignored, and every reading would still look right
+   * because 30 is what the route passes anyway. Binding an unusual value is the
+   * only version of this check that can fail.
+   */
+  it('binds the floor it was given rather than a constant', async () => {
+    const { db, sql } = recordingDb();
+    await new NegativeShareService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90, 77);
+    expect(sql()).toContain(',77,');
+  });
+
+  /**
+   * A rate needs a denominator, and the denominator is what an inner join
+   * destroys: joining only negatives makes every client 100% negative. The LEFT
+   * JOIN is the single most load-bearing token in the query and the one a later
+   * "optimisation" is most likely to remove.
+   */
+  it('keeps the LEFT JOIN that makes a rate possible', async () => {
+    const { db, sql } = recordingDb();
+    await new NegativeShareService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90, 30);
+    expect(sql()).toContain('LEFT JOIN email_analyses');
+  });
+
+  /**
+   * The window ends at the newest MESSAGE, not at the clock.
+   *
+   * Every other panel service says `now() - N days`. On a clone whose newest
+   * mail is days old that silently shortens the window while the heading keeps
+   * claiming 90 days.
+   */
+  it('anchors the window on the corpus rather than on now()', async () => {
+    const { db, sql } = recordingDb();
+    await new NegativeShareService(db).get(TENANT, { userId: 'u1', isAdmin: true }, 90, 30);
+    const text = sql();
+    expect(text).toContain('max(received_at)');
+    expect(text).toContain('win_start');
+  });
+
+  /**
+   * The metadata row is what stops a viewer entitled to nothing receiving a
+   * baseline of 0%, a null window and a blind tail of zero — every field
+   * plausible, every field wrong, and no error anywhere. It is emitted from the
+   * CTEs so no GROUP BY, HAVING or entitlement clause can remove it.
+   */
+  it('emits an unscoped metadata row that survives an empty ranking', async () => {
+    const { db, sql } = recordingDb();
+    await new NegativeShareService(db).get(TENANT, { userId: 'u1', isAdmin: false }, 90, 30);
+    const text = sql();
+    expect(text).toContain('is_meta');
+    expect(text).toContain('UNION ALL');
+    // The scope is applied to the OUTPUT, so the firm baseline stays firm-wide.
+    // If it ever moves into `msg`, every reader gets a different reference line.
+    const meta = text.slice(0, text.indexOf('UNION ALL'));
+    expect(meta).not.toContain('user_accessible_customers');
+  });
+
+  it('scopes a non-admin and leaves an admin unscoped', async () => {
+    const scoped = recordingDb();
+    await new NegativeShareService(scoped.db).get(TENANT, { userId: 'u1', isAdmin: false }, 90, 30);
+    expect(scoped.sql()).toContain('user_accessible_customers');
+
+    const admin = recordingDb();
+    await new NegativeShareService(admin.db).get(TENANT, { userId: 'u1', isAdmin: true }, 90, 30);
+    expect(admin.sql()).not.toContain('user_accessible_customers');
   });
 });

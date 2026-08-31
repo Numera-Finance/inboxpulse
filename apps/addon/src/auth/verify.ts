@@ -58,7 +58,23 @@ export async function verifyRequest(
   const userIdToken = auth.userIdToken;
 
   if (env.ADDON_VERIFY_ID_TOKEN !== 'true') {
-    return { ok: true, email: unsafeEmail(userIdToken) };
+    // Dev only, and everything here is unverified by construction — this branch
+    // has already decided not to check anything.
+    //
+    // Order matters. A real (if unverified) token still describes the actual
+    // signed-in mailbox, so it outranks a caller's assertion; the caller's
+    // assertion outranks the pinned env default, so one add-on can serve several
+    // testers without a restart. `|| undefined` and not `?? undefined`: an empty
+    // ADDON_DEV_VIEWER_EMAIL must read as "nobody said", or resolveViewer is
+    // called with '' and returns `unreachable` instead of being skipped.
+    //
+    // NOTHING BELOW THIS RETURN MAY READ devViewerEmail. Once verification is
+    // on, identity comes from Google's signature alone — a caller-supplied
+    // address there would be an impersonation route into entitlement-scoped
+    // data.
+    const claimed =
+      unsafeEmail(userIdToken) || event.devViewerEmail || env.ADDON_DEV_VIEWER_EMAIL;
+    return { ok: true, email: claimed || undefined };
   }
 
   // 1) Prove Google origin via any Google-signed token present in the request.

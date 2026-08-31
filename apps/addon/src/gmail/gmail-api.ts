@@ -242,6 +242,9 @@ export async function fetchMessageHeaders(
 export interface ThreadMessage {
   id: string;
   from?: string;
+  /** The message's own Subject header. Also carried by caller-supplied threads,
+   *  so the two sources stay interchangeable — see getSuppliedMessages. */
+  subject?: string;
   to?: string;
   cc?: string;
   date?: string;
@@ -280,6 +283,7 @@ export async function fetchThreadMessages(
     out.push({
       id: m.id ?? '',
       from: header('from'),
+      subject: header('subject'),
       to: header('to'),
       cc: header('cc'),
       date: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : undefined,

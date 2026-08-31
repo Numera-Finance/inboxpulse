@@ -169,6 +169,12 @@ export function mountApp(root, { apiFetch, sections = MANAGER_SECTIONS, initialS
   const resetBtn     = $('global-reset');
   const presetBtns   = root.querySelectorAll('[data-preset]');
 
+  // One section is not a choice. A lone tab reads as leftover chrome, and the
+  // strip costs ~28px of a ~400px rail that the content can have instead.
+  // Derived from the array rather than hardcoded, so the harness — which passes
+  // the full set — still renders its strip.
+  nav.hidden = sections.length <= 1;
+
   // Filters — default to last 30 days, all customers, all users. Sections
   // are mounted with these initial values and updated through setFilters().
   const DEFAULTS = {
@@ -242,6 +248,10 @@ export function mountApp(root, { apiFetch, sections = MANAGER_SECTIONS, initialS
   }
 
   function showSection(id) {
+    // The cross-section jumps below name ids by string, so a section filtered
+    // out of this build would set activeId to something that does not exist and
+    // then hide every host — a blank panel with no error.
+    if (!sections.some((s) => s.id === id)) return;
     activeId = id;
     for (const btn of nav.querySelectorAll('[data-section]')) {
       btn.classList.toggle('active', btn.dataset.section === id);

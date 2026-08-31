@@ -36,6 +36,7 @@ const SERVICES = {
   stirring: 'export class StirringService',
   pulse: 'export class DangerPulseService',
   slow: 'export class SlowRespondersService',
+  'negative-share': 'export class NegativeShareService',
 };
 
 const which = process.argv[2];
@@ -93,7 +94,33 @@ function fragments() {
     '${tenantId}': `'${TENANT}'`,
     '${days}': DAYS,
     '${limit}': '200',
+    // NegativeShareService's sample floor. The ranking is meaningless without
+    // one — at 10 analysed messages the top row is six angry emails out of
+    // eleven — so it is filled with the value the route actually clamps to.
+    '${floor}': '30',
     '${OWN_DOMAIN_MIN_STAFF}': '3',
+
+    // Three services were unresolvable until these were added, so `--run` and
+    // `--explain` simply refused for half the panel. Each is a local in its
+    // service rather than a shared helper, which is why they were missed.
+    '${opts.days}': DAYS,
+    '${opts.limit}': '200',
+    // WaitingClientsService's own-name exclusion. The runtime passes
+    // ownDomains: ['mystartupcfo.com','numerafinance.com'] and compares the
+    // first label of each against customers.name.
+    '${own}': "AND lower(c.name) <> ALL(ARRAY['mystartupcfo','numerafinance']::text[])",
+    // SlowRespondersService's sample floor — a median over four threads names a
+    // person on the strength of an anecdote.
+    '${minThreads}': '5',
+    // DangerPulseService reuses one FROM+WHERE across several aggregates.
+    '${base}':
+      "FROM emails e JOIN email_analyses a ON a.email_id = e.id AND a.analysis_type = 'sentiment' " +
+      `WHERE e.tenant_id = '${TENANT}' AND e.is_customer_email AND e.first_reply_at IS NOT NULL ` +
+      `AND e.first_reply_at > e.received_at AND e.received_at > now() - (${DAYS} || ' days')::interval ` +
+      "AND EXISTS (SELECT 1 FROM emails e2 JOIN email_participants pp ON pp.email_id = e2.id " +
+      "AND pp.participant_type = 'user' WHERE e2.thread_id = e.thread_id AND e2.tenant_id = e.tenant_id) " +
+      "AND EXISTS (SELECT 1 FROM email_participants me WHERE me.email_id = e.id " +
+      "AND me.participant_type = 'user' AND me.direction IN ('to','cc'))",
   };
 }
 

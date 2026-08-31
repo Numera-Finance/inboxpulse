@@ -28,6 +28,15 @@ const MANAGER_URL = env.WXT_MANAGER_URL || 'http://localhost:8080';
 // service-key auth (no cookie) and can therefore read a different stack — the
 // clone — while session paths must stay on the host the web app logs into.
 const FLAGS_API_URL = env.WXT_FLAGS_API_URL || API_URL;
+// The Workspace add-on, whose rendered cards the Panel tab displays. LOCAL
+// ONLY: a deployed add-on verifies a Google-signed ID token that an extension
+// cannot mint, so this stays a localhost URL. See lib/addon-client.ts.
+const ADDON_URL = env.WXT_ADDON_URL || 'http://localhost:4005';
+// Display name in chrome://extensions and Gmail's rail. Overridable so a local
+// QA build can sit alongside an installed production build without the two
+// being indistinguishable. Unset everywhere except a dev .env, so production
+// builds keep the original name.
+const EXT_NAME = env.WXT_EXT_NAME || 'CRM Sidebar for Gmail';
 
 /**
  * Convert an origin URL into a Chrome host match pattern.
@@ -47,6 +56,7 @@ const hostPermissions = Array.from(
     toHostMatchPattern(WEB_URL),
     toHostMatchPattern(MANAGER_URL),
     toHostMatchPattern(FLAGS_API_URL),
+    toHostMatchPattern(ADDON_URL),
   ]),
 );
 
@@ -72,13 +82,13 @@ export default defineConfig({
     },
   },
   manifest: {
-    name: 'CRM Sidebar for Gmail',
+    name: EXT_NAME,
     description: 'View CRM customer data alongside Gmail conversations',
     version: '0.1.0',
     permissions: ['activeTab', 'storage', 'scripting'],
     host_permissions: hostPermissions,
     action: {
-      default_title: 'CRM Sidebar for Gmail',
+      default_title: EXT_NAME,
       default_icon: {
         '16': 'icons/icon-16.png',
         '32': 'icons/icon-32.png',

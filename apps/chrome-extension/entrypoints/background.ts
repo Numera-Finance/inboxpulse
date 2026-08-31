@@ -29,6 +29,11 @@ const FLAGS_API_URL = import.meta.env.WXT_FLAGS_API_URL || API_URL;
 // crm-manager service. See lib/manager-client.ts for why traffic is routed
 // through the service worker rather than issued from the content script.
 const MANAGER_URL = import.meta.env.WXT_MANAGER_URL || 'http://localhost:8080';
+// The Workspace add-on service, whose rendered Cards-v2 JSON the sidebar can
+// display directly so the extension and the add-on cannot drift apart. Local
+// only: a deployed add-on verifies a Google-signed ID token that an extension
+// cannot mint. See lib/addon-client.ts.
+const ADDON_URL = import.meta.env.WXT_ADDON_URL || 'http://localhost:4005';
 
 export default defineBackground(() => {
   // Handle messages from content script sidebar
@@ -208,6 +213,77 @@ export default defineBackground(() => {
               `Start the authenticated proxy with:  gcloud run services proxy crm-manager --region us-central1 --port 8080`,
           });
         });
+      return true;
+    }
+
+    // The Workspace add-on's rendered cards. POSTed, always, because every
+    // add-on trigger endpoint is a POST that takes the event object as its body
+    // — see apps/addon/src/index.ts.
+    //
+    // Returns the same { ok, status, json } envelope MANAGER_FETCH does. A
+    // Response cannot cross the message boundary, and the envelope is what
+    // lib/addon-client.ts is typed against.
+    if (message.type === 'ADDON_FETCH') {
+      const { path, body } = message as { path: string; body?: string };
+
+      // Card action buttons carry an ABSOLUTE url (the add-on builds them from
+      // ADDON_BASE_URL, because Google has to call them). Everything else is a
+      // path. Accept both, but never let an absolute url point somewhere else:
+      // a card is data from the API, so a rewritten action url would otherwise
+      // make the service worker POST wherever it said.
+      const url = path.startsWith('http') ? path : `${ADDON_URL}${path}`;
+      if (!url.startsWith(ADDON_URL)) {
+        sendResponse({
+          ok: false,
+          status: 0,
+          json: null,
+          error: `Refused to call ${url} — not the configured add-on (${ADDON_URL}).`,
+        });
+        return true;
+      }
+
+      fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: body ?? '{}',
+      })
+        .then(async (res) => {
+          let json: unknown = null;
+          try {
+            json = await res.json();
+          } catch {
+            /* non-JSON body — status carries the outcome */
+          }
+          sendResponse({ ok: res.ok, status: res.status, json });
+        })
+        .catch((err: Error) => {
+          console.warn('[InboxPulse bg] addon fetch failed:', path, err.message);
+          // "Couldn't load" and "the add-on isn't running" render identically in
+          // the panel, and only one of them is fixed by starting a process.
+          sendResponse({
+            ok: false,
+            status: 0,
+            json: null,
+            error:
+              `Can't reach the InboxPulse add-on at ${ADDON_URL}. ` +
+              `Start it with:  pnpm --filter @crm/addon dev`,
+          });
+        });
+      return true;
+    }
+
+    // Every card link that would leave for the web console lands here instead.
+    // See components/CardRenderer.tsx — the panel never navigates to a real
+    // host, so a QA build cannot be used to act on production by accident.
+    //
+    // Opened from the background rather than the content script so the page
+    // needs no web_accessible_resources entry: a chrome-extension:// URL loaded
+    // from Gmail's origin would otherwise be blocked.
+    if (message.type === 'OPEN_QA_NOTICE') {
+      chrome.tabs.create({ url: chrome.runtime.getURL('qa-only.html') }).then(
+        () => sendResponse({ ok: true }),
+        (err: Error) => sendResponse({ ok: false, error: err.message }),
+      );
       return true;
     }
 

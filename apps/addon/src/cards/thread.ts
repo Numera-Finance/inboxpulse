@@ -103,6 +103,33 @@ export interface ThreadCardInput {
    * offer analysis as an action. See buildThreadCard.
    */
   analysisPending?: boolean;
+  /**
+   * Offer "Analyse and save". Only ever true for a thread InboxPulse has NO
+   * analysed record of — the button's whole claim is that it fills a gap, and on
+   * a tracked thread it would overwrite a pipeline analysis with a panel one.
+   *
+   * Also requires a configured target (ADDON_SAVE_INTEGRATION_ID) and content to
+   * store. Absent, the button is not rendered rather than rendered and refused:
+   * a control that cannot work is worse than no control, and this one writes.
+   */
+  canSave?: boolean;
+  /**
+   * The outcome of a save that just happened, rendered so the write is visible.
+   * A write nobody can see is indistinguishable from a button that did nothing —
+   * the failure this panel produces most often.
+   */
+  saved?: { sentiment: string; reason: string } | null;
+  /** A save that was attempted and did not happen, in words the reader can act on. */
+  saveFailed?: string | null;
+  /**
+   * A reading already stored for THIS message, from an earlier press of the
+   * button — not from the save that just happened (that is `saved`).
+   *
+   * Rendered rather than merely suppressing the buttons. An already-analysed
+   * message and one the panel simply failed on look identical if the controls
+   * just vanish, and only one of those is fixed by pressing anything.
+   */
+  storedAnalysis?: { sentiment: string; reason: string; analysedAt?: string } | null;
   /** Echoed back into the analyse action so the callback can re-fetch. */
   providerThreadId?: string;
   /** How many messages the reading actually covered, for the provenance line. */
@@ -520,6 +547,56 @@ export function buildThreadCard(input: ThreadCardInput): Card {
   // branch below. Gating the analysis behind "not resolved" meant a thread
   // InboxPulse knows about could not be read at all — no commitments, no Track,
   // no draft — while an unknown one could. Backwards.
+  // The outcome of a save, stated plainly and at the top. A stored row and a
+  // failed write render identically everywhere else on this card, and only one
+  // of them is fixed by pressing the button again.
+  if (input.saved) {
+    sections.push({
+      widgets: [
+        deco({
+          startIcon: { knownIcon: 'BOOKMARK' },
+          text: `<b>Saved to InboxPulse</b>`,
+          bottomLabel: `Stored as ${escapeText(input.saved.sentiment)}. It will appear for colleagues who can see this account.`,
+          wrapText: true,
+        }),
+        ...(input.saved.reason
+          ? [text(`<font color="#5f6368">${escapeText(input.saved.reason)}</font>`)]
+          : []),
+      ],
+    });
+  } else if (input.saveFailed) {
+    sections.push({
+      widgets: [
+        deco({
+          startIcon: { knownIcon: 'DESCRIPTION' },
+          text: '<b>Not saved</b>',
+          bottomLabel: escapeText(input.saveFailed),
+          wrapText: true,
+        }),
+      ],
+    });
+  } else if (input.storedAnalysis) {
+    // Already read, on an earlier visit. Said out loud, because the alternative
+    // is a card that has quietly dropped its analysis controls — which reads as
+    // a broken panel rather than a finished job.
+    const when = toDay(input.storedAnalysis.analysedAt);
+    sections.push({
+      widgets: [
+        deco({
+          startIcon: { knownIcon: 'BOOKMARK' },
+          text: '<b>Already analysed</b>',
+          bottomLabel: when
+            ? `Stored as ${escapeText(input.storedAnalysis.sentiment)} on ${escapeText(when)}.`
+            : `Stored as ${escapeText(input.storedAnalysis.sentiment)}.`,
+          wrapText: true,
+        }),
+        ...(input.storedAnalysis.reason
+          ? [text(`<font color="#5f6368">${escapeText(input.storedAnalysis.reason)}</font>`)]
+          : []),
+      ],
+    });
+  }
+
   if (status !== 'resolved' || input.analysisPending) {
     // A live, in-request reading of the open message. Shown INSTEAD of the
     // "nothing here" copy, because it answers the same question with real
@@ -538,11 +615,38 @@ export function buildThreadCard(input: ThreadCardInput): Card {
               threadId: input.providerThreadId ?? '',
               messageId: input.messageId ?? '',
             }),
+            // THE ONLY CONTROL ON THIS CARD THAT KEEPS ANYTHING.
+            //
+            // Deliberately a second button rather than a checkbox on the first:
+            // reading and storing are different acts with different consequences,
+            // and the default has to stay the one that keeps nothing. "Read this
+            // thread" promises the analysis is thrown away, and that promise is
+            // only worth anything if storing is a thing the reader chose.
+            ...(input.canSave
+              ? [
+                  actionButton('Analyse and save', `${input.baseUrl}/gmail/save`, {
+                    threadId: input.providerThreadId ?? '',
+                    messageId: input.messageId ?? '',
+                  }),
+                ]
+              : []),
           ),
           deco({
             text: 'Sentiment, commitments and a draft reply, read on your machine and not stored.',
             wrapText: true,
           }),
+          // Said BEFORE the press, not after. Same rule as the reading switch:
+          // a card that acts first and explains afterwards is a caption, not a
+          // disclosure.
+          ...(input.canSave
+            ? [
+                deco({
+                  startIcon: { knownIcon: 'BOOKMARK' },
+                  text: '<font color="#5f6368"><b>Analyse and save</b> keeps this one. The message and its sentiment are written to InboxPulse, where your colleagues can see them.</font>',
+                  wrapText: true,
+                }),
+              ]
+            : []),
         ],
       });
 
@@ -993,10 +1097,39 @@ export function buildThreadCard(input: ThreadCardInput): Card {
     // but only when analysis is off, since pending returns above.
     if (status === 'resolved') return { sections: separated(sections) };
 
-    const hint = NON_RESOLVED_HINT[status];
-    sections.push({
-      widgets: [deco({ text: NON_RESOLVED_COPY[status], bottomLabel: hint, wrapText: true })],
-    });
+    // A thread we JUST saved is not an untracked one any more, and saying both
+    // on one card is worse than saying neither: "Saved to InboxPulse" directly
+    // above "Not a tracked client thread, so there's nothing analysed to show"
+    // reads as the save having failed. The save banner is the truer statement of
+    // the two, so it stands alone.
+    // "Nothing analysed to show" is only true if nothing is being shown.
+    //
+    // A message saved from the panel lands in `emails` and `email_analyses` but
+    // gets no `email_participants` row, and resolution keys on that join to find
+    // a customer — so the thread stays 'untracked' while its stored sentiment
+    // renders in Flagged messages two inches below. The copy then flatly
+    // contradicts the card it is printed on, and of the two the rendered
+    // sentiment is the one the reader can check.
+    //
+    // THREE SOURCES NOW, AND THE LIST HAS GROWN TWICE. A stored reading counts
+    // as well as a trend or a flag: `storedAnalysis` prints "Already analysed —
+    // stored as neutral" and this copy printed "there's nothing analysed to
+    // show" directly beneath it, with the buttons correctly suppressed and no
+    // remaining explanation. A reader cannot tell that from a panel that broke,
+    // and the button had in fact worked perfectly.
+    //
+    // Derived from what the card is DISPLAYING rather than enumerated per
+    // feature, so the next thing that renders an analysis is covered without
+    // anyone remembering this line exists.
+    const showingStored = Boolean(
+      input.trend?.length || input.flagged?.length || input.storedAnalysis,
+    );
+    if (!input.saved && !(status === 'untracked' && showingStored)) {
+      const hint = NON_RESOLVED_HINT[status];
+      sections.push({
+        widgets: [deco({ text: NON_RESOLVED_COPY[status], bottomLabel: hint, wrapText: true })],
+      });
+    }
     // Only worth showing the envelope when we have nothing else to say.
     sections.push(buildOpenMessageSection(input));
     // Trend and flags are THREAD-level, so show them if we have them even when

@@ -993,6 +993,97 @@ export class EmailRepository extends ScopedRepository {
   }
 
   /**
+   * Has THE PANEL already read and stored this exact provider message?
+   *
+   * Not "is this message analysed" — that question has a much bigger answer and
+   * asking it here was a bug. See the `model_used` note on the WHERE clause.
+   *
+   * DELIBERATELY NOT `findByMessageIdsScoped`. That method answers a different
+   * question — "is this a tracked CLIENT thread I am entitled to see" — and it
+   * answers it with an inner join onto `email_participants` requiring
+   * `direction='from'`, `participant_type='contact'` and a non-null
+   * `customer_id`, plus the entitlement filter.
+   *
+   * A message the sidebar saved has none of that. `LiveSaveService` writes the
+   * thread, the email and the analysis and no participant rows, because the
+   * whole reason the Save button was offered is that the thread resolved to no
+   * customer. Asking the customer-scoped question about a deliberately
+   * customer-less row can only ever answer "no" — which is the bug this method
+   * exists to fix, and would be reintroduced by adding a customer join here.
+   *
+   * So the boundary is the TENANT, and that is the honest one: the caller is
+   * asking whether their own tenant already holds a reading for a message they
+   * have open in their own mailbox. Nothing about another customer's data is
+   * disclosed — the row is returned only to the tenant that wrote it.
+   *
+   * Matches provider id OR RFC id for the same reason `findByMessageIdsScoped`
+   * does: provider ids are per-mailbox, so a thread ingested from a teammate's
+   * mailbox only matches on the cross-mailbox-stable RFC header.
+   */
+  async findStoredAnalysisByMessageIds(
+    tenantId: string,
+    provider: string,
+    messageIds: string[],
+    rfcMessageIds: string[] = []
+  ): Promise<{
+    emailId: string;
+    messageId: string;
+    subject: string | null;
+    sentiment: string | null;
+    reasoning: string | null;
+    modelUsed: string | null;
+    analysedAt: Date | null;
+  } | null> {
+    const idClauses: SQL[] = [];
+    if (messageIds.length) idClauses.push(inArray(emails.messageId, messageIds));
+    if (rfcMessageIds.length) idClauses.push(inArray(emails.rfcMessageId, rfcMessageIds));
+    if (idClauses.length === 0) return null;
+    const idMatch = idClauses.length === 1 ? idClauses[0] : or(...idClauses);
+
+    // innerJoin, not leftJoin: an `emails` row with no analysis is NOT analysed.
+    // Ingestion inserts rows with analysis_status pending long before the batch
+    // analyser reaches them, so "the message is stored" and "the message has a
+    // reading" are different facts and only the second one may hide the button.
+    //
+    // AND THE READING HAS TO BE THE PANEL'S OWN. `model_used IS NOT NULL` is the
+    // provenance marker LiveSaveService stamps on every row it writes; existing
+    // corpus rows leave it NULL. Without this clause the query matched the whole
+    // analysed corpus — 35,863 sentiment rows, of which exactly 7 came from the
+    // Save button — so every message the batch analyser had ever touched showed
+    // "Already analysed" and lost both of its buttons.
+    //
+    // The distinction is not pedantic. The button produces a live thread reading
+    // (sentiment WITH a reason, from a named model); a pipeline sentiment row is
+    // a different artifact and 13,024 of them carry no reasoning at all. Offering
+    // to read a thread whose only stored reading is a bare 'neutral' is correct,
+    // and suppressing it on the strength of that row is not.
+    const rows = await this.db
+      .select({
+        emailId: emails.id,
+        messageId: emails.messageId,
+        subject: emails.subject,
+        sentiment: emailAnalyses.sentimentValue,
+        reasoning: emailAnalyses.reasoning,
+        modelUsed: emailAnalyses.modelUsed,
+        analysedAt: emailAnalyses.updatedAt,
+      })
+      .from(emails)
+      .innerJoin(emailAnalyses, eq(emails.id, emailAnalyses.emailId))
+      .where(
+        and(
+          eq(emails.tenantId, tenantId),
+          eq(emails.provider, provider),
+          idMatch,
+          eq(emailAnalyses.analysisType, 'sentiment'),
+          isNotNull(emailAnalyses.modelUsed)
+        )
+      )
+      .limit(1);
+
+    return rows[0] ?? null;
+  }
+
+  /**
    * Find email by ID with access control
    */
   async findByIdScoped(header: RequestHeader, emailId: string) {

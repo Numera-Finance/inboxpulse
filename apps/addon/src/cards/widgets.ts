@@ -98,6 +98,22 @@ export const text = (t: string): Widget => ({ textParagraph: { text: t } });
 export const deco = (d: DecoratedText): Widget => ({ decoratedText: d });
 
 /**
+ * Card text is an HTML subset, so anything read out of the database — customer
+ * names, subjects, people — must be escaped before it is interpolated into a
+ * card string.
+ *
+ * Lives here rather than in one card module because every card interpolates
+ * mail-derived text and a second copy is how the two drift. Note that the
+ * EXTENSION escapes again on the way in (`sanitizeCardHtml` in
+ * CardRenderer.tsx), and that one must additionally escape `"` — it restores a
+ * whitelist by tag shape, so an unescaped quote made `<font color="…">`
+ * un-matchable. This one does not, because Cards v2 has no attribute we build
+ * from mail-derived text; keep it that way.
+ */
+export const escapeText = (v: string): string =>
+  v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
  * A blank line.
  *
  * Cards v2 exposes no padding, margin or spacing property on widgets or sections,

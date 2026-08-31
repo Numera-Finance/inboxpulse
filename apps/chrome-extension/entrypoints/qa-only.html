@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QA only</title>
+    <!--
+      Where every card link that would have opened the web console lands.
+
+      This extension build reads a CLONE database. A "See them" button that
+      opened the real console would put production data one click from a panel
+      whose entire premise is that it is not production — and once the tab is
+      open, nothing distinguishes the two. So the panel never navigates to a
+      real host; it navigates here.
+
+      Deliberately inert: no script, no link, nothing to click onward to.
+    -->
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #fff;
+        color: #202124;
+        font-family: 'Google Sans', Roboto, 'Segoe UI', system-ui, Arial, sans-serif;
+      }
+      main {
+        padding: 24px;
+        text-align: center;
+      }
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 500;
+        letter-spacing: 0.2px;
+      }
+      p {
+        margin: 10px 0 0;
+        font-size: 13px;
+        color: #5f6368;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #202124;
+          color: #e8eaed;
+        }
+        p {
+          color: #9aa0a6;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>This app is QA only.</h1>
+      <p>Links out of the InboxPulse panel are disabled in this build.</p>
+    </main>
+  </body>
+</html>

@@ -196,6 +196,66 @@ export async function resolveThreadByMessage(
   }
 }
 
+export interface StoredAnalysis {
+  emailId: string;
+  subject?: string;
+  sentiment?: string;
+  reason?: string;
+  modelUsed?: string;
+  analysedAt?: string;
+}
+
+/**
+ * Has this message already been analysed and stored?
+ *
+ * Asked before the card offers "Analyse and save". `resolveThreadByMessage`
+ * cannot answer it: that endpoint is customer-scoped, and a message saved from
+ * the panel has no customer by construction — the Save button is only offered
+ * on threads that resolved to none. So a message this button had already stored
+ * still came back unresolved, and the card offered to analyse it again, every
+ * time it was opened.
+ *
+ * Returns null both when nothing is stored and when the lookup fails. That is
+ * the safe direction: an unreachable API leaves the buttons offered rather than
+ * hiding a control on a guess.
+ */
+export async function findStoredAnalysis(
+  messageId: string,
+  rfcMessageId: string | undefined,
+  tenantId: string,
+): Promise<StoredAnalysis | null> {
+  const env = getEnv();
+  try {
+    const res = await apiFetch(`${env.SERVICE_API_URL}/api/internal/emails/stored-analysis`, {
+      method: 'POST',
+      headers: internalHeaders(tenantId),
+      body: JSON.stringify({
+        messageIds: [messageId],
+        rfcMessageIds: rfcMessageId ? [rfcMessageId] : undefined,
+        provider: 'gmail',
+      }),
+    });
+    if (!res || !res.ok) {
+      logger.warn({ status: res?.status }, 'stored-analysis non-OK');
+      return null;
+    }
+    const d = unwrap<{ analysis?: Record<string, unknown> | null }>(await res.json());
+    const row = d.analysis;
+    if (!row) return null;
+    return {
+      emailId: String(row.emailId ?? ''),
+      subject: (row.subject as string) ?? undefined,
+      sentiment: (row.sentiment as string) ?? undefined,
+      reason: (row.reasoning as string) ?? undefined,
+      modelUsed: (row.modelUsed as string) ?? undefined,
+      analysedAt: (row.analysedAt as string) ?? undefined,
+    };
+  } catch (err) {
+    logger.error({ err: String(err) }, 'findStoredAnalysis failed');
+    return null;
+  }
+}
+
 /**
  * Resolve a DB thread id from the open thread's Gmail (provider) thread id.
  * Lets the sidebar show thread-level trend/flagged even when the open message
@@ -409,6 +469,62 @@ export async function getAccountContext(
 }
 
 /** Create a task from the panel. Returns false when the viewer is not entitled. */
+/**
+ * File a message the panel read, with its reading, into InboxPulse.
+ *
+ * The SECOND write in this client, and the first that adds a row to `emails`.
+ * Returns a discriminated result rather than a boolean because the three
+ * outcomes need different words on the card: stored, refused for a stated
+ * reason, or we could not reach the service. `createTask` returns a boolean and
+ * that is already the thing that makes "you do not have access" and "the API is
+ * down" render identically.
+ */
+export async function saveAnalysedEmail(input: {
+  tenantId: string;
+  integrationId: string;
+  provider: string;
+  thread: { providerThreadId: string; subject: string };
+  email: {
+    messageId: string;
+    rfcMessageId?: string | null;
+    subject: string;
+    body: string;
+    fromEmail: string;
+    fromName?: string | null;
+    tos?: string[];
+    ccs?: string[];
+    receivedAt: string;
+  };
+  analysis: { sentiment: 'positive' | 'neutral' | 'negative'; reason: string; modelUsed: string };
+}): Promise<
+  { status: 'stored'; emailId: string } | { status: 'refused'; reason: string } | { status: 'unreachable' }
+> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return { status: 'refused', reason: 'no service key configured' };
+  try {
+    const res = await apiFetch(`${env.SERVICE_API_URL}/api/internal/emails/analysed-live`, {
+      method: 'POST',
+      headers: internalHeaders(input.tenantId),
+      body: JSON.stringify(input),
+    });
+    if (!res) return { status: 'unreachable' };
+    if (!res.ok) {
+      // The API's own message, not a generic one: a 400 here is a shape problem
+      // in what the panel sent, and that is the only place it is visible.
+      const detail = await res.text().catch(() => '');
+      logger.warn({ status: res.status, detail: detail.slice(0, 300) }, 'saveAnalysedEmail non-OK');
+      return { status: 'refused', reason: `the API returned ${res.status}` };
+    }
+    const json = (await res.json()) as { data?: { emailId?: string } };
+    return json.data?.emailId
+      ? { status: 'stored', emailId: json.data.emailId }
+      : { status: 'refused', reason: 'the API stored nothing' };
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'saveAnalysedEmail failed');
+    return { status: 'unreachable' };
+  }
+}
+
 export async function createTask(input: {
   tenantId: string;
   userId: string;
@@ -784,6 +900,88 @@ async function _uncachedFires(
     return Array.isArray(d) ? d : [];
   } catch {
     return [];
+  }
+}
+
+/** One client's negative rate over their own analysed mail. */
+export interface NegativeShareRow {
+  customerId: string | null;
+  customer: string;
+  /** Negatives as a percent of THEIR analysed mail — the plotted magnitude. */
+  rateOfAnalysed: number;
+  /** Negatives as a percent of every negative in the firm. Printed, never sorted on. */
+  shareOfFirmNegatives: number;
+  negative: number;
+  analysed: number;
+  messages: number;
+  /** `analysed / messages` — why two rows may not be comparable. */
+  coveragePct: number;
+}
+
+export interface NegativeShare {
+  rows: NegativeShareRow[];
+  /** The firm's own rate. The chart's reference line, and firm-wide for every reader. */
+  baselinePct: number;
+  floor: number;
+  windowStart: string | null;
+  /** `max(received_at)`, not `now()`. */
+  windowEnd: string | null;
+  lastAnalysed: string | null;
+  blindMessages: number;
+  /** Clients this viewer could see that cleared the floor with a negative. */
+  qualified: number;
+  notShown: number;
+}
+
+/**
+ * Which clients are unhappiest as a share of their own mail.
+ *
+ * Entitlement-scoped, so it takes the resolved viewer like `getFires`. The API
+ * masks; nothing here decides who may see what.
+ *
+ * Empty rows are NOT treated as a failure for caching purposes — unlike the
+ * other viewer-scoped calls above. A viewer entitled to no qualifying client
+ * legitimately has none, and re-asking every 60s would spend a 2-second query on
+ * re-deriving that. The metadata still arrives, so the card can say so.
+ */
+export async function getNegativeShare(
+  tenantId: string,
+  userId: string,
+  isAdmin: boolean,
+  days = 90,
+  limit = 5,
+): Promise<NegativeShare | null> {
+  return cached(
+    `negshare:${tenantId}:${userId}:${isAdmin}:${days}:${limit}`,
+    VIEWER_TTL_MS,
+    (v: NegativeShare | null) => v === null,
+    () => _uncachedNegativeShare(tenantId, userId, isAdmin, days, limit),
+  );
+}
+
+async function _uncachedNegativeShare(
+  tenantId: string,
+  userId: string,
+  isAdmin: boolean,
+  days: number,
+  limit: number,
+): Promise<NegativeShare | null> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return null;
+  const res = await apiFetch(
+    `${env.SERVICE_API_URL}/api/internal/addon/negative-share?tenantId=${encodeURIComponent(tenantId)}` +
+      `&userId=${encodeURIComponent(userId)}&isAdmin=${isAdmin}&days=${days}&limit=${limit}`,
+    { headers: internalHeaders(tenantId) },
+  );
+  if (!res || !res.ok) return null;
+  try {
+    const d = unwrap<NegativeShare>(await res.json());
+    // A failed fetch and an empty ranking must not be the same value. `null`
+    // means we could not ask; `rows: []` means we asked and nobody qualified,
+    // and only one of those is worth telling the reader about.
+    return d && Array.isArray(d.rows) ? d : null;
+  } catch {
+    return null;
   }
 }
 

@@ -8,6 +8,7 @@ import {
   SlowRespondersService,
   FiresService,
   WaitingClientsService,
+  NegativeShareService,
 } from './account-context';
 
 /**
@@ -67,6 +68,22 @@ export class PanelSnapshotService {
             { userId: '', isAdmin: true },
             { days: 30, limit: 200, ownDomains: ['mystartupcfo.com', 'numerafinance.com'] },
           ),
+      },
+      // THE ONE THAT MUST NOT BE FETCHED LIVE.
+      //
+      // ~2s measured, against ~0.7s for the fires ranking, and the cost is
+      // irreducible: a rate needs its denominator, so it LEFT JOINs
+      // email_analyses across every inbound message in the window rather than
+      // inner-joining the negatives. On a panel-open path that is three times
+      // the budget of the slowest thing already there.
+      //
+      // Computed AS AN ADMIN and unlimited, like `fires` — this is the superset
+      // every viewer's list is a subset of, and the route masks it. The firm
+      // baseline it carries is deliberately firm-wide, so a reader's reference
+      // line does not change with their entitlements.
+      {
+        kind: 'negative_share',
+        run: () => new NegativeShareService(this.db).get(tenantId, { userId: '', isAdmin: true }, 90, 30),
       },
     ];
 

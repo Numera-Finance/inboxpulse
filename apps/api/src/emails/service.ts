@@ -837,6 +837,29 @@ export class EmailService {
   }
 
   /**
+   * Does this provider message already have a stored reading?
+   *
+   * The sidebar asks this before offering "Analyse and save", so that a message
+   * it has already analysed is reported rather than silently offered for
+   * re-analysis. See the repository method for why this is tenant-scoped and
+   * not customer-scoped.
+   */
+  async findStoredAnalysis(
+    tenantId: string,
+    provider: string,
+    messageIds: string[],
+    rfcMessageIds: string[] = []
+  ) {
+    if (!tenantId) throw new Error('tenantId is required');
+    return this.emailRepo.findStoredAnalysisByMessageIds(
+      tenantId,
+      provider,
+      messageIds,
+      rfcMessageIds
+    );
+  }
+
+  /**
    * Check if email exists
    */
   async exists(tenantId: string, provider: string, messageId: string): Promise<boolean> {

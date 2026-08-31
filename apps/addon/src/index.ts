@@ -14,11 +14,12 @@ import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import { logger } from './utils/logger';
 import { pushCard } from './cards/widgets';
-import { buildHomepageCard } from './cards/homepage';
+import { buildHomepageCard, homepageCharts } from './cards/homepage';
+import { buildChart } from './cards/chart';
 import { buildThreadCard } from './cards/thread';
 import { buildFlaggedDetailCard } from './cards/flagged-detail';
 import { signalNames } from './cards/signals';
-import { getGmail, getActionParameters, type AddonEvent } from './gmail/event';
+import { getGmail, getActionParameters, getSuppliedMessages, type AddonEvent } from './gmail/event';
 import { fetchMessageHeaders, fetchMessageBody, fetchThreadMessages, normalizeGmailMessageId } from './gmail/gmail-api';
 import { verifyRequest } from './auth/verify';
 import {
@@ -27,6 +28,7 @@ import {
   getAnalyzedEmail,
   getDangerPulse,
   getFires,
+  getNegativeShare,
   getStirring,
   getSlowResponders,
   getThreadFlagged,
@@ -35,7 +37,9 @@ import {
   resolveTenantByEmail,
   resolveThreadByMessage,
   resolveThreadIdByProvider,
+  findStoredAnalysis,
   resolveViewer,
+  saveAnalysedEmail,
 } from './services/api-client';
 import { analyseMessageLive, readThreadLive, writeReplyOptions, draftForStance, classifyThreadMode, isLiveAnalysisEnabled, THREAD_MODES } from './services/live-analysis';
 import type { ReplyOption, ThreadMode } from './services/live-analysis';
@@ -585,6 +589,156 @@ app.post('/gmail/analyse', async (c) => {
   );
 });
 
+/**
+ * Action callback: "Analyse and save".
+ *
+ * The one control on this panel that adds a row to `emails`. Everything else
+ * here reads, marks, or writes a label the user can delete; this puts a message
+ * and a judgement about it into the shared tenant, where colleagues will see it.
+ *
+ * CONSENT, ON A PATH WITH NO GMAIL TOKEN.
+ * --------------------------------------
+ * `hasConsent` asks Gmail whether the ⚡/Reading on label exists, and returns
+ * false with no token — which the Panel tab never has. Taken literally that
+ * makes this button permanently dead in the only surface it ships on.
+ *
+ * So the gate here is the PRESS PLUS THE PAYLOAD, and that is a stronger
+ * signal, not a weaker one: the caller supplied the message text itself, from
+ * the conversation the reader has open, in response to a button labelled with
+ * what it keeps. There is no mailbox being swept and nothing being fetched
+ * behind anyone's back — the two things the label gate exists to prevent.
+ *
+ * What is NOT relaxed: with a Gmail token present (Google's own runtime) the
+ * label still governs, because there the add-on would be doing the reading.
+ * Read the section in CLAUDE.md before touching this ordering.
+ */
+app.post('/gmail/save', async (c) => {
+  let event: AddonEvent = {};
+  try {
+    event = await c.req.json<AddonEvent>();
+  } catch {
+    /* keep the endpoint curl-testable */
+  }
+
+  const verified = await verifyRequest(c.req.header('authorization'), event);
+  if (!verified.ok) return c.json(notify('Could not verify this request.'));
+
+  const env = getEnv();
+  const integrationId = env.ADDON_SAVE_INTEGRATION_ID;
+  if (!integrationId) {
+    return c.json(notify('Saving is not configured. Set ADDON_SAVE_INTEGRATION_ID.'));
+  }
+
+  const { oauthToken, accessToken } = getGmail(event);
+  const p = getActionParameters(event);
+  const threadId = normalizeGmailMessageId(p.threadId ?? event.gmail?.threadId);
+  const messageId = normalizeGmailMessageId(p.messageId ?? event.gmail?.messageId);
+  if (!threadId || !messageId) return c.json(notify('Could not tell which message to save.'));
+
+  // Gmail first when we have a credential, caller-supplied content otherwise.
+  // Same shape either way — see getSuppliedMessages.
+  const supplied = getSuppliedMessages(event);
+  const fetched = oauthToken || accessToken
+    ? await fetchThreadMessages(threadId, oauthToken, accessToken)
+    : undefined;
+  const messages = fetched?.length ? fetched : supplied;
+  if (!messages.length) return c.json(notify('There was nothing to read on this thread.'));
+
+  // With a Gmail token the add-on is doing the reading, so the label governs —
+  // exactly as it does for /gmail/analyse. Without one, the press is the gate.
+  if ((oauthToken || accessToken) && !(await hasConsent(oauthToken))) {
+    return c.json(notify('Reading is off, so this thread was not read or saved.'));
+  }
+
+  const headers = await fetchMessageHeaders(messageId, oauthToken, accessToken);
+  const open = messages.find((m) => m.id === messageId) ?? messages[messages.length - 1];
+  const threadText = messages
+    .map((m) => `From: ${m.from ?? 'unknown'}\n${m.body}`)
+    .join('\n\n')
+    .slice(0, 8000);
+
+  const reading = await analyseMessageLive({
+    subject: headers?.subject ?? p.subject,
+    from: open.from,
+    body: threadText,
+  });
+  if (!reading) return c.json(notify('Could not analyse this thread, so nothing was saved.'));
+
+  const tenantId = await resolveTenant(verified.email);
+  if (!tenantId) return c.json(notify('Could not tell which workspace to save this to.'));
+
+  // Gmail's headers when we have them, the caller's subject otherwise. Without
+  // the last fallback every message saved from the panel is filed as
+  // "(no subject)" — there are no headers on that path, and the subject is not
+  // an action parameter.
+  const subject = headers?.subject ?? p.subject ?? open.subject ?? '(no subject)';
+  const result = await saveAnalysedEmail({
+    tenantId,
+    integrationId,
+    provider: 'gmail',
+    thread: { providerThreadId: threadId, subject },
+    email: {
+      messageId,
+      rfcMessageId: headers?.rfcMessageId ?? null,
+      subject,
+      body: open.body,
+      // The address only. `From:` arrives as `Name <addr>` from both sources and
+      // the column is matched against bare addresses everywhere else.
+      fromEmail: addressOf(open.from) ?? verified.email ?? 'unknown@unknown',
+      fromName: nameOf(open.from),
+      tos: open.to ? open.to.split(',').map((s) => addressOf(s.trim()) ?? '').filter(Boolean) : [],
+      receivedAt: open.date ?? new Date().toISOString(),
+    },
+    analysis: {
+      sentiment: reading.sentiment,
+      reason: reading.reason,
+      modelUsed: getEnv().LIVE_ANALYSIS_MODEL,
+    },
+  });
+
+  const card = (extra: Partial<Parameters<typeof buildThreadCard>[0]>) =>
+    c.json(
+      pushCard(
+        buildThreadCard({
+          messageId,
+          providerThreadId: threadId,
+          status: 'untracked',
+          headers,
+          subject,
+          viewerEmail: verified.email,
+          baseUrl: env.ADDON_BASE_URL,
+          ...extra,
+        }),
+      ),
+    );
+
+  if (result.status === 'stored') {
+    logger.info({ emailId: result.emailId, sentiment: reading.sentiment }, 'panel save: stored');
+    return card({ saved: { sentiment: reading.sentiment, reason: reading.reason } });
+  }
+  return card({
+    saveFailed:
+      result.status === 'unreachable'
+        ? 'InboxPulse could not be reached, so nothing was written. Try again.'
+        : `InboxPulse refused the write: ${result.reason}`,
+  });
+});
+
+/** `Name <addr@host>` or a bare address -> the address. */
+function addressOf(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const angled = raw.match(/<([^>]+)>/);
+  const addr = (angled ? angled[1] : raw).trim();
+  return addr.includes('@') ? addr.toLowerCase() : undefined;
+}
+
+/** `Name <addr@host>` -> `Name`, when there is one. */
+function nameOf(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const m = raw.match(/^\s*"?([^"<]+?)"?\s*</);
+  return m ? m[1].trim() || null : null;
+}
+
 // Action callback: "Track" on a commitment. The one control on the panel that
 // WRITES — it turns a commitment the model found into a task in the CRM.
 // Answers with a toast rather than rebuilding the card, so the user keeps their
@@ -1065,10 +1219,14 @@ app.post('/homepage', async (c) => {
     tenantId ? getStirring(tenantId) : Promise.resolve([]),
   ]);
   const who = whoLookup?.status === 'found' ? whoLookup.viewer : null;
-  // Both are management views: where the fires are, and who to ask about them.
-  const [waiting, fires] = await Promise.all([
+  // Management views: where the fires are, who to ask about them, and which
+  // clients are unhappiest as a share of their own mail. All three are
+  // entitlement-scoped and so all three wait on the resolved viewer; issued
+  // together, they cost the slowest rather than their sum.
+  const [waiting, fires, negativeShare] = await Promise.all([
     tenantId && who ? getWaitingClients(tenantId, who.userId, who.isAdmin) : Promise.resolve([]),
     tenantId && who ? getFires(tenantId, who.userId, who.isAdmin) : Promise.resolve([]),
+    tenantId && who ? getNegativeShare(tenantId, who.userId, who.isAdmin) : Promise.resolve(null),
   ]);
   // A viewer with no admin permission and no assigned customers sees nothing in
   // the entitlement-scoped sections. That must be stated on the card, not left
@@ -1093,34 +1251,66 @@ app.post('/homepage', async (c) => {
   workingSet.prune();
   const { oauthToken: homeToken } = getGmail(event);
   if (homeToken) void sweepExpired(homeToken);
-  return c.json(
-    pushCard(
-      buildHomepageCard(
-        stats,
-        {
-          entries: workingSet.entries(verified.email ?? 'anon'),
-          viewerEmail: verified.email ?? undefined,
-          threadUrl: gmailThreadUrl,
-        },
-        getEnv().ADDON_BASE_URL,
-        { clients: waiting, webUrl: getEnv().WEB_URL },
-        pulse ?? undefined,
-        {
-          fires,
-          restricted,
-          viewerEmail: viewerUnknown,
-          lookupFailed: viewerUncheckable,
-          windowDays: 90,
-          webUrl: getEnv().WEB_URL,
-        },
-        { people: slow, firmMedianH: pulse?.negativeMedianH ?? null, webUrl: getEnv().WEB_URL, windowDays: 90 },
-        // canWrite tracks the SCOPE, not a preference: the label tools are only
-        // shown where they can actually run, and the write is only disclosed
-        // where it can actually happen.
-        { readingOn: await hasConsent(homeToken), canWrite: Boolean(homeToken) },
-        stirring,
-      ),
+  // ONE FiresView, TWO CONSUMERS. The card renders it as block bars; the specs
+  // describe the same rows for a caller that can plot them. Hoisted into a
+  // variable rather than written out twice so the two cannot be given different
+  // numbers — the drift `cards/chart.ts` exists to prevent.
+  const firesView = {
+    fires,
+    restricted,
+    viewerEmail: viewerUnknown,
+    lookupFailed: viewerUncheckable,
+    windowDays: 90,
+    webUrl: getEnv().WEB_URL,
+  };
+  // `null` means we could not ask; a present view with no rows means we asked
+  // and nobody qualified. Only the second one is a fact about the mailbox, and
+  // the card is allowed to say so.
+  const shareView = negativeShare ?? undefined;
+  const card = pushCard(
+    buildHomepageCard(
+      stats,
+      {
+        entries: workingSet.entries(verified.email ?? 'anon'),
+        viewerEmail: verified.email ?? undefined,
+        threadUrl: gmailThreadUrl,
+      },
+      getEnv().ADDON_BASE_URL,
+      { clients: waiting, webUrl: getEnv().WEB_URL },
+      pulse ?? undefined,
+      firesView,
+      { people: slow, firmMedianH: pulse?.negativeMedianH ?? null, webUrl: getEnv().WEB_URL, windowDays: 90 },
+      // canWrite tracks the SCOPE, not a preference: the label tools are only
+      // shown where they can actually run, and the write is only disclosed
+      // where it can actually happen.
+      { readingOn: await hasConsent(homeToken), canWrite: Boolean(homeToken) },
+      stirring,
+      shareView,
     ),
+  );
+  // The extra key rides beside the card, never inside it — Google parses this
+  // body directly as a RenderActions proto and rejects unknown FIELDS, so a
+  // `charts` key reaching Gmail would fail the whole card rather than be
+  // ignored. Two conditions, both of which Google fails: it never sets the flag,
+  // and this branch is closed entirely once ID-token verification is on. See
+  // AddonEvent.chartSpecs.
+  //
+  // A SHAPE THE CALLER DID NOT ASK FOR IS NOT SENT. See AddonEvent.chartKinds:
+  // an unrecognised kind is not ignored by the renderer, it replaces the card's
+  // own rendering with the wrong one. Default to bars, which every panel build
+  // that has ever existed can draw.
+  const kinds = new Set(
+    Array.isArray(event.chartKinds) && event.chartKinds.length > 0 ? event.chartKinds : ['bars'],
+  );
+  return c.json(
+    event.chartSpecs === true && env.ADDON_VERIFY_ID_TOKEN !== 'true'
+      ? {
+          ...card,
+          charts: homepageCharts(firesView, shareView)
+            .map((s) => buildChart(s).spec)
+            .filter((s) => kinds.has(s.kind)),
+        }
+      : card,
   );
 });
 
@@ -1223,6 +1413,18 @@ app.post('/gmail/contextual', async (c) => {
     const dbThreadId = providerThreadId ? await resolveThreadIdByProvider(providerThreadId, tenantId) : null;
     const [trend, flagged] = await threadExtras(dbThreadId);
 
+    // WE HAVE THE MESSAGE, even with no Gmail credential.
+    //
+    // Read once here rather than only inside the analysis branch below, because
+    // three separate decisions depend on whether the message is in hand, and two
+    // of them are skipped as soon as this thread has stored rows. After a save
+    // the panel showed "InboxPulse couldn't read this message. Gmail declined
+    // the request" and "Your mail is not being read" directly above the
+    // sentiment it had just stored — both true only of the Gmail fetch, which is
+    // not how this caller got the text.
+    const supplied = getSuppliedMessages(event);
+    const suppliedOpen = supplied.find((m) => m.id === messageId) ?? supplied[supplied.length - 1];
+
     // Nothing stored for this thread — analyse the open message in-request and
     // throw the result away. Opt-in, and only on this branch: a tracked thread
     // always uses its stored analysis. Every failure returns null, so the card
@@ -1236,8 +1438,34 @@ app.post('/gmail/contextual', async (c) => {
     const draft: string | null = null;
     let participants: Participant[] = [];
     let analysisPending = false;
-    if (!trend.length && !flagged.length && isLiveAnalysisEnabled()) {
-      const threadMessages = await fetchThreadMessages(providerThreadId, oauthToken, accessToken);
+
+    // Have we already read and stored THIS message?
+    //
+    // The resolve above cannot answer that. It is customer-scoped, and the Save
+    // button is only ever offered on a thread that resolved to no customer — so
+    // the rows it writes are invisible to the only lookup this card was doing,
+    // and a message analysed yesterday came back looking untouched today. The
+    // card then offered to analyse and store it a second time, which is the
+    // behaviour this call removes.
+    const stored = messageId
+      ? await findStoredAnalysis(messageId, headers?.rfcMessageId, tenantId)
+      : null;
+
+    // `!stored` gates the whole pending branch, not just the Save button. The
+    // branch means "we hold nothing for this thread, shall we go and get
+    // something" — a premise that is simply false once a reading is stored, so
+    // offering the ephemeral read beside it would be answering a question the
+    // card can already answer from the database.
+    if (!stored && !trend.length && !flagged.length && isLiveAnalysisEnabled()) {
+      // Gmail when we can, the caller's own text otherwise.
+      //
+      // Without the fallback this branch is unreachable from the Panel tab: the
+      // extension holds no Gmail credential, so the fetch returns undefined, and
+      // the card fell through to a single-message path that itself needs a token
+      // to check consent. The result was a panel with no analysis controls at
+      // all on exactly the threads they were built for.
+      const fetchedMessages = await fetchThreadMessages(providerThreadId, oauthToken, accessToken);
+      const threadMessages = fetchedMessages?.length ? fetchedMessages : supplied;
       if (threadMessages?.length) {
         // Who is involved comes from the WHOLE chain — see services/participants.
         participants = deriveParticipants(threadMessages, viewerEmail);
@@ -1266,27 +1494,71 @@ app.post('/gmail/contextual', async (c) => {
     // Gmail refused the read, so we know nothing about the open message. Saying
     // "not a tracked client thread" here would be a confident answer to a
     // question we never got to ask.
-    const status = !headers && !live ? ('unreadable' as const) : ('untracked' as const);
+    //
+    // `suppliedOpen` is the third case: Gmail refused nothing because Gmail was
+    // never asked — the caller handed us the message. 'unreadable' there tells a
+    // reader their add-on lacks mailbox access and to re-install it, as advice
+    // for a message sitting parsed in front of us.
+    const status =
+      !headers && !live && !suppliedOpen ? ('unreadable' as const) : ('untracked' as const);
+
+    // The envelope, from whichever source we actually have. Without this the
+    // "Open message" section reads "No details available" on the panel path,
+    // because `headers` only ever comes from Gmail.
+    const shownHeaders =
+      headers ??
+      (suppliedOpen
+        ? { subject: suppliedOpen.subject, from: suppliedOpen.from, to: suppliedOpen.to }
+        : undefined);
 
     return c.json(
       pushCard(
         buildThreadCard({
           messageId,
           status,
-          headers,
+          headers: shownHeaders,
           viewerEmail,
           trend,
           flagged,
           threadId: dbThreadId ?? undefined,
           baseUrl,
           live,
-          readingOff: !live && !analysisPending && (await hasConsent(oauthToken)) === false,
+          // "Your mail is not being read" is a statement about the LABEL GATE,
+          // which governs what the add-on fetches from Gmail. It says nothing
+          // about a message the caller supplied, and printing it beside that
+          // message's stored sentiment claims the opposite of what happened.
+          readingOff:
+            !live &&
+            !analysisPending &&
+            !suppliedOpen &&
+            (await hasConsent(oauthToken)) === false,
           chatShareEnabled: isChatShareEnabled(),
           participants,
           digest,
           draft,
           analysisPending,
           providerThreadId,
+          // The reading we already hold, so the card can report it instead of
+          // going quiet. Hiding the buttons without saying why would make an
+          // already-analysed message look identical to a broken one — the same
+          // rule the consent gate follows: say the thing was already done.
+          storedAnalysis: stored
+            ? {
+                sentiment: stored.sentiment ?? 'unknown',
+                reason: stored.reason ?? '',
+                analysedAt: stored.analysedAt,
+              }
+            : null,
+          // Offered only where it can actually run AND only on a thread with no
+          // stored analysis. `analysisPending` now carries the second condition
+          // for real — it is false whenever `stored` is set — rather than
+          // inferring it from an unrelated customer-scoped resolve. A configured
+          // target and content to store are both required; see
+          // ADDON_SAVE_INTEGRATION_ID.
+          canSave:
+            Boolean(env.ADDON_SAVE_INTEGRATION_ID) &&
+            analysisPending &&
+            Boolean(providerThreadId && messageId),
         }),
       ),
     );

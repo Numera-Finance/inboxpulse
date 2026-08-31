@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { EmailService } from './service';
 import { EmailAnalysisService } from './analysis-service';
 import { ContextSearchService } from './context-search-service';
+import { LiveSaveService } from './live-save-service';
 import { RunService } from '../runs/service';
 import { dbEmailToEmail } from './converter';
 import type { NewEmail } from './schema';
@@ -97,6 +98,60 @@ app.post('/bulk-with-threads', async (c) => {
   }
 
   return c.json(result);
+});
+
+/**
+ * Store one message the SIDEBAR read, with the reading it produced.
+ *
+ * INTERNAL ONLY in practice: it is reachable on the /api/emails mount too, but
+ * every caller is the add-on using the service key. It writes three rows in one
+ * transaction — see LiveSaveService for why it does not reuse the sync path.
+ *
+ * `integrationId` is REQUIRED and never defaulted. `email_threads.integration_id`
+ * is NOT NULL and part of the thread's unique key, so something has to be
+ * chosen; choosing it here would mean this endpoint silently filing a personal
+ * thread under whichever mailbox happened to be first. The caller states it.
+ */
+const liveSaveRequestSchema = z.object({
+  tenantId: z.string().uuid(),
+  integrationId: z.string().uuid(),
+  provider: z.string().min(1).max(50).default('gmail'),
+  thread: z.object({
+    providerThreadId: z.string().min(1).max(500),
+    subject: z.string(),
+  }),
+  email: z.object({
+    messageId: z.string().min(1).max(500),
+    rfcMessageId: z.string().max(500).nullish(),
+    subject: z.string(),
+    // Bounded here as well as at the add-on: this is the boundary that writes.
+    body: z.string().max(200_000),
+    fromEmail: z.string().min(1).max(500),
+    fromName: z.string().max(500).nullish(),
+    tos: z.array(z.string()).max(200).optional(),
+    ccs: z.array(z.string()).max(200).optional(),
+    receivedAt: z.string().min(1),
+  }),
+  analysis: z.object({
+    sentiment: z.enum(['positive', 'neutral', 'negative']),
+    reason: z.string().max(4000),
+    modelUsed: z.string().min(1).max(100),
+  }),
+});
+
+app.post('/analysed-live', async (c) => {
+  const parsed = liveSaveRequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    throw new ValidationError(
+      'Invalid live-save payload',
+      { issues: parsed.error.issues },
+      parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message, code: i.code })),
+    );
+  }
+
+  const service = container.resolve(LiveSaveService);
+  const result = await service.save(parsed.data);
+  return c.json({ success: true, data: result });
 });
 
 /**
@@ -586,6 +641,52 @@ app.post('/tag-suggestion', async (c) => {
     const service = container.resolve(EmailService);
     return await service.submitTagSuggestion(requestHeader, body);
   });
+});
+
+/**
+ * POST /api/emails/stored-analysis - Has THE PANEL already read and stored this
+ * provider message?
+ *
+ * Narrower than the name suggests, deliberately: it matches only rows carrying
+ * `email_analyses.model_used`, the marker LiveSaveService stamps on its own
+ * writes. Answering the broader "is this analysed at all" matched the entire
+ * analysed corpus and silently removed the analysis buttons from every message
+ * the batch pipeline had touched.
+ *
+ * The add-on's thread card asks this before offering "Analyse and save". Without
+ * it the card had no way to tell an unanalysed message from one it had analysed
+ * and stored itself: its only lookup was resolve-by-messages, which is
+ * customer-scoped and therefore blind to exactly the rows the Save button
+ * writes (see findStoredAnalysisByMessageIds for the full reasoning).
+ *
+ * Tenant-scoped, not customer-scoped, on purpose. Returns `{ analysis: null }`
+ * when nothing is stored, so "not analysed" and "analysed" are distinguishable
+ * from a single call.
+ *
+ * REGISTERED BEFORE /:emailId, and that is load-bearing. Hono finalizes on the
+ * first matching handler, so a literal segment declared after /:emailId is
+ * captured by it and never runs — which is why GET /exists below is dead code
+ * today despite its guard list.
+ */
+app.post('/stored-analysis', async (c) => {
+  return handleApiRequest(
+    c,
+    z.object({
+      messageIds: z.array(z.string()).min(1).max(100),
+      rfcMessageIds: z.array(z.string()).max(100).optional(),
+      provider: z.string().optional(),
+    }),
+    async (requestHeader: RequestHeader, body) => {
+      const service = container.resolve(EmailService);
+      const analysis = await service.findStoredAnalysis(
+        requestHeader.tenantId,
+        body.provider ?? 'gmail',
+        body.messageIds,
+        body.rfcMessageIds ?? []
+      );
+      return { analysis };
+    }
+  );
 });
 
 /**

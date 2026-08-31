@@ -1758,3 +1758,278 @@ export class StirringService {
     }));
   }
 }
+
+export interface NegativeShareRow {
+  customerId: string | null;
+  customer: string;
+  /**
+   * Reading (A): this client's negatives as a percent of THEIR OWN analysed
+   * mail. The plotted magnitude, and the only one the firm baseline compares to.
+   */
+  rateOfAnalysed: number;
+  /**
+   * Reading (B): this client's negatives as a percent of every negative in the
+   * firm. Printed on the row, NEVER sorted on.
+   *
+   * The two readings share only two of five names on this corpus. Aescape ranks
+   * 4th on (B) while sitting at 2.02% — BELOW the 2.79% firm baseline. It is a
+   * big account, not an unhappy one, and a chart of (B) under an "unhappiest"
+   * heading would put it on the podium.
+   */
+  shareOfFirmNegatives: number;
+  negative: number;
+  /** Messages carrying a sentiment row — the denominator of (A), and the n. */
+  analysed: number;
+  /** Messages received in the window, analysed or not. */
+  messages: number;
+  /**
+   * `analysed / messages`, and the reason two rows may not be comparable.
+   *
+   * Coverage across clients with ≥30 messages runs 0.03%–100%: p25 63.6%, median
+   * 79.8%, p90 93.2%. It is not random. A client at 49% coverage has had half
+   * their mail looked at, and their rate is a rate over that half.
+   */
+  coveragePct: number;
+}
+
+export interface NegativeShareResult {
+  /** Every client clearing the floor with at least one negative, best-ranked first. */
+  rows: NegativeShareRow[];
+  /** The firm's own negative rate over analysed mail — the chart's reference line. */
+  baselinePct: number;
+  firmNegative: number;
+  firmAnalysed: number;
+  /** The floor actually applied, so the card can state it. */
+  floor: number;
+  windowStart: string | null;
+  /** The window's end — `max(received_at)`, NOT `now()`. See the query comment. */
+  windowEnd: string | null;
+  /** The last message carrying a sentiment row. Everything after it is blind. */
+  lastAnalysed: string | null;
+  /** Messages after `lastAnalysed` — ingested, unanalysed, counted by nothing. */
+  blindMessages: number;
+}
+
+/**
+ * Which clients are unhappiest, as a share of their own mail.
+ *
+ * NOT `FiresService` with a different ORDER BY. Fires counts negative THREADS
+ * and ranks by who is most likely to escalate; this is a RATE over messages and
+ * ranks by who is angriest relative to how much they write. A small furious
+ * client tops this list and does not appear on that one, which is the point.
+ *
+ * WHY THIS COSTS ~2s AND FIRES COSTS ~0.7s. A rate needs a denominator, so this
+ * LEFT JOINs `email_analyses` across all ~88,000 inbound messages in the window;
+ * `FiresService` only ever inner-joins the negatives. That is not optimisable
+ * away — it is the cost of knowing what the negatives are a fraction OF — so
+ * this belongs on the snapshot path and must never be fetched live on a panel
+ * open. See `PanelSnapshotService`.
+ *
+ * The `monthly` CTE inside `FiresService` computes almost exactly this rate and
+ * MUST NOT be lifted. It applies none of the exclusions itself — its WHERE is
+ * only tenant / is_customer_email / 4 months / non-null sentiment — and is safe
+ * there solely because it is probed as `WHERE m.customer_id = c.id` against a
+ * CTE that has already excluded everything. Standalone, it ranks our own
+ * domains. Every exclusion below is re-applied for that reason.
+ */
+@injectable()
+export class NegativeShareService {
+  constructor(@inject('Database') private readonly db: Database) {}
+
+  async get(
+    tenantId: string,
+    viewer: { userId: string; isAdmin: boolean },
+    days = 90,
+    floor = 30,
+  ): Promise<NegativeShareResult> {
+    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
+
+    // Applied to the OUTPUT, not to `msg`, so the firm baseline below stays
+    // firm-wide for every viewer. Scoping the population would give a non-admin
+    // a "firm baseline" computed from their own nineteen accounts — a reference
+    // line that means something different for each reader, which is worse than
+    // none. Aggregates are already disclosed unscoped by /pulse; names are not,
+    // and names are what this clause governs.
+    const scope = viewer.isAdmin
+      ? sql``
+      : sql`AND m.customer_id IN (
+              SELECT customer_id FROM user_accessible_customers WHERE user_id = ${viewer.userId}
+            )`;
+
+    const rows = await this.db.execute(sql`
+      WITH bounds AS (
+        -- ANCHORED ON THE CORPUS, NOT ON THE CLOCK.
+        --
+        -- Every other panel service says 'now() - N days'. On production that is
+        -- the same thing; on the QA clone 'now()' is 5.5 days past the newest
+        -- message, so a "90 day" window is really 84.5 days of mail and the
+        -- section silently reports a shorter period than its heading claims.
+        -- Anchoring on max(received_at) makes the window mean the same thing
+        -- wherever it runs, and lets the card print an end date it can defend.
+        SELECT max(received_at) AS win_end,
+               max(received_at) - (${days} || ' days')::interval AS win_start
+        FROM emails WHERE tenant_id = ${tenantId}
+      ),
+      analysed_to AS (
+        -- The last message anything has looked at. Nothing else in this codebase
+        -- computes it, and without it the window's end date is a claim we cannot
+        -- support: mail is ingested days ahead of being analysed.
+        SELECT max(e.received_at) AS last_analysed
+        FROM emails e
+        JOIN email_analyses a ON a.email_id = e.id AND a.analysis_type = 'sentiment'
+        WHERE e.tenant_id = ${tenantId}
+      ),
+      msg AS MATERIALIZED (
+        -- One row per inbound client message in the window, carrying whether it
+        -- was analysed and whether it was negative. The LEFT JOIN is what makes
+        -- a rate possible: an inner join would make every denominator equal its
+        -- own numerator's population.
+        SELECT e.id AS email_id,
+               cd.customer_id,
+               c.name AS customer,
+               (a.email_id IS NOT NULL) AS analysed,
+               (a.sentiment_value = 'negative') AS neg
+        FROM emails e
+        CROSS JOIN bounds b
+        LEFT JOIN email_analyses a
+          ON a.email_id = e.id AND a.analysis_type = 'sentiment'
+        JOIN customer_domains cd
+          -- Attributed by WHO SENT IT, matching FiresService. The participant
+          -- path credits a client for mail they merely received.
+          ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+         AND cd.tenant_id = e.tenant_id
+         ${ownableDomain()}
+        JOIN customers c ON c.id = cd.customer_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.is_customer_email
+          AND e.received_at >  b.win_start
+          AND e.received_at <= b.win_end
+          ${weAreOnTheThread()}
+          -- weWereAddressed() is deliberately ABSENT. It belongs on "we failed
+          -- to reply" metrics; this one asks what share of a client's mail is
+          -- angry, which is true whether or not we were the recipient. Measured
+          -- on this corpus it is a no-op anyway: the firm denominator moves
+          -- 25,509 → 25,157 and not one of the top five rates changes.
+          --
+          -- is_auto_created is ALSO deliberately absent, following the reasoning
+          -- at FiresService above: the flag records how a customer ROW was made,
+          -- not whether the company is real. Excluding it would drop 59 of the
+          -- 200 clients that clear the floor.
+          AND NOT EXISTS (
+            SELECT 1 FROM customer_domains cd2
+            WHERE cd2.customer_id = c.id
+              AND lower(cd2.domain) IN (
+                SELECT split_part(lower(u2.email), '@', 2)
+                FROM users u2
+                WHERE u2.tenant_id = ${tenantId} AND u2.email LIKE '%@%'
+                GROUP BY 1
+                HAVING count(*) >= ${OWN_DOMAIN_MIN_STAFF}
+              )
+          )
+          ${clientFilter}
+      ),
+      firm AS (
+        -- Computed over the UNSCOPED population on purpose — see 'scope' above.
+        SELECT count(DISTINCT email_id) FILTER (WHERE neg)::int      AS f_neg,
+               count(DISTINCT email_id) FILTER (WHERE analysed)::int AS f_analysed
+        FROM msg
+      )
+      -- ONE METADATA ROW, ALWAYS PRESENT, AND UNSCOPED.
+      --
+      -- The baseline, the window and the blind tail were read off the first data
+      -- row, which is correct exactly until there are no data rows. A non-admin
+      -- entitled to nothing then received baseline 0%, window null and a blind
+      -- tail of 0 — every field plausible, every field wrong, and no error. That
+      -- is the shape of failure this codebase keeps rediscovering, so the
+      -- metadata is emitted by its own row from the CTEs instead, where no
+      -- GROUP BY, HAVING or entitlement clause can remove it.
+      --
+      -- Unscoped on purpose: the firm baseline must be the FIRM's, or the
+      -- reference line means something different for every reader.
+      SELECT TRUE AS is_meta,
+             NULL::text AS customer_id, NULL::text AS customer,
+             0 AS negative, 0 AS analysed, 0 AS messages,
+             NULL::numeric AS rate_of_analysed,
+             NULL::numeric AS share_of_firm,
+             NULL::numeric AS coverage_pct,
+             f.f_neg AS firm_neg, f.f_analysed AS firm_analysed,
+             b.win_start, b.win_end, a.last_analysed,
+             (SELECT count(*) FROM emails e3
+               WHERE e3.tenant_id = ${tenantId}
+                 AND e3.received_at > a.last_analysed) AS blind_messages
+      FROM firm f CROSS JOIN bounds b CROSS JOIN analysed_to a
+      UNION ALL
+      SELECT FALSE AS is_meta,
+             m.customer_id::text AS customer_id,
+             COALESCE(m.customer, '(unknown)') AS customer,
+             count(DISTINCT m.email_id) FILTER (WHERE m.neg)::int      AS negative,
+             count(DISTINCT m.email_id) FILTER (WHERE m.analysed)::int AS analysed,
+             count(DISTINCT m.email_id)::int                           AS messages,
+             round(100.0 * count(DISTINCT m.email_id) FILTER (WHERE m.neg)
+                   / NULLIF(count(DISTINCT m.email_id) FILTER (WHERE m.analysed), 0), 2)
+               AS rate_of_analysed,
+             round(100.0 * count(DISTINCT m.email_id) FILTER (WHERE m.neg)
+                   / NULLIF(max(f.f_neg), 0), 2)
+               AS share_of_firm,
+             round(100.0 * count(DISTINCT m.email_id) FILTER (WHERE m.analysed)
+                   / NULLIF(count(DISTINCT m.email_id), 0), 1)
+               AS coverage_pct,
+             NULL::int AS firm_neg, NULL::int AS firm_analysed,
+             NULL::timestamptz AS win_start, NULL::timestamptz AS win_end,
+             NULL::timestamptz AS last_analysed,
+             NULL::bigint AS blind_messages
+      FROM msg m CROSS JOIN firm f
+      WHERE TRUE ${scope}
+      GROUP BY m.customer_id, m.customer
+      -- The floor is the whole difference between a call list and noise. At ≥10
+      -- the top row is six angry emails out of eleven — an anecdote with a
+      -- decimal point, and it names a company. Measured: ≥30 keeps 200 clients
+      -- and a 7.5x-baseline top row; ≥50 costs 87 clients and improves nothing;
+      -- ≥100 drops the top rate to 2.1x baseline and the section stops naming
+      -- anyone who is actually on fire.
+      HAVING count(DISTINCT m.email_id) FILTER (WHERE m.analysed) >= ${floor}
+        -- A 0.00% row under a heading about unhappiness is an accusation with no
+        -- basis. Clients with nothing negative are not candidates.
+        AND count(DISTINCT m.email_id) FILTER (WHERE m.neg) > 0
+      -- Item 7: named columns, never ordinals. 'analysed' breaks ties toward the
+      -- better-evidenced row. is_meta first so the metadata row is raw[0]
+      -- whether or not any client survived the mask.
+      ORDER BY is_meta DESC, rate_of_analysed DESC, analysed DESC
+    `);
+
+    const raw = rows as unknown as Array<Record<string, unknown>>;
+    // Split rather than indexed: the metadata row is ordered first, but reading
+    // it positionally is how it silently becomes a client row again if the
+    // ORDER BY is ever edited.
+    const meta = raw.find((r) => r.is_meta === true) ?? {};
+    const data = raw.filter((r) => r.is_meta !== true);
+
+    return {
+      rows: data.map((r) => ({
+        customerId: (r.customer_id as string | null) ?? null,
+        customer: String(r.customer ?? '(unknown)'),
+        rateOfAnalysed: Number(r.rate_of_analysed ?? 0),
+        shareOfFirmNegatives: Number(r.share_of_firm ?? 0),
+        negative: Number(r.negative ?? 0),
+        analysed: Number(r.analysed ?? 0),
+        messages: Number(r.messages ?? 0),
+        coveragePct: Number(r.coverage_pct ?? 0),
+      })),
+      // All from the metadata row, which exists even when nothing survived the
+      // entitlement mask — see the UNION ALL above.
+      firmNegative: Number(meta.firm_neg ?? 0),
+      firmAnalysed: Number(meta.firm_analysed ?? 0),
+      baselinePct:
+        Number(meta.firm_analysed ?? 0) > 0
+          ? Math.round((10000 * Number(meta.firm_neg ?? 0)) / Number(meta.firm_analysed)) / 100
+          : 0,
+      floor,
+      windowStart: meta.win_start ? new Date(meta.win_start as string).toISOString() : null,
+      windowEnd: meta.win_end ? new Date(meta.win_end as string).toISOString() : null,
+      lastAnalysed: meta.last_analysed
+        ? new Date(meta.last_analysed as string).toISOString()
+        : null,
+      blindMessages: Number(meta.blind_messages ?? 0),
+    };
+  }
+}

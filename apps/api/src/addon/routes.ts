@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { PanelSnapshotService } from './snapshot-service';
 import { InvalidInputError } from '@crm/shared';
-import { AccountContextService, WaitingClientsService, DangerPulseService, FiresService, SlowRespondersService, StirringService } from './account-context';
+import { AccountContextService, WaitingClientsService, DangerPulseService, FiresService, SlowRespondersService, StirringService, NegativeShareService, type NegativeShareResult } from './account-context';
 
 export const addonRoutes = new Hono();
 
@@ -262,5 +262,57 @@ addonRoutes.get('/slow-responders', async (c) => {
     data: await fromSnapshot(tenantId, 'slow_responders', days, () =>
       container.resolve(SlowRespondersService).get(tenantId, days),
     ),
+  });
+});
+
+/**
+ * GET /api/internal/addon/negative-share?tenantId=&userId=&isAdmin=&days=&limit=
+ *
+ * Which clients are unhappiest as a share of their OWN mail, ranked.
+ *
+ * Entitlement-scoped, because it names customers. Masked here in the API and
+ * never in the add-on: the stored superset is every qualifying client in the
+ * tenant and must not cross the wire to a viewer entitled to some of it.
+ *
+ * Not `fromScopedSnapshot`, because the payload is a result OBJECT rather than a
+ * row array — the baseline, the window and the blind tail travel with the rows
+ * and are what stop the chart claiming more than the query did. The masking is
+ * the same `accessibleCustomerIds` + filter; only the shape differs.
+ */
+addonRoutes.get('/negative-share', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  const userId = c.req.query('userId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  if (!userId) throw new InvalidInputError('userId is required');
+  const isAdmin = c.req.query('isAdmin') === 'true';
+  const days = Math.min(180, Math.max(1, Number(c.req.query('days') ?? 90)));
+  const limit = Math.min(20, Math.max(1, Number(c.req.query('limit') ?? 5)));
+  // Clamped low, not because 10 is unusable in principle but because it is
+  // unusable on this corpus: at ≥10 analysed messages the top row is six angry
+  // emails out of eleven, and it names a company.
+  const floor = Math.min(500, Math.max(10, Number(c.req.query('floor') ?? 30)));
+
+  const snapshots = container.resolve(PanelSnapshotService);
+  const stored = await snapshots.read<NegativeShareResult>(tenantId, 'negative_share', 90);
+  const result =
+    stored ?? (await container.resolve(NegativeShareService).get(tenantId, { userId, isAdmin }, days, floor));
+
+  // The stored superset is computed as an admin, so it still needs the mask. The
+  // live fallback already scoped itself in SQL and `allowed` is recomputed
+  // harmlessly over rows that are already the viewer's.
+  const allowed = await snapshots.accessibleCustomerIds(userId, isAdmin);
+  const visible = snapshots.maskAndLimit(result.rows, allowed, result.rows.length);
+
+  return c.json({
+    success: true,
+    data: {
+      ...result,
+      rows: visible.slice(0, limit),
+      // Counted AFTER the mask, so the sentence on the card is about clients
+      // this reader could have seen — not about a firm-wide total they cannot
+      // reconcile against the five names in front of them.
+      qualified: visible.length,
+      notShown: Math.max(0, visible.length - limit),
+    },
   });
 });

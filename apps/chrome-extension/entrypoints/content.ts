@@ -22,11 +22,13 @@ import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import InboxSDK from '@inboxsdk/core';
 import { ThreadTab } from '../components/ThreadTab';
+import { CardTab } from '../components/CardTab';
 import { API_BASE_URL } from '../lib/clients';
 import { managerFetch } from '../lib/manager-client';
 import { buildFlagRow, flagSummary, type TagSuggestion } from '../lib/flags';
 import { guardLabelChips, installLabelClickGuard } from '../lib/label-guard';
 import { setThread, clearThread } from '../lib/thread-store';
+import { setViewerEmail } from '../lib/viewer-store';
 import {
   registerMessage,
   forgetMessage,
@@ -43,6 +45,11 @@ import {
   dropThreadMessage,
   clearThreadMessages,
 } from '../lib/thread-messages-store';
+import {
+  putMessageBody,
+  dropMessageBody,
+  clearMessageBodies,
+} from '../lib/message-bodies';
 import { startAuthGate, subscribeAuth, refreshAuth, type AuthState } from '../lib/auth-gate';
 import {
   isRuntimeAlive,
@@ -58,6 +65,7 @@ import type {
   SectionInstance,
 } from '../manager/app-shell';
 import cssText from '../assets/globals.css?inline';
+import cardCssText from '../assets/card.css?inline';
 import managerCssText from '../manager/manager.css?inline';
 
 const INBOXSDK_APP_ID = 'sdk_mcfo-crm_f3ce3285d1';
@@ -141,6 +149,38 @@ function setupFetchProxy(): void {
 }
 
 /** Mount the React thread view into its own nested shadow root. */
+/**
+ * The Panel tab — the add-on's own cards.
+ *
+ * No QueryClient: this view holds no queries of its own. It fetches rendered
+ * cards from the add-on and displays them, which is the entire point — the
+ * decisions about what a section says live in apps/addon/src/cards, once.
+ *
+ * Not wrapped in gateSection either. The add-on authenticates its own call to
+ * crm-api with the service key, so a better-auth cookie is not what makes this
+ * work — requiring one would show a login screen in a sandbox whose OAuth
+ * client is deliberately unconfigured.
+ */
+function mountCardSection(sectionHost: HTMLElement): { destroy: () => void } {
+  const shadow = sectionHost.attachShadow({ mode: 'open' });
+
+  // Both sheets: card.css styles the Cards-v2 output as Gmail renders it, while
+  // CardView's own chrome (header, spinner, the "can't reach the add-on"
+  // notice) is Tailwind like the rest of the extension.
+  const style = document.createElement('style');
+  style.textContent = `${cssText}\n${cardCssText}`;
+  shadow.appendChild(style);
+
+  const mountPoint = document.createElement('div');
+  mountPoint.className = 'bg-background text-foreground';
+  shadow.appendChild(mountPoint);
+
+  const reactRoot = ReactDOM.createRoot(mountPoint);
+  reactRoot.render(React.createElement(React.StrictMode, null, React.createElement(CardTab)));
+
+  return { destroy: () => reactRoot.unmount() };
+}
+
 function mountThreadSection(
   sectionHost: HTMLElement,
   queryClient: QueryClient,
@@ -240,6 +280,24 @@ function gateSection(section: SectionDescriptor): SectionDescriptor {
 }
 
 /**
+ * The tabs this build exposes.
+ *
+ * This ships as a Panel-only product, so the Thread and manager sections are
+ * built but not offered. They are NOT deleted: they still compile, and
+ * harness/main.js still mounts the full set, so they remain look-at-able
+ * without a Gmail session. Add an id here to bring one back.
+ */
+const VISIBLE_SECTION_IDS = new Set(['panel']);
+
+/**
+ * Whether any section behind `gateSection` survives the filter above.
+ *
+ * Only the manager sections are gated, and the auth poll exists solely to feed
+ * them — so this is also the condition for starting it at all.
+ */
+const HAS_GATED_SECTION = MANAGER_SECTIONS.some((s) => VISIBLE_SECTION_IDS.has(s.id));
+
+/**
  * Build the panel host: a shadow root carrying the ported manager stylesheet,
  * with the tabbed shell mounted inside it.
  *
@@ -263,6 +321,14 @@ function buildPanelHost(queryClient: QueryClient): HTMLElement {
 
   const sections = [
     {
+      id: 'panel',
+      label: 'Panel',
+      // Firm-wide and thread-scoped at once, but never filtered by the shell's
+      // date/customer controls — the add-on decides its own windows.
+      usesFilters: false,
+      mount: (sectionHost: HTMLElement) => mountCardSection(sectionHost),
+    },
+    {
       id: 'thread',
       label: 'Thread',
       // The thread view describes whichever conversation is open; the global
@@ -272,9 +338,9 @@ function buildPanelHost(queryClient: QueryClient): HTMLElement {
     },
     // Manager sections sit behind the same session wall as the thread view.
     ...MANAGER_SECTIONS.map(gateSection),
-  ];
+  ].filter((s) => VISIBLE_SECTION_IDS.has(s.id));
 
-  mountApp(root, { apiFetch: managerFetch, sections, initialSection: 'thread' });
+  mountApp(root, { apiFetch: managerFetch, sections, initialSection: 'panel' });
 
   return host;
 }
@@ -309,7 +375,11 @@ export default defineContentScript({
 
     // Start the session check that gates the manager sections. Must come after
     // setupFetchProxy — the check calls the API and needs the background proxy.
-    startAuthGate();
+    //
+    // Skipped entirely when no gated section is visible. The poll hits
+    // /api/users/me every 5s while signed out and every 60s after, for the life
+    // of the tab; with nothing to gate that is a request loop with no reader.
+    if (HAS_GATED_SECTION) startAuthGate();
 
     // Page-level capture guard for protected label chips. Installed once, before
     // InboxSDK loads, so a removal click is swallowed even on the very first
@@ -323,6 +393,16 @@ export default defineContentScript({
 
     const sdk = await InboxSDK.load(2, INBOXSDK_APP_ID);
     console.log('[InboxPulse] InboxSDK loaded');
+
+    // Who is looking, for the Panel tab. The add-on normally learns this from
+    // Google's signed userIdToken, which an extension cannot mint; without it
+    // the homepage card silently drops its two entitlement-scoped sections
+    // rather than reporting that it could not scope them. See lib/viewer-store.ts.
+    try {
+      setViewerEmail(sdk.User.getEmailAddress());
+    } catch (err) {
+      console.warn('[InboxPulse] could not read the signed-in address:', err);
+    }
 
     // Fetch the tenant's email domains from the API so we correctly identify
     // internal vs external participants regardless of who has access.
@@ -433,6 +513,7 @@ export default defineContentScript({
           messageView.on('destroy', () => {
             forgetMessage(id);
             dropThreadMessage(id);
+            dropMessageBody(id);
           });
 
           // Drive the message-scoped sections of the panel, and feed the panel's
@@ -481,6 +562,18 @@ export default defineContentScript({
 
           const publish = (): void => {
             const envelope = readEnvelope();
+
+            // The message's visible text, for the panel's analyse-and-save path.
+            // Read on every publish for the same reason the envelope is: Gmail
+            // fills a message in progressively, so a collapsed row yields
+            // nothing and the expand is what makes the text available.
+            // putMessageBody ignores empty reads, so this never overwrites text
+            // we already have with a not-loaded-yet blank.
+            try {
+              putMessageBody(id, messageView.getBodyElement()?.innerText ?? null);
+            } catch {
+              /* body not rendered in this view state — picked up on expand */
+            }
 
             // The row element is re-read on every publish rather than captured
             // once: Gmail swaps the node out as a message expands, and the list
@@ -655,6 +748,7 @@ export default defineContentScript({
       // thread pane the reader has just left, and the handler above refills it
       // as Gmail builds this conversation's messages.
       clearThreadMessages();
+      clearMessageBodies();
 
       // The external sender (first non-tenant participant) — used only to
       // highlight the matching contact and for the "no customer" message.
@@ -725,6 +819,8 @@ export default defineContentScript({
         if (token !== activeThreadToken) return;
         clearThread();
         clearThreadMessages();
+        clearMessageBodies();
+      clearMessageBodies();
       });
     });
 

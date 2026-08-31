@@ -50,6 +50,36 @@ spending a model call, disclosing a name:
   identically, and only one of them is fixed by pressing a button. Same rule as
   the empty-section failure below.
 
+## A Lookup Answers Its Own Question, Not the One You Wanted Asked
+
+The panel re-offered "Analyse and save" on messages it had already analysed. The
+check was not missing; it was the wrong check. `resolveThreadByMessage` asks
+*"is this a tracked client thread I am entitled to see"* — an inner join on
+`email_participants` with a non-null `customer_id` — and the card read its `null`
+as *"not analysed"*. But the Save button is only offered when a thread resolves
+to **no** customer, and `LiveSaveService` writes no participant rows, so that
+lookup could never see its own output. Always-"no" is not a data problem, and no
+amount of retrying finds the row.
+
+- **Name the predicate before reusing the query.** Customer-scoped, entitlement-
+  scoped and tenant-scoped are three different questions. A row written
+  deliberately without a customer cannot be found by a customer-scoped query, and
+  adding one "for safety" reinstates the bug.
+- **"Stored" and "analysed" are different facts.** Ingestion inserts `emails`
+  rows with `analysis_status` pending long before the analyser runs, so join
+  `email_analyses` — `GET /api/emails/exists` answers the weaker question and
+  would have hidden the button on unanalysed mail.
+- **Write every denormalised copy, or the row contradicts itself.**
+  `emails.signals` is what the trend, the flagged list and the panel colours
+  actually read; `email_analyses` is not. A row with `analysis_status = 3` and
+  null `signals` reads as analysed to one consumer and unanalysed to every other.
+- **Register literal routes BEFORE parameterised ones.** Hono finalizes on the
+  first match, so `app.get('/:id')` swallows every literal declared after it —
+  returning `c.notFound()` from the parameterised handler does **not** fall
+  through, which is why `GET /api/emails/exists` has never once run.
+- **Say it was already done.** Suppressing a control without a word renders
+  identically to a panel that broke. Same rule as the consent gate.
+
 ## Refusals Carry the Envelope Too
 
 `ApiResponse.error` is a `StructuredError`, and `c.json` will accept anything.
@@ -180,6 +210,52 @@ Two checks before believing a signal:
 And keep the anti-signals: **volume with nobody replying runs 4.4%, below base
 rate.** An unattended spike is a notification stream, not a person getting angry.
 
+## Tooling Traps That Cost Round Trips
+
+Each of these was hit while building the panel charts. None produced a useful
+error message; all cost a round trip to diagnose.
+
+- **A backtick inside a `sql\`…\`` template closes the template.** Writing
+  ``-- says `now() - N days` `` in a SQL comment inside a Drizzle template
+  yields `TS1005: ',' expected` pointing at a line with no comma in it. Use
+  single quotes inside SQL comments, always.
+- **`round(double precision, integer)` does not exist in Postgres.**
+  `extract(epoch …)` and `percentile_cont` both return double precision, so
+  `round(x, 2)` over either fails at parse time with "no function matches" and a
+  position offset. Cast: `round(x::numeric, 2)`.
+- **Do not use `perl -0pi -e` on this repo.** Patterns containing `${…}` or
+  parentheses silently match nothing and report success, so a mutation test
+  "passes" because it never applied. Use the Edit tool, or python with an
+  `assert old in s`.
+- **Vitest output is ANSI-coloured**, so `grep -cE "^\s+×"` counts zero however
+  many tests failed. Grep the `Tests` summary line instead, or a mutation check
+  will report that every mutation survived.
+- **A bound parameter is a JSON number, not a string**, in Drizzle's serialised
+  query. `expect(sql).toContain('"30"')` fails where `toContain(',30,')` passes.
+- **Not every `<svg>` in the panel is a chart.** `decoratedText` rows render
+  Lucide icons. Key on `class="ipc__chart-svg"`, or a geometry check silently
+  measures an icon and reports the chart as empty.
+
+## Measuring Against the Clone
+
+**`node scripts/qa-query.mjs` is the runner. Do not write another one.**
+
+```bash
+node scripts/qa-query.mjs --facts              # standing corpus probe, ~2.4s
+node scripts/qa-query.mjs --predicates         # checklist exclusions as SQL
+node scripts/qa-query.mjs batch.json out.json  # [["name","SELECT …"], …]
+```
+
+Measured: a metric-analyst run took **26.8 minutes and executed 8.9 seconds of
+SQL**. Seven minutes went on rewriting connection plumbing and twelve on
+hand-writing exclusion predicates that already exist in `account-context.ts`.
+Both are now one command each. `--facts` returns instance identity, window
+bounds, the analysis blind tail, our own domains, the firm negative baseline and
+the coverage spread in a single connection.
+
+The guard refuses any write before it reaches the wire, including one smuggled
+after a semicolon. This project is read-only against the clone.
+
 ## Export Rules
 
 - **All data export logic (fetching, transforming, enriching) MUST run on the backend.** The frontend should only receive the final data and render the spreadsheet. Never fetch additional data client-side for exports.
@@ -204,7 +280,19 @@ Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer manag
   the symptom reads like missing IAM rather than a wrong id.
 - **GCP Project**: `project-y-email-sentiment` (project number `203731638840`) — the Cloud Run deploy target for all services, supplied to CI as the `GCP_PROJECT_ID` secret. The older `health-474623` project still hosts stale copies of the `crm-*` services; do NOT read logs, revisions, or deploy state from it.
 - **Runtime**: Bun (backend services), Vite (frontend dev), Nginx (frontend prod)
-- **Database**: PostgreSQL (Neon) with Drizzle ORM
+- **Database**: PostgreSQL on **Cloud SQL**, via `postgres.js` + Drizzle.
+  Not Neon — `packages/database/src/db.ts` reads `CLOUDSQL_SERVER_CA` /
+  `CLOUDSQL_CLIENT_CERT` / `CLOUDSQL_CLIENT_KEY` (or the `*_PATH` variants for
+  local dev) and connects with mTLS.M
+  Two things follow. **`sslmode` must be `verify-ca`, never `verify-full`** —
+  the server cert's SAN is the instance's `*.sql.goog` name and never matches
+  the IP you connect to; `db.ts` encodes this as
+  `checkServerIdentity: () => undefined`. And **the `*_PATH` vars are resolved
+  against `process.cwd()`**, which is the app directory, not the repo root, so
+  a relative path silently resolves to `apps/api/certs/…`. Use absolute paths.
+
+  Certificates are per-instance. A clone signed by its own CA rejects
+  production's certs, and the error names the client cert, not the CA.
 - **Auth**: Better-Auth with Google OAuth SSO
 
 ## Services
@@ -216,6 +304,17 @@ Multi-tenant CRM platform built as a TypeScript monorepo. Handles customer manag
 | `crm-gmail` | `apps/gmail` | 4002 | Gmail sync via Pub/Sub webhooks |
 | `crm-analysis` | `apps/analysis` | 4003 | AI/LLM email analysis (OpenAI, Anthropic, Google, xAI) |
 | `crm-notifications` | `apps/notifications` | 4004 | Email notifications via React Email + Inngest |
+| `crm-addon` | `apps/addon` | 4005 | Google Workspace add-on (Cards-v2 JSON, no HTML) |
+| `crm-manager` | `apps/manager` | — | Standalone dashboard. IAM-gated on Cloud Run with no login of its own; reached through `gcloud run services proxy`, never directly |
+
+Two more directories under `apps/` are NOT services and are easy to mistake for
+them:
+
+- **`apps/chrome-extension`** — a build target, not a server. Its own rules are
+  in *Chrome Extension Builds* below.
+- **`apps/embeddings`** — contains **only a Dockerfile**. No `package.json`, no
+  `src`, not a workspace member despite matching `apps/*`. It is an orphan; there
+  is nothing to run and nothing to read.
 
 ## Monorepo Structure
 
@@ -226,7 +325,11 @@ crm/
 │   ├── api/             # Hono REST API with tsyringe DI
 │   ├── gmail/           # Gmail sync with googleapis + Pub/Sub
 │   ├── analysis/        # Multi-provider AI analysis (AI SDK)
-│   └── notifications/   # Notifications with React Email + Inngest
+│   ├── notifications/   # Notifications with React Email + Inngest
+│   ├── addon/           # Workspace add-on — Cards-v2 JSON, :4005
+│   ├── manager/         # Standalone dashboard (server.js), IAM-gated
+│   ├── chrome-extension/# WXT/MV3 Gmail sidebar — a build target, not a service
+│   └── embeddings/      # ORPHAN: a Dockerfile and nothing else
 ├── packages/
 │   ├── clients/         # Type-safe HTTP clients (AuthBaseClient, InternalBaseClient)
 │   ├── shared/          # Shared types, RBAC, errors, utilities
@@ -245,6 +348,25 @@ crm/
 - **Build the extension with `pnpm --filter @crm/chrome-extension build:clone`, never plain `build`.** `wxt.config.ts` sets `outDir: 'output'`, so every mode writes to the same `output/chrome-mv3` directory Chrome loads unpacked — a plain `wxt build` silently replaces a working build.
 - Only `.env.clone` carries `WXT_SERVICE_API_KEY`, `WXT_TENANT_ID` and `WXT_FLAGS_API_URL`. `.env.production` does not, and `.env` has no `WXT_*` vars at all.
 - Without those, `SERVICE_API_KEY`/`TENANT_ID` are empty strings and **every** `INTERNAL_FETCH` in `entrypoints/background.ts` returns `internal auth not configured`. The sidebar still renders and still looks signed in; it just reports `N messages sent · 0 matched · 0 with a customer` and drops the trend, flagged messages, stats, activity and contacts at once. Treat "everything thread-scoped vanished together" as a build/env symptom, not a data one.
+
+### The Sidebar Renders Without Gmail — Use It
+
+`apps/chrome-extension/harness/` mounts the real components in a 400px column,
+so the panel can be LOOKED AT without a Gmail session. Gmail itself cannot be
+automated here (it needs a live Google login), but everything below InboxSDK can.
+
+```bash
+npx vite --port 5177          # from apps/chrome-extension
+#  harness/index.html   the manager shell   (needs the gcloud proxy on :8080)
+#  harness/card.html    the Panel tab       (needs the add-on on :4005)
+```
+
+`?w=1200` widens the column, so a narrow-layout bug can be told apart from one
+that reproduces at any width. Not part of the build — WXT only bundles
+`entrypoints/`.
+
+Reach for this before reasoning about rendering. Structural checks pass happily
+while text renders wrong; the harness is how you find that in one glance.
 
 ## Development Commands
 
@@ -521,6 +643,33 @@ psql $DATABASE_URL -f apps/api/sql/{filename}.sql
 ### Test File Convention
 - `*.test.ts` / `*.test.tsx` for unit tests, colocated with source
 - `*.integration.test.ts` for API integration tests in `apps/api/src/__tests__/`
+- `*.domtest.ts` — standalone `bun` scripts, NOT Vitest. Run by hand:
+  `cd apps/chrome-extension && bun lib/card-links.domtest.ts`. They exist because
+  the extension has no test runner (see below) and because some checks need a
+  live service rather than a fixture.
+
+### `pnpm test` and `pnpm lint` Do Not Cover the Chrome Extension
+
+Turbo runs a **per-package script**, so a package without that script is skipped
+silently — it is not reported as absent, it simply does not appear. Measured:
+
+| Package | no `test` | no `lint` |
+|---|---|---|
+| `@crm/chrome-extension` | ✗ skipped | ✗ skipped (it has `check`, not `lint`) |
+| `@crm/manager` | ✗ skipped | ✗ skipped |
+| `@crm/encryption` | ✗ skipped | — |
+| `@crm/notifications` | — | ✗ skipped |
+
+So **a green `pnpm test` and a green `pnpm lint` at the root say nothing about
+the extension**, which is the package holding the Gmail sidebar. Nothing
+discovers `*.domtest.ts` either — they are `bun` scripts, invisible to Vitest.
+
+Type-check and test it explicitly, every time:
+
+```bash
+pnpm --filter @crm/chrome-extension check         # NOT `lint` — that script does not exist
+cd apps/chrome-extension && bun lib/card-links.domtest.ts
+```
 
 ## Deployment
 
@@ -646,3 +795,166 @@ Lightweight format in `docs/decisions.md`:
 | RBAC permissions | `packages/shared/src/types/rbac.ts` | `Permission.ADMIN` |
 | UI components | `packages/ui/src/components/` | Radix + shadcn components |
 | Background jobs | `apps/api/src/inngest/` | Inngest functions |
+
+
+
+## Other Notes
+
+## The Schema Has No Runner, and `db:push` Is Not It
+
+`pnpm db:push` (and `db:generate` / `db:studio`) resolve
+`packages/database/drizzle.config.ts` → `./src/schema/index.ts`, **a path that
+does not exist**. Schemas live in `apps/api/src/{module}/schema.ts`. Those
+commands are documented in three places in this file and in README.md; none of
+them work.
+
+The real path is 46 hand-ordered SQL files with no runner and no migrations
+table, and `apps/api/sql/README.md` *is* the runner. Its list is not in numeric
+order and omits several files, so "run the README top to bottom" is not the same
+as "run 001…020".
+
+Two consequences worth stating rather than rediscovering:
+
+- **Base files in `apps/api/sql/` open with `DROP TABLE IF EXISTS`.** Never run
+  them against a populated database. Only `sql/migrations/*` are re-runnable.
+- **A clone must be COPIED, never rebuilt from the repo.** Production has drifted
+  from these files before (see `docs/handbook/04-DATA-MODEL.md`), so a rebuilt
+  schema is a different schema. There is also no fixture or seed generator
+  anywhere — every realistic-data path reads production or a copy of it.
+
+
+**`pnpm build` at the repo root runs plain `wxt build`** and so produces
+  precisely the broken artifact the rule above forbids: pointed at production,
+  with no `WXT_SERVICE_API_KEY`. Re-run your extension build after any repo-wide
+  build, before loading unpacked.
+**`dev` and `build` share ONE output directory.** There is no `-dev` folder:
+  wxt's default `outDirTemplate` is `chrome-mv3` with no `{{modeSuffix}}`, and
+  `wxt.config.ts` sets `outDir` but no template. Whichever ran last owns
+  `output/chrome-mv3`. The rule is not "never plain `build`" — it is **whichever
+  command ran last owns that folder.**
+
+## The Panel Tab Renders the Add-on's Cards, It Does Not Copy Them
+
+The extension's "Panel" tab displays the Cards-v2 JSON the Workspace add-on
+returns, rather than rebuilding those sections in React (ADR-031). So **a change
+to what a card says belongs in `apps/addon/src/cards/`, and needs no extension
+edit at all.** Only the rendering vocabulary lives in
+`components/CardRenderer.tsx`.
+
+Four things measured against the live endpoints, each of which renders as
+plausible-looking output when got wrong:
+
+- **Section titles usually are NOT `section.header`.** `fold()` collapses
+  sections so Gmail draws one hairline instead of six, and the folded titles
+  survive as `textParagraph` widgets containing only `<b>…</b>`. `/homepage`
+  returns 2 sections, 1 real header and 5 folded ones — key on `section.header`
+  alone and you lose five headings while the card still looks fine.
+- **Most links are `decoratedText.onClick`, not `button`.** Every "Where the
+  fires are" row makes the whole row the link. A renderer handling only
+  accessories renders that section as unclickable text.
+- **Links out are intercepted in the RENDERER, not by pointing `WEB_URL` at a
+  stub.** `homepage.ts:880` hardcodes the production dashboard and ignores
+  `WEB_URL`. `mail.google.com` links stay live; everything else goes to
+  `qa-only.html`. Classification fails closed — an unparseable URL is treated as
+  a console link. `lib/card-links.domtest.ts` enumerates the links of the LIVE
+  card, so a link added to a card next month is policed automatically.
+- **The trigger carries the ids; an action button carries nothing.**
+  `fetchContextualCard` posts `{ gmail: { messageId, threadId } }`, but
+  `invokeCardAction` posts `post(fnUrl, withViewer({}, viewerEmail))` — the body
+  is `{ devViewerEmail }` and nothing else. So in the handler
+  `getActionParameters(event)` returns `{}` **and** `getGmail(event)` returns
+  all-undefined: a button pressed in the panel knows neither which message it was
+  pressed for nor any credential to go and look, and the `parameters`
+  `actionButton()` wrote are never sent. Three failures then stack silently — the
+  handler takes its "could not do that" branch, answers with `notify()`, and
+  `cardSections()` reads only `navigations` so a notification renders as nothing
+  at all. **The button looks like it did nothing.** This is why "Read this
+  thread" is already dead in the Panel tab: no `oauthToken` → `hasConsent` false
+  → `notify('Reading is off…')` → invisible. Answer with `pushCard(...)` if the
+  panel must show it, and do not rely on action parameters until
+  `invokeCardAction` forwards an event envelope. See
+  `.claude/skills/gmail-access/SKILL.md` §7.
+- **The one image widget is a solid colour band** (`/bar.png?c=…&h=…`), painted
+  as CSS rather than fetched — Gmail's page CSP governs the content script, and a
+  rectangle of one colour is pixel-identical either way.
+- **`sanitizeCardHtml` must escape `"` along with `&`, `<` and `>`.** It escapes
+  everything and then restores a whitelist, and the restore pattern matches
+  `&quot;` — so an unescaped quote made `<font color="#c5221f">` un-matchable and
+  every colour tag rendered as visible characters on 21 of the card's 63 strings,
+  while `</font>` (no attribute) was restored and left a stray closing tag.
+  A whitelist that restores by TAG SHAPE only works if escaping is complete.
+
+**Structural tests do not catch rendering bugs.** Every check on this panel —
+links, bands, which sections exist — stayed green through the bug above, because
+none of them rendered a string and looked at it. `card-links.domtest.ts` now runs
+the live card's text through the sanitizer and fails if any `&lt;` survives or if
+a `<font>`/`<b>` count drops. Verify a new check discriminates: run it against
+the old code and confirm it fails, or it is only decorating a green run.
+
+**Local only.** A deployed add-on verifies a Google-signed ID token the extension
+cannot mint, so the panel works because `ADDON_VERIFY_ID_TOKEN=false`. Deploying
+that publishes an unauthenticated endpoint serving clone customer data. See
+ADR-032 before putting this on any host.
+
+**Symptom to recognise:** the panel shows "Slowest to answer" and "Talking more
+than usual" but neither "Where the fires are" nor "Unhappy clients left waiting".
+That is not an empty mailbox — it is the add-on failing to identify the viewer,
+which SKIPS those two queries rather than failing them, so no error is rendered.
+The extension supplies the address as `devViewerEmail`; check that before the
+database.
+
+## Test Entitlement-Scoped Endpoints as a NON-Admin
+
+Admins bypass the `user_accessible_customers` filter, so an admin cannot
+reproduce the most common failure in this system: a section that is empty
+*because the viewer isn't entitled to its rows*.
+
+Both halves are needed, and so is a third case that reads like a bug and isn't:
+
+- `isAdmin=true` → rows. Proves the query works, nothing about scoping.
+- `isAdmin=false`, a user **with** allocations → rows. Proves scoping works.
+- `isAdmin=false`, a user with **zero** allocations → `[]`. **Correct, not a
+  bug.** Many admin accounts have no allocation rows at all, so testing "as
+  myself, non-admin" produces an empty array that looks like a broken endpoint.
+
+Pick the test user by allocation count, not by convenience.
+
+**`ALLOW_DEV_AUTH` does nothing.** `apps/api/src/middleware/tenant-resolution.ts`
+  reads it and throws `UnauthorizedError` unconditionally on the following
+  lines. Same for `DEV_TENANT_ID` / `DEV_USER_ID`, which the API never
+  references. All three are documented as working in `docs/environment-variables.md`
+  and `docs/BETTER_AUTH_TESTING_GUIDE.md`. The working bypasses are the
+  test-token route and the internal service key.
+**`SERVICE_API_KEY` and `ENCRYPTION_SECRET` are read from `process.env`
+  directly**, are absent from every `.env.example`, and are not in any Zod
+  schema — so a service starts fine without them and fails later at the point of
+  use. Note also that `docs/environment-variables.md` calls this
+  `INTERNAL_API_KEY` throughout; the code says `SERVICE_API_KEY`.
+**Env validation only checks non-empty.** `GOOGLE_CLIENT_ID=CHANGEME` passes
+  `.min(1)`, the API boots, and the failure surfaces only when someone tries to
+  sign in.
+**`ADDON_DEV_VIEWER_EMAIL` decides who the add-on's panel is scoped to** whenever
+  the caller has no Google-signed token — local curl, and the extension's Panel
+  tab, which cannot mint one. Unset, the two entitlement-scoped sections are
+  SKIPPED rather than failed, so they vanish with no error (see the Panel Tab
+  section). Read only while `ADDON_VERIFY_ID_TOKEN` is false, and outranked by a
+  real token and by a per-request `devViewerEmail`. Blank in deployments, where
+  it is ignored. Pick the address by allocation count, not convenience.
+
+`apps/addon/src/cards/homepage.ts:880` hardcodes
+  `https://emailsentiment.mystartupcfo.com` for "Open web dashboard", bypassing
+  `WEB_URL` — and that is not even the current production web host. Every other
+  card link honours `WEB_URL`. Route new card links through it.
+
+
+## Practices while running.
+
+- In plan mode, do not under any circumstances begin writing code. Do not switch to coding. Simply answer questions and explain future processes. If you want to start writing any code while in plan mode, end with a straight statement, and then wait for me to enter another message such as "begin" or "yes, go ahead".
+
+- When the user says they are about to do something, do not begin right away. Do not under any circumstances make large changes like switching to a new session or trying to upload to github or cloud run. If they say they are about to do something, end the thinking process with a prompt explaining the process and implications and asking permission to do so.
+
+- Never make any changes to the production database or program if you find a way to do so. This project is entirely QA.
+
+- If you make any changes to the clone database, at the end of the thinking process explain the exact changes you made.
+
+- You may modify the technical information in this file, but do not modify the Practices while running section.

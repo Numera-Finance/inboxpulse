@@ -1,0 +1,358 @@
+/**
+ * Google Workspace add-on card styling, for the Panel tab.
+ *
+ * The Panel renders the SAME Cards-v2 JSON that Gmail's rail renders for the
+ * published add-on, so it should look like the add-on and not like the rest of
+ * the extension. Every value here is Gmail's, not this codebase's palette:
+ * #202124 body text, #5f6368 labels, #dadce0 rules, #1a73e8 actions.
+ *
+ * Loaded into the panel's shadow root alongside globals.css, so these `ipc__*`
+ * classes never collide with Tailwind's utilities or with Gmail's own CSS.
+ *
+ * Sizing note: Cards v2 has NO font-size control — `<b>` is the entire
+ * emphasis vocabulary — so a section title and a client name are the same size
+ * and differ only by weight. Reproducing that faithfully means resisting the
+ * urge to make headings bigger than the add-on can make them.
+ */
+
+:host,
+.ipc {
+  --ipc-text: #202124;
+  --ipc-muted: #5f6368;
+  --ipc-rule: #dadce0;
+  --ipc-accent: #1a73e8;
+  --ipc-hover: #f1f3f4;
+}
+
+.ipc {
+  font-family: 'Google Sans', Roboto, 'Segoe UI', system-ui, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ipc-text);
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Gmail draws one hairline between card sections and gives no control over its
+   weight, colour or inset. The add-on's fold() exists to keep the count down —
+   so a rule here means the meaning genuinely changed. */
+.ipc__section {
+  padding: 12px 0;
+  border-top: 1px solid var(--ipc-rule);
+}
+.ipc__section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* Section titles, whether they arrived as section.header or as a folded
+   bold-only paragraph. Body size, bold — see the note above. */
+.ipc__header {
+  margin: 6px 0 2px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ipc-text);
+}
+
+.ipc__para {
+  margin: 2px 0;
+  padding: 0 16px;
+  font-size: 14px;
+  color: var(--ipc-text);
+}
+
+/* The add-on's only spacing lever: a widget that renders as whitespace. */
+.ipc__spacer {
+  height: 12px;
+}
+
+.ipc__divider {
+  margin: 8px 0;
+  border-top: 1px solid var(--ipc-rule);
+}
+
+/* A solid colour band, painted rather than fetched. See bandFrom() — the source
+   PNG is a rectangle of one colour, so CSS is pixel-identical and needs no
+   network request that Gmail's CSP would have to allow. */
+.ipc__band {
+  width: 100%;
+  border-radius: 1px;
+}
+
+.ipc__image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---- charts -------------------------------------------------------------- */
+
+/* The add-on emits every chart twice: as block-character bars the card carries
+   (all Cards v2 can draw) and as a spec. These classes style the spec's SVG,
+   which replaces the block run in this renderer only. The numbers are identical
+   by construction — see apps/addon/src/cards/chart.ts.
+
+   Sizes track the card's own: 14px body, 12px for the small labels Cards v2
+   renders in decoratedText's top and bottom slots. A chart typeset larger than
+   the rows above it would read as a different kind of content. */
+
+.ipc__chart {
+  margin: 4px 0 0;
+  padding: 0 16px;
+}
+
+.ipc__chart-svg {
+  display: block;
+  margin: 6px 0 2px;
+  overflow: visible;
+}
+
+/* Every value is printed as text beside its bar, so nothing on this chart is
+   carried by colour or by length alone. */
+.ipc__chart-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: var(--ipc-text);
+}
+
+.ipc__chart-value {
+  font-size: 12px;
+  fill: var(--ipc-muted);
+}
+
+/* "Ranked by volume", and what the dashed baseline is. Not decoration: the
+   first says what the chart MEANS, and without it a bar chart of counts is a
+   ranking of how much mail somebody sends. */
+.ipc__chart-note {
+  margin: 2px 0;
+  font-size: 12px;
+  color: var(--ipc-muted);
+}
+
+/* A ranking the analyst said not to act on. Red, above the rows, and never
+   accompanied by bars — see ChartFigure. */
+.ipc__chart-refusal {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: #c5221f;
+}
+
+.ipc__chart-empty {
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--ipc-muted);
+}
+
+.ipc__chart-plainrow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 14px;
+}
+
+.ipc__chart-num {
+  flex: none;
+  font-size: 12px;
+  color: var(--ipc-muted);
+}
+
+/* Caveats sit open under the chart. A caveat the reader has to expand is a
+   caveat that does not exist, and a chart is the format least able to carry its
+   own qualifications. */
+.ipc__chart-notes {
+  margin: 6px 0 0;
+  padding: 0 0 0 16px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ipc-muted);
+}
+
+/* ---- donut --------------------------------------------------------------
+   A composition, not a ranking. The ring and its legend are one unit: the ring
+   shows that the parts close, the legend carries every number — so a reader who
+   cannot separate the ochre from the orange loses nothing. Sized to the 368px
+   content column: 128 ring + 16 gap + ~192 legend. */
+
+/* The whole the slices divide. Stated in words because the ring cannot say it. */
+.ipc__chart-denominator {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ipc-muted);
+}
+
+.ipc__donut {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 6px 0 2px;
+}
+
+.ipc__donut-svg {
+  flex: 0 0 128px;
+  display: block;
+}
+
+.ipc__donut-legend {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ipc__donut-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.ipc__donut-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  align-self: center;
+}
+
+/* Pushed right and tabular, so four percentages read as a column the eye can
+   add up rather than four numbers at four different x positions. */
+.ipc__donut-pct {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ipc-text);
+}
+
+.ipc__donut-n {
+  color: var(--ipc-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* SVG text takes `fill`, not `color`. */
+.ipc__donut-hole {
+  font-size: 16px;
+  font-weight: 700;
+  fill: var(--ipc-text);
+}
+
+.ipc__donut-holelabel {
+  font-size: 10px;
+  fill: var(--ipc-muted);
+}
+
+/* ---- decoratedText ------------------------------------------------------ */
+
+.ipc__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 16px;
+}
+
+.ipc__row--click {
+  cursor: pointer;
+}
+.ipc__row--click:hover {
+  background: var(--ipc-hover);
+}
+.ipc__row--click:focus-visible {
+  outline: 2px solid var(--ipc-accent);
+  outline-offset: -2px;
+}
+
+.ipc__icon {
+  margin-top: 2px;
+  flex: 0 0 auto;
+  color: var(--ipc-muted);
+}
+
+.ipc__body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* topLabel and bottomLabel are the SAME size and colour in Cards v2. They are
+   not an eyebrow and a caption — deliberately not uppercased, because the
+   add-on writes them as sentences ("of 501 answered messages") and uppercasing
+   changes how the row reads. */
+.ipc__top,
+.ipc__bot {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ipc-muted);
+}
+.ipc__top {
+  margin-bottom: 1px;
+}
+.ipc__bot {
+  margin-top: 1px;
+}
+
+.ipc__text {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ipc-text);
+}
+.ipc__text--truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* wrapText is respected above; long client names ("Ctruh Technologies Private
+   Limited") must break rather than push the accessory off the column. */
+.ipc__text,
+.ipc__bot,
+.ipc__top {
+  overflow-wrap: anywhere;
+}
+
+.ipc__accessory {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+/* ---- buttons ------------------------------------------------------------ */
+
+/* Gmail's card buttons are outlined pills, not flat text links. */
+.ipc__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 14px;
+  border: 1px solid var(--ipc-rule);
+  border-radius: 16px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--ipc-accent);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ipc__btn:hover {
+  background: rgba(26, 115, 232, 0.06);
+  border-color: #c6dafc;
+}
+.ipc__btn:focus-visible {
+  outline: 2px solid var(--ipc-accent);
+  outline-offset: 1px;
+}
+
+.ipc__btn--dead {
+  color: var(--ipc-muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ipc__btnrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 16px;
+}

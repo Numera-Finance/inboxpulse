@@ -1,3 +1,4 @@
+import { GoogleAuth } from 'google-auth-library';
 import { safeErrorDetail } from '../utils/api-error';
 import { getEnv, type Env } from '../env';
 import { logger } from '../utils/logger';
@@ -43,7 +44,16 @@ export function isLiveAnalysisEnabled(): boolean {
   // error, no log, just a panel that quietly stopped working. Exactly the shape
   // of failure this codebase keeps producing -- a config change that reads as
   // empty data.
-  if (env.LIVE_ANALYSIS_PROVIDER === 'gemini') return env.LIVE_ANALYSIS_KEY.trim().length > 0;
+  //
+  // ADC IS A CREDENTIAL TOO, and this is the same bug one layer along: under
+  // LIVE_ANALYSIS_AUTH=adc there is no key by design and never will be, so a
+  // key-only test reports the panel disabled while the credential it actually
+  // uses is sitting right there and working. The token is not minted here --
+  // this is called on the render path and must stay synchronous; a bad ADC
+  // environment surfaces as a logged 401 from the call itself, not as a panel
+  // that silently claims to be switched off.
+  if (env.LIVE_ANALYSIS_PROVIDER === 'gemini')
+    return env.LIVE_ANALYSIS_AUTH === 'adc' || env.LIVE_ANALYSIS_KEY.trim().length > 0;
   return env.LIVE_ANALYSIS_URL.trim().length > 0;
 }
 
@@ -88,8 +98,7 @@ export async function analyseMessageLive(input: {
   const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const headers = await authHeaders(env);
 
     const url = endpointFor(base, env.LIVE_ANALYSIS_PROVIDER);
     const payload = ollama
@@ -258,8 +267,7 @@ export async function draftReplyLive(input: {
   const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const headers = await authHeaders(env);
 
     const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
@@ -374,8 +382,7 @@ export async function digestThreadLive(input: {
   const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const headers = await authHeaders(env);
 
     const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
@@ -639,8 +646,7 @@ export async function readThreadLive(input: {
   const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const headers = await authHeaders(env);
 
     const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
@@ -667,9 +673,7 @@ export async function readThreadLive(input: {
               // reasoning_effort is what stops 2.5 Flash thinking by default,
               // which is billed as output tokens on top of the latency.
               ...schemaFields(env.LIVE_ANALYSIS_PROVIDER, READING_SCHEMA, 'reading'),
-              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini' && env.LIVE_ANALYSIS_REASONING !== 'unset'
-                ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
-                : {}),
+              ...reasoningFields(env, base),
             },
       ),
     });
@@ -775,6 +779,92 @@ function endpointFor(base: string, provider: string): string {
   return `${base}/v1/chat/completions`;
 }
 
+/**
+ * `reasoning_effort`, in the spelling the configured HOST accepts.
+ *
+ * The two Gemini hosts disagree about the name of "do not think", and neither
+ * degrades: the request is rejected outright.
+ *
+ *   generativelanguage.googleapis.com   'none'
+ *   {…}aiplatform.googleapis.com        the field OMITTED
+ *
+ * Vertex rejects 'none' outright -- 400 "Expected 'reasoning_effort' to be one
+ * of: 'high', 'low', 'medium', 'minimal'; found 'none'." -- and its nearest
+ * spelling, 'minimal', is NOT the same thing: minimal still thinks. Measured
+ * 2026-08-27 on gemini-3.1-flash-lite, one-word classification, max_tokens 64:
+ *
+ *   reasoning_effort: 'minimal'   60 reasoning tokens, finish_reason 'length',
+ *                                 content NULL          -- 1017ms
+ *   field omitted                 0 reasoning tokens, completion_tokens 1,
+ *                                 content "scheduling"  --  737ms
+ *
+ * So on Vertex "do not think" is spelled by ABSENCE. Mapping 'none' to
+ * 'minimal' looks like the careful translation and reproduces, exactly, the bug
+ * the max_tokens comment in classifyThreadMode already describes: a 200 with no
+ * content, which every caller reads as "unclassifiable" rather than as an error.
+ *
+ * Keyed on the BASE URL, not on a second env var: the host is already the thing
+ * that decides, so a separate switch could only ever contradict it.
+ */
+function reasoningFields(env: Env, base: string): Record<string, unknown> {
+  if (env.LIVE_ANALYSIS_PROVIDER !== 'gemini' || env.LIVE_ANALYSIS_REASONING === 'unset') return {};
+  const vertex = base.includes('aiplatform.googleapis.com');
+  if (vertex && env.LIVE_ANALYSIS_REASONING === 'none') return {};
+  return { reasoning_effort: env.LIVE_ANALYSIS_REASONING };
+}
+
+/**
+ * The request headers for a model call, including the credential.
+ *
+ * Centralised for the same reason `endpointFor` was: these two lines were
+ * written out at seven call sites, and under ADC they are no longer two lines
+ * but an async token mint. Seven copies of that is seven places to forget the
+ * await.
+ *
+ * The header shape does not change between modes — Vertex takes an ordinary
+ * `Authorization: Bearer`, exactly as an API key did — so only the source of
+ * the string differs.
+ *
+ * A failure to mint returns headers WITHOUT authorization rather than throwing.
+ * The call then fails with a 401 that `safeErrorDetail` logs, which is a
+ * diagnosable error; throwing here would abort the render path and blank the
+ * card instead, and this codebase's recurring failure is a panel that goes
+ * quiet rather than one that complains.
+ */
+async function authHeaders(env: Env): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (env.LIVE_ANALYSIS_AUTH === 'adc') {
+    const token = await accessToken();
+    if (token) headers.authorization = `Bearer ${token}`;
+    return headers;
+  }
+  if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+  return headers;
+}
+
+/**
+ * One GoogleAuth for the process, because it is the token cache.
+ *
+ * `getAccessToken()` returns the cached token until it nears expiry and
+ * refreshes it transparently, so this is cheap on every call after the first —
+ * but only while the client is reused. Constructing a GoogleAuth per request
+ * would re-read the credential and re-mint a token on every panel render.
+ */
+let googleAuth: GoogleAuth | null = null;
+
+async function accessToken(): Promise<string | null> {
+  try {
+    googleAuth ??= new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+    const client = await googleAuth.getClient();
+    const { token } = await client.getAccessToken();
+    return token ?? null;
+  } catch (err) {
+    // The message only. Never the credential, and never the token.
+    logger.warn({ err: String(err) }, 'live analysis: could not mint an ADC token');
+    return null;
+  }
+}
+
 /** The base URL for the configured provider. */
 function baseFor(env: Env): string {
   const raw =
@@ -863,8 +953,7 @@ export async function classifyThreadMode(input: {
   const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const headers = await authHeaders(env);
     const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
@@ -890,20 +979,29 @@ export async function classifyThreadMode(input: {
               max_tokens: 64,
               // The actual fix: without this, 2.5 Flash reasons about a
               // one-word classification. With it, the answer costs 1 token.
-              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini' && env.LIVE_ANALYSIS_REASONING !== 'unset'
-                ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
-                : {}),
+              ...reasoningFields(env, base),
             },
       ),
     });
-    if (!res.ok) return null;
+    // SAY WHY. This returned null silently, and null here is indistinguishable
+    // from "the model could not classify it" -- so a rejected request became a
+    // thread quietly falling back to 'working'. A 400 for a malformed field
+    // looked exactly like an unclassifiable email.
+    if (!res.ok) {
+      const detail = safeErrorDetail(await res.text().catch(() => ''));
+      logger.warn({ status: res.status, detail }, 'mode classify: non-OK');
+      return null;
+    }
     const json = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
       message?: { content?: string };
     };
-    const raw = ((ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '')
-      .toLowerCase()
-      .replace(/[^a-z]/g, '');
+    const content = (ollama ? json.message?.content : json.choices?.[0]?.message?.content) ?? '';
+    // An EMPTY content on a 200 is the documented failure of the max_tokens cap
+    // above, not an opinion about the thread. Worth its own line, because the
+    // fix is a budget change and the symptom is silence.
+    if (!content.trim()) logger.warn({}, 'mode classify: 200 with no content (token budget?)');
+    const raw = content.toLowerCase().replace(/[^a-z]/g, '');
     return (THREAD_MODES as string[]).includes(raw) ? (raw as ThreadMode) : null;
   } catch (err) {
     logger.warn({ err: String(err) }, 'mode classify: failed');
@@ -958,8 +1056,7 @@ export async function draftForStance(input: {
   const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const headers = await authHeaders(env);
     const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
@@ -1130,8 +1227,7 @@ export async function writeReplyOptions(input: {
   const ollama = env.LIVE_ANALYSIS_PROVIDER === 'ollama';
 
   try {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (env.LIVE_ANALYSIS_KEY) headers.authorization = `Bearer ${env.LIVE_ANALYSIS_KEY}`;
+    const headers = await authHeaders(env);
     const res = await fetch(endpointFor(base, env.LIVE_ANALYSIS_PROVIDER), {
       method: 'POST',
       headers,
@@ -1156,9 +1252,7 @@ export async function writeReplyOptions(input: {
               temperature: 0.4,
               // Gemini DOES honour it, and this is the runtime path.
               ...schemaFields(env.LIVE_ANALYSIS_PROVIDER, OPTIONS_SCHEMA, 'replyOptions'),
-              ...(env.LIVE_ANALYSIS_PROVIDER === 'gemini' && env.LIVE_ANALYSIS_REASONING !== 'unset'
-                ? { reasoning_effort: env.LIVE_ANALYSIS_REASONING }
-                : {}),
+              ...reasoningFields(env, base),
             },
       ),
     });

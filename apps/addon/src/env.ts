@@ -22,6 +22,38 @@ const envSchema = z.object({
   ADDON_DEV_TENANT_ID: z.string().optional(),
   ADDON_DEV_USER_ID: z.string().optional(),
 
+  /**
+   * Who to treat as the viewer when the request carries no Google-signed token.
+   *
+   * The homepage's two entitlement-scoped sections are skipped entirely when the
+   * viewer cannot be identified, and — because a skipped lookup is not the same
+   * as a failed one — they disappear without the "could not check who you are"
+   * row that a genuine failure produces. A panel then reports calm because it
+   * never asked. That is the exact failure mode homepage.ts warns about, so a
+   * caller with no token needs SOME way to say who is looking.
+   *
+   * Only read when ADDON_VERIFY_ID_TOKEN is off, and outranked by both a real
+   * userIdToken and a per-request `devViewerEmail`. Blank in production, where
+   * it would be ignored anyway.
+   */
+  ADDON_DEV_VIEWER_EMAIL: z.string().default(''),
+
+  /**
+   * Where "Analyse and save" files what it stores. BLANK = the button does not
+   * appear at all.
+   *
+   * `email_threads.integration_id` is NOT NULL and part of the thread's unique
+   * key, so a saved thread must be filed under some mailbox. This is stated
+   * rather than derived, and the button is hidden rather than defaulted, for the
+   * reason ADR-005 records about label writes: a default target once meant a
+   * colleague's live mailbox. The failure mode of guessing here is quieter and
+   * worse — rows appear under a mailbox that never saw the message, and nothing
+   * about the panel looks wrong.
+   *
+   * Blank in every deployment. This is a QA affordance.
+   */
+  ADDON_SAVE_INTEGRATION_ID: z.string().default(''),
+
   // Verify Google's signed ID token on inbound requests. MUST be 'true' before
   // any public deployment; left 'false' for local curl testing. See auth/verify.ts.
   ADDON_VERIFY_ID_TOKEN: z.string().default('false'),
@@ -105,6 +137,31 @@ const envSchema = z.object({
    */
   LIVE_ANALYSIS_FAST_MODEL: z.string().default(''),
   LIVE_ANALYSIS_KEY: z.string().default(''),
+
+  /**
+   * How the model call authenticates. 'key' sends LIVE_ANALYSIS_KEY; 'adc' mints
+   * a short-lived OAuth token from Application Default Credentials.
+   *
+   * 'adc' exists because an organisation can forbid API keys outright, and
+   * because Vertex takes an ordinary OAuth bearer token — the header shape is
+   * identical either way, so only where the string comes from differs.
+   *
+   * VERIFIED, 2026-08-27, against Vertex's OpenAI-compat endpoint: a token
+   * minted from a gcloud user login returned 200 and schema-conforming JSON on
+   * google/gemini-3.1-flash-lite. Two things that were NOT obvious and cost a
+   * probe each:
+   *
+   *   - The model exists at locations/global and 404s at us-central1.
+   *   - The model id needs the `google/` publisher prefix.
+   *
+   * ADC is resolved from the ambient environment (GOOGLE_APPLICATION_CREDENTIALS,
+   * a gcloud user login, or a Cloud Run runtime service account), so no
+   * credential is ever stored in this repo. A service-account file used this way
+   * needs `roles/aiplatform.user`; `roles/cloudsql.client` alone returns 403
+   * `aiplatform.endpoints.predict` denied, which names the permission and not
+   * the account, so it reads like the wrong project rather than the wrong role.
+   */
+  LIVE_ANALYSIS_AUTH: z.enum(['key', 'adc']).default('key'),
   /**
    * Hard ceiling on the in-request LLM call; the card renders without it on
    * timeout.
@@ -205,10 +262,19 @@ const envSchema = z.object({
    * the compat API at .../v1beta/openai/chat/completions, while the 'openai'
    * branch appends /v1/chat/completions to its base.
    *
-   * NOTHING ON THIS PATH IS VERIFIED AGAINST THE LIVE API -- no key was
-   * reachable (gcloud auth had expired and no secret was readable). Google
-   * rejects on the missing Authorization header before routing, so even the URL
-   * could not be confirmed by probing. Treat the first real call as the test.
+   * TWO DIFFERENT HOSTS ANSWER TO "gemini", and the base decides which:
+   *
+   *   generativelanguage.googleapis.com/v1beta/openai   API key  (the default)
+   *   {…}aiplatform.googleapis.com/v1beta1/projects/<p>/locations/global/endpoints/openapi
+   *                                                    OAuth / ADC
+   *
+   * The second is Vertex, and it is the one to use where API keys are not
+   * permitted. Set LIVE_ANALYSIS_AUTH=adc with it; the path suffix
+   * `/chat/completions` that endpointFor() appends is correct for both.
+   *
+   * The Vertex form is VERIFIED against the live API (2026-08-27): 200, and
+   * response_format.json_schema is honoured, which the deep read depends on.
+   * The generativelanguage form remains unverified — no key was ever reachable.
    */
   LIVE_ANALYSIS_GEMINI_URL: z
     .string()

@@ -1,5 +1,6 @@
-import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated, fold, image } from './widgets';
+import { type Card, type CardSection, text, deco, buttons, linkButton, actionButton, heading, separated, fold, image, escapeText } from './widgets';
 import { privacyBlock } from './privacy';
+import { buildChart, type ChartSpec } from './chart';
 import type { EmailStats } from '../services/api-client';
 
 /**
@@ -44,10 +45,8 @@ import type { EmailStats } from '../services/api-client';
 const FIRE = 'd93025';
 const MINE = '1a73e8';
 
-/** Card text is an HTML subset, so subjects taken from mail must be escaped. */
-function escapeText(v: string): string {
-  return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+// `escapeText` moved to ./widgets — cards/chart.ts needs it too, and two copies
+// of an escaper is how one of them stops matching the other's assumptions.
 
 export interface WorkingSetView {
   entries: Array<{
@@ -207,6 +206,38 @@ export interface WaitingView {
   webUrl: string;
 }
 
+/**
+ * Where clients are unhappiest, as a share of their own mail.
+ *
+ * Deliberately NOT the same population as "Where the fires are". Fires ranks by
+ * who is likely to escalate next week; this ranks by who is angriest relative to
+ * how much they write, and a small furious client tops this one without
+ * appearing on that one at all.
+ */
+export interface NegativeShareView {
+  rows: Array<{
+    customer: string;
+    customerId: string | null;
+    /** Negatives as a percent of THEIR analysed mail. Plotted. */
+    rateOfAnalysed: number;
+    /** Negatives as a percent of all firm negatives. Printed, never sorted on. */
+    shareOfFirmNegatives: number;
+    negative: number;
+    analysed: number;
+    messages: number;
+    coveragePct: number;
+  }>;
+  /** The firm's own rate — the reference line, firm-wide for every reader. */
+  baselinePct: number;
+  floor: number;
+  windowEnd: string | null;
+  lastAnalysed: string | null;
+  blindMessages: number;
+  /** Clients that cleared the floor with a negative, and how many are not shown. */
+  qualified: number;
+  notShown: number;
+}
+
 export interface PrivacyView {
   /** Whether this viewer has turned reading on. */
   readingOn: boolean;
@@ -235,6 +266,164 @@ export function arcWord(arc: number[]): string {
   return arc[arc.length - 1] > arc[0] ? 'Rising' : 'Cooling';
 }
 
+/**
+ * The charts this card carries, as specs.
+ *
+ * SEPARATE FROM `buildHomepageCard` ON PURPOSE, and the reason is the response
+ * envelope rather than taste. A trigger response is parsed by Google directly as
+ * a `RenderActions` proto with no tolerance for unknown fields, so a spec cannot
+ * ride inside the Card — it has to sit beside it in the JSON body, which only a
+ * non-Google caller ever receives (see the `/homepage` handler in index.ts).
+ *
+ * The seam that creates is closed by construction and by assertion: the card's
+ * chart widgets are `buildChart()` applied to exactly these specs, and
+ * `chart.test.ts` asserts the card contains what `buildChart(homepageCharts(f))`
+ * produces. Call both with the same `fires` — index.ts does, three lines apart.
+ *
+ * Returns [] rather than an empty chart when there is nothing to plot. An empty
+ * frame claims we looked and found nothing, which is a different statement from
+ * having had nothing to look at.
+ */
+/**
+ * Every chart this card carries.
+ *
+ * A list rather than a single spec because the card is expected to grow more of
+ * them — add a builder, push it here, and place its section in
+ * `buildHomepageCard`. The response envelope and the card body both read this
+ * one function, which is what keeps the block-bar rendering and the SVG
+ * describing the same numbers.
+ */
+export function homepageCharts(
+  /**
+   * RETIRED, AND THE PARAMETER STAYS SO THE CALL SITES DO NOT MOVE.
+   *
+   * "Complaints by client, charted" plotted `fires.negative` and was dropped —
+   * measured, not disliked. Three findings, over 90 days on the QA clone:
+   *
+   *   - THE RANGE CANNOT CARRY A BAR CHART. The rows the panel shows run 4, 3,
+   *     1, 1, 1, 1. Of 68 clients with an unresolved complaint, 63 have exactly
+   *     one and only two have more than two, so four of six bars are ties at the
+   *     minimum and bar length has essentially one comparison in it. The counts
+   *     already print on every row of "Where the fires are" directly above.
+   *   - IT WAS NOT RANKED BY WHAT IT DREW, and not merely re-ordered. The fires
+   *     query takes its six rows `ORDER BY unanswered DESC, engaged DESC,
+   *     negative DESC` and the chart then re-sorted THOSE six by count — so the
+   *     membership was "most unanswered", not "most complaints". Two clients
+   *     with 2 unresolved complaints each never appeared while three with 1
+   *     did. The caveat admitted the order differed; it did not admit the
+   *     population did.
+   *   - THE COUNT IS MOSTLY A RESOLUTION FILTER. 691 negative threads become 532
+   *     after every relevance test and 76 after `notAlreadyResolved` — 86% of
+   *     the drop is one predicate. That makes it a worklist, not a volume
+   *     measure, and a bar chart states it as volume.
+   *
+   * `chartable: false` was the wrong instrument: buildChart still emits the
+   * title, a "Not charted" verdict and every row as text, which here would
+   * restate the list immediately above it. Nothing to plot means no spec.
+   */
+  _fires?: FiresView,
+  negativeShare?: NegativeShareView,
+): ChartSpec[] {
+  const specs: ChartSpec[] = [];
+  const share = negativeShare ? negativeShareSpec(negativeShare) : null;
+  if (share) specs.push(share);
+  return specs;
+}
+
+/**
+ * "Where clients are unhappiest" — a RATE, with the firm baseline behind it.
+ *
+ * RECONSTRUCTED 2026-08-30 after the original was deleted in error while
+ * retiring the fires chart. Behaviour is pinned by the existing assertions in
+ * `chart.test.ts` ("the unhappiest-clients chart"); the original prose is gone.
+ * What follows is why each field is the way it is, re-derived from those tests
+ * and from NegativeShareView — treat it as accurate about the code and as a
+ * thinner account than the one it replaces.
+ *
+ * - **The bars plot `rateOfAnalysed`, never `shareOfFirmNegatives`.** The two
+ *   readings rank differently: a large account reaches the top of
+ *   share-of-all-complaints while sitting BELOW the firm baseline on its own
+ *   rate. Only the rate is comparable against `baselinePct`, so only the rate
+ *   may drive a length. The share is still true and still useful, so it rides
+ *   on the row's note where it cannot be mistaken for the plotted quantity —
+ *   as TEXT with its unit attached, because a bare `1.96` beside a bar labelled
+ *   `20.9%` is two percentages meaning different things.
+ * - **Coverage goes on every row.** These rates share no denominator: Izba at
+ *   49.4% analysed means half their mail was never looked at, and their 17.95%
+ *   is a rate over a different, smaller thing than LumenData's at 98.5%. A
+ *   reader deciding whom to call has to see that beside the number.
+ * - **The blind tail is stated, not hidden, and computed rather than written
+ *   down.** Mail is ingested days ahead of being analysed, so the most recent
+ *   window is always partly unread. `daysBetween` derives the gap from the two
+ *   measured instants; a literal here would stop being true the next time mail
+ *   lands. When nothing measured it, the line is OMITTED rather than rendered
+ *   with a guessed or NaN gap.
+ * - **The top-5 cut admits what it dropped.** 116 other clients clearing the
+ *   floor with at least one negative is the difference between "these are the
+ *   unhappy ones" and "these are the five unhappiest", and only the second is
+ *   true.
+ *
+ * Returns null when no client qualified, so the card emits no chart at all. An
+ * empty frame claims we looked and found nothing, which is a different
+ * statement from having had nothing to look at.
+ */
+function negativeShareSpec(view: NegativeShareView): ChartSpec | null {
+  if (!view.rows.length) return null;
+
+  // Only when both instants exist. `daysBetween` returns null otherwise, and a
+  // sentence built around a null gap is how "NaN days" reaches a card.
+  const gap = daysBetween(view.windowEnd, view.lastAnalysed);
+  const blindTail =
+    view.lastAnalysed && gap !== null
+      ? `Sentiment stops at ${view.lastAnalysed.slice(0, 10)} — the last ${gap} days ` +
+        `(${view.blindMessages.toLocaleString('en-US')} messages) are ingested but not yet analysed.`
+      : undefined;
+
+  return {
+    id: 'negative_share',
+    title: 'Where clients are unhappiest',
+    kind: 'bars',
+    // A rate against a stated baseline over a stated denominator is exactly the
+    // shape a bar chart can carry honestly. Contrast the fires chart retired in
+    // homepageCharts, whose range could not.
+    chartable: true,
+    columns: [
+      { name: 'customer', role: 'label', label: 'Client' },
+      { name: 'rateOfAnalysed', role: 'rate', label: 'Negative rate', unit: 'percent' },
+      { name: 'analysed', role: 'sample_n', label: 'Analysed messages', unit: 'count' },
+    ],
+    rows: view.rows.map((r) => ({
+      label: r.customer,
+      rate: r.rateOfAnalysed,
+      // The n behind the rate is what it was divided by — analysed mail, not
+      // everything received. Using `messages` here would print a denominator
+      // the percentage was never computed over.
+      sampleN: r.analysed,
+      note: `${r.coveragePct}% analysed · ${r.shareOfFirmNegatives.toFixed(1)}% of complaints`,
+    })),
+    // Without this a rate ranking means nothing: 20.9% is alarming at a firm
+    // baseline of 2.8% and unremarkable at 20%.
+    baseRate: { value: view.baselinePct, unit: 'percent', label: 'Firm baseline' },
+    sampleFloor: { column: 'analysed', value: view.floor, unit: 'messages' },
+    window: {
+      end: view.windowEnd ?? undefined,
+      blindTail,
+    },
+    caveats: [
+      view.notShown > 0
+        ? `Top ${view.rows.length} by rate; ${view.notShown} more had at least one negative and cleared the ${view.floor}-message floor.`
+        : `That is all ${view.qualified} clients that cleared the ${view.floor}-message floor with a negative.`,
+    ],
+  };
+}
+
+/** Days between two ISO instants, for the honest-window sentence. */
+function daysBetween(a: string | null, b: string | null): number | null {
+  if (!a || !b) return null;
+  const ms = new Date(a).getTime() - new Date(b).getTime();
+  return Number.isFinite(ms) ? Math.round((ms / 86_400_000) * 10) / 10 : null;
+}
+
 export function buildHomepageCard(
   stats: EmailStats | null,
   working?: WorkingSetView,
@@ -246,6 +435,8 @@ export function buildHomepageCard(
   privacy?: PrivacyView,
   /** Clients talking twice as much as usual, who have not complained. */
   stirring?: Array<{ customer: string; customerId: string | null; recent: number; usual: number; owner: string | null }>,
+  /** Where clients are unhappiest, as a share of their own mail. */
+  negativeShare?: NegativeShareView,
 ): Card {
   // No lead-in section.
   //
@@ -654,6 +845,29 @@ export function buildHomepageCard(
     });
   }
 
+  // A CHART GOES WHERE THE NUMBERS IT DRAWS ALREADY ARE.
+  //
+  // The fires chart is a picture of the list directly above it, so it is
+  // unshifted BEFORE the fires section — that section's own unshift then lands
+  // on top, leaving [fires list, chart, …]. A picture of numbers that are not on
+  // the screen beside it is a second claim the reader has to reconcile; under
+  // the rows it is the same claim at a comparable length.
+  //
+  // "Where clients are unhappiest" charts a population NOTHING else on the card
+  // lists — a rate, not a count, and a different five names — so it takes the
+  // opposite placement: `firm.push`, standing on its own at the foot of the
+  // clients group rather than beside a list it does not describe.
+  //
+  // Both built from the same specs the response envelope carries, so what Gmail
+  // draws in block characters and what the extension draws in SVG are the same
+  // numbers by construction.
+  const charts = homepageCharts(fires, negativeShare);
+
+  // No fires chart. See homepageCharts — it was measured and dropped, and the
+  // counts it drew are already on every row of "Where the fires are" below.
+  const shareChart = charts.find((s) => s.id === 'negative_share');
+  if (shareChart) firm.push({ widgets: buildChart(shareChart).widgets });
+
   if (fires?.fires.length) {
     firm.unshift({
       header: heading('Where the fires are'),
@@ -864,7 +1078,11 @@ export function buildHomepageCard(
     pulse !== undefined ||
     Boolean(fires?.fires.length) ||
     Boolean(slow?.people.length) ||
-    Boolean(waiting?.clients.length);
+    Boolean(waiting?.clients.length) ||
+    // A viewer entitled to no qualifying client still gets a live answer here —
+    // rows is empty but the baseline and window arrived — so its PRESENCE, not
+    // its length, is the evidence the API is reachable.
+    negativeShare !== undefined;
 
   if (!connected) {
     footer.push({

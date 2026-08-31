@@ -2114,3 +2114,216 @@ service key is a tenant-wide admin credential** and is treated as one: one
 holder, rotated on staff change. Fixing identity blocks issuing a second key,
 and that ordering is the point of writing this down before the integration
 rather than after it.
+
+### ADR-031: The extension renders the add-on's cards rather than reimplementing them (2026-08-20)
+**Status:** Accepted
+**Context:** The Chrome extension needed the Workspace add-on's panel — "Where
+the fires are", "Unhappy clients left waiting" — inside its sidebar, reading the
+clone, so the interface can be changed in QA without touching production.
+
+The obvious approach is to rebuild those sections in React against the same
+`/api/internal/addon/*` endpoints. That is the mistake this codebase has already
+made twice: two email-reduction paths that never meet, and `/api/manager/*`
+handlers whose field names drifted from the UI reading them with nothing
+validating the seam. `apps/addon/src/cards/homepage.ts` is not a layout, it is
+~1,300 lines of decisions — when a count is withheld, when "we could not check
+who you are" must be said out loud rather than rendering as calm. A second
+implementation does not copy those; it silently omits them.
+**Decision:** The extension fetches the add-on's rendered Cards-v2 JSON and
+renders it (`lib/addon-client.ts` → `components/CardRenderer.tsx`). The add-on
+remains the only place that decides what a section says. The renderer's
+vocabulary is scoped to what the add-on actually emits, measured against the live
+endpoints rather than taken from Google's spec.
+
+Three things follow that are not obvious:
+
+- **Most section titles are not `section.header`.** `fold()` collapses sections
+  so Gmail draws one hairline instead of six, and folded titles survive as
+  `textParagraph` widgets holding only `<b>…</b>`. Measured on `/homepage`: 2
+  sections, 1 real header, 5 folded. A renderer keyed on `section.header` loses
+  every heading but one.
+- **Most links are `decoratedText.onClick`, not buttons.** Every fires row makes
+  the whole row the link, because six identical "Open" pills in a 400px column
+  are decoration. A renderer handling only `button` renders that section as
+  unclickable text and looks correct doing it.
+- **Links out are intercepted at the RENDER boundary, not via `WEB_URL`.** All
+  console links are redirected to a bundled "This app is QA only." page;
+  `mail.google.com` deep links still work, being the reader's own mailbox.
+  Redirecting `WEB_URL` would have missed `homepage.ts:880`, which hardcodes
+  `https://emailsentiment.mystartupcfo.com`. Classification fails closed.
+**Consequences:** The two surfaces agree by construction — a card changed in the
+add-on changes in the extension with no extension edit. In exchange the panel
+cannot render without the add-on running, so that failure is stated explicitly
+rather than rendering as an empty card.
+
+This path is LOCAL ONLY. A deployed add-on verifies a Google-signed ID token an
+extension cannot mint; see ADR-032.
+
+### ADR-032: An unverified caller may state who it is, and only where nothing is verified (2026-08-20)
+**Status:** Accepted
+**Context:** The add-on identifies the viewer from Google's signed
+`userIdToken`. An extension has none. With no address, `/homepage` skips
+`resolveViewer`, and because a skipped lookup is not a failed one, both
+entitlement-scoped sections are dropped **without** the "could not check who you
+are" row a real failure produces. The panel then shows firm-wide numbers beside
+two silent absences and reads as a working product reporting calm — the exact
+failure `homepage.ts` warns about, reintroduced by a caller rather than a bug.
+**Decision:** `AddonEvent.devViewerEmail` lets a caller name the viewer, honoured
+**only** inside the branch where `ADDON_VERIFY_ID_TOKEN` is off — which has
+already decided to trust the caller completely. Precedence is real token →
+request claim → `ADDON_DEV_VIEWER_EMAIL`, so one add-on serves several testers.
+
+This is consistent with ADR-030, not an exception to it: the caller states *who
+it is* and never *what it may see*. `userId`, `isAdmin` and the accessible-customer
+count are still resolved server-side by `/api/internal/addon/viewer`. What is
+missing versus production is only the proof of the identity claim, which is why
+the read is confined to the unverified branch.
+**Consequences:** `auth/verify.test.ts` asserts both halves — the claim is
+honoured with verification off, refused with it on — and pins the property on the
+source text, that no read of `devViewerEmail` appears at or below the point where
+origin is being proven. A behavioural test alone would pass against a version
+that reads the field in both paths and happens to reject for another reason.
+
+**Do not deploy this configuration.** Turning verification off on a public URL
+publishes an unauthenticated endpoint returning clone customer names, unanswered
+counts and who is unhappy. Shipping the panel to any host requires giving the
+add-on a real caller proof (the service key) instead, not relaxing the gate.
+
+### ADR-033: The panel chart layer gets a second shape, `donut` (2026-08-26)
+**Status:** Accepted
+**Context:** `ChartKind` was a literal union of one, `'bars'`, and both
+`chart-metric` and the panel renderer assumed a ranking throughout: the scale runs
+from the largest value, a count-only chart is annotated "ranked by volume", and a
+rate chart draws a baseline. That is correct for the questions this panel usually
+answers — which client is worst — and wrong for a question that divides ONE
+population into parts that sum to it. Asked for a share-of-whole (the four churn
+levels), the honest answers available were "draw it as a ranking of four things
+that are not competing" or "do not draw it".
+**Decision:** Add `kind: 'donut'` alongside `bars`, with its own column role
+`share` and a spec-level `denominator`, rather than reusing `rate`. A share has
+one denominator for the whole chart and no external reference; a rate has one per
+row and is compared against `base_rate`. Keeping them distinct means the baseline
+row and the volume note fall away by themselves instead of being suppressed, and
+the shape dispatch sits *below* the two shared gates (`chartable: false`, and no
+rows) so a composition refuses exactly as a ranking does.
+
+Gmail, which has no arc and no positioning, gets a 100%-stacked run of block
+characters — one coloured segment per slice, apportioned by largest-remainder so
+the parts sum to exactly the full width — plus a legend row per slice. That is a
+complete rendering, not a placeholder, which is what makes withholding the SVG
+safe. The extension draws the same numbers as a stroked ring.
+
+The pie ban in `chart-metric` is narrowed to what it always argued, not lifted:
+never a pie **for a ranking**. A composition is the one case a ring is right, and
+it is gated on the analyst supplying `share` + `denominator`.
+**Consequences:** Row order becomes load-bearing — `SEVERITY_RAMP` is assigned by
+position, so a builder that sorts a composition by magnitude paints the worst
+level the palest colour. This is the opposite of the bars rule, which sorts by
+what it plots, and it is asserted on a spec whose largest slice is `critical`.
+
+Version skew is closed from both ends, because it fails silently in the worst
+direction: the renderer finds a chart by title and then consumes
+`fallbackWidgets`, so a kind it does not recognise does not degrade — it deletes
+the card's correct rendering and draws whatever it falls through to. A donut
+reaching a bars-only panel would render as a ranking under "ranked by volume". So
+`CardRenderer` splices only kinds in `DRAWABLE`, and the extension declares
+`AddonEvent.chartKinds` so the add-on withholds the rest. **A future shape must be
+added to both, together.**
+
+Verified by rendering rather than by structure: `lib/donut-render.domtest.ts`
+drives `buildChart` → `CardRenderer` and reads the geometry back out of the
+markup, including that the fallback run was consumed rather than left beside the
+ring, and runs the real `sanitizeCardHtml` over the emitted card strings — the
+check that would have caught the `<font color="#c5221f">` incident. Deleting the
+`kind` dispatch fails it in eight places.
+
+No metric ships as a donut. The churn mix that prompted this was measured and
+refused (`chartable: false`): `riskLevel='none'` is absent from the stored enum,
+so `low` was the analyser's resting state at 87.8% and "has a churn level"
+selected every analysed message. The capability is deliberately in place ahead of
+a use, and `apps/analysis/src/analyses/schemas.ts` records the enum fix.
+
+### ADR-034: The panel asks whether a message is analysed, not whether it is a tracked client (2026-08-30)
+
+**Status:** Accepted
+
+**Context:** A message the sidebar had already analysed and saved kept offering
+"Read this thread" and "Analyse and save" every time it was reopened. The card
+was not failing to check — it was checking the wrong thing. Its only lookup was
+`resolveThreadByMessage` → `findByMessageIdsScoped`, which inner-joins
+`email_participants` on `direction='from'`, `participant_type='contact'`, a
+non-null `customer_id`, and the entitlement filter. That answers *"is this a
+tracked client thread I am entitled to see"*.
+
+But "Analyse and save" is only ever offered on a thread that resolved to **no**
+customer, and `LiveSaveService` writes no participant rows. So the rows the
+button creates are structurally invisible to the only lookup that could have
+found them, and the answer was always "no" — not because of a missing row, but
+because of a mismatched question. Separately the saved row carried
+`analysis_status = 3` with `emails.signals` left null, so the thread trend (which
+reads `signals`, never `email_analyses`) also saw nothing and the row contradicted
+itself.
+
+**Decision:** Add a distinct lookup for the distinct question.
+`POST /api/emails/stored-analysis` (`findStoredAnalysisByMessageIds`) inner-joins
+`emails` → `email_analyses` and is scoped by **tenant**, not by customer.
+`/gmail/contextual` calls it before deciding, and gates the whole
+`analysisPending` branch on the answer. `LiveSaveService` now also writes
+`emails.signals`, on insert and on conflict-update.
+
+**Consequences:**
+- Customer scoping is deliberately absent here, and that is the whole point: the
+  rows being asked about have no customer by construction. Re-adding a customer
+  join would silently restore the bug. Tenant is the honest boundary — the row is
+  only ever returned to the tenant that wrote it.
+- `innerJoin` on `email_analyses`, not `leftJoin`: ingestion inserts `emails`
+  rows long before the analyser reaches them, so "stored" and "analysed" are
+  different facts and only the second may hide the button.
+- The card reports the stored reading ("Already analysed", with sentiment, date
+  and reason) rather than going quiet. Dropping the controls silently would make
+  an already-analysed message look identical to a broken panel.
+- Registered **before** `/:emailId`. Hono finalizes on the first match, so a
+  literal segment declared after a parameterised one never runs — which is why
+  `GET /api/emails/exists` is dead code today despite its guard list. That
+  endpoint remains unreachable and unused; it was left alone rather than fixed
+  as a drive-by.
+
+### ADR-035: "Complaints by client, charted" is retired (2026-08-30)
+
+**Status:** Accepted
+
+**Context:** The homepage carried a bar chart of `fires.negative` per client. Asked
+what it was telling anyone, three things came back from the QA clone over 90 days:
+
+- **The range cannot carry a bar chart.** The rows run 4, 3, 1, 1, 1, 1. Of 68
+  clients holding an unresolved complaint, 63 have exactly one and only two have
+  more than two — so four of six bars tie at the minimum and bar length carries
+  essentially one comparison. The same counts already print on every row of
+  "Where the fires are" immediately above it.
+- **It was not ranked by what it drew, and the membership differed too.** The
+  fires query takes its six rows `ORDER BY unanswered DESC, engaged DESC,
+  negative DESC`; the chart then re-sorted *those six* by count. So the six
+  clients shown were the six with the most *unanswered* complaints. Two clients
+  with 2 unresolved complaints each never appeared while three with 1 did. The
+  card's caveat admitted the order differed; it did not admit the population did.
+- **The count is mostly a resolution filter.** 691 negative threads survive every
+  relevance predicate down to 532, then `notAlreadyResolved` takes it to 76 —
+  86% of the total drop is that one predicate. That makes the number a worklist,
+  and a bar chart states it as volume.
+
+**Decision:** `homepageCharts` no longer emits the `fires_by_negative` spec, so
+it leaves both the card body and the response envelope at once. The `fires`
+parameter is retained (as `_fires`) with the reasoning attached, so call sites do
+not move and the next person sees why rather than re-adding it.
+
+`chartable: false` was considered and rejected: `buildChart` still renders the
+title, a "Not charted" verdict and every row as text, which here would restate
+the list directly above. Nothing to plot means no spec.
+
+**Consequences:**
+- "Where the fires are" is unchanged and remains the section that answers this.
+- `negativeShareSpec` ("Where clients are unhappiest") is now the card's only
+  chart. It is a rate against a stated baseline over a stated denominator —
+  the shape the fires count was not.
+- Charts are worth reviewing against their own range. A metric can be correct,
+  well-attributed and worth showing, and still be wrong to draw as bars.
