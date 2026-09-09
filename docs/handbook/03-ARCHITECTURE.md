@@ -1,15 +1,10 @@
 # How it fits together
 
-## Scope
-
 InboxPulse reads a finance firm's client email, scores it, and surfaces the
-clients who need attention today. This document describes the deployed system:
-what runs, what each part owns, how a request crosses them, and the rules that
-hold across all of them. It is the document to read before changing code.
+clients who need attention today. Ten Cloud Run services do that work, and
+`crm-api` does most of it.
 
-Every claim carries a `file:line` so you can check it. Decisions and their
-reasoning live in `docs/decisions.md`; symptoms and commands live in
-`08-OPERATIONS.md`.
+Claims below carry a `file:line`.
 
 ## System context
 
@@ -272,8 +267,9 @@ call, so a backfill costs database time and nothing else.
 
 Three properties to preserve when extending it:
 
-- **Word boundaries, never substrings.** The vocabulary overlaps ordinary English
-  and hex identifiers.
+- **Word boundaries, never substrings.** The vocabulary collides with ordinary
+  English and with hex identifiers: `409a` occurs inside GUID fragments such as
+  `4ab083e2409a`, and `warrant` matches "warranty" in 274 of 278 threads.
 - **The sender is checked before any phrase.** Numera's own domains, the LMS,
   internal Google Chat and Notes, and newsletter domains are excluded first.
 - **A vendor in the FROM line is not evidence.** It says which tools we and our

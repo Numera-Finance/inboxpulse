@@ -1,12 +1,9 @@
 # InboxPulse handbook
 
-*Written for someone who has never seen this codebase and is now responsible for
-it. Assumes no context.*
-
-**Verified against the live system on 2026-08-18**, with the Capital events
-section re-verified 2026-09-09. Line numbers and counts drift; treat them as
-pointers, not guarantees. Where a number matters, the query that produced it is
-given so you can re-run it.
+Thirteen documents covering the product, the code, the data and the numbers.
+**Verified against the live system on 2026-08-18**, Capital events re-verified
+2026-09-09. Line numbers drift; where a number matters, the query that produced
+it is given so you can re-run it.
 
 **Internal only.** This handbook names real clients and gives reply-time figures
 for named employees.

@@ -1,7 +1,7 @@
 # Getting access, and what to do when it breaks
 
-*The runbook in `08-OPERATIONS.md` assumes you already have credentials. This is
-where they come from, and what order to check things in.*
+`08-OPERATIONS.md` assumes you already hold credentials. This is where they come
+from, and the order to check things in when nothing works yet.
 
 ## Everything you need, and where it comes from
 

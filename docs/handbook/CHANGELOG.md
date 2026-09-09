@@ -1,8 +1,6 @@
 # What changed, and when
 
-*Behavior and structure changes to the deployed system, newest first. The other
-handbook documents describe the system as it is now and carry no history; this is
-where the dates live.*
+Behavior and structure changes to the deployed system, newest first.
 
 **What belongs here:** a component added or removed, a number whose meaning
 changed, an interface that moved, a default that flipped. One line each.

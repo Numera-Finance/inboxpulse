@@ -1,8 +1,8 @@
 # What predicts trouble, and how to check it yourself
 
-*Every number here was measured against this firm's own mail. None of it is
-imported from a paper. Where a claim has been corrected, the correction is
-stated, because the shape of the error recurs.*
+Every number here was measured against this firm's own mail, not imported from
+published work. Each carries the query that produced it, so a figure that has
+drifted can be re-derived rather than argued about.
 
 ## The one question
 

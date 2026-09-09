@@ -128,10 +128,10 @@ governed nothing.
 curl -s -X POST "$API/api/internal/addon/snapshots/clear" > /dev/null && echo "snapshot cleared"
 ```
 
-printed `snapshot cleared` after every deploy for several deploys, against a
-route that **does not exist**. The false line cost an hour: when the panel kept
-rendering pre-fix output, the cache was believed clear, so the search went to the
-build, the revision and the database instead.
+prints `snapshot cleared` against a route that does not exist. The failure mode
+is not the wasted call, it is that the next diagnosis starts from a false
+premise: the cache is believed clear, so a stale panel sends you to the build,
+the revision and the database.
 
 - Gate on the status, not the exit code: `curl -f`, or capture
   `-w '%{http_code}'` and test it.

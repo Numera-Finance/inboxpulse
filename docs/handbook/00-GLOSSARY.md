@@ -1,8 +1,5 @@
 # Glossary
 
-*Every term this handbook uses without explaining. Read it once; come back when a
-word stops making sense.*
-
 ## The four surfaces, and what people call them
 
 The single biggest source of confusion. **Four separate things put "InboxPulse"

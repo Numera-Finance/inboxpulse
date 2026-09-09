@@ -1,7 +1,8 @@
 # The sidebar as a surface for other systems
 
-*A design brief, not a description. Nothing here is built. It records the
-intent and the constraints so whoever builds it does not rediscover them.*
+**Nothing in this document is built.** It is a design brief: the intent and the
+constraints for turning the sidebar into a surface other systems can render
+into.
 
 > **The open questions below are now answered in `docs/API-STANDARD.md`** — the
 > envelope, the identity model, versioning, the layout budget, the image
@@ -35,9 +36,10 @@ Before anyone external builds against this, settle and publish:
 - **The envelope.** `ApiResponse<T>` is the standard and holds at the auth
   boundary: `requireServiceAuth` and `requireInternalAuth` return
   `{ code, message, statusCode }`, typed `ApiResponse<never>` so the compiler
-  refuses a bare string. `service-auth.test.ts` covers all six refusal paths. An
-  external client can rely on `error.code` and `error.message` being present on
-  every non-2xx response, including 401.
+  refuses a bare string. `service-auth.test.ts` covers all six refusal paths. A
+  producer can rely on `error.code` and `error.message` being present on every
+  non-2xx response, 401 included, which is what the add-on's `safeErrorDetail`
+  reads to decide whether it can show the reason.
 - **Where identity comes from.** A valid service key currently grants
   `ALL_PERMISSIONS` and the caller asserts its own `isAdmin` in a query
   parameter. That is workable for a first-party add-on and is not a model to hand

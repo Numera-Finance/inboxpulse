@@ -1,8 +1,5 @@
 # Running it
 
-*Everything needed to deploy, debug and not break production. Written for someone
-who has never touched this project.*
-
 ## Where it runs
 
 **GCP project `project-y-email-sentiment`, region `us-central1`.** All services

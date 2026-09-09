@@ -1,8 +1,7 @@
 # What was tried and did not work
 
-*This document exists so nobody spends a week rediscovering these. Each entry has
-a measured result, because "we tried it and it felt worse" is not a reason anyone
-can act on.*
+Each entry carries the measurement that closed it, so a proposal to revisit one
+starts from the number rather than from scratch.
 
 ## The tone branches — all of them failed for one reason
 

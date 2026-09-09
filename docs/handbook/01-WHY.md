@@ -1,8 +1,5 @@
 # Why InboxPulse exists
 
-*Read this first. Everything else in this handbook assumes you accept, or at
-least understand, the argument here.*
-
 ## The business it serves
 
 Numera (trading as myStartUpCFO) is an outsourced finance firm. Clients hand over

@@ -1,9 +1,9 @@
 # The data model
 
-*One PostgreSQL database. The schema is defined in **two places that must be read
-together**: Drizzle definitions at `apps/api/src/*/schema.ts` (what the ORM
-believes) and raw SQL under `apps/api/sql/` (what actually exists). They diverge,
-and the divergences are listed at the end.*
+One PostgreSQL database. The schema is defined in **two places that must be read
+together**: Drizzle definitions at `apps/api/src/*/schema.ts`, which is what the
+ORM believes, and raw SQL under `apps/api/sql/`, which is what exists. They
+diverge; the divergences are listed under "Where Drizzle and SQL disagree".
 
 ## The tables, by domain
 

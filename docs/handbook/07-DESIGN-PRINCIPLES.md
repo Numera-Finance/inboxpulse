@@ -1,8 +1,7 @@
 # Design principles
 
-*Rules with a cost attached. Each one is here because breaking it broke
-something, and the incident is named so you can judge whether the rule still
-applies to your situation.*
+Each rule below carries the failure that motivates it, named and measured, so
+you can judge whether it still applies to what you are building.
 
 ## 1. A silent failure is worse than a loud one
 
@@ -52,7 +51,7 @@ q = q.replace('${tenantId}', "'...'").replace('${days}', '90')
 
 ## 3. The same screen name exists on three surfaces
 
-**"AI Analysis" is three different things**, and one bug had to be fixed in all
+**"AI Analysis" is three different things**, and a fix to the behavior lands in all
 three before it went away.
 
 | where | what it really is | what it calls |

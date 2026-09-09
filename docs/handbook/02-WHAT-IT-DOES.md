@@ -1,9 +1,5 @@
 # What a user actually sees
 
-*The product surface, section by section, with what each number means and where
-it comes from. If you are supporting users, this is the document you will reach
-for most.*
-
 ## The Gmail sidebar
 
 InboxPulse is a **Google Workspace Add-on**. It renders in the right-hand panel
