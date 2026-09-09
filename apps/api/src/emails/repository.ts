@@ -9,7 +9,7 @@ import { customers } from '../customers/schema';
 import { users } from '../users/schema';
 import { eq, and, desc, asc, sql, inArray, or, ilike, isNotNull, SQL } from 'drizzle-orm';
 import { logger } from '../utils/logger';
-import type { AnalyzedEmail, AnalyzedEmailListItem, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse } from '@crm/clients';
+import type { AnalyzedEmail, AnalyzedEmailListItem, AnalyzedEmailSearchRequest, AnalyzedEmailSearchResponse, AnalyzedEmailSignalFilter } from '@crm/clients';
 
 /**
  * One outbound reply, as far as first-reply (TAT) attribution is concerned.
@@ -2001,7 +2001,7 @@ export class EmailRepository extends ScopedRepository {
    * Map a signal filter string to raw SQL conditions (using table alias "e" for emails)
    * Used in raw SQL queries where emails is aliased as "e"
    */
-  private getSignalFilterCondition(signal: string): SQL | null {
+  private getSignalFilterCondition(signal: AnalyzedEmailSignalFilter): SQL | null {
     switch (signal) {
       case 'positive':
         return sql`e.signals @> ARRAY[${Signal.SENTIMENT_POSITIVE}]::integer[]`;
@@ -2032,10 +2032,24 @@ export class EmailRepository extends ScopedRepository {
                 WHERE h.tenant_id = e.tenant_id
               )
           ) >= 1`;
+      case 'capital-event':
+        return sql`e.signals @> ARRAY[${Signal.CAPITAL_EVENT}]::integer[]`;
       case 'all':
         return null;
-      default:
-        return null;
+      default: {
+        /**
+         * `default: return null` used to sit here, and null means NO FILTER.
+         * `capital-event` was a value this switch had never heard of, so the
+         * page asked for the flagged mail and silently received every analyzed
+         * email for the customer instead. The panel row and its click-through
+         * showed different populations, which is worse than a link that fails.
+         *
+         * `never` makes the next unhandled member a compile error rather than a
+         * page quietly showing the wrong rows.
+         */
+        const unhandled: never = signal;
+        throw new Error(`Unhandled signal filter: ${String(unhandled)}`);
+      }
     }
   }
 
