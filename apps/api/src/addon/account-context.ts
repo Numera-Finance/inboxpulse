@@ -1783,6 +1783,15 @@ export class CapitalEventsService {
           AND e.is_customer_email
           AND e.signals @> ARRAY[${Signal.CAPITAL_EVENT}]::integer[]
           AND e.received_at >= now() - (${days} || ' days')::interval
+          -- Only mail the destination can actually show.
+          --
+          -- The row links to /escalations, which lists ANALYSED email. Falconx
+          -- had three flagged messages and none of them analysed, so the row
+          -- rendered, the link opened, and the page said "No analyzed emails
+          -- found". A row must not send the reader somewhere that cannot
+          -- display it. 90 of 130 flagged emails qualify; the other 40 were
+          -- never put through the model, and the rule does not need the model.
+          AND e.analysis_status = 3
           AND split_part(lower(e.from_email), '@', 2) NOT IN (SELECT dom FROM vendor)
       )
       SELECT f.customer_id::text AS customer_id,

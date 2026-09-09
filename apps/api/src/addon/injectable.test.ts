@@ -67,3 +67,18 @@ describe('the capital events section excludes service providers', () => {
     }
   });
 });
+
+/**
+ * Falconx rendered in the Capital events section with three flagged messages,
+ * and the row's link opened a page that said "No analyzed emails found". All
+ * three had analysis_status != Completed, and /escalations lists analysed mail
+ * only. The row was pointing somewhere structurally unable to show it.
+ */
+describe('the capital events section only surfaces mail its link can render', () => {
+  const src = readFileSync(join(__dirname, 'account-context.ts'), 'utf8');
+  const section = src.slice(src.indexOf('export class CapitalEventsService'));
+
+  it('requires the email to be analysed', () => {
+    expect(section).toContain('e.analysis_status = 3');
+  });
+});

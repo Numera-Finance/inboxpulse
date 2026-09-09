@@ -1,6 +1,6 @@
 "use client"
 
-import { Smile, Frown, Meh, TrendingUp, TrendingDown, Clock } from "lucide-react"
+import { Smile, Frown, Meh, TrendingUp, TrendingDown, Clock, Landmark } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -60,6 +60,12 @@ export function SignalFilter({ value, onChange, className, excludeNeutral }: Sig
           <span className="flex items-center gap-2">
             <TrendingDown className="h-3.5 w-3.5 text-orange-500" />
             Churn Risk
+          </span>
+        </SelectItem>
+        <SelectItem value="capital-event">
+          <span className="flex items-center gap-2">
+            <Landmark className="h-3.5 w-3.5 text-emerald-600" />
+            Capital Event
           </span>
         </SelectItem>
         <SelectItem value="tat">
