@@ -246,7 +246,7 @@ export function buildHomepageCard(
   privacy?: PrivacyView,
   /** Clients talking twice as much as usual, who have not complained. */
   stirring?: Array<{ customer: string; customerId: string | null; recent: number; usual: number; owner: string | null }>,
-  capitalEvents?: Array<{ customer: string; customerId: string | null; subject: string; daysAgo: number; messages: number; owner: string | null }>,
+  capitalEvents?: Array<{ customer: string; customerId: string | null; quote?: string; subject: string; daysAgo: number; messages: number; owner: string | null }>,
 ): Card {
   // No lead-in section.
   //
@@ -678,8 +678,14 @@ export function buildHomepageCard(
       widgets: capitalEvents.map((ce) =>
         deco({
           text: `<b>${escapeText(ce.customer)}</b>`,
+          // THE QUOTE, NOT THE SUBJECT.
+          //
+          // "Re: Combined Financial Model" tells the reader nothing about why
+          // this client is on the list. "please PDF for data room" tells them
+          // everything, and it is what the rule actually matched. The subject
+          // was a proxy for evidence we already had and had thrown away.
           bottomLabel:
-            `${escapeText(ce.subject.slice(0, 58))} · ` +
+            `<i>${escapeText(ce.quote || ce.subject)}</i> · ` +
             (ce.daysAgo === 0 ? 'today' : `${ce.daysAgo}d ago`) +
             (ce.messages > 1 ? ` · ${ce.messages} messages` : '') +
             (ce.owner ? ` · ${escapeText(ce.owner)}` : ' · no rep assigned'),

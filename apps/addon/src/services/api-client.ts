@@ -828,6 +828,8 @@ export interface CapitalEvent {
   customer: string;
   customerId: string | null;
   flag: string;
+  /** The sentence that fired the rule, quoted from the mail. Not the subject. */
+  quote: string;
   subject: string;
   daysAgo: number;
   messages: number;

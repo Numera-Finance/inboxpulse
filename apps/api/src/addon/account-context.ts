@@ -1659,13 +1659,52 @@ export interface CapitalEvent {
   customerId: string | null;
   /** 'data-room' | 'term-sheet' | 'declaration', from the detector. */
   flag: string;
-  /** The subject of the most recent flagged message, so the row is openable. */
+  /**
+   * The sentence that fired the rule, quoted from the mail.
+   *
+   * NOT the subject line. "Re: Combined Financial Model" says nothing about why
+   * this client is here; "please PDF for data room" says everything. The
+   * subject is a proxy for the evidence, and we had the evidence all along.
+   */
+  quote: string;
+  /** Kept for the deep link, not for display. */
   subject: string;
   /** Days since that message. A capital event goes cold; a 90-day-old one is history. */
   daysAgo: number;
   /** Flagged messages in the window, so a live deal outranks a single mention. */
   messages: number;
   owner: string | null;
+}
+
+/**
+ * Cut an extracted quote down to the sentence that matters.
+ *
+ * The SQL window is deliberately generous, so it drags in whatever follows:
+ * sign-offs, signature blocks, email addresses. "in our Data Room. Regards,
+ * Himanshu Email ID: hsriv" is the evidence plus three lines of noise, in a
+ * column 250px wide.
+ *
+ * Exported so it can be tested against the real tails found in the corpus
+ * rather than invented ones.
+ */
+export function tidyQuote(raw: string, max = 96): string {
+  let q = raw.replace(/\s+/g, ' ').trim();
+
+  // Stop at a sign-off. These are the ones that actually appear in this mail.
+  const signoff = q.search(
+    /\b(regards|thanks|thank you|best|sincerely|cheers|sent from|email id|confidentiality)\b/i,
+  );
+  if (signoff > 30) q = q.slice(0, signoff);
+
+  // Prefer ending on a sentence, but only if enough of it survives to read.
+  const stop = q.lastIndexOf('. ');
+  if (stop > 40) q = q.slice(0, stop + 1);
+
+  if (q.length > max) {
+    const cut = q.lastIndexOf(' ', max);
+    q = q.slice(0, cut > 40 ? cut : max).trim() + '\u2026';
+  }
+  return q.trim();
 }
 
 @injectable()
@@ -1717,6 +1756,14 @@ export class CapitalEventsService {
         SELECT cd.customer_id,
                e.subject,
                e.received_at,
+               -- emails.body is raw HTML with the full quoted chain, so strip
+               -- tags and entities before looking for the phrase, or the window
+               -- lands in the middle of a style attribute.
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(coalesce(e.body, ''), '<[^>]*>', ' ', 'g'),
+                 '&[a-z]+;|&#[0-9]+;', ' ', 'g'),
+               '\\s+', ' ', 'g') AS clean_body,
                row_number() OVER (PARTITION BY cd.customer_id ORDER BY e.received_at DESC) AS rn,
                count(*) OVER (PARTITION BY cd.customer_id)::int AS messages
         FROM emails e
@@ -1732,6 +1779,28 @@ export class CapitalEventsService {
       SELECT f.customer_id::text AS customer_id,
              c.name AS customer,
              coalesce(f.subject, '(no subject)') AS subject,
+             -- A window around the FIRST phrase that matched, so the row quotes
+             -- the reason rather than the subject line.
+             -- Trim the partial words the window inevitably cuts: a quote that
+             -- opens "t have a merchant valuation report" reads as a bug.
+             regexp_replace(
+               regexp_replace(
+                 btrim(substring(
+                   f.clean_body
+                   FROM GREATEST(1, COALESCE(NULLIF(LEAST(
+                          NULLIF(position('data room'  in lower(f.clean_body)), 0),
+                          NULLIF(position('term sheet' in lower(f.clean_body)), 0),
+                          NULLIF(position('fundrais'   in lower(f.clean_body)), 0),
+                          NULLIF(position('we are raising' in lower(f.clean_body)), 0),
+                          NULLIF(position('letter of intent' in lower(f.clean_body)), 0),
+                          NULLIF(position('for a financing' in lower(f.clean_body)), 0),
+                          NULLIF(position('our series'  in lower(f.clean_body)), 0),
+                          NULLIF(position('seed round'  in lower(f.clean_body)), 0),
+                          NULLIF(position('convertible note' in lower(f.clean_body)), 0)
+                        ), 0), 1) - 50)
+                   FOR 140)),
+               '^\\S*\\s+', '', ''),
+             '\\s+\\S*$', '', '') AS quote,
              extract(day FROM (now() - f.received_at))::int AS days_ago,
              f.messages,
              (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
@@ -1769,6 +1838,9 @@ export class CapitalEventsService {
       customerId: (r.customer_id as string) ?? null,
       flag: 'capital-event',
       subject: String(r.subject ?? ''),
+      // Fall back to the subject only when extraction found nothing, which
+      // happens when the phrase lives in an attachment name or a header.
+      quote: tidyQuote(String(r.quote ?? '')) || String(r.subject ?? ''),
       daysAgo: Number(r.days_ago ?? 0),
       messages: Number(r.messages ?? 1),
       owner: (r.owner as string) ?? null,

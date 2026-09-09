@@ -1094,20 +1094,20 @@ describe('the waiting row counts clients, not messages', () => {
  * database column, not a feature.
  */
 describe('capital events', () => {
-  const card = (events?: Array<{ customer: string; customerId: string | null; subject: string; daysAgo: number; messages: number; owner: string | null }>) =>
+  const card = (events?: Array<{ customer: string; customerId: string | null; quote?: string; subject: string; daysAgo: number; messages: number; owner: string | null }>) =>
     JSON.stringify(
       buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, events),
     );
 
-  const one = [{ customer: 'StepSecurity', customerId: 'c1', subject: 'Restarting our Series A in September', daysAgo: 4, messages: 3, owner: 'Ganesh Shankar' }];
+  const one = [{ customer: 'StepSecurity', customerId: 'c1', quote: 'While preparing our Series A data room, we found calculation errors', subject: 'Re: Restarting our Series A', daysAgo: 4, messages: 3, owner: 'Ganesh Shankar' }];
 
   it('renders as its own section, a peer of the others', () => {
     expect(card(one)).toContain('Capital events');
   });
 
-  it('states what was found and when, never what it means', () => {
+  it('quotes the sentence that fired the rule, not the subject line', () => {
     const json = card(one);
-    expect(json).toContain('Restarting our Series A');
+    expect(json).toContain('preparing our Series A data room');
     expect(json).toContain('4d ago');
     // 5 of 20 term-sheet threads were acquisitions and 3 were debt, so the card
     // must not assert a raise.
