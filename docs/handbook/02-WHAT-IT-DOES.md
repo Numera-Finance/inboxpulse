@@ -48,11 +48,11 @@ escalations view filtered to exactly that population.
 
 ### The arc: Rising, Cooling, Entrenched
 
-Three words, not two, and the third exists because two mislabelled the clients
-who need the most care.
+Three bands, because two cannot separate a client who is improving from one who
+has settled into a high rate. A client steady at 15% for six months is not
+cooling, and labelling it so sends nobody.
 
-A client steady at 15% for six months rendered as "Cooling 16%→15%", which reads
-as improving. Measured across 693 client-months: a client under 10% in a month
+Measured across 693 client-months: a client under 10% in a month
 behaves exactly like one at zero (2.0% complaints the following month either
 way). A client who crosses 10% runs 7.9% the next month and is **still at 5.9%
 three months later**, against 1.6% for clients who never crossed.

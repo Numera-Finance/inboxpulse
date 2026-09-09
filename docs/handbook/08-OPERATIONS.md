@@ -8,12 +8,11 @@ who has never touched this project.*
 **GCP project `project-y-email-sentiment`, region `us-central1`.** All services
 are Cloud Run.
 
-> **`health-474623` is retired.** It is still named in
-> `docs/GMAIL-OAUTH-SETUP.md`, and the OAuth client id beginning `505023465535-`
-> belongs to it. The live client is `crm-oauth` (`203731638840-…`). Pointing
-> gcloud at the old project fails as a **permission** error rather than "no such
-> project", because the account can only see the live one — so the symptom reads
-> like missing IAM when the id is simply wrong.
+> **Check the project id before debugging IAM.** gcloud pointed at any project
+> other than `project-y-email-sentiment` fails as a **permission** error rather
+> than "no such project", because the account can only see the live one. A wrong
+> id therefore reads like a missing role. The live OAuth client is `crm-oauth`
+> (`203731638840-…`).
 
 | service | package | what it does |
 |---|---|---|
@@ -26,10 +25,9 @@ are Cloud Run.
 | `crm-manager` | `apps/manager` | ported manager endpoints |
 | `crm-embeddings` | — | nomic-embed-text behind an auth'd endpoint |
 
-**Check which host a surface calls before changing code.** A `crm-api-clone`
-reading a separate `CLONE_DATABASE_URL` existed until 2026-08-18 and caused
-exactly this confusion; `crm-web-clone` still does. A page showing unexpected
-data may be reading a different database, not a different code path.
+**Check which host a surface calls before changing code.** `crm-web-clone` reads
+the clone database, so a page showing unexpected data may be reading a different
+database, not running different code.
 
 ## Deploying
 
@@ -67,13 +65,13 @@ gcloud run services update crm-addon \
 
 Three separate settings on `crm-addon` have taken the whole panel down.
 
-**`ADDON_AUDIENCE` must be blank.** A post-deploy step used to set it to the
-service's own Cloud Run URL. Google does not mint `event.userIdToken` for that
-audience, so every request failed verification with `Wrong recipient, payload
-audience != requiredAudience`. With no verified caller there is no viewer, so the
-entitlement-scoped sections vanished and the card fell back to *"Preview mode.
-Not connected to the InboxPulse API. Set SERVICE_API_KEY"* — naming a problem
-that did not exist. `auth/verify.ts` treats blank as "verify Google's signature
+**`ADDON_AUDIENCE` must be blank.** Set to the service's own Cloud Run URL,
+verification fails with `Wrong recipient, payload audience != requiredAudience`,
+because Google does not mint `event.userIdToken` for that audience. With no
+verified caller there is no viewer, so every entitlement-scoped section
+disappears and the card reports *"Preview mode. Not connected to the InboxPulse
+API. Set SERVICE_API_KEY"*, which names the wrong cause. Check this variable
+before the key. `auth/verify.ts` treats blank as "verify Google's signature
 and issuer, skip the `aud` claim", which is the intended state.
 
 **`GOOGLE_CLIENT_ID` is not read by the add-on.** It is declared in
@@ -137,13 +135,10 @@ Three caches sit in the way: the rollout, the `panel_snapshots` cron (every 5
 minutes, and `read` serves rows up to 15 minutes old), and the add-on's 180s
 in-memory TTL. Worst case is about twenty minutes.
 
-**There is no route that clears a snapshot.** `/api/internal/addon/snapshots/clear`
-does not exist. A deploy script called it for several deploys and printed
-"snapshot cleared" every time, because **`curl` exits 0 on a 404** and the `&&`
-fired anyway. That one false line sent a diagnosis chasing a broken build and a
-database outage for an hour.
+**No route clears a snapshot.** Wait the cron out; there is no lever.
 
-So, two rules for any deploy or verification script here:
+Two rules for any script that checks a deploy here, because **`curl` exits 0 on a
+404 or a 500** and will report success against a route that does not exist:
 
 ```bash
 # WRONG: succeeds on 404, 500, anything that completes a round trip
@@ -164,11 +159,12 @@ the old behavior exactly, the code is fine and the cache is old.
 
 ## Timeouts
 
-The add-on gives every API call **6 seconds** (`apps/addon/src/services/api-client.ts`).
-It was 2s, chosen when every call was a lookup. The management queries are not:
-the fires query aggregates 90 days of negative threads per client, computes a
-monthly rate for each, and resolves an owner. At 2s it timed out on **every**
-request and the panel simply had no fires section.
+The add-on gives every API call **6 seconds**
+(`apps/addon/src/services/api-client.ts`), and returns `[]` rather than an error
+when it expires. The budget is sized for management queries, not lookups: the
+fires query aggregates 90 days of negative threads per client, computes a monthly
+rate for each, and resolves an owner. A section whose query exceeds the budget
+renders as absent, not as failed.
 
 If you add a heavy query to the panel, measure it against that budget first.
 

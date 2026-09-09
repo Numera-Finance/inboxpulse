@@ -1,12 +1,10 @@
 # Gmail OAuth Setup Guide
 
-> **Corrected 2026-08-18.** Every command in this file used to name the
-> **retired** project `health-474623`, and the tooling it calls still runs — so
-> following it executed real commands against a dead project. Pointing gcloud
-> there fails as a *permission* error rather than "no such project", because
-> the account can only see the live one, so the symptom reads like missing IAM.
-> The live project is `project-y-email-sentiment` (`203731638840`) and the live
-> OAuth client is `crm-oauth` (`203731638840-…`), not `505023465535-…`.
+> **Project and client.** All commands below run against
+> `project-y-email-sentiment` (`203731638840`). The OAuth client is `crm-oauth`
+> (`203731638840-…`). If gcloud reports a *permission* error, check the project
+> id first: the account can only see the live project, so a wrong id surfaces as
+> missing IAM rather than "no such project".
 
 This guide helps you set up Gmail API access using OAuth for personal Gmail accounts without publishing an app.
 

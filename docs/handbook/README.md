@@ -18,7 +18,7 @@ for named employees.
 | 0 | **[00-GLOSSARY.md](00-GLOSSARY.md)** | Every term this handbook uses without explaining | Keep it open beside the others |
 | 1 | **[01-WHY.md](01-WHY.md)** | Why this product exists and what it claims | First. Nothing else makes sense without it. |
 | 2 | **[02-WHAT-IT-DOES.md](02-WHAT-IT-DOES.md)** | Every panel section, what each number means | A user asks what something means |
-| 3 | **[03-ARCHITECTURE.md](03-ARCHITECTURE.md)** | Services, surfaces, request paths, what is dead | Before changing any code |
+| 3 | **[03-ARCHITECTURE.md](03-ARCHITECTURE.md)** | Services, surfaces, request paths, the rules that hold across them | Before changing any code |
 | 4 | **[04-DATA-MODEL.md](04-DATA-MODEL.md)** | Tables, the two attribution paths, misleading columns | Before writing a query |
 | 5 | **[05-PIPELINE.md](05-PIPELINE.md)** | How an email becomes a verdict | "Why did this email get no sentiment?" |
 | 6 | **[06-SIGNALS.md](06-SIGNALS.md)** | What predicts trouble, measured, and how to re-derive it | Before quoting a number to anyone |
@@ -27,6 +27,8 @@ for named employees.
 | 9 | **[09-DEAD-ENDS.md](09-DEAD-ENDS.md)** | What was tried and failed, with numbers | Before proposing an improvement |
 | 10 | **[10-NEXT-INTEGRATIONS.md](10-NEXT-INTEGRATIONS.md)** | The design brief for making this a shared surface | Planning the next phase |
 | 11 | **[11-ACCESS-AND-FIRST-RESPONSE.md](11-ACCESS-AND-FIRST-RESPONSE.md)** | How to get credentials, and what order to check things in | **Your first day, and every incident** |
+| 12 | **[12-PERFORMANCE.md](12-PERFORMANCE.md)** | The load-test rig and what it measures | Before adding a query to the panel |
+| — | **[CHANGELOG.md](CHANGELOG.md)** | What changed and when | A document disagrees with the code |
 
 ## The five-minute version
 
@@ -59,8 +61,9 @@ sender's domain — and they disagree. Of 1,484 participant rows in one populati
 **275** were cases where the customer actually wrote. See `04-DATA-MODEL.md`.
 
 **3. A broken thing looks like good news.** The characteristic failure here is a
-section that renders empty and reads as calm. It has happened at least five
-times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md`.
+section that renders empty and reads as calm: the panel swallows a non-OK
+response and shows nothing, which is indistinguishable from nothing to report.
+**Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md`.
 
 ## Known defects, recorded rather than tidied away
 
@@ -105,14 +108,12 @@ on, or the reader is sent to their own account index N, which is somebody else.
 ## The other documents in `docs/`
 
 There are 73 files beside this handbook in `docs/`, most of them planning
-artifacts from earlier work. Twenty-six others were deleted in August 2026
-because they documented subsystems the code no longer contains: JWT session
-tokens, which were never implemented (see ADR-028), and a separate `employees`
-entity, since merged into `users`. Two of what remains are worth your time:
+artifacts. Treat them as drafts: where one disagrees with the handbook, the
+handbook is current. Two are worth your time:
 
 - **`docs/decisions.md`** — the ADR log, append-only. Read ADR-005 and ADR-020.
-- **`12-PERFORMANCE.md`** (in this handbook) — the load-test rig, every
-  measurement it produced, and three hypotheses that turned out wrong. Read
+- **`12-PERFORMANCE.md`** (in this handbook) — the load-test rig and every
+  measurement it produced. Read
   before optimising anything on the panel path.
 - **`docs/API-STANDARD.md`** — binding rules for any new endpoint or panel
   producer: the envelope, identity, versioning, the layout budget, the image

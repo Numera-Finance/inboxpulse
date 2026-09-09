@@ -252,19 +252,20 @@ deployed feature and a missing column is whoever remembers.
 
 ## One stuck transaction takes the whole panel down
 
-On 2026-08-19 every add-on endpoint returned 504 for three hours. The panel was
-not slow — each request hung to exactly 300.000s, the Cloud Run ceiling.
+Every add-on endpoint can return 504 together, with each request hanging to
+exactly 300.000s, the Cloud Run ceiling. A uniform 300s is the signature: the
+panel is not slow, it is blocked.
 
-The chain:
+The chain that produces it:
 
 1. `ensureCustomerForEmail` takes `pg_advisory_xact_lock(hashtext('customer:<tenant>:<domain>'))`
    to serialize customer creation per domain. It is an **xact** lock, released
    only at commit.
-2. One request was killed at Cloud Run's 300s limit. Cloud Run throttles an
-   instance's CPU outside request scope, so the code froze mid-transaction —
-   after the lock, after `findByDomain`, before any commit.
-3. The connection sat `idle in transaction` for 46 minutes, still holding the
-   lock. `idle_in_transaction_session_timeout` was `0`, so nothing reclaimed it.
+2. A request killed at Cloud Run's 300s limit leaves the handler mid-transaction:
+   Cloud Run throttles an instance's CPU outside request scope, so the code stops
+   after the lock, after `findByDomain`, and before any commit.
+3. That connection sits `idle in transaction` holding the lock. With
+   `idle_in_transaction_session_timeout` at `0`, nothing reclaims it.
 4. **74 sessions** queued on that lock, exhausting the pool. After that every
    endpoint hung, including `/viewer`, which is one indexed lookup and touches
    neither customers nor the lock — it simply could not get a connection.
@@ -298,31 +299,26 @@ locks for several domains until it commits. That widens the window this incident
 walked through. Holding each lock for the shortest span, or moving customer
 creation out of the per-message transaction, is the real fix and is not done.
 
-### It came back, and CPU throttling was not the whole story
+### Why the mitigations are mitigations
 
-`--no-cpu-throttling` was applied to crm-api and the jam returned within the
-hour: 44 sessions on the advisory lock again, endpoints timing out again. Two
-things were wrong with the first diagnosis.
+Two settings reduce how often this bites, and neither removes the cause.
 
-First, **the CI deploy silently reset `--min-instances` to 0**, because
-`deploy.yml` hard-codes it and the setting had only been applied by hand. That is
-the same failure as `ADDON_AUDIENCE` earlier in 2026. Both flags now live in
-`deploy.yml`.
+**`--min-instances 1` and `--no-cpu-throttling` live in `deploy.yml`.** Both are
+hard-coded there rather than applied by hand, because CI rewrites the service
+definition on every deploy and a hand-applied flag does not survive it. Any Cloud
+Run setting the system depends on belongs in that file for the same reason.
 
-Second, and more important: with CPU always allocated, a frozen handler is no
-longer the mechanism, and the pile-up happened anyway. The logs show the real
-one — `POST /api/internal/emails/first-reply-markers` returning **200 in 109
-seconds**, and the analysis path opening a transaction per message that calls
-`ensureCustomerForEmail` once per participant. Those transactions are genuinely
-long, and every advisory lock they take is held until the whole thing commits.
-Nothing has to freeze for that to block the panel; it only has to be slow while
-many messages arrive at once.
+**CPU allocation removes only one mechanism.** A frozen handler is not the only
+way to hold a lock too long. `POST /api/internal/emails/first-reply-markers`
+returns 200 in 109 seconds under load, and the analysis path opens a transaction
+per message that calls `ensureCustomerForEmail` once per participant. Those
+transactions are legitimately long, and every advisory lock they take is held
+until the whole thing commits. Nothing has to freeze for the panel to block; the
+transaction only has to be slow while many messages arrive at once.
 
-**So the outstanding fix is unchanged and is now the only one left:** hold each
-advisory lock for the shortest possible span, or move customer creation out of
-the per-message transaction entirely. Until then, `--min-instances 1` and CPU
-allocation reduce how often this bites, and restarting crm-api is the way to
-clear it when it does.
+**The fix is to shorten the lock span**, or move customer creation out of the
+per-message transaction. Until then, restarting `crm-api` clears a jam and the
+query above identifies it.
 
 ## What made 200 users work
 
