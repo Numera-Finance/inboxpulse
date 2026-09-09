@@ -1741,19 +1741,31 @@ export function tidyQuote(raw: string, phraseAt = 0, max = 96): string {
 
   /**
    * Nothing below may cut into the phrase, so every cut has to land past the
-   * lead. The 12 keeps a two-word quote from collapsing to nothing.
+   * lead plus the phrase. 8 is the shortest phrase the extractor can match
+   * ("fundrais"), which makes this a floor derived from the phrase list rather
+   * than a number chosen to make one case pass. A flat 12 blocked a legitimate
+   * cut at exactly 12 and rendered "Term Sheet. Hi Sandeep".
    */
-  const floor = Math.max(lead.length, 12);
+  const floor = lead.length + 8;
 
   const greeting = q.search(GREETING);
-  if (greeting > floor) q = q.slice(0, greeting);
+  if (greeting >= floor) q = q.slice(0, greeting);
 
   const signoff = q.search(SIGN_OFF);
-  if (signoff > floor) q = q.slice(0, signoff);
+  if (signoff >= floor) q = q.slice(0, signoff);
 
-  // Prefer ending on a sentence, but only if enough of it survives to read.
-  const stop = q.lastIndexOf('. ');
-  if (stop > Math.max(floor + 20, 40)) q = q.slice(0, stop + 1);
+  /**
+   * End at the FIRST sentence break after the evidence, not the last one in the
+   * window. lastIndexOf ran the quote on past its own point: DeepSource read
+   * "The consents are in the data room. Decision process: Key decisions are
+   * taken jointly by the two..." The first sentence was the answer; the second
+   * was the next paragraph of a long mail.
+   *
+   * Searching from `floor` cannot cut inside the matched phrase, because no
+   * phrase in the priority list contains a sentence break.
+   */
+  const end = q.slice(floor).search(/[.!?]\s/);
+  if (end >= 0) q = q.slice(0, floor + end + 1);
 
   q = q.trim();
   if (q.length > max) {

@@ -16,8 +16,13 @@ describe('tidyQuote', () => {
   });
 
   it('keeps the sentence that carries the evidence', () => {
-    const q = tidyQuote('an escalation on this thread. While preparing our Series A data room, we found calculation errors in');
+    // The offset is what the SQL supplies. Passing 0 here described a window
+    // the extractor never produces, and the assertion only held because the
+    // old end-trim took the LAST sentence break in the window.
+    const raw = 'an escalation on this thread. While preparing our Series A data room, we found calculation errors in';
+    const q = tidyQuote(raw, raw.indexOf('data room'));
     expect(q).toContain('preparing our Series A data room');
+    expect(q).not.toContain('an escalation');
   });
 
   it('does not cut on a sign-off word that opens the quote', () => {
@@ -76,6 +81,24 @@ describe('tidyQuote', () => {
     const raw = 'First sentence here. Second one too. we are raising a bridge round this quarter';
     const q = tidyQuote(raw, raw.indexOf('we are raising'));
     expect(q).toContain('we are raising');
+  });
+
+  it('ends at the first sentence break after the evidence, not the last', () => {
+    // lastIndexOf ran DeepSource's quote on into the next paragraph:
+    // "...in the data room. Decision process: Key decisions are taken jointly..."
+    const raw =
+      'signed electronically. The consents are in the data room. Decision process: Key decisions are taken jointly.';
+    const q = tidyQuote(raw, raw.indexOf('data room'));
+    expect(q).toBe('The consents are in the data room.');
+  });
+
+  it('cuts a greeting that lands exactly on the floor', () => {
+    // A flat floor of 12 blocked this cut at index 12 and rendered
+    // "Term Sheet. Hi Sandeep". The floor is now the lead plus the shortest
+    // phrase the extractor can match.
+    const raw = 'ALP Term Sheet. Hi Sandeep - Thank you for this, we will be in touch';
+    const q = tidyQuote(raw, raw.toLowerCase().indexOf('term sheet'));
+    expect(q).toBe('Term Sheet.');
   });
 
   it('returns empty for empty, so the caller can fall back to the subject', () => {
