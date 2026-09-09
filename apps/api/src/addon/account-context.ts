@@ -1668,6 +1668,7 @@ export interface CapitalEvent {
   owner: string | null;
 }
 
+@injectable()
 export class CapitalEventsService {
   constructor(@inject('Database') private readonly db: Database) {}
 
