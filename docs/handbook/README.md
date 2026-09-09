@@ -93,7 +93,9 @@ bash scripts/build-handbook-docx.sh
 ```
 
 That regenerates the diagrams first, swaps the SVG the markdown uses for the PNG
-Word can display, and writes one `.docx` per document.
+Word can display, and writes one `.docx` per document named
+`InboxPulse NN Name.docx`, so a Drive search for the product returns the whole
+set rather than a file called `03-ARCHITECTURE`.
 
 
 `.scratch/` is gitignored, which matters: these files carry real client names
