@@ -656,7 +656,7 @@ export function buildHomepageCard(
   }
 
   /**
-   * Money is moving at this client.
+   * Capital events: money is moving at this client.
    *
    * A peer of the fires and waiting-clients sections, not a sub-row of either,
    * because it is a different KIND of fact: those two say somebody is unhappy,
@@ -674,7 +674,7 @@ export function buildHomepageCard(
    */
   if (capitalEvents?.length) {
     firm.push({
-      header: heading('Money is moving'),
+      header: heading('Capital events'),
       widgets: capitalEvents.map((ce) =>
         deco({
           text: `<b>${escapeText(ce.customer)}</b>`,

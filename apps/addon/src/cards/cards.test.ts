@@ -1093,7 +1093,7 @@ describe('the waiting row counts clients, not messages', () => {
  * backfilled while rendering on no screen. A detector nothing displays is a
  * database column, not a feature.
  */
-describe('money is moving', () => {
+describe('capital events', () => {
   const card = (events?: Array<{ customer: string; customerId: string | null; subject: string; daysAgo: number; messages: number; owner: string | null }>) =>
     JSON.stringify(
       buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, events),
@@ -1102,7 +1102,7 @@ describe('money is moving', () => {
   const one = [{ customer: 'StepSecurity', customerId: 'c1', subject: 'Restarting our Series A in September', daysAgo: 4, messages: 3, owner: 'Ganesh Shankar' }];
 
   it('renders as its own section, a peer of the others', () => {
-    expect(card(one)).toContain('Money is moving');
+    expect(card(one)).toContain('Capital events');
   });
 
   it('states what was found and when, never what it means', () => {
@@ -1120,7 +1120,7 @@ describe('money is moving', () => {
   });
 
   it('renders nothing at all when there is nothing, rather than an empty header', () => {
-    expect(card([])).not.toContain('Money is moving');
-    expect(card(undefined)).not.toContain('Money is moving');
+    expect(card([])).not.toContain('Capital events');
+    expect(card(undefined)).not.toContain('Capital events');
   });
 });
