@@ -2114,3 +2114,39 @@ service key is a tenant-wide admin credential** and is treated as one: one
 holder, rotated on staff change. Fixing identity blocks issuing a second key,
 and that ordering is the point of writing this down before the integration
 rather than after it.
+
+### ADR-031: Capital Event, three flags instead of sixteen categories (2026-09-09)
+**Status:** Accepted
+**Context:** Fin Ops asked for a fundraising trigger and supplied sixteen
+keyword categories from prior research: due diligence, cap table, 409A, SAFE,
+convertible note, monthly financials, burn rate, and so on. Measured over 80,114
+customer threads, the list turned out to mix three kinds of phrase that behave
+nothing alike. EVENT terms are rare and mean something is happening now: data
+room 97% precision over all 30 threads, term sheet 85% over all 20. ARTIFACT
+terms look strong on a topical read and are near-useless as triggers, because an
+outsourced CFO firm handles those artifacts continuously for companies that
+raised years ago: `cap table` is 95% genuinely about a cap table and 5% about an
+event, across 627 threads. SERVICE terms fire on Numera itself, since our
+retainer letters sell "audit / due diligence support" as a service line and the
+disprz LMS runs a cap-table reconciliation course.
+**Decision:** Ship three flags, not sixteen: data room, term sheet, and explicit
+declarations ("our next fundraise", "we are raising", "restarting our series").
+Name it **Capital Event**, not fundraising: of the twenty term-sheet threads, 8
+are equity raises, 5 M&A and 3 debt, and a fundraising-only tag discards the M&A
+where the controller workload is largest. Add the vendor domain as an
+independent trigger, since a DFIN Venue or Suralink invoice means the client has
+bought a virtual data room. `Signal.CAPITAL_EVENT = 70`; detection lives in
+`apps/api/src/emails/capital-event.ts`, outside the tenant-configurable keyword
+map so nobody can add `cap table` back into it.
+**Consequences:** Fires on 58 of 1,481 candidate threads across three years,
+roughly nineteen a year. That is the right order of magnitude for a real capital
+event and the wrong one for anything that can be validated statistically, so this
+is a rules-and-review feature and no precision-against-outcomes figure is
+claimed: there is no labelled set of clients who actually raised.
+
+Deliberately excluded and worth not relitigating: `cap table`, `409a`, `SAFE`,
+`convertible note` as triggers; `carta.com` and `etonvs.com` as vendor triggers.
+A first pass listed Eton, a 409A provider, and the corpus check caught it -- six
+of sixty-eight hits were annual IRC409A reports, which every company with an
+option plan must refresh whether or not anything is happening. That let the
+artifact class back in through the vendor door.

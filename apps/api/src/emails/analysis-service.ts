@@ -19,6 +19,7 @@ import { KeywordService } from '../keywords/service';
 import { logger } from '../utils/logger';
 import { extractLatestReply } from './extraction/extractor';
 import { buildThreadContext, type ThreadContextEmail } from './thread-context';
+import { detectCapitalEvent } from './capital-event';
 import {
   buildParticipantRoster,
   customerDomainKeysFor,
@@ -330,16 +331,40 @@ export class EmailAnalysisService {
    */
   private async runKeywordAnalysis(ctx: AnalysisContext): Promise<Record<string, any>> {
     const keywordMap = await this.keywordService.getKeywordsByTenant(ctx.tenantId);
-    if (keywordMap.size === 0) {
-      return {};
-    }
-
     const searchText = this.prepareTextForKeywordSearch(ctx.email);
-    if (!searchText) {
-      return {};
-    }
 
     const results: Record<string, any> = {};
+
+    /**
+     * Capital event: is this client raising, selling, or borrowing?
+     *
+     * Runs BEFORE the tenant keyword map is consulted and independently of it.
+     * The tenant keywords are configuration; this is a fixed rule set derived
+     * from measuring 80,114 threads, and putting it in the configurable map
+     * would invite someone to add `cap table` back, which is 627 threads at 5%
+     * event precision. See `capital-event.ts` for why there are three flags and
+     * not the sixteen categories requested.
+     */
+    const capitalEvent = detectCapitalEvent({
+      subject: ctx.email.subject ?? null,
+      body: ctx.email.body ?? null,
+      // `from` is { email, name }, not a string.
+      fromEmail: ctx.email.from?.email ?? null,
+    });
+    if (capitalEvent) {
+      results['capitalEvent'] = {
+        detected: true,
+        flag: capitalEvent.flag,
+        // Quote the evidence. The panel shows what was found, not a verdict
+        // about what it means, because raise vs sale vs debt is unmeasured.
+        reasoning: `Capital event (${capitalEvent.flag}): "${capitalEvent.phrase}"`,
+        modelUsed: 'capital-event-rule',
+      };
+    }
+
+    if (keywordMap.size === 0 || !searchText) {
+      return results;
+    }
 
     // Sentiment: check negative first (higher priority), then positive
     const negativeKeywords = keywordMap.get('sentiment_negative');
@@ -1111,6 +1136,12 @@ export class EmailAnalysisService {
     const competitorResult = analysisResults['competitor'];
     if (competitorResult?.detected === true) {
       signals.push(Signal.COMPETITOR);
+    }
+
+    // Capital event: the client is raising, being acquired, or borrowing.
+    const capitalEventResult = analysisResults['capitalEvent'];
+    if (capitalEventResult?.detected === true) {
+      signals.push(Signal.CAPITAL_EVENT);
     }
 
     // Update signals array — respecting manual overrides. This is the single

@@ -36,6 +36,11 @@ export const Signal = {
   // Competitor mention (50-59)
   COMPETITOR: 50,
 
+  // Capital event (70-79) - the client is raising, being acquired, or
+  // borrowing. Deliberately NOT sub-typed into raise / sale / debt: the
+  // detector could guess from context and that guess is unmeasured.
+  CAPITAL_EVENT: 70,
+
   // Email classification (60-69)
   CLASSIFICATION_SPAM: 60,
   CLASSIFICATION_MARKETING: 61,
@@ -59,6 +64,7 @@ export const SIGNAL_LABELS: Record<SignalType, string> = {
   [Signal.CHURN_CRITICAL]: 'Churn Risk (Critical)',
   [Signal.KUDOS]: 'Kudos',
   [Signal.COMPETITOR]: 'Competitor Mention',
+  [Signal.CAPITAL_EVENT]: 'Capital Event',
   [Signal.CLASSIFICATION_SPAM]: 'Spam',
   [Signal.CLASSIFICATION_MARKETING]: 'Marketing',
   [Signal.CLASSIFICATION_TRANSACTIONAL]: 'Transactional',
