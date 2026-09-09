@@ -72,6 +72,31 @@ times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md
 | Migrations are applied by hand and nothing detects drift — merging a migration does not run it | `04-DATA-MODEL.md` |
 | One leaked transaction can hold `pg_advisory_xact_lock` and hang every panel endpoint | `04-DATA-MODEL.md` |
 
+## Where the published copy lives
+
+These documents are converted to `.docx` and uploaded to Google Drive for the
+UAT group, who do not read the repo:
+
+    https://drive.google.com/drive/folders/1Bm0ytuTDO9zRJbC4PrgI-YOyFXr1kIfS
+
+**The markdown here is the source.** The Drive copy is a snapshot and goes stale
+the moment anything changes; regenerate it rather than editing it there, or the
+two disagree with no way to tell which is current. To rebuild:
+
+```bash
+mkdir -p .scratch/"InboxPulse Handbook"
+for f in docs/handbook/*.md; do
+  pandoc "$f" -f gfm -t docx --toc --toc-depth=2 \
+    --metadata title="$(grep -m1 '^# ' "$f" | sed 's/^# //')" \
+    -o ".scratch/InboxPulse Handbook/$(basename "$f" .md).docx"
+done
+```
+
+`.scratch/` is gitignored, which matters: these files carry real client names
+(Hammerhead, Berolzheimer, Truefoundry, Curium, Prisma) because the worked
+examples depend on them. Strip the URL of any `/u/N/` segment before sending it
+on, or the reader is sent to their own account index N, which is somebody else.
+
 ## The other documents in `docs/`
 
 There are 73 files beside this handbook in `docs/`, most of them planning
