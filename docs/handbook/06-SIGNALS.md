@@ -231,10 +231,17 @@ change either end:
 
 ### How the quote is chosen
 
-**Which phrase:** the strongest present, by priority, not the earliest in the
-body. `COALESCE` over an ordered list, never `LEAST`. A declaration outranks a
-term sheet, which outranks a data room, which outranks an artifact word.
-Position-first picks whichever phrase the bookkeeping happens to mention first.
+**Which phrase:** the strongest present, by declared tier, not the earliest in
+the body. The SQL carries an explicit priority table, and a declaration outranks
+a term sheet, which outranks a data room, which outranks an artifact word.
+Position-first picks whichever phrase the bookkeeping happens to mention first,
+which is how a quote about convertible-note accounting reached a row whose
+subject line read "cleaning up cap table to prepare for a financing".
+
+**That same tier orders the section.** Strongest evidence first, recency only as
+the tiebreak. Ranking by recency alone let a passing data-room mention sit above
+an outright declaration because it happened to be newer, and the declaration is
+the row a rep should open.
 
 **Where the sentence starts and ends:** the query returns a fixed 150-character
 window opening 45 characters before the match, **plus the phrase's offset inside

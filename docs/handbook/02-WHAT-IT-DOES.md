@@ -138,6 +138,11 @@ Restarting our Series A in September, need your help on the model.
 |---|---|
 | the italic line | **a quote from the mail, not the subject.** The subject is usually administrative ("Re: Introduction") while the sentence that matters is in the body. The row carries the evidence and lets the reader draw the conclusion. |
 | **30d ago** | age of the newest mention, not the oldest. A capital event is a deadline. |
+
+**Rows are ordered by how strong the evidence is, then by recency.** A client who
+wrote "restarting our Series A in September" outranks one whose mail mentions a
+data room in passing, even when the passing mention is newer. Three bands, in
+order: an outright declaration, a term sheet in play, a data room that exists.
 | **3 messages** | how much traffic the thread carries. |
 | **Sandeep Shroff** | the **sales rep** first, unlike every other section, which puts the account manager first. This is the one signal whose action is commercial: the controller staffs the work, the rep opens the conversation. "no rep assigned" is an allocation-sheet gap, not an error. |
 

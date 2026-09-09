@@ -32,6 +32,10 @@ mail only. 90 of 130 flagged emails qualify. ADR-034.
 **Panel quotes replaced subject lines** in the Capital events section, extracted
 by phrase priority and bounded by the phrase offset. ADR-033.
 
+**Capital events rows reordered by evidence strength**, with recency as the
+tiebreak rather than the sole key. A declaration now outranks a data room named
+in passing. ADR-035.
+
 **`crm-api` given burst capacity**, `minScale=3`.
 
 ## 2026-08

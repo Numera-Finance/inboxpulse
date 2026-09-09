@@ -75,7 +75,6 @@ response and shows nothing, which is indistinguishable from nothing to report.
 | The signal filter is implemented three times and they do not share code; consolidating on `SignalFilterType` is undone | `03-ARCHITECTURE.md` |
 | No route clears a panel snapshot, so a panel change takes up to ~20 minutes to appear and cannot be forced | `08-OPERATIONS.md` |
 | 40 of 130 capital-event emails were never analyzed, so they are invisible to the panel by design (ADR-034) | `06-SIGNALS.md` |
-| Capital events orders by recency, not evidence strength, so a passing data-room mention can outrank a declaration | `06-SIGNALS.md` |
 
 ## Where the published copy lives
 

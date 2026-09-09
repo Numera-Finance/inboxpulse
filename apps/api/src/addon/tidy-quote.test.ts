@@ -116,25 +116,57 @@ describe('quote extraction ranks phrases by strength', () => {
     require('node:path').join(__dirname, 'account-context.ts'), 'utf8',
   ) as string;
   const svc = src.slice(src.indexOf('export class CapitalEventsService'));
+  const table = svc.slice(svc.indexOf('FROM (VALUES'), svc.indexOf('AS p(tier, seq, phrase)'));
+  /** Executable SQL only. A `-- LEAST() took the earliest phrase` comment
+   *  explains why the mechanism is not that, and must not trip the check. */
+  const code = svc.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
 
-  it('uses COALESCE, not LEAST', () => {
-    // LEAST took the earliest phrase in the body, so SkyCentrics quoted
-    // "2910 Convertible Notes" while its subject said "prepare for a financing".
-    const window = svc.slice(svc.indexOf('SELECT COALESCE('), svc.indexOf('AS pos'));
-    expect(window).toContain('COALESCE(');
-    expect(window).not.toContain('LEAST(');
+  /** Tier for a phrase as the SQL VALUES table declares it. */
+  const tierOf = (phrase: string): number => {
+    const m = table.match(new RegExp(`\\((\\d+),\\s*\\d+,\\s*'${phrase}'\\)`));
+    if (!m) throw new Error(`phrase not in the priority table: ${phrase}`);
+    return Number(m[1]);
+  };
+
+  it('picks by declared tier, not by position in the body', () => {
+    // Position-first quoted "2910 Convertible Notes" from a client whose
+    // subject line read "cleaning up cap table to prepare for a financing".
+    expect(table).toContain('FROM (VALUES');
+    expect(svc).toContain('ORDER BY p.tier, p.seq');
+    expect(code).not.toContain('LEAST(');
   });
 
-  it('ranks a declaration above a data-room mention, and that above an artifact', () => {
-    const window = svc.slice(svc.indexOf('SELECT COALESCE('), svc.indexOf('AS pos'));
-    const at = (p: string) => window.indexOf(p);
-    expect(at("'prepare for a financing'")).toBeLessThan(at("'data room'"));
-    expect(at("'term sheet'")).toBeLessThan(at("'data room'"));
-    expect(at("'data room'")).toBeLessThan(at("'convertible note'"));
+  it('ranks a declaration above a term sheet, above a data room, above an artifact', () => {
+    expect(tierOf('we are raising')).toBeLessThan(tierOf('term sheet'));
+    expect(tierOf('term sheet')).toBeLessThan(tierOf('data room'));
+    expect(tierOf('data room')).toBeLessThan(tierOf('convertible note'));
+  });
+
+  it('breaks within-tier ties deterministically', () => {
+    // Without seq, two phrases of equal tier resolve arbitrarily and the quote
+    // a row shows can change between runs on unchanged data.
+    const seqs = [...table.matchAll(/\(\s*\d+,\s*(\d+),/g)].map((m) => Number(m[1]));
+    expect(seqs.length).toBeGreaterThan(10);
+    expect(new Set(seqs).size).toBe(seqs.length);
+  });
+
+  it('orders rows by evidence strength before recency', () => {
+    const order = svc.slice(svc.indexOf('ORDER BY coalesce(hit.tier'));
+    const tierAt = order.indexOf('hit.tier');
+    const dateAt = order.indexOf('received_at');
+    expect(tierAt).toBeGreaterThan(-1);
+    expect(dateAt).toBeGreaterThan(tierAt);
+  });
+
+  it('keeps a row whose phrase falls outside the searched window', () => {
+    // A CROSS JOIN drops the row entirely when no phrase matches; the panel
+    // then silently shows fewer clients than the signal found.
+    expect(svc).toContain('LEFT JOIN LATERAL');
+    expect(svc).toContain('coalesce(hit.tier, 9)');
+    expect(svc).toContain('coalesce(hit.pos, 1)');
   });
 
   it('searches the subject as well as the body', () => {
-    // SkyCentrics' evidence is in the subject and its body is bookkeeping.
     expect(svc).toContain("coalesce(e.subject, '') || '. ' || coalesce(e.body, '')");
   });
 });

@@ -2230,3 +2230,23 @@ than a row that is absent, and the same reasoning as the empty-section rule in
 `CLAUDE.md`. Measured confirmation: Falconx has 447 analyzed emails in 90 days
 and zero carrying signal 70, so the exclusion is real and not a filter bug.
 
+### ADR-035: The Capital events section orders by evidence strength, not recency (2026-09-09)
+**Status:** Accepted
+**Context:** The section ordered `received_at DESC`. Recency is a reasonable
+tiebreak for a deadline-shaped signal, but on its own it let a client whose mail
+mentioned a data room in passing sit above a client who wrote "restarting our
+Series A in September", because the passing mention happened to be newer. The
+panel shows five rows; the ordering decides which clients a rep sees at all.
+**Decision:** The phrase-priority list moved out of a `COALESCE` chain into an
+explicit `(tier, seq, phrase)` table. The query returns the matched phrase's
+tier alongside its position, and rows sort `coalesce(hit.tier, 9),
+received_at DESC`. Tiers are the detector's own taxonomy: declaration, term
+sheet, data room, then weaker artifact words. `seq` preserves the within-tier
+precedence the COALESCE order used to encode.
+**Consequences:** The join became `LEFT JOIN LATERAL ... ON true`. A `CROSS JOIN`
+drops a row when no phrase matches, which would silently show fewer clients than
+the signal found; the quote expressions now coalesce a missing position to 1 and
+such rows sort last. `tidy-quote.test.ts` reads the tier table out of the source
+and asserts the ordering places tier before `received_at`, so a revert to
+recency-only ordering fails the suite.
+

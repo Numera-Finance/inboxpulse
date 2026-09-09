@@ -1888,9 +1888,9 @@ export class CapitalEventsService {
              -- WHERE the phrase sits inside it, so tidyQuote can snap the
              -- start forward to a clause end without ever moving past the
              -- evidence. Stripping the half-word moved there too.
-             substring(f.clean_body FROM GREATEST(hit.pos - 45, 1) FOR 150) AS quote,
+             substring(f.clean_body FROM GREATEST(coalesce(hit.pos, 1) - 45, 1) FOR 150) AS quote,
              -- The phrase's offset within that window, 0-based for JS.
-             (hit.pos - GREATEST(hit.pos - 45, 1))::int AS quote_offset,
+             (coalesce(hit.pos, 1) - GREATEST(coalesce(hit.pos, 1) - 45, 1))::int AS quote_offset,
              extract(day FROM (now() - f.received_at))::int AS days_ago,
              f.messages,
              (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
@@ -1918,30 +1918,51 @@ export class CapitalEventsService {
       -- The strongest phrase present, in priority order. COALESCE takes the
       -- first non-null, so a declaration wins over a mention even when the
       -- mention appears earlier in the body.
-      CROSS JOIN LATERAL (
-        SELECT COALESCE(
-          NULLIF(position('prepare for a financing' in lower(f.clean_body)), 0),
-          NULLIF(position('for a financing'         in lower(f.clean_body)), 0),
-          NULLIF(position('we are raising'          in lower(f.clean_body)), 0),
-          NULLIF(position('our next fundraise'      in lower(f.clean_body)), 0),
-          NULLIF(position('our fundraise'           in lower(f.clean_body)), 0),
-          NULLIF(position('restarting our series'   in lower(f.clean_body)), 0),
-          NULLIF(position('our series a'            in lower(f.clean_body)), 0),
-          NULLIF(position('our series b'            in lower(f.clean_body)), 0),
-          NULLIF(position('seed round'              in lower(f.clean_body)), 0),
-          NULLIF(position('term sheet'              in lower(f.clean_body)), 0),
-          NULLIF(position('letter of intent'        in lower(f.clean_body)), 0),
-          NULLIF(position('data room'               in lower(f.clean_body)), 0),
-          NULLIF(position('fundrais'                in lower(f.clean_body)), 0),
-          NULLIF(position('convertible note'        in lower(f.clean_body)), 0),
-          1) AS pos
-      ) hit
+      -- WHICH phrase matched, WHERE it sits, and HOW STRONG it is.
+      --
+      -- The tier is the same taxonomy the detector uses, and it drives the row
+      -- order below. Ranking by recency alone put a client who mentioned a data
+      -- room in passing above a client who wrote "restarting our Series A in
+      -- September", because the passing mention happened to be newer. The
+      -- stronger claim is the one a rep should open.
+      --
+      -- seq preserves the old within-tier precedence, which was the order of a
+      -- COALESCE list. Without it, ties inside a tier resolve arbitrarily and
+      -- the quote a row shows can change between runs on unchanged data.
+      LEFT JOIN LATERAL (
+        SELECT p.tier, position(p.phrase in lower(f.clean_body)) AS pos
+        FROM (VALUES
+          -- tier 1: a declaration. Somebody says outright what is happening.
+          (1,  1, 'prepare for a financing'),
+          (1,  2, 'for a financing'),
+          (1,  3, 'we are raising'),
+          (1,  4, 'our next fundraise'),
+          (1,  5, 'our fundraise'),
+          (1,  6, 'restarting our series'),
+          (1,  7, 'our series a'),
+          (1,  8, 'our series b'),
+          (1,  9, 'seed round'),
+          -- tier 2: a term sheet is in play.
+          (2, 10, 'term sheet'),
+          (2, 11, 'letter of intent'),
+          -- tier 3: a data room exists.
+          (3, 12, 'data room'),
+          -- tier 4: present in the text but weakest evidence of an event.
+          (4, 13, 'fundrais'),
+          (4, 14, 'convertible note')
+        ) AS p(tier, seq, phrase)
+        WHERE position(p.phrase in lower(f.clean_body)) > 0
+        ORDER BY p.tier, p.seq
+        LIMIT 1
+      ) hit ON true
       JOIN customers c ON c.id = f.customer_id
       WHERE f.rn = 1
         ${clientFilter}
-      -- Freshest first: a capital event is a deadline, and the newest mention is
-      -- the best evidence it is still running.
-      ORDER BY f.received_at DESC
+      -- Strongest evidence first, then freshest. A capital event is a deadline,
+      -- so recency still breaks ties, but it no longer outranks the difference
+      -- between "we are raising" and a data room named in passing. Rows with no
+      -- phrase in the window sort last rather than disappearing.
+      ORDER BY coalesce(hit.tier, 9), f.received_at DESC
       LIMIT ${limit}
     `);
     return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
