@@ -178,8 +178,8 @@ configuration a tenant can edit, and this is a fixed rule set derived from
 measuring 80,114 threads. If it were configurable, `cap table` would be added
 back, and that is 627 threads at 5% event precision.
 
-It makes no model call. Three phrase groups plus a vendor-domain check, so a
-backfill over the whole corpus costs database time and nothing else.
+It makes no model call: three phrase groups, so a backfill over the whole
+corpus costs database time and nothing else.
 
 Two things it does that are easy to get wrong when extending it:
 
@@ -188,6 +188,10 @@ Two things it does that are easy to get wrong when extending it:
 - **It excludes us.** Numera's own retainer language, the disprz LMS, internal
   Google Chat and Notes. Our own mail was the largest false-positive class at
   10.5% of matches, ahead of newsletters at 1.5%.
+- **A vendor in the FROM line is not a signal.** A vendor-domain trigger was
+  built and removed after misfiring three times; it reports which tools we and
+  our partners use, not what the client is doing. See the comment in
+  `capital-event.ts`.
 
 Its result flows into `updateEmailSignalsInTransaction` as
 `Signal.CAPITAL_EVENT` (70). `capitalEvent` is not in `ANALYSIS_TYPES`, so it

@@ -2133,9 +2133,8 @@ disprz LMS runs a cap-table reconciliation course.
 declarations ("our next fundraise", "we are raising", "restarting our series").
 Name it **Capital Event**, not fundraising: of the twenty term-sheet threads, 8
 are equity raises, 5 M&A and 3 debt, and a fundraising-only tag discards the M&A
-where the controller workload is largest. Add the vendor domain as an
-independent trigger, since a DFIN Venue or Suralink invoice means the client has
-bought a virtual data room. `Signal.CAPITAL_EVENT = 70`; detection lives in
+where the controller workload is largest. A vendor-domain trigger was also
+built and then REMOVED, see the amendment below. `Signal.CAPITAL_EVENT = 70`; detection lives in
 `apps/api/src/emails/capital-event.ts`, outside the tenant-configurable keyword
 map so nobody can add `cap table` back into it.
 **Consequences:** Fires on 58 of 1,481 candidate threads across three years,
@@ -2150,3 +2149,23 @@ A first pass listed Eton, a 409A provider, and the corpus check caught it -- six
 of sixty-eight hits were annual IRC409A reports, which every company with an
 option plan must refresh whether or not anything is happening. That let the
 artifact class back in through the vendor door.
+
+### ADR-031a: The vendor domain is not a signal (amends ADR-031, 2026-09-09)
+**Status:** Accepted
+**Context:** ADR-031 added a vendor-domain trigger: an invoice from a data-room
+or valuation vendor was taken as evidence the client had bought what a capital
+event requires. It misfired three times. Carta was excluded before shipping.
+Eton Venture Services was removed when a corpus check showed six of sixty-eight
+hits were annual IRC409A reports. Suralink survived both and was caught only by
+the backfill, where it produced 109 of 239 marked emails, 46% of the signal, all
+of them "N New Notifications for <Numera staff>" digests across 110 threads.
+**Decision:** The vendor-domain trigger is removed entirely. A vendor in the
+FROM line reports which tools we and our partners use, not what the client is
+doing. The one genuine case, a client forwarding a DFIN Venue invoice, is
+already caught by the phrase rule.
+**Consequences:** The backfill dropped from 239 emails to 130 across 61 threads
+and 54 sender domains, with no single domain above 12. The three staged checks
+each caught something the previous one missed, and the ordering is the lesson:
+unit tests passed, the corpus check caught Eton, and only writing the data
+caught Suralink. A rule that looks right in review and in a dry run can still be
+half noise in the table.

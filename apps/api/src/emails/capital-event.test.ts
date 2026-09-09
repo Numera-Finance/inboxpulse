@@ -137,14 +137,20 @@ describe('substring traps that cost two published numbers a retraction', () => {
   });
 });
 
-describe('the vendor domain is its own evidence', () => {
-  it('flags a data-room vendor invoice with no keyword at all', () => {
-    const hit = detectCapitalEvent(from('billing@dfinsolutions.com', 'Invoice INV00232849 for Venue is attached'));
-    expect(hit?.flag).toBe('data-room');
-    expect(hit?.phrase).toBe('dfinsolutions.com');
+describe('the vendor domain is NOT evidence, after three misfires', () => {
+  it('does not flag a data-room vendor emailing us', () => {
+    // suralink.com produced 109 of 239 backfilled emails, 46% of the signal, all
+    // "N New Notifications for <Numera staff>". It is the auditor's tool that we
+    // use, not something the client bought.
+    expect(detectCapitalEvent(from('notify@suralink.com', '2 New Notifications for Sneha Suralikal'))).toBeNull();
   });
 
-  it('does NOT treat Carta as one, because cap-table software is used continuously', () => {
+  it('still catches the client forwarding a data-room invoice, via the phrase', () => {
+    const hit = detectCapitalEvent(from('finance@firebird.ai', 'FW: DFIN Venue invoice approved. data room cost, payment should be setup'));
+    expect(hit?.flag).toBe('data-room');
+  });
+
+  it('does not flag Carta, cap-table software used continuously', () => {
     expect(detectCapitalEvent(from('no-reply@carta.com', 'Ryan Kim requests access to your cap table'))).toBeNull();
   });
 });

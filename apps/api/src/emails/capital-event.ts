@@ -157,26 +157,30 @@ const DECLARATION_PHRASES = [
 ];
 
 /**
- * Vendors whose invoice IS the signal.
+ * THE VENDOR-DOMAIN TRIGGER WAS REMOVED. It misfired three times.
  *
- * Nobody asked for this and it needs no keyword. DFIN Venue and Suralink sell
- * virtual data rooms; an invoice from one means the client has bought the thing
- * a capital event requires, and buying it is the event.
+ * The idea was that an invoice from a data-room or valuation vendor means the
+ * client has bought the thing a capital event requires. It does not, because
+ * the vendor's mail reflects OUR tooling, not the client's event:
  *
- * TWO VENDORS ARE DELIBERATELY EXCLUDED, for the same reason:
+ *   carta.com     excluded from the start; cap-table software used continuously
+ *                 by companies that raised years ago.
+ *   etonvs.com    removed after the corpus check: six of sixty-eight hits were
+ *                 annual IRC409A reports, which every company with an option
+ *                 plan refreshes whether or not anything is happening.
+ *   suralink.com  removed after the BACKFILL: 109 of 239 marked emails, 46% of
+ *                 the whole signal, were "N New Notifications for <Numera
+ *                 staff>" digests across 110 threads. Suralink is the auditor's
+ *                 document tool that we use; a client in the corpus says so
+ *                 outright ("we use a data room called suralink").
  *
- *   carta.com   cap-table software, used continuously by companies that raised
- *               years ago. "Ryan Kim requests access to your cap table" is
- *               routine administration.
- *   etonvs.com  409A valuations. A first pass listed Eton here and the corpus
- *               check caught it: six of sixty-eight hits were annual IRC409A
- *               FMV reports, which every company with an option plan must
- *               refresh whether or not anything is happening. Including it
- *               contradicted this file's own reason for excluding the `409a`
- *               phrase, and let the artifact class back in through the vendor
- *               door.
+ * Nothing is lost by removing it. The one genuine case, a client forwarding a
+ * DFIN Venue invoice, is already caught by the phrase rule because the
+ * forwarded body says "data room" in it.
+ *
+ * The general lesson, now in CLAUDE.md: a vendor in the FROM line tells you
+ * which tools we and our partners use. It says nothing about the client.
  */
-const CAPITAL_EVENT_VENDOR_DOMAINS = ['dfinsolutions.com', 'suralink.com'];
 
 export interface CapitalEventInput {
   subject: string | null;
@@ -199,11 +203,6 @@ export function detectCapitalEvent(input: CapitalEventInput): CapitalEventHit | 
 
   if (EXCLUDED_SENDER_DOMAINS.includes(senderDomain)) return null;
   if (NEWSLETTER_DOMAINS.includes(senderDomain)) return null;
-
-  // The vendor's identity is the evidence; no phrase needed.
-  if (CAPITAL_EVENT_VENDOR_DOMAINS.includes(senderDomain)) {
-    return { flag: 'data-room', phrase: senderDomain };
-  }
 
   const text = `${input.subject ?? ''} ${input.body ?? ''}`.toLowerCase();
   if (!text.trim()) return null;

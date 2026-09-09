@@ -599,11 +599,25 @@ restructure, a $2.285m SBA loan, SVB venture debt). A fundraising-only framing
 discards the M&A, which is where the diligence-grade bookkeeping demand is
 largest and where the sales opening is clearest.
 
-### Unrequested signal: the vendor domain
+### RETRACTED: "the vendor domain is an unrequested signal"
 
-Carta, DFIN Venue and Suralink appear as senders. Those are cap-table and
-virtual-data-room products. An invoice from DFIN Venue means the client has
-bought a data room, which needs no keyword to interpret.
+Carta, DFIN Venue, Suralink and Eton Venture Services appear as senders, and I
+proposed treating a vendor invoice as evidence that the client had bought what a
+capital event requires. Built, then removed after misfiring three times:
+
+- **Carta** was excluded from the start: cap-table software used continuously.
+- **Eton Venture Services** was removed after the corpus check. Six of
+  sixty-eight hits were annual IRC409A reports.
+- **Suralink** was removed after the BACKFILL, which is where it became
+  undeniable: 109 of 239 marked emails, **46% of the entire signal**, were "N
+  New Notifications for <Numera staff>" digests across 110 threads. A client in
+  this corpus says outright "we use a data room called suralink" - it is the
+  auditor's document tool, and we are on the notification list.
+
+The error was assuming a vendor in the FROM line says something about the
+client. It says which tools WE and our partners use. Nothing was lost by
+removing it: the one genuine case, a client forwarding a DFIN Venue invoice, is
+already caught by the phrase rule, because the forwarded body says "data room".
 
 ### The full review: three classes of term, not one list
 
