@@ -1929,8 +1929,18 @@ export class CapitalEventsService {
       -- seq preserves the old within-tier precedence, which was the order of a
       -- COALESCE list. Without it, ties inside a tier resolve arbitrarily and
       -- the quote a row shows can change between runs on unchanged data.
+      --
+      -- WORD BOUNDARIES, not position(). position() is a substring match, so
+      -- "your series b" matched 'our series b' and two rows carrying an
+      -- auditor's document request were ranked as declarations, above a client
+      -- who had actually said they were raising. The detector has always used
+      -- boundaries (capital-event.ts); this path is a second implementation of
+      -- the same matching and did not. regexp_instr returns the offset of the
+      -- phrase itself, subexpression 2, or 0 when it does not match.
       LEFT JOIN LATERAL (
-        SELECT p.tier, position(p.phrase in lower(f.clean_body)) AS pos
+        SELECT p.tier,
+               regexp_instr(lower(f.clean_body),
+                 '(^|[^a-z0-9])(' || p.phrase || ')([^a-z0-9]|$)', 1, 1, 0, '', 2) AS pos
         FROM (VALUES
           -- tier 1: a declaration. Somebody says outright what is happening.
           (1,  1, 'prepare for a financing'),
@@ -1948,10 +1958,13 @@ export class CapitalEventsService {
           -- tier 3: a data room exists.
           (3, 12, 'data room'),
           -- tier 4: present in the text but weakest evidence of an event.
-          (4, 13, 'fundrais'),
-          (4, 14, 'convertible note')
+          -- Spelled out rather than the stem 'fundrais', which a right-hand
+          -- word boundary rejects.
+          (4, 13, 'fundraise'),
+          (4, 14, 'fundraising'),
+          (4, 15, 'convertible note')
         ) AS p(tier, seq, phrase)
-        WHERE position(p.phrase in lower(f.clean_body)) > 0
+        WHERE lower(f.clean_body) ~ ('(^|[^a-z0-9])' || p.phrase || '([^a-z0-9]|$)')
         ORDER BY p.tier, p.seq
         LIMIT 1
       ) hit ON true

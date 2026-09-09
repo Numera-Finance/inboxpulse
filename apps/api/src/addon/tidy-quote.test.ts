@@ -120,6 +120,8 @@ describe('quote extraction ranks phrases by strength', () => {
   /** Executable SQL only. A `-- LEAST() took the earliest phrase` comment
    *  explains why the mechanism is not that, and must not trip the check. */
   const code = svc.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+  /** The VALUES rows with their explanatory `--` lines removed. */
+  const rows = table.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
 
   /** Tier for a phrase as the SQL VALUES table declares it. */
   const tierOf = (phrase: string): number => {
@@ -164,6 +166,23 @@ describe('quote extraction ranks phrases by strength', () => {
     expect(svc).toContain('LEFT JOIN LATERAL');
     expect(svc).toContain('coalesce(hit.tier, 9)');
     expect(svc).toContain('coalesce(hit.pos, 1)');
+  });
+
+  it('matches on word boundaries, not substrings', () => {
+    // "your series b" contains 'our series b'. position() matched it, so an
+    // auditor's document-request thread was ranked as a declaration and took
+    // two of the five rows above a client who had said they were raising.
+    expect(code).not.toContain('position(p.phrase');
+    expect(code).toContain('regexp_instr');
+    expect(code).toContain("'(^|[^a-z0-9])(' || p.phrase || ')([^a-z0-9]|$)'");
+    expect(code).toContain("~ ('(^|[^a-z0-9])' || p.phrase || '([^a-z0-9]|$)')");
+  });
+
+  it('spells out the fundraise words instead of a stem', () => {
+    // A right-hand boundary rejects the stem 'fundrais', so it would never fire.
+    expect(rows).not.toContain("'fundrais'");
+    expect(rows).toContain("'fundraise'");
+    expect(rows).toContain("'fundraising'");
   });
 
   it('searches the subject as well as the body', () => {
