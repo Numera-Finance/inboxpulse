@@ -119,8 +119,48 @@ curl -s -H "x-internal-api-key: $KEY" -H "x-tenant-id: $TENANT" \
   "$API/api/internal/addon/viewer?tenantId=$TENANT&email=someone@example.com"
 ```
 
-**Symptom: a panel row's link shows nothing.** Attribution mismatch — see
-principle 6 in `07-DESIGN-PRINCIPLES.md`.
+**Symptom: a panel row's link shows nothing.** Two causes, in order of how often
+they bite. First, the destination cannot display the row: the AI Analysis page
+lists analyzed mail only, so a section that counts unanalyzed mail will link to
+"No analyzed emails found". Second, attribution mismatch: see principle 6 in
+`07-DESIGN-PRINCIPLES.md`.
+
+**Symptom: a panel row's link shows TOO MUCH.** The filter is being dropped, not
+applied. `getSignalFilterCondition` returns `null` for a value it does not
+handle, and null means no condition, so the page returns everything for that
+client under a filter chip that still displays the filter. Check the chip against
+the rows: if the chip says "Capital E" and row one is an AWS invoice, the query
+never received the filter.
+
+**Symptom: the panel is unchanged after a deploy.** Usually not a failed deploy.
+Three caches sit in the way: the rollout, the `panel_snapshots` cron (every 5
+minutes, and `read` serves rows up to 15 minutes old), and the add-on's 180s
+in-memory TTL. Worst case is about twenty minutes.
+
+**There is no route that clears a snapshot.** `/api/internal/addon/snapshots/clear`
+does not exist. A deploy script called it for several deploys and printed
+"snapshot cleared" every time, because **`curl` exits 0 on a 404** and the `&&`
+fired anyway. That one false line sent a diagnosis chasing a broken build and a
+database outage for an hour.
+
+So, two rules for any deploy or verification script here:
+
+```bash
+# WRONG: succeeds on 404, 500, anything that completes a round trip
+curl -s -X POST "$API/some/route" > /dev/null && echo "cleared"
+
+# RIGHT: check the status you actually got
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/some/route")
+[ "$CODE" = "200" ] && echo "cleared (200)" || echo "NOT cleared ($CODE)"
+```
+
+And when polling for a change to appear, **match exactly**. A poll that broke on
+a substring of a 46-character truncation reported success while the run-on tail
+it was waiting to see disappear was still there.
+
+To tell a stale snapshot from a broken fix, compare the output against what the
+PREVIOUS revision would have produced for the same input. If every row matches
+the old behavior exactly, the code is fine and the cache is old.
 
 ## Timeouts
 

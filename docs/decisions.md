@@ -2169,3 +2169,64 @@ each caught something the previous one missed, and the ordering is the lesson:
 unit tests passed, the corpus check caught Eton, and only writing the data
 caught Suralink. A rule that looks right in review and in a dry run can still be
 half noise in the table.
+
+### ADR-032: A signal filter must fail loudly, not return everything (2026-09-09)
+**Status:** Accepted
+**Context:** The Capital events panel row links to the AI Analysis page filtered
+by `signal=capital-event`. The page rendered AWS invoices and bank credit advices
+under a filter chip reading "Capital E". The page calls `searchAnalyzedEmails`,
+which uses `getSignalFilterCondition`. That is a third signal path, separate from
+the `options?.signal` and `filters?.signal` paths elsewhere in `EmailRepository`.
+That switch had no case for the value and fell to `default: return null`. Null
+means no condition is pushed, so the filter was silently discarded and the query
+returned every analyzed email for the customer. Nothing errored and nothing
+logged.
+**Decision:** The case exists. `default` no longer returns null: the parameter is
+typed to `AnalyzedEmailSignalFilter` rather than `string`, and `default` assigns
+to `never` and throws. A test derives the accepted values from the Zod request
+enum and the handled values from the `case` labels, and asserts the first set is
+a subset of the second.
+**Consequences:** Adding a value to the signal enum without handling it in the
+switch is now a compile error. The general rule, recorded in `CLAUDE.md`: a
+filter helper returning a nullable condition must distinguish "no filter wanted"
+from "filter not understood", because the two produce identical SQL and opposite
+meanings. Three separate implementations of the same filter remain; consolidating
+on `SignalFilterType` is still undone.
+
+### ADR-033: A panel quote is a sentence, chosen by priority and bounded by the phrase (2026-09-09)
+**Status:** Accepted
+**Context:** Capital event rows showed the email subject, which is usually
+administrative ("Re: Introduction") while the sentence that matters is in the
+body. Quoting the body raised two questions the corpus answered differently than
+intuition did.
+**Decision:** *Which* phrase is chosen by priority, not position: `COALESCE` over
+an ordered list, never `LEAST`. Position-first quoted "2910 Convertible Notes"
+from a client whose subject said "cleaning up cap table to prepare for a
+financing". *Where* the quote starts and ends is computed in TypeScript, not SQL:
+the query returns a fixed 150-character window opening 45 characters before the
+match **plus the phrase's offset inside it**, and `tidyQuote` snaps the start
+forward to the last clause break before the phrase, never past it, then ends at
+the first sentence break after it.
+**Consequences:** The offset is load-bearing. An earlier attempt snapped to a
+sentence start without it and pushed the phrase off the end of the window. Three
+boundary bugs reached production on one day and each is now a test using the
+string the panel actually rendered: a lead landing mid-sentence
+("electronically. The consents are in the data room."), an end taken by
+`lastIndexOf` from the last break in the window rather than the first after the
+evidence, and a flat floor of 12 blocking a cut that landed at exactly 12. The
+floor is now the lead plus 8, the shortest phrase the extractor can match, so it
+derives from the phrase list rather than from whichever case last failed.
+
+### ADR-034: A capital-event row may only name a client the destination can show (2026-09-09)
+**Status:** Accepted
+**Context:** The panel counted flagged mail regardless of analysis state. Falconx
+reached the section on three flagged emails, none of which had been through the
+model. Its link opened the AI Analysis page, which lists analyzed mail only, and
+the page said "No analyzed emails found".
+**Decision:** The section requires `e.analysis_status = 3`.
+**Consequences:** 90 of the 130 flagged emails qualify; the other 40 are invisible
+to the panel. That is the correct trade: a row that cannot be opened is worse
+than a row that is absent, and the same reasoning as the empty-section rule in
+`CLAUDE.md`. Measured confirmation: Falconx has 447 analyzed emails in 90 days
+and zero carrying signal 70, so the exclusion is real and not a filter bug.
+

@@ -3,9 +3,10 @@
 *Written for someone who has never seen this codebase and is now responsible for
 it. Assumes no context.*
 
-**Verified against the live system on 2026-08-18.** Line numbers and counts drift;
-treat them as pointers, not guarantees. Where a number matters, the query that
-produced it is given so you can re-run it.
+**Verified against the live system on 2026-08-18**, with the Capital events
+section re-verified 2026-09-09. Line numbers and counts drift; treat them as
+pointers, not guarantees. Where a number matters, the query that produced it is
+given so you can re-run it.
 
 **Internal only.** This handbook names real clients and gives reply-time figures
 for named employees.
@@ -71,6 +72,10 @@ times. **Curl the endpoint; never trust the card.** See `07-DESIGN-PRINCIPLES.md
 | Hammerhead's six allocated people are unreachable via `hammerheadco.ai` | `09-DEAD-ENDS.md` |
 | Migrations are applied by hand and nothing detects drift — merging a migration does not run it | `04-DATA-MODEL.md` |
 | One leaked transaction can hold `pg_advisory_xact_lock` and hang every panel endpoint | `04-DATA-MODEL.md` |
+| The signal filter is implemented three times and they do not share code; consolidating on `SignalFilterType` is undone | `03-ARCHITECTURE.md` |
+| No route clears a panel snapshot, so a panel change takes up to ~20 minutes to appear and cannot be forced | `08-OPERATIONS.md` |
+| 40 of 130 capital-event emails were never analyzed, so they are invisible to the panel by design (ADR-034) | `06-SIGNALS.md` |
+| Capital events orders by recency, not evidence strength, so a passing data-room mention can outrank a declaration | `06-SIGNALS.md` |
 
 ## Where the published copy lives
 

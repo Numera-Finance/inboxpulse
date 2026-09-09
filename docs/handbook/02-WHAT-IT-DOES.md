@@ -125,6 +125,38 @@ The `we replied 3+ times` condition is not hygiene. Volume with nobody replying
 runs **4.4%, below the base rate**, because an unattended spike is a notification
 stream.
 
+### Capital events
+
+Clients whose mail says they are raising, being acquired, or borrowing. Five
+rows, ninety days rather than the usual thirty, because a raise or a sale runs
+for months and a thirty-day window would show the thread only while somebody
+happened to be typing.
+
+```
+Step Security, Inc.
+Restarting our Series A in September, need your help on the model.
+30d ago · 3 messages · Sandeep Shroff
+```
+
+| element | meaning |
+|---|---|
+| the italic line | **a quote from the mail, not the subject.** The subject is usually administrative ("Re: Introduction") while the sentence that matters is in the body. The row carries the evidence and lets the reader draw the conclusion. |
+| **30d ago** | age of the newest mention, not the oldest. A capital event is a deadline. |
+| **3 messages** | how much traffic the thread carries. |
+| **Sandeep Shroff** | the **sales rep** first, unlike every other section, which puts the account manager first. This is the one signal whose action is commercial: the controller staffs the work, the rep opens the conversation. "no rep assigned" is an allocation-sheet gap, not an error. |
+
+**This section predicts nothing and must not be read as a forecast.** Every other
+section is a posterior scored against a 5.7% base rate. This one is an
+observation: the mail says a data room exists, so we report that a data room
+exists. It earns its slot on the different test, would seeing it change what
+somebody does, and the answer is yes for both the controller and the rep. About
+nineteen a year. See `06-SIGNALS.md` for why sixteen requested keyword categories
+became three flags.
+
+Clicking a row opens the AI Analysis page filtered to that client's
+capital-event mail. A client only appears here if that page can actually show it,
+which means at least one flagged email has been analyzed (ADR-034).
+
 ## The thread card
 
 Opened on a specific email. Leads with the answer rather than the envelope:

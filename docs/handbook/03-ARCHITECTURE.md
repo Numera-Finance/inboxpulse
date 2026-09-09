@@ -198,6 +198,54 @@ Its result flows into `updateEmailSignalsInTransaction` as
 cannot shadow an LLM analysis through `excludeTypes`, and `labelFor` returns
 null for it, so it writes no Gmail label.
 
+## A signal filter is implemented three times
+
+Adding one value to the signal union took fourteen edits across the web app, the
+API, the repository and the clients package. That is the shape of the seam, and
+it matters because **the three filter paths do not share code**:
+
+| path | used by |
+|---|---|
+| `options?.signal` in `EmailRepository` | the list query |
+| `filters?.signal` in `EmailRepository` | the count query |
+| `getSignalFilterCondition` | `searchAnalyzedEmails`, which is what the AI Analysis page calls |
+
+The first two drift into disagreement: a filter added to one and not the other
+gives a list of rows under a total that contradicts it, and nothing errors. The
+third fails worse. It is a `switch` whose `default` returned `null`, and **null
+means no condition is pushed**, so a value it had never heard of did not throw,
+did not warn, and returned every analyzed email for the customer. The Capital
+events row linked to a page of AWS invoices under a filter chip reading
+"Capital E".
+
+`default` now assigns to `never` and throws, and the parameter is typed to the
+union rather than `string`, so the next value added to the enum is a compile
+error instead of a page quietly showing the wrong rows.
+`signal-filter-parity.test.ts` reads the accepted values out of the Zod enum and
+the `case` labels out of the switch and asserts nothing is missing from the
+second. It is derived from the source on both sides, so a filter added later is
+policed without anyone editing the test.
+
+## Three caches sit between a deploy and a changed pixel
+
+A panel change is not visible when CI goes green. It passes through:
+
+1. **The Cloud Run rollout**, a few minutes.
+2. **`panel_snapshots`**, recomputed by an Inngest cron every 5 minutes.
+   `PanelSnapshotService.read` serves any row **up to 15 minutes old** before
+   falling back to live compute, so a row written just before the new revision
+   took traffic keeps serving old output for another quarter hour.
+3. **The add-on's in-memory cache**, 180s TTL with stale-while-revalidate.
+
+Worst case is about twenty minutes. **There is no route that clears a
+snapshot.** Do not write a deploy step that pretends to; see `08-OPERATIONS.md`.
+
+The diagnostic consequence: when a panel is unchanged after a deploy, compare
+its output against **what the previous revision would have produced for the same
+input**. On 2026-09-09 all five capital-event rows matched the old behavior
+exactly, which identified a stale snapshot rather than a broken fix, and saved
+an hour of looking at the deploy.
+
 ## Where entitlement scoping is deliberately absent
 
 `user_accessible_customers` is a denormalized cache rebuilt asynchronously from

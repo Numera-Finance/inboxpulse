@@ -93,6 +93,56 @@ So when a signal is requested as a word list:
   because a valuation vendor had been added to the trigger list. The corpus
   check found it in one run.
 
+## A Nullable Filter Must Not Mean "No Filter"
+
+`getSignalFilterCondition` maps a filter value to a SQL condition and returns
+`SQL | null`. `null` was used for two opposite things: "this value means no
+filter" (`all`) and "I do not recognise this value" (`default`). They compile to
+the same thing and mean the reverse of each other. `capital-event` was a value
+the switch had never heard of, so it did not throw, did not log, and returned
+**every analyzed email for the customer**. The panel row and the page it linked to showed
+different populations, under a filter chip still displaying the filter that had
+been discarded.
+
+- **Type the parameter to the union, never `string`.** A `string` parameter
+  invites a `default` branch; a union lets `const unhandled: never = value` turn
+  the next omission into a compile error.
+- **Distinguish "none wanted" from "not understood".** The first returns null on
+  a named case. The second throws.
+- **Derive the test from both sources.** `signal-filter-parity.test.ts` reads the
+  accepted values out of the Zod request enum and the handled values out of the
+  `case` labels. Neither side is typed by hand, so a value added later is policed
+  without anyone remembering the test exists.
+- **Count the implementations before fixing one.** This filter exists three
+  times: `options?.signal`, `filters?.signal`, and this switch. Two were correct
+  and the page used the third.
+
+Same shape as the consent gate above: the check was present, was called, and
+governed nothing.
+
+## Exit Code Is Not HTTP Status
+
+`curl` exits 0 whenever it completes a round trip, whatever the status. So
+
+```bash
+curl -s -X POST "$API/api/internal/addon/snapshots/clear" > /dev/null && echo "snapshot cleared"
+```
+
+printed `snapshot cleared` after every deploy for several deploys, against a
+route that **does not exist**. The false line cost an hour: when the panel kept
+rendering pre-fix output, the cache was believed clear, so the search went to the
+build, the revision and the database instead.
+
+- Gate on the status, not the exit code: `curl -f`, or capture
+  `-w '%{http_code}'` and test it.
+- Before scripting a call to an endpoint, `grep` the routes file and confirm it
+  exists.
+- Never print a past-tense success string you did not derive from the response
+  you just read.
+- When polling for a change, **match exactly**. A poll comparing a substring of a
+  46-character truncation reported success while the text it was waiting to see
+  gone was still on screen.
+
 ## Writing Into the User's Mailbox
 
 Labels are the only sanctioned mailbox write (ADR-005), and the policy is

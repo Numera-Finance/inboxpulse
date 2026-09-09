@@ -194,6 +194,65 @@ tenant-configurable keyword map so `cap table` cannot be added back. Writes
 `Signal.CAPITAL_EVENT` (70) and **no Gmail label**: `labelFor` returns null for
 it, so this never touches a mailbox.
 
+### What the row shows, and what it links to
+
+The section is called **Capital events** and sits in the add-on sidebar as a peer
+of "Where the fires are" and "Unhappy clients left waiting". Each row is one
+client, and it shows a **quote from the mail, not the subject line**. The subject
+is usually administrative ("Re: Introduction") while the sentence that matters is
+in the body, so the row carries the evidence and lets the reader draw the
+conclusion.
+
+The whole row is clickable and opens the AI Analysis page filtered to that
+client's capital-event mail. Three things had to be true for that link to mean
+anything, and each was wrong at first:
+
+1. **The destination must filter on the signal.** `signal=capital-event` reaches
+   `getSignalFilterCondition`, which is a *third* filter path, separate from the
+   two used elsewhere in the repository. It had no case for the value and fell to
+   `default: return null`, which pushes no condition at all, so the page returned
+   every analyzed email for the client. The panel row and its link showed different populations.
+2. **The destination must be able to display the row.** The AI Analysis page
+   lists analyzed mail only, so the section requires `e.analysis_status = 3`.
+   Ninety of the 130 flagged emails qualify; the other forty were never put
+   through the model, and the rule does not need the model. Before this, Falconx
+   appeared in the panel and its link landed on "No analyzed emails found".
+3. **The window must match.** The section counts ninety days and the page
+   defaults to thirty, so the link carries an explicit `from`.
+
+### How the quote is chosen
+
+Two decisions, both made against rendered output rather than in principle:
+
+**Which phrase.** The strongest phrase present, by priority, not the earliest in
+the body. `COALESCE` over an ordered list, never `LEAST`. A declaration outranks
+a term sheet, which outranks a data room, which outranks an artifact word.
+Position-first quoted "2910 Convertible Notes" from a client whose subject line
+said "cleaning up cap table to prepare for a financing".
+
+**Where the sentence starts and ends.** The extractor takes a fixed
+150-character window opening 45 characters before the match, and returns the
+phrase's offset inside it. `tidyQuote` uses that offset to snap the start forward
+to the last clause break *before* the phrase, and never past it, then ends at the
+**first** sentence break after it. Both halves were wrong in production on the
+same day:
+
+| rendered | why |
+|---|---|
+| "electronically. The consents are in the data room." | the 45-character lead landed inside the previous sentence |
+| "The consents are in the data room. Decision process: Key decisions are…" | `lastIndexOf` took the last break in the window, not the first after the evidence |
+| "Term Sheet. Hi Sandeep" | a flat floor of 12 blocked a greeting cut landing at exactly 12 |
+
+The floor is now the lead plus 8, where 8 is the shortest phrase the extractor
+can match, so the number comes from the phrase list rather than from whichever
+case last failed. An earlier attempt snapped to a sentence start *without* the
+offset and pushed the phrase off the end of the window; nothing may move the
+start past the evidence.
+
+Code: `tidyQuote` and `CapitalEventsService` in
+`apps/api/src/addon/account-context.ts`. Tests in `tidy-quote.test.ts` use the
+strings the panel actually rendered.
+
 ## How to re-derive all of this
 
 Signals are computed from `emails.first_reply_at`, and **main's first-reply fix
