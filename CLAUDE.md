@@ -59,6 +59,40 @@ existed, so `error.message` was `undefined` on every 401 and the add-on logged
 the caller that needed it. Build refusals through a helper typed
 `ApiResponse<never>` so the compiler refuses the next bare string.
 
+## An Artifact Is Not an Event
+
+Asked for a "fundraising trigger", Fin Ops supplied sixteen keyword categories.
+Measured over 80,114 threads, only three survived, and the reason generalises to
+any signal request that arrives as a vocabulary list.
+
+The list mixed three kinds of phrase:
+
+- **EVENT.** Rare, and a hit means something is happening now. `data room` 97%
+  precision over all 30 threads, `term sheet` 85% over all 20.
+- **ARTIFACT.** `cap table`, `409a`, `SAFE`, `convertible note`. Almost always
+  genuinely about that artifact, which is exactly why they survive a topical
+  read, and near-useless as triggers. We are an outsourced CFO firm: we handle
+  those artifacts continuously for companies that raised years ago. `cap table`
+  is 95% about a cap table and **5% about an event**, across 627 threads.
+- **SERVICE.** `due diligence`, `financial projections`. These appear in OUR OWN
+  retainer letters and LMS courses. The alert fires on our marketing.
+
+So when a signal is requested as a word list:
+
+- **Separate "is this about X" from "is X happening".** A term can score 95% on
+  the first and 5% on the second. Only the second is a trigger.
+- **Check whether we are the sender.** Our own mail was the largest
+  false-positive class at 10.5% of matches, ahead of newsletters at 1.5%.
+- **Word boundaries, always.** `409a` matched inside the hex GUID `4ab083e2409a`;
+  `warrant` was "warranty" in 274 of 278 threads. Both cost a published number a
+  retraction.
+- **A client's name can match the keyword.** `fundraisly.com` matched `fundrais`
+  in every message it ever sent.
+- **Run the rules over the corpus, not only the unit tests.** 23 unit tests
+  passed while the detector was flagging annual 409A reports as capital events,
+  because a valuation vendor had been added to the trigger list. The corpus
+  check found it in one run.
+
 ## Writing Into the User's Mailbox
 
 Labels are the only sanctioned mailbox write (ADR-005), and the policy is

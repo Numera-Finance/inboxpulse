@@ -139,6 +139,61 @@ rate.** At a 5.7% prior it will make almost anything look strong.
 >    across thresholds — 1.5x volume and 3x volume both landing near 7.2% — means
 >    something correlated with the signal is carrying it, not the signal.
 
+## Capital event: the one signal here that predicts nothing
+
+Everything above is a posterior: P(trouble next week | what we can see), scored
+against a 5.7% base rate. **Capital event is not that, and must not be read that
+way.** It is an observation, not a prediction. The mail says a data room exists;
+we report that a data room exists. There is no lift to quote because there is no
+forecast being made.
+
+It earns its place by a different test, the one in `07-DESIGN-PRINCIPLES.md`:
+would seeing it change what somebody does? A client preparing a data room needs
+diligence-grade books in weeks rather than months, and that is both a workload
+the controller has to staff and an opening the sales rep has to work.
+
+**Three flags, from sixteen requested categories.** Measured over 80,114
+customer threads:
+
+| | threads | genuinely a capital event |
+|---|---|---|
+| data room | 30 | **97%** |
+| term sheet | 20 | **85%** |
+| due diligence | 141 | 50% |
+| cap table | 627 | **5%** |
+
+The request listed sixteen categories. Three survived, because the list mixed
+three kinds of phrase:
+
+- **Event terms** are rare and mean something is happening now. These are the
+  trigger.
+- **Artifact terms** (`cap table`, `409a`, `SAFE`, `convertible note`) are
+  almost always genuinely about that artifact, which is why they read well, and
+  are near-useless as triggers: an outsourced CFO firm handles those artifacts
+  continuously for companies that raised years ago. Booking convertible-note
+  interest monthly. Refreshing a 409A annually because the option plan demands
+  it. `cap table` is 95% about a cap table and 5% about an event.
+- **Service terms** (`due diligence`, `financial projections`) appear in our own
+  retainer letters, which sell "audit / due diligence support" as a service
+  line, and in the disprz LMS, which runs a cap-table reconciliation course. The
+  alert would fire on our own marketing.
+
+**Named for the event, not the fundraise.** Of the twenty term-sheet threads, 8
+are equity raises, 5 M&A and 3 debt. A fundraising-only tag discards the M&A,
+where the controller workload is largest.
+
+**Volume: about nineteen a year.** 58 hits across 1,481 candidate threads over
+three years. That is the right order for a real capital event and the wrong one
+for anything statistically validatable, so this is rules-and-review. **No
+precision against outcomes is claimed**, because there is no labelled set of
+clients who actually raised, and asking which raisers mentioned a data room
+would measure backwards.
+
+Code: `apps/api/src/emails/capital-event.ts`, deliberately outside the
+tenant-configurable keyword map so `cap table` cannot be added back. Writes
+`Signal.CAPITAL_EVENT` (70) and **no Gmail label**: `labelFor` returns null for
+it, so this never touches a mailbox.
+
 ## How to re-derive all of this
 
 Signals are computed from `emails.first_reply_at`, and **main's first-reply fix

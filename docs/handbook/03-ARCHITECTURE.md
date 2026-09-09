@@ -169,6 +169,31 @@ hits.** On a 404 it falls back to the old gcloud proxy for the rest of the
 session, and that decision is cached — so after deploying crm-api, **reload the
 Gmail tab**.
 
+## The one rule that runs before the model, and outside tenant config
+
+`apps/api/src/emails/capital-event.ts` detects that a client is raising, being
+acquired, or borrowing. It sits inside `runKeywordAnalysis` but is **not part of
+the tenant keyword map**, and the separation is deliberate: the keyword map is
+configuration a tenant can edit, and this is a fixed rule set derived from
+measuring 80,114 threads. If it were configurable, `cap table` would be added
+back, and that is 627 threads at 5% event precision.
+
+It makes no model call. Three phrase groups plus a vendor-domain check, so a
+backfill over the whole corpus costs database time and nothing else.
+
+Two things it does that are easy to get wrong when extending it:
+
+- **Word boundaries, always.** `409a` was found inside the hex GUID fragment
+  `4ab083e2409a`, and `warrant` matched "warranty" in 274 of 278 threads.
+- **It excludes us.** Numera's own retainer language, the disprz LMS, internal
+  Google Chat and Notes. Our own mail was the largest false-positive class at
+  10.5% of matches, ahead of newsletters at 1.5%.
+
+Its result flows into `updateEmailSignalsInTransaction` as
+`Signal.CAPITAL_EVENT` (70). `capitalEvent` is not in `ANALYSIS_TYPES`, so it
+cannot shadow an LLM analysis through `excludeTypes`, and `labelFor` returns
+null for it, so it writes no Gmail label.
+
 ## Where entitlement scoping is deliberately absent
 
 `user_accessible_customers` is a denormalized cache rebuilt asynchronously from
