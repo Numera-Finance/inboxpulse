@@ -824,6 +824,41 @@ async function _uncached_getStirring(tenantId: string): Promise<Stirring[]> {
   }
 }
 
+export interface CapitalEvent {
+  customer: string;
+  customerId: string | null;
+  flag: string;
+  subject: string;
+  daysAgo: number;
+  messages: number;
+  owner: string | null;
+}
+
+export async function getCapitalEvents(tenantId: string, days = 90): Promise<CapitalEvent[]> {
+  return cached(
+    `capital:${tenantId}:${days}`,
+    TENANT_TTL_MS,
+    (v: CapitalEvent[]) => v.length === 0,
+    () => _uncached_getCapitalEvents(tenantId, days),
+  );
+}
+
+async function _uncached_getCapitalEvents(tenantId: string, days: number): Promise<CapitalEvent[]> {
+  const env = getEnv();
+  if (!env.SERVICE_API_KEY) return [];
+  const res = await apiFetch(
+    `${env.SERVICE_API_URL}/api/internal/addon/capital-events?tenantId=${encodeURIComponent(tenantId)}&days=${days}`,
+    { headers: internalHeaders(tenantId) },
+  );
+  if (!res || !res.ok) return [];
+  try {
+    const d = unwrap<CapitalEvent[]>(await res.json());
+    return Array.isArray(d) ? d : [];
+  } catch {
+    return [];
+  }
+}
+
 export interface SlowResponder {
   name: string;
   userId?: string | null;

@@ -1,6 +1,7 @@
 import { inject, injectable } from 'tsyringe';
 import { sql, type SQL } from 'drizzle-orm';
 import type { Database } from '@crm/database';
+import { Signal } from '@crm/shared';
 import { logger } from '../utils/logger';
 
 /**
@@ -1644,6 +1645,120 @@ export class SlowRespondersService {
  * necessarily angry. The row says what it knows — the volume — and does not
  * assert a mood.
  */
+/**
+ * A client with a capital event in flight: raising, being acquired, or borrowing.
+ *
+ * Tenant-wide, like Stirring, because a capital event is a fact about the
+ * client rather than about the viewer's entitlements. The panel row exists to
+ * make somebody act, so it carries the evidence phrase and the newest subject
+ * rather than a verdict: "this client is raising" is a claim we cannot support,
+ * and "term sheet, 4 days ago" is one the reader can check in a click.
+ */
+export interface CapitalEvent {
+  customer: string;
+  customerId: string | null;
+  /** 'data-room' | 'term-sheet' | 'declaration', from the detector. */
+  flag: string;
+  /** The subject of the most recent flagged message, so the row is openable. */
+  subject: string;
+  /** Days since that message. A capital event goes cold; a 90-day-old one is history. */
+  daysAgo: number;
+  /** Flagged messages in the window, so a live deal outranks a single mention. */
+  messages: number;
+  owner: string | null;
+}
+
+export class CapitalEventsService {
+  constructor(@inject('Database') private readonly db: Database) {}
+
+  /**
+   * Ninety days, not the panel's usual thirty.
+   *
+   * A raise or a sale runs for months: DeepSource's acquisition diligence spans
+   * the corpus, and StepSecurity paused a Series A in Q1 and restarted it in
+   * September. A thirty-day window would show the thread only while somebody
+   * happened to be typing.
+   */
+  async get(tenantId: string, days = 90, limit = 5): Promise<CapitalEvent[]> {
+    const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
+    const rows = await this.db.execute(sql`
+      WITH base_owner AS (
+        -- Same domain-base owner resolution the other sections use: a client
+        -- writing from acme.ai and acme.com is one client with one owner.
+        SELECT d.base, (array_agg(DISTINCT d.customer_id))[1] AS owner_customer_id
+        FROM (
+          SELECT split_part(lower(cd.domain), '.', 1) AS base, cd.customer_id
+          FROM customer_domains cd
+          WHERE cd.tenant_id = ${tenantId}
+            AND EXISTS (
+              SELECT 1 FROM customer_allocations al
+              WHERE al.customer_id = cd.customer_id AND al.tenant_id = ${tenantId}
+            )
+        ) d
+        GROUP BY d.base
+      ),
+      flagged AS (
+        SELECT cd.customer_id,
+               e.subject,
+               e.received_at,
+               row_number() OVER (PARTITION BY cd.customer_id ORDER BY e.received_at DESC) AS rn,
+               count(*) OVER (PARTITION BY cd.customer_id)::int AS messages
+        FROM emails e
+        JOIN customer_domains cd
+          ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
+         AND cd.tenant_id = e.tenant_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.is_customer_email
+          AND e.signals @> ARRAY[${Signal.CAPITAL_EVENT}]::integer[]
+          AND e.received_at >= now() - (${days} || ' days')::interval
+      )
+      SELECT f.customer_id::text AS customer_id,
+             c.name AS customer,
+             coalesce(f.subject, '(no subject)') AS subject,
+             extract(day FROM (now() - f.received_at))::int AS days_ago,
+             f.messages,
+             (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
+                FROM customer_allocations al
+                LEFT JOIN users u ON u.id = al.user_id
+               WHERE al.customer_id = COALESCE(
+                       (SELECT bo.owner_customer_id
+                          FROM customer_domains cd2
+                          JOIN base_owner bo
+                            ON bo.base = split_part(lower(cd2.domain), '.', 1)
+                         WHERE cd2.customer_id = c.id AND cd2.tenant_id = ${tenantId}
+                         LIMIT 1),
+                       c.id)
+                 AND al.tenant_id = ${tenantId}
+               -- Sales rep FIRST here, unlike every other section.
+               -- A capital event is the one signal whose action is commercial:
+               -- the controller staffs the work, the rep opens the conversation.
+               ORDER BY CASE al.role
+                          WHEN 'Sales rep' THEN 1
+                          WHEN 'Account manager' THEN 2
+                          ELSE 3
+                        END
+               LIMIT 1) AS owner
+      FROM flagged f
+      JOIN customers c ON c.id = f.customer_id
+      WHERE f.rn = 1
+        ${clientFilter}
+      -- Freshest first: a capital event is a deadline, and the newest mention is
+      -- the best evidence it is still running.
+      ORDER BY f.received_at DESC
+      LIMIT ${limit}
+    `);
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      customer: String(r.customer ?? 'Unknown'),
+      customerId: (r.customer_id as string) ?? null,
+      flag: 'capital-event',
+      subject: String(r.subject ?? ''),
+      daysAgo: Number(r.days_ago ?? 0),
+      messages: Number(r.messages ?? 1),
+      owner: (r.owner as string) ?? null,
+    }));
+  }
+}
+
 export interface Stirring {
   customer: string;
   customerId: string | null;

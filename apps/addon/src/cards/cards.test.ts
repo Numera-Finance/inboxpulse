@@ -1087,3 +1087,40 @@ describe('the waiting row counts clients, not messages', () => {
     expect(json).toMatch(/1<\/font><\/b> client waited/);
   });
 });
+
+/**
+ * The Capital Event section exists because the signal was built, deployed and
+ * backfilled while rendering on no screen. A detector nothing displays is a
+ * database column, not a feature.
+ */
+describe('money is moving', () => {
+  const card = (events?: Array<{ customer: string; customerId: string | null; subject: string; daysAgo: number; messages: number; owner: string | null }>) =>
+    JSON.stringify(
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, events),
+    );
+
+  const one = [{ customer: 'StepSecurity', customerId: 'c1', subject: 'Restarting our Series A in September', daysAgo: 4, messages: 3, owner: 'Ganesh Shankar' }];
+
+  it('renders as its own section, a peer of the others', () => {
+    expect(card(one)).toContain('Money is moving');
+  });
+
+  it('states what was found and when, never what it means', () => {
+    const json = card(one);
+    expect(json).toContain('Restarting our Series A');
+    expect(json).toContain('4d ago');
+    // 5 of 20 term-sheet threads were acquisitions and 3 were debt, so the card
+    // must not assert a raise.
+    expect(json).not.toContain('is raising');
+  });
+
+  it('names the rep, and says so plainly when there is not one', () => {
+    expect(card(one)).toContain('Ganesh Shankar');
+    expect(card([{ ...one[0], owner: null }])).toContain('no rep assigned');
+  });
+
+  it('renders nothing at all when there is nothing, rather than an empty header', () => {
+    expect(card([])).not.toContain('Money is moving');
+    expect(card(undefined)).not.toContain('Money is moving');
+  });
+});

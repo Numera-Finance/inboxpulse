@@ -246,6 +246,7 @@ export function buildHomepageCard(
   privacy?: PrivacyView,
   /** Clients talking twice as much as usual, who have not complained. */
   stirring?: Array<{ customer: string; customerId: string | null; recent: number; usual: number; owner: string | null }>,
+  capitalEvents?: Array<{ customer: string; customerId: string | null; subject: string; daysAgo: number; messages: number; owner: string | null }>,
 ): Card {
   // No lead-in section.
   //
@@ -648,6 +649,40 @@ export function buildHomepageCard(
           bottomLabel:
             `usually ${sc.usual} a week` +
             (sc.owner ? ` · ${escapeText(sc.owner)}` : ' · no owner assigned'),
+          wrapText: true,
+        }),
+      ),
+    });
+  }
+
+  /**
+   * Money is moving at this client.
+   *
+   * A peer of the fires and waiting-clients sections, not a sub-row of either,
+   * because it is a different KIND of fact: those two say somebody is unhappy,
+   * this one says a deadline exists. It sits after them because an angry client
+   * is today's problem and a raise is this quarter's.
+   *
+   * The row states what was found and when, never what it means. "Term sheet,
+   * 4 days ago" is checkable in a click; "this client is raising" is a claim
+   * the detector cannot support, since 5 of 20 term-sheet threads were
+   * acquisitions and 3 were debt.
+   *
+   * The owner shown here is the SALES REP where one is allocated, unlike every
+   * other section, which leads with the Account manager. A capital event is the
+   * one signal whose next action is commercial.
+   */
+  if (capitalEvents?.length) {
+    firm.push({
+      header: heading('Money is moving'),
+      widgets: capitalEvents.map((ce) =>
+        deco({
+          text: `<b>${escapeText(ce.customer)}</b>`,
+          bottomLabel:
+            `${escapeText(ce.subject.slice(0, 58))} · ` +
+            (ce.daysAgo === 0 ? 'today' : `${ce.daysAgo}d ago`) +
+            (ce.messages > 1 ? ` · ${ce.messages} messages` : '') +
+            (ce.owner ? ` · ${escapeText(ce.owner)}` : ' · no rep assigned'),
           wrapText: true,
         }),
       ),

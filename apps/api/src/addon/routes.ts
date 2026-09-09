@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { container } from 'tsyringe';
 import { PanelSnapshotService } from './snapshot-service';
 import { InvalidInputError } from '@crm/shared';
-import { AccountContextService, WaitingClientsService, DangerPulseService, FiresService, SlowRespondersService, StirringService } from './account-context';
+import { AccountContextService, WaitingClientsService, DangerPulseService, FiresService, SlowRespondersService, StirringService, CapitalEventsService, type CapitalEvent } from './account-context';
 
 export const addonRoutes = new Hono();
 
@@ -215,6 +215,25 @@ addonRoutes.get('/fires', async (c) => {
         container
           .resolve(FiresService)
           .get(tenantId, { userId, isAdmin: c.req.query('isAdmin') === 'true' }, days),
+    ),
+  });
+});
+
+/**
+ * GET /api/internal/addon/capital-events?tenantId=&days=
+ *
+ * Clients raising, being acquired, or borrowing. Tenant-wide: a capital event is
+ * a fact about the client, not about the viewer's entitlements, and the whole
+ * point is that the rep and the controller both see it.
+ */
+addonRoutes.get('/capital-events', async (c) => {
+  const tenantId = c.req.query('tenantId');
+  if (!tenantId) throw new InvalidInputError('tenantId is required');
+  const days = Math.min(365, Math.max(7, Number(c.req.query('days') ?? 90)));
+  return c.json({
+    success: true,
+    data: await fromSnapshot<CapitalEvent[]>(tenantId, 'capital_events', days, () =>
+      container.resolve(CapitalEventsService).get(tenantId, days),
     ),
   });
 });

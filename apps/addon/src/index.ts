@@ -28,6 +28,7 @@ import {
   getDangerPulse,
   getFires,
   getStirring,
+  getCapitalEvents,
   getSlowResponders,
   getThreadFlagged,
   getThreadTrend,
@@ -1058,11 +1059,14 @@ app.post('/homepage', async (c) => {
   //
   // Each call keeps its own 6s abort, so one slow section still cannot hold the
   // panel past its own budget — and now it no longer delays the others either.
-  const [whoLookup, pulse, slow, stirring] = await Promise.all([
+  const [whoLookup, pulse, slow, stirring, capitalEvents] = await Promise.all([
     tenantId && verified.email ? resolveViewer(tenantId, verified.email) : Promise.resolve(null),
     tenantId ? getDangerPulse(tenantId) : Promise.resolve(null),
     tenantId ? getSlowResponders(tenantId) : Promise.resolve([]),
     tenantId ? getStirring(tenantId) : Promise.resolve([]),
+    // Tenant-wide like its neighbours, so it rides the same round rather than
+    // adding a seventh sequential call to the render.
+    tenantId ? getCapitalEvents(tenantId) : Promise.resolve([]),
   ]);
   const who = whoLookup?.status === 'found' ? whoLookup.viewer : null;
   // Both are management views: where the fires are, and who to ask about them.
@@ -1119,6 +1123,7 @@ app.post('/homepage', async (c) => {
         // where it can actually happen.
         { readingOn: await hasConsent(homeToken), canWrite: Boolean(homeToken) },
         stirring,
+        capitalEvents,
       ),
     ),
   );

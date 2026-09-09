@@ -7,6 +7,7 @@ import {
   StirringService,
   SlowRespondersService,
   FiresService,
+  CapitalEventsService,
   WaitingClientsService,
 } from './account-context';
 
@@ -58,6 +59,10 @@ export class PanelSnapshotService {
       {
         kind: 'fires',
         run: () => new FiresService(this.db).get(tenantId, { userId: '', isAdmin: true }, windowDays, 200),
+      },
+      {
+        kind: 'capital_events',
+        run: () => new CapitalEventsService(this.db).get(tenantId, windowDays, 5),
       },
       {
         kind: 'waiting',
