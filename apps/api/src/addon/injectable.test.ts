@@ -44,3 +44,26 @@ describe('every addon service is resolvable through the container', () => {
     expect(missing, `missing @injectable(): ${missing.join(', ')}`).toEqual([]);
   });
 });
+
+/**
+ * The Capital events section put Carta in its first row, writing "we are still
+ * awaiting the signed term sheet". True, and about whichever client the 409A
+ * belonged to, not about Carta. A vendor shown as the client sends the rep to
+ * sell to their own tooling supplier.
+ */
+describe('the capital events section excludes service providers', () => {
+  const src = readFileSync(join(__dirname, 'account-context.ts'), 'utf8');
+  const section = src.slice(src.indexOf('export class CapitalEventsService'));
+
+  it('filters the sender domain against a vendor list', () => {
+    expect(section).toContain('NOT IN (SELECT dom FROM vendor)');
+  });
+
+  it('names the vendors that reached production', () => {
+    // Carta surfaced in row one; the others are the same class of error caught
+    // earlier in the detector.
+    for (const dom of ['carta.com', 'etonvs.com', 'dfinsolutions.com', 'suralink.com']) {
+      expect(section, `${dom} missing from the vendor list`).toContain(dom);
+    }
+  });
+});

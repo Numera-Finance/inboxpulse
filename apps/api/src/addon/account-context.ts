@@ -1683,7 +1683,22 @@ export class CapitalEventsService {
   async get(tenantId: string, days = 90, limit = 5): Promise<CapitalEvent[]> {
     const clientFilter = isAClient(tenantId, await hasRelationshipsTable(this.db));
     const rows = await this.db.execute(sql`
-      WITH base_owner AS (
+      WITH vendor AS (
+        -- Service providers whose mail is ABOUT a capital event but never their
+        -- own. Carta reached the top of this section writing "we are still
+        -- awaiting the signed term sheet" — true, and about whichever client
+        -- the 409A belongs to, not about Carta. Showing the vendor as the
+        -- client sends the rep to sell to their own tooling supplier.
+        --
+        -- Kept as a list rather than inferred: these firms have real customer
+        -- records here (Carta's is manually created, not auto), so nothing in
+        -- the data marks them as vendors.
+        SELECT unnest(ARRAY[
+          'carta.com','etonvs.com','dfinsolutions.com','suralink.com',
+          'mytaxfiler.com','disprz.com'
+        ]) AS dom
+      ),
+      base_owner AS (
         -- Same domain-base owner resolution the other sections use: a client
         -- writing from acme.ai and acme.com is one client with one owner.
         SELECT d.base, (array_agg(DISTINCT d.customer_id))[1] AS owner_customer_id
@@ -1712,6 +1727,7 @@ export class CapitalEventsService {
           AND e.is_customer_email
           AND e.signals @> ARRAY[${Signal.CAPITAL_EVENT}]::integer[]
           AND e.received_at >= now() - (${days} || ' days')::interval
+          AND split_part(lower(e.from_email), '@', 2) NOT IN (SELECT dom FROM vendor)
       )
       SELECT f.customer_id::text AS customer_id,
              c.name AS customer,
