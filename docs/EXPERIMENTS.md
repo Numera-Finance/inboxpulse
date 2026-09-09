@@ -671,6 +671,60 @@ entirely; exclude senders in `mystartupcfo.com`, `disprz.com`, `mytaxfiler.com`,
 domains as an independent trigger. Name it **capital event**, not fundraising:
 of 20 term-sheet threads, 8 are equity raises, 5 M&A, 3 debt.
 
+### The remaining twelve categories, and two numbers I got wrong
+
+Counts for every category not hand-reviewed above. Two of these were first
+published with broken patterns of my own and are corrected here rather than
+quietly fixed.
+
+**RETRACTED: "dilution / ownership 396 threads (0.49%)".** The pattern was
+`%ownership %`, which matches "ownership " followed by anything. `dilution`
+alone is **11 threads**. The strict form `ownership <n>%` matches **1**.
+
+**RETRACTED: "convertible debt / warrant 290 threads (0.36%)".** Of 278 threads
+containing `warrant`, **274 are "warranty" or "warrants" used as a verb**.
+Equity-sense warrants are **5 threads**; `convertible debt` is **9**.
+
+Corrected, over 80,114 customer threads:
+
+| category | threads | share |
+|---|---|---|
+| 409a | 190 | 0.24% |
+| debt schedule / loan agreement | 120 | 0.15% |
+| R&D credit / state filings | 115 | 0.14% |
+| series a/b/seed | 110 | 0.14% |
+| board + shareholder consent | 98 | 0.12% |
+| fundraising / raise | 97 | 0.12% |
+| preferred stock / issuance | 65 | 0.08% |
+| SPA / subscription / IRA / charter | 65 | 0.08% |
+| valuation report | 44 | 0.05% |
+| option grants | 44 | 0.05% |
+| historical / audited financials | 39 | 0.05% |
+| subscription agreement (of the 65) | 34 | 0.04% |
+| pre-seed / C / bridge / extension | 22 | 0.03% |
+| hiring plan / revenue projections | 14 | 0.02% |
+| financing round / seeking investment | 14 | 0.02% |
+| investor meeting / committee | 12 | 0.01% |
+| dilution | 11 | 0.01% |
+| convertible debt | 9 | 0.01% |
+| forecast / budget / KPI model | 9 | 0.01% |
+| GAAP financials | 5 | 0.01% |
+| equity financing | 5 | 0.01% |
+| warrant (equity sense) | 5 | 0.01% |
+| diligence / investor folder | 4 | 0.00% |
+
+**What the tail says.** Sixteen of the twenty-three categories sit under 100
+threads across three years, and seven are in single digits. The whole keyword
+approach yields a handful of threads a year, which is the right order of
+magnitude for a real capital event and the wrong order for anything that needs
+statistical validation. This is a rules-and-review feature, not a model.
+
+**Two lessons about the measurement itself.** `warrant` and `ownership %` both
+looked like precise financial vocabulary and both were dominated by ordinary
+English. Any term in this list that is also a common word needs its match
+inspected before its count is quoted, and word-boundary matching is mandatory:
+`409a` was found inside the hex GUID fragment `4ab083e2409a`.
+
 ### What cannot be claimed yet
 
 There is no labelled set of clients who actually raised, so no precision figure
