@@ -43,32 +43,11 @@ The **Chrome extension** is a browser extension, built to
 `apps/chrome-extension/output` and loaded unpacked. It is installed rather than
 deployed, and appears below only as a caller.
 
-```
-                        ┌──────────────────────────┐
-   Gmail sidebar ──────►│ crm-addon    apps/addon   │──┐
-   (Workspace add-on)   └──────────────────────────┘  │
-                                                       │  x-internal-api-key
-   Gmail right rail ───►┌──────────────────────────┐  │
-   (Chrome extension)   │ apps/chrome-extension     │──┤  session cookie
-                        └──────────────────────────┘  │
-                                                       ▼
-   Browser ────────────►┌──────────────────────────┐ ┌──────────────────────┐
-   inboxpulse.myst…com  │ crm-web      apps/web     │►│ crm-api   apps/api   │
-                        └──────────────────────────┘ └──────────┬───────────┘
-                                                                 │
-   Gmail push ─────────►┌──────────────────────────┐            │
-   (Pub/Sub)            │ crm-gmail    apps/gmail   │────────────┤
-                        └──────────────────────────┘            │
-                        ┌──────────────────────────┐            │
-                        │ crm-analysis apps/analysis│───────────┤
-                        └──────────────────────────┘            │
-                        ┌──────────────────────────┐            ▼
-                        │ crm-notifications         │      ┌──────────┐
-                        └──────────────────────────┘      │ Postgres │
-                        ┌──────────────────────────┐      │  (Neon)  │
-                        │ crm-manager  apps/manager │─────►└──────────┘
-                        └──────────────────────────┘
-```
+![How the services connect: four callers reach five deployed services, every one of which reaches crm-api, which owns the database.](diagrams/architecture.svg)
+
+Regenerate with `python3 scripts/build-diagrams.py`, which writes the SVG the
+markdown uses and the PNG the `.docx` build uses from one layout.
+
 
 ### Four surfaces that share a name
 

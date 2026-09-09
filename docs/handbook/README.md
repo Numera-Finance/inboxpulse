@@ -89,13 +89,12 @@ the moment anything changes; regenerate it rather than editing it there, or the
 two disagree with no way to tell which is current. To rebuild:
 
 ```bash
-mkdir -p .scratch/"InboxPulse Handbook"
-for f in docs/handbook/*.md; do
-  pandoc "$f" -f gfm -t docx --toc --toc-depth=2 \
-    --metadata title="$(grep -m1 '^# ' "$f" | sed 's/^# //')" \
-    -o ".scratch/InboxPulse Handbook/$(basename "$f" .md).docx"
-done
+bash scripts/build-handbook-docx.sh
 ```
+
+That regenerates the diagrams first, swaps the SVG the markdown uses for the PNG
+Word can display, and writes one `.docx` per document.
+
 
 `.scratch/` is gitignored, which matters: these files carry real client names
 (Hammerhead, Berolzheimer, Truefoundry, Curium, Prisma) because the worked

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="545" viewBox="0 0 1120 545" role="img" aria-label="InboxPulse service architecture">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#57606a"/></marker></defs>
+<rect width="1120" height="545" fill="#f6f8fa"/>
+<text x="40" y="56" font-family="Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1f2328">Gmail sidebar</text>
+<text x="40" y="73" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#57606a">Workspace add-on</text>
+<line x1="215" y1="62.0" x2="292" y2="62.0" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="40" y="124" font-family="Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1f2328">Gmail right rail</text>
+<text x="40" y="141" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#57606a">in-page rail</text>
+<line x1="215" y1="130.0" x2="292" y2="130.0" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="40" y="192" font-family="Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1f2328">Browser</text>
+<text x="40" y="209" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#57606a">inboxpulse…com</text>
+<line x1="215" y1="198.0" x2="292" y2="198.0" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="40" y="276" font-family="Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1f2328">Gmail push</text>
+<text x="40" y="293" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#57606a">Pub/Sub</text>
+<line x1="215" y1="282.0" x2="292" y2="282.0" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300" y="36" width="230" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="314" y="58" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">crm-addon</text>
+<text x="314" y="76" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/addon</text>
+<rect x="300" y="104" width="230" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="314" y="126" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">Chrome extension</text>
+<text x="314" y="144" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/chrome-extension</text>
+<rect x="300" y="172" width="230" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="314" y="194" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">crm-web</text>
+<text x="314" y="212" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/web</text>
+<rect x="300" y="256" width="230" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="314" y="278" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">crm-gmail</text>
+<text x="314" y="296" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/gmail</text>
+<rect x="300" y="324" width="230" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="314" y="346" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">crm-analysis</text>
+<text x="314" y="364" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/analysis</text>
+<rect x="300" y="392" width="230" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="314" y="414" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">crm-notifications</text>
+<text x="314" y="432" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/notifications</text>
+<rect x="300" y="466" width="230" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="314" y="488" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">crm-manager</text>
+<text x="314" y="506" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/manager</text>
+<rect x="800" y="172" width="210" height="52" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="814" y="194" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#1f2328">crm-api</text>
+<text x="814" y="212" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">apps/api</text>
+<rect x="840" y="436" width="170" height="56" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="854" y="458" font-family="Helvetica,Arial,sans-serif" font-size="15" font-weight="500" fill="#1f2328">Postgres</text>
+<text x="854" y="476" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#57606a">Neon</text>
+<path d="M530 62.0 H745 V198.0 H792" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="538" y="55.0" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#0969da">x-internal-api-key</text>
+<path d="M530 130.0 H745 V198.0 H792" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="538" y="123.0" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#0969da">session cookie</text>
+<path d="M530 198.0 H745 V198.0 H792" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="538" y="191.0" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#0969da">session cookie</text>
+<path d="M530 282.0 H745 V198.0 H792" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="538" y="275.0" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#0969da">x-internal-api-key</text>
+<path d="M530 350.0 H745 V198.0 H792" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="538" y="343.0" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#0969da">x-internal-api-key</text>
+<path d="M530 418.0 H745 V198.0 H792" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="538" y="411.0" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#0969da">x-internal-api-key</text>
+<path d="M905.0 224 V428" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M530 492.0 H832" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+</svg>
