@@ -605,6 +605,72 @@ Carta, DFIN Venue and Suralink appear as senders. Those are cap-table and
 virtual-data-room products. An invoice from DFIN Venue means the client has
 bought a data room, which needs no keyword to interpret.
 
+### The full review: three classes of term, not one list
+
+Eight terms hand-reviewed, 91 threads read individually plus 468 classified by
+sender. The list Vignesh supplied mixes three kinds of phrase that behave
+completely differently.
+
+| term | threads | reviewed | about the topic | about an EVENT |
+|---|---|---|---|---|
+| data room | 30 | all 30 | 97% | **97%** |
+| term sheet | 20 | all 20 | 100% | **85%** |
+| 409a | 190 | 14 | 79% | low |
+| series a/b/seed | 110 | 16 | 56% | 56% |
+| due diligence | 141 | 14 | 50% | 50% |
+| convertible note | 74 | 9 | 89% | **33%** |
+| SAFE agreement | 48 | 8 | 88% | **25%** |
+| cap table | 627 | 20 | 95% | **5%** |
+
+**1. EVENT terms.** `data room`, `term sheet`, and phrases like "preparing for a
+financing" or "restarting our Series A". Rare, and a hit means something is
+happening now. These are the trigger.
+
+**2. ARTIFACT terms.** `cap table`, `409a`, `SAFE agreement`, `convertible
+note`, `option grants`. Common, and almost always genuinely about that artifact,
+which is why they look good on a topical read. But an outsourced CFO firm
+handles these artifacts continuously for companies that raised years ago:
+booking convertible-note interest monthly, administering ESOP exercises,
+refreshing a 409A annually because the option plan requires it. High topical
+precision, low event precision. Corroboration only, never a trigger alone.
+
+**3. SERVICE terms.** `due diligence`, `financial projections`, `GAAP
+financials`. These appear in Numera's own retainer letters, which sell "audit /
+due diligence support" as a service line, and in the disprz LMS, which runs a
+"Cap Table Reconciliation Training Session". The alert would fire on our own
+marketing and our own training.
+
+### Where the false positives actually come from
+
+Of 468 threads matching the core fundraising vocabulary:
+
+- **49 (10.5%) are Numera's own internal mail** — Google Chat, meeting Notes,
+  the disprz LMS, mytaxfiler. The largest single contaminant.
+- **8 (1.7%) are one client named `fundraisly.com`**, matched on the company
+  name in every message they send.
+- **7 (1.5%) are newsletters and social** — a beehiiv issue titled "$73b series
+  b", a LinkedIn deal feed announcing another company's $64M Series A. Real, but
+  smaller than a 16-row sample suggested; an earlier draft of this section
+  overweighted them.
+- **Substring matches inside hex.** `startupgenome.com` matched `409a` inside
+  the GUID fragment `4ab083e2409a`. Word-boundary matching is required.
+
+### The vendor domain is a signal nobody asked for
+
+`carta.com`, `etonvs.com` (Eton Venture Services, a 409A provider), DFIN Venue
+invoices via `firebird.ai`, and Suralink via `tannerco.com`. These are
+cap-table, valuation and virtual-data-room products. An invoice from a data-room
+vendor means the client has bought a data room, which needs no keyword.
+
+### Recommended shape
+
+Trigger on EVENT terms with word boundaries; require ARTIFACT terms to
+co-occur with an event term rather than firing alone; exclude SERVICE terms
+entirely; exclude senders in `mystartupcfo.com`, `disprz.com`, `mytaxfiler.com`,
+`google.com` chat, and the client whose name contains the keyword; add vendor
+domains as an independent trigger. Name it **capital event**, not fundraising:
+of 20 term-sheet threads, 8 are equity raises, 5 M&A, 3 debt.
+
 ### What cannot be claimed yet
 
 There is no labelled set of clients who actually raised, so no precision figure
@@ -612,4 +678,3 @@ against outcomes exists. The percentages above are hand-review of whether the
 mail is about a capital event, not whether the client went on to close one.
 Asking "of clients who raised, how many mentioned a data room" would measure
 backwards, which at this base rate makes almost anything look strong.
-
