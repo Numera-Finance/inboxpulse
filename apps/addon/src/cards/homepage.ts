@@ -247,6 +247,7 @@ export function buildHomepageCard(
   /** Clients talking twice as much as usual, who have not complained. */
   stirring?: Array<{ customer: string; customerId: string | null; recent: number; usual: number; owner: string | null }>,
   capitalEvents?: Array<{ customer: string; customerId: string | null; quote?: string; subject: string; daysAgo: number; messages: number; owner: string | null }>,
+  capitalEventsWebUrl?: string,
 ): Card {
   // No lead-in section.
   //
@@ -690,6 +691,25 @@ export function buildHomepageCard(
             (ce.messages > 1 ? ` · ${ce.messages} messages` : '') +
             (ce.owner ? ` · ${escapeText(ce.owner)}` : ' · no rep assigned'),
           wrapText: true,
+          // The whole row opens the client's capital-event mail, the same shape
+          // the fires rows use. The filter is `signal=capital-event`, which the
+          // repository learned in the same change: a link whose destination
+          // shows a DIFFERENT population contradicts the row that produced it.
+          //
+          // `from` is required. The page defaults to 30 days and this section
+          // counts 90, so without it the oldest rows land on "no emails found".
+          ...(ce.customerId && capitalEventsWebUrl
+            ? {
+                onClick: {
+                  openLink: {
+                    url:
+                      `${capitalEventsWebUrl}/escalations?signal=capital-event&status=all` +
+                      `&customer=${encodeURIComponent(ce.customerId)}` +
+                      `&from=${sinceDays(90)}`,
+                  },
+                },
+              }
+            : {}),
         }),
       ),
     });

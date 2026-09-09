@@ -1096,7 +1096,7 @@ describe('the waiting row counts clients, not messages', () => {
 describe('capital events', () => {
   const card = (events?: Array<{ customer: string; customerId: string | null; quote?: string; subject: string; daysAgo: number; messages: number; owner: string | null }>) =>
     JSON.stringify(
-      buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, events),
+      buildHomepageCard(null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, events, 'https://web.test'),
     );
 
   const one = [{ customer: 'StepSecurity', customerId: 'c1', quote: 'While preparing our Series A data room, we found calculation errors', subject: 'Re: Restarting our Series A', daysAgo: 4, messages: 3, owner: 'Ganesh Shankar' }];
@@ -1117,6 +1117,16 @@ describe('capital events', () => {
   it('names the rep, and says so plainly when there is not one', () => {
     expect(card(one)).toContain('Ganesh Shankar');
     expect(card([{ ...one[0], owner: null }])).toContain('no rep assigned');
+  });
+
+  it('links the whole row to the same population the row claims', () => {
+    const json = card(one);
+    // Not signal=negative: that is a different set, and a destination showing
+    // other mail contradicts the row that sent the reader there.
+    expect(json).toContain('signal=capital-event');
+    expect(json).toContain('customer=c1');
+    // The page defaults to 30 days; this section counts 90.
+    expect(json).toContain('from=');
   });
 
   it('renders nothing at all when there is nothing, rather than an empty header', () => {

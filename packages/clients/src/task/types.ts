@@ -59,7 +59,7 @@ export type TaskComment = z.infer<typeof taskCommentSchema>;
 /**
  * Signal filter values for email sentiment/signal filtering
  */
-export type SignalFilterType = 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat';
+export type SignalFilterType = 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'capital-event';
 
 /**
  * Search request for tasks

@@ -3,13 +3,18 @@ import { z } from 'zod';
 /**
  * Signal filter values for analyzed email search
  */
-export type AnalyzedEmailSignalFilter = 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all';
+/**
+ * Kept in step with SignalFilterType in ../task/types.ts by hand.
+ * Five copies of this union existed when `capital-event` was added and
+ * four of them silently rejected it; the compiler found them one at a time.
+ */
+export type AnalyzedEmailSignalFilter = 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'capital-event' | 'all';
 
 /**
  * Search request for analyzed emails
  */
 export const analyzedEmailSearchRequestSchema = z.object({
-  signal: z.enum(['positive', 'negative', 'neutral', 'upsell', 'churn', 'tat', 'all']).optional(),
+  signal: z.enum(['positive', 'negative', 'neutral', 'upsell', 'churn', 'tat', 'capital-event', 'all']).optional(),
   status: z.enum(['open', 'done', 'all']).optional(),
   assignedToId: z.string().optional(),
   customerId: z.string().uuid().optional(),

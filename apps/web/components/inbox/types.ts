@@ -206,7 +206,7 @@ export interface InboxItemContent {
  * Signal filter values for inbox
  * Includes sentiment (positive/negative/neutral), other signals (upsell/churn), and TAT violations
  */
-export type InboxSentimentFilter = 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all';
+export type InboxSentimentFilter = 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'capital-event' | 'all';
 
 /**
  * Filter options for fetching items

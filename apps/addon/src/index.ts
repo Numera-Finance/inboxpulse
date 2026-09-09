@@ -1124,6 +1124,7 @@ app.post('/homepage', async (c) => {
         { readingOn: await hasConsent(homeToken), canWrite: Boolean(homeToken) },
         stirring,
         capitalEvents,
+        getEnv().WEB_URL,
       ),
     ),
   );

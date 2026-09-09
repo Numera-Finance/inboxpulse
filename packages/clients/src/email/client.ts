@@ -168,7 +168,7 @@ export class EmailClient extends BaseClient {
       limit?: number;
       offset?: number;
       sentiment?: 'positive' | 'negative' | 'neutral';
-      signal?: 'upsell' | 'churn';
+      signal?: 'upsell' | 'churn' | 'capital-event';
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;

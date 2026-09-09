@@ -12,7 +12,7 @@ export const emailKeys = {
       limit?: number;
       offset?: number;
       sentiment?: 'positive' | 'negative' | 'neutral';
-      signal?: 'upsell' | 'churn';
+      signal?: 'upsell' | 'churn' | 'capital-event';
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;
@@ -31,7 +31,7 @@ export function useEmailsByCustomer(
     limit?: number;
     offset?: number;
     sentiment?: 'positive' | 'negative' | 'neutral';
-    signal?: 'upsell' | 'churn';
+    signal?: 'upsell' | 'churn' | 'capital-event';
     tatViolation?: boolean;
     dateFrom?: string;
     dateTo?: string;

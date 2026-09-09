@@ -54,7 +54,7 @@ interface CustomerDrawerProps {
   isLoading?: boolean
   selectedEmailId?: string
   onEmailSelect?: (emailId: string | null) => void
-  initialSignalFilter?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | null
+  initialSignalFilter?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'capital-event' | null
   /** Optional date filters to scope email results (passed from customer page) */
   dateFrom?: string
   dateTo?: string
@@ -131,7 +131,7 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
   const [editTeamMemberError, setEditTeamMemberError] = React.useState<string | null>(null)
 
   // Email filter state - lifted from InboxView to enable server-side filtering
-  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'all'>(initialSignalFilter || 'negative')
+  const [emailSentimentFilter, setEmailSentimentFilter] = React.useState<'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'capital-event' | 'all'>(initialSignalFilter || 'negative')
 
   // Sync signal filter when URL signal changes (e.g., clicking different signal counts)
   React.useEffect(() => {
@@ -268,7 +268,7 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
       limit: number;
       offset: number;
       sentiment?: 'positive' | 'negative' | 'neutral';
-      signal?: 'upsell' | 'churn';
+      signal?: 'upsell' | 'churn' | 'capital-event';
       tatViolation?: boolean;
       query?: string;
       dateFrom?: string;
@@ -279,7 +279,10 @@ export function CustomerDrawer({ customer, open, onClose, onMerged, activeTab = 
     // Only fall back to emailSentimentFilter if filter has no sentiment key at all
     const sentimentVal = filter.sentiment || undefined;
     if (sentimentVal && sentimentVal !== 'all') {
-      if (sentimentVal === 'upsell' || sentimentVal === 'churn') {
+      // capital-event is a SIGNAL, not a sentiment. Without this it fell into
+      // the else and was assigned to options.sentiment, which only accepts the
+      // three sentiment values.
+      if (sentimentVal === 'upsell' || sentimentVal === 'churn' || sentimentVal === 'capital-event') {
         options.signal = sentimentVal;
       } else if (sentimentVal === 'tat') {
         options.tatViolation = true;

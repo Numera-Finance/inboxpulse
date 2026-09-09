@@ -14,7 +14,7 @@ export interface TaskFilter {
   customerId?: string
   dateFrom?: Date
   dateTo?: Date
-  signal?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat'
+  signal?: 'positive' | 'negative' | 'neutral' | 'upsell' | 'churn' | 'tat' | 'capital-event'
   [key: string]: any
 }
 

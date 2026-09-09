@@ -929,7 +929,7 @@ export class EmailService {
       offset?: number;
       sentiment?: 'positive' | 'negative' | 'neutral';
       escalation?: boolean;
-      signal?: 'upsell' | 'churn';
+      signal?: 'upsell' | 'churn' | 'capital-event';
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;

@@ -678,7 +678,7 @@ export class EmailRepository extends ScopedRepository {
       offset?: number;
       sentiment?: 'positive' | 'negative' | 'neutral';
       escalation?: boolean;
-      signal?: 'upsell' | 'churn';
+      signal?: 'upsell' | 'churn' | 'capital-event';
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;
@@ -765,6 +765,10 @@ export class EmailRepository extends ScopedRepository {
     } else if (options?.signal === 'churn') {
       // Any churn level
       conditions.push(signalOverlaps([Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL]));
+    } else if (options?.signal === 'capital-event') {
+      // The panel's Capital events row links here. The destination has to show
+      // exactly what the row claimed, or the link contradicts the panel.
+      conditions.push(signalContains(Signal.CAPITAL_EVENT));
     }
 
     // Build query
@@ -802,7 +806,7 @@ export class EmailRepository extends ScopedRepository {
     filters?: {
       sentiment?: 'positive' | 'negative' | 'neutral';
       escalation?: boolean;
-      signal?: 'upsell' | 'churn';
+      signal?: 'upsell' | 'churn' | 'capital-event';
       tatViolation?: boolean;
       dateFrom?: string;
       dateTo?: string;
@@ -886,6 +890,11 @@ export class EmailRepository extends ScopedRepository {
     } else if (filters?.signal === 'churn') {
       // Any churn level
       conditions.push(signalOverlaps([Signal.CHURN_LOW, Signal.CHURN_MEDIUM, Signal.CHURN_HIGH, Signal.CHURN_CRITICAL]));
+    } else if (filters?.signal === 'capital-event') {
+      // The COUNT path, kept in step with the list path above. These two have
+      // drifted before: a filter added to one and not the other gives a list of
+      // rows under a total that disagrees with it.
+      conditions.push(signalContains(Signal.CAPITAL_EVENT));
     }
 
     // Build query
