@@ -185,6 +185,31 @@ describe('quote extraction ranks phrases by strength', () => {
     expect(rows).toContain("'fundraising'");
   });
 
+  it('gives one email to one customer before counting', () => {
+    // customer_domains is not unique on domain: a client and their outside CPA
+    // firm both claimed one, so the same thread rendered twice under two names
+    // with an identical quote, taking two of the five slots.
+    expect(code).toContain('candidate AS (');
+    expect(code).toContain('PARTITION BY e.id');
+    expect(code).toContain('WHERE dup_rn = 1');
+    // The message count must be computed on the deduped set, not the join.
+    const flagged = code.slice(code.indexOf('flagged AS ('));
+    const countAt = flagged.indexOf('count(*) OVER (PARTITION BY customer_id)');
+    const fromAt = flagged.indexOf('FROM candidate');
+    expect(countAt).toBeGreaterThan(-1);
+    expect(fromAt).toBeGreaterThan(countAt);
+  });
+
+  it('uses is_auto_created only to break a tie, never to exclude', () => {
+    // Excluding auto-created customers dropped a real client with 15 unanswered
+    // threads; that flag records how a row was created, not whether the company
+    // is real. It may order candidates and must not filter them.
+    expect(code).toContain('ORDER BY dup.is_auto_created, dup.name');
+    const cte = code.slice(code.indexOf('candidate AS ('), code.indexOf('flagged AS ('));
+    expect(cte).not.toMatch(/AND\s+NOT\s+dup\.is_auto_created/);
+    expect(cte).not.toMatch(/WHERE[^)]*is_auto_created\s*=\s*false/);
+  });
+
   it('searches the subject as well as the body', () => {
     expect(svc).toContain("coalesce(e.subject, '') || '. ' || coalesce(e.body, '')");
   });

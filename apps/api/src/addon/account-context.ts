@@ -1824,8 +1824,23 @@ export class CapitalEventsService {
         ) d
         GROUP BY d.base
       ),
-      flagged AS (
-        SELECT cd.customer_id,
+      -- One row per EMAIL first, then per customer.
+      --
+      -- customer_domains is not unique on domain: a client and their outside
+      -- CPA firm can both claim it, so one email joins to two customers and the
+      -- section rendered the same thread twice, under two names, with an
+      -- identical quote. Two of five slots for one fact.
+      --
+      -- is_auto_created breaks the tie and is NOT used to exclude. That flag
+      -- records how a customer ROW was created, not whether the company is
+      -- real, and for most clients the auto-created record is the only one
+      -- carrying their domain; excluding it outright dropped a client with 15
+      -- unanswered threads (see the note above the fires query). Here it only
+      -- decides which of two candidates owns an email, and name breaks any
+      -- remaining tie so the choice is stable between runs.
+      candidate AS (
+        SELECT e.id AS email_id,
+               cd.customer_id,
                e.subject,
                e.received_at,
                -- emails.body is raw HTML with the full quoted chain, so strip
@@ -1845,12 +1860,15 @@ export class CapitalEventsService {
                    '<[^>]*>', ' ', 'g'),
                  '&[a-z]+;|&#[0-9]+;', ' ', 'g'),
                '\\s+', ' ', 'g') AS clean_body,
-               row_number() OVER (PARTITION BY cd.customer_id ORDER BY e.received_at DESC) AS rn,
-               count(*) OVER (PARTITION BY cd.customer_id)::int AS messages
+               row_number() OVER (
+                 PARTITION BY e.id
+                 ORDER BY dup.is_auto_created, dup.name
+               ) AS dup_rn
         FROM emails e
         JOIN customer_domains cd
           ON lower(cd.domain) = split_part(lower(e.from_email), '@', 2)
          AND cd.tenant_id = e.tenant_id
+        JOIN customers dup ON dup.id = cd.customer_id
         WHERE e.tenant_id = ${tenantId}
           AND e.is_customer_email
           AND e.signals @> ARRAY[${Signal.CAPITAL_EVENT}]::integer[]
@@ -1865,6 +1883,15 @@ export class CapitalEventsService {
           -- never put through the model, and the rule does not need the model.
           AND e.analysis_status = 3
           AND split_part(lower(e.from_email), '@', 2) NOT IN (SELECT dom FROM vendor)
+      ),
+      -- Counted AFTER the dedupe, so "3 messages" means three emails this
+      -- client owns, not three the join produced.
+      flagged AS (
+        SELECT customer_id, subject, received_at, clean_body,
+               row_number() OVER (PARTITION BY customer_id ORDER BY received_at DESC) AS rn,
+               count(*) OVER (PARTITION BY customer_id)::int AS messages
+        FROM candidate
+        WHERE dup_rn = 1
       )
       SELECT f.customer_id::text AS customer_id,
              c.name AS customer,
