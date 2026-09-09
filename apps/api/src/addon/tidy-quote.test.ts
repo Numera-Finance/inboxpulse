@@ -35,6 +35,49 @@ describe('tidyQuote', () => {
     expect(long).toContain(q.replace('…', '').trim());
   });
 
+  /**
+   * The four below are the quotes the panel actually rendered on 2026-09-09,
+   * with the offset the SQL window produces. Three of five opened mid-sentence
+   * or ran into the next message's greeting.
+   */
+  it('does not open inside the previous sentence', () => {
+    // Rendered: "electronically. The consents are in the data room."
+    const raw =
+      'action is taken by unanimous written consent, signed electronically. The consents are in the data room.';
+    const q = tidyQuote(raw, raw.indexOf('data room'));
+    expect(q).toBe('The consents are in the data room.');
+  });
+
+  it('does not open inside a parenthetical', () => {
+    // Rendered: "to be cross-billed) Review the data room shared and revert..."
+    const raw = 'the Gusto invoice (to be cross-billed) Review the data room shared and revert for any pending docs';
+    const q = tidyQuote(raw, raw.indexOf('data room'));
+    expect(q.startsWith('Review the data room')).toBe(true);
+    expect(q).not.toContain('cross-billed');
+  });
+
+  it('stops where the next message begins', () => {
+    // Rendered: "...need your help on the model. Hello @Pritika Sood , Hope you are doing..."
+    const raw = 'restarting our Series A in September, need your help on the model. Hello @Pritika Sood, Hope you are doing well';
+    const q = tidyQuote(raw, raw.indexOf('restarting our Series'));
+    expect(q).toContain('our Series A in September');
+    expect(q).not.toMatch(/Hello|Pritika/);
+  });
+
+  it('drops a greeting that opens the quote rather than quoting it', () => {
+    // Rendered: "Data room requests. Hi Sukrati, Could you please provide..."
+    const raw = 'Data room requests. Hi Sukrati, Could you please provide the latest P L statement';
+    const q = tidyQuote(raw, raw.indexOf('Data room'));
+    expect(q).toBe('Data room requests.');
+  });
+
+  it('never moves the start past the evidence', () => {
+    // The earlier sentence-start attempt pushed the phrase off the window.
+    const raw = 'First sentence here. Second one too. we are raising a bridge round this quarter';
+    const q = tidyQuote(raw, raw.indexOf('we are raising'));
+    expect(q).toContain('we are raising');
+  });
+
   it('returns empty for empty, so the caller can fall back to the subject', () => {
     expect(tidyQuote('')).toBe('');
     expect(tidyQuote('   ')).toBe('');

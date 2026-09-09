@@ -1687,22 +1687,82 @@ export interface CapitalEvent {
  * Exported so it can be tested against the real tails found in the corpus
  * rather than invented ones.
  */
-export function tidyQuote(raw: string, max = 96): string {
-  let q = raw.replace(/\s+/g, ' ').trim();
+/** A sign-off, and everything after it is a signature block. */
+const SIGN_OFF =
+  /\b(regards|thanks|thank you|best|sincerely|cheers|sent from|email id|confidentiality)\b/i;
 
-  // Stop at a sign-off. These are the ones that actually appear in this mail.
-  const signoff = q.search(
-    /\b(regards|thanks|thank you|best|sincerely|cheers|sent from|email id|confidentiality)\b/i,
-  );
-  if (signoff > 30) q = q.slice(0, signoff);
+/**
+ * A greeting that opens a NEW message inside the window.
+ *
+ * Case-sensitive on the name, because "hi" lowercase mid-sentence is ordinary
+ * English and "Hi Sukrati" is the top of a fresh mail. The window is 150
+ * characters of a quoted chain, so it routinely spans the seam between one
+ * message and the next.
+ */
+const GREETING = /\b(Hi|Hello|Hey|Dear)\s+[@A-Z]/;
+
+/** A clause end we are willing to start a quote after. */
+const CLAUSE_END = /^.*[.!?:)]\s/s;
+
+/**
+ * Trim an extracted window down to the sentence that carries the evidence.
+ *
+ * `phraseAt` is where the matched phrase sits inside `raw`, and it is the whole
+ * point: without it this function cannot tell a lead-in it should drop from the
+ * evidence it must keep. Two failures in the rendered panel came from not
+ * having it.
+ *
+ * DeepSource read "electronically. The consents are in the data room." The
+ * extractor takes a fixed 45-character lead, which landed inside the previous
+ * sentence ("all board action is taken by unanimous written consent, signed
+ * electronically"). Snapping the start forward to the last clause end BEFORE
+ * the phrase gives "The consents are in the data room."
+ *
+ * An earlier attempt snapped to a sentence start without knowing `phraseAt`,
+ * and pushed the phrase off the end of the window instead. Nothing may move the
+ * start past `phraseAt`.
+ */
+export function tidyQuote(raw: string, phraseAt = 0, max = 96): string {
+  // Normalise the two halves separately so collapsing whitespace cannot shift
+  // the phrase out from under the offset.
+  let lead = raw.slice(0, Math.max(phraseAt, 0)).replace(/\s+/g, ' ');
+  const rest = raw.slice(Math.max(phraseAt, 0)).replace(/\s+/g, ' ');
+
+  // Open on a clause boundary if there is one in the lead, else drop the
+  // partial word the fixed-width window cut in half.
+  const clause = lead.match(CLAUSE_END);
+  lead = clause ? lead.slice(clause[0].length) : lead.replace(/^\S*\s+/, '');
+  // A greeting in the lead means the window opened in the previous message.
+  const openingGreeting = lead.search(GREETING);
+  if (openingGreeting >= 0) lead = lead.slice(openingGreeting);
+  lead = lead.replace(/^(Hi|Hello|Hey|Dear)\s+[@A-Za-z][^,\u2014-]{0,30}[,\u2014-]\s*/, '');
+
+  let q = `${lead}${rest}`.replace(/\s+/g, ' ').trim();
+
+  /**
+   * Nothing below may cut into the phrase, so every cut has to land past the
+   * lead. The 12 keeps a two-word quote from collapsing to nothing.
+   */
+  const floor = Math.max(lead.length, 12);
+
+  const greeting = q.search(GREETING);
+  if (greeting > floor) q = q.slice(0, greeting);
+
+  const signoff = q.search(SIGN_OFF);
+  if (signoff > floor) q = q.slice(0, signoff);
 
   // Prefer ending on a sentence, but only if enough of it survives to read.
   const stop = q.lastIndexOf('. ');
-  if (stop > 40) q = q.slice(0, stop + 1);
+  if (stop > Math.max(floor + 20, 40)) q = q.slice(0, stop + 1);
 
+  q = q.trim();
   if (q.length > max) {
     const cut = q.lastIndexOf(' ', max);
     q = q.slice(0, cut > 40 ? cut : max).trim() + '\u2026';
+  } else {
+    // The SQL window is a fixed 150 characters and no longer strips the word it
+    // sliced, so a trailing fragment has to go here.
+    q = q.replace(/\s+\S*$/, (m) => (/[.!?,;:]$/.test(q) ? m : ''));
   }
   return q.trim();
 }
@@ -1809,18 +1869,16 @@ export class CapitalEventsService {
              -- declaration outranks a term sheet, which outranks a data room,
              -- which outranks an artifact word.
              --
-             -- And a fixed 50-character lookback opened StepSecurity's quote
-             -- with "an escalation on this thread", the tail of the PREVIOUS
-             -- sentence. The window now starts after the last sentence break
-             -- before the match.
-             regexp_replace(
-               regexp_replace(
-                 btrim(substring(
-                 f.clean_body
-                 FROM GREATEST(hit.pos - 45, 1)
-                 FOR 150))
-               , '^\\S*\\s+', '', '')
-             , '\\s+\\S*$', '', '') AS quote,
+             -- And a fixed 45-character lookback opened DeepSource's quote with
+             -- "electronically.", the tail of the PREVIOUS sentence. The window
+             -- is still fixed, because SQL is the wrong place to reason about
+             -- sentence boundaries; what changed is that we now also return
+             -- WHERE the phrase sits inside it, so tidyQuote can snap the
+             -- start forward to a clause end without ever moving past the
+             -- evidence. Stripping the half-word moved there too.
+             substring(f.clean_body FROM GREATEST(hit.pos - 45, 1) FOR 150) AS quote,
+             -- The phrase's offset within that window, 0-based for JS.
+             (hit.pos - GREATEST(hit.pos - 45, 1))::int AS quote_offset,
              extract(day FROM (now() - f.received_at))::int AS days_ago,
              f.messages,
              (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
@@ -1881,7 +1939,7 @@ export class CapitalEventsService {
       subject: String(r.subject ?? ''),
       // Fall back to the subject only when extraction found nothing, which
       // happens when the phrase lives in an attachment name or a header.
-      quote: tidyQuote(String(r.quote ?? '')) || String(r.subject ?? ''),
+      quote: tidyQuote(String(r.quote ?? ''), Number(r.quote_offset ?? 0)) || String(r.subject ?? ''),
       daysAgo: Number(r.days_ago ?? 0),
       messages: Number(r.messages ?? 1),
       owner: (r.owner as string) ?? null,
