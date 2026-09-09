@@ -40,3 +40,35 @@ describe('tidyQuote', () => {
     expect(tidyQuote('   ')).toBe('');
   });
 });
+
+/**
+ * The extraction picks WHICH phrase by priority, not by position in the text.
+ * Structural, on the SQL, because the alternative is a live database.
+ */
+describe('quote extraction ranks phrases by strength', () => {
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, 'account-context.ts'), 'utf8',
+  ) as string;
+  const svc = src.slice(src.indexOf('export class CapitalEventsService'));
+
+  it('uses COALESCE, not LEAST', () => {
+    // LEAST took the earliest phrase in the body, so SkyCentrics quoted
+    // "2910 Convertible Notes" while its subject said "prepare for a financing".
+    const window = svc.slice(svc.indexOf('SELECT COALESCE('), svc.indexOf('AS pos'));
+    expect(window).toContain('COALESCE(');
+    expect(window).not.toContain('LEAST(');
+  });
+
+  it('ranks a declaration above a data-room mention, and that above an artifact', () => {
+    const window = svc.slice(svc.indexOf('SELECT COALESCE('), svc.indexOf('AS pos'));
+    const at = (p: string) => window.indexOf(p);
+    expect(at("'prepare for a financing'")).toBeLessThan(at("'data room'"));
+    expect(at("'term sheet'")).toBeLessThan(at("'data room'"));
+    expect(at("'data room'")).toBeLessThan(at("'convertible note'"));
+  });
+
+  it('searches the subject as well as the body', () => {
+    // SkyCentrics' evidence is in the subject and its body is bookkeeping.
+    expect(svc).toContain("coalesce(e.subject, '') || '. ' || coalesce(e.body, '')");
+  });
+});

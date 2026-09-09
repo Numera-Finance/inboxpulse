@@ -1759,9 +1759,18 @@ export class CapitalEventsService {
                -- emails.body is raw HTML with the full quoted chain, so strip
                -- tags and entities before looking for the phrase, or the window
                -- lands in the middle of a style attribute.
+               -- Subject FIRST, then body.
+               --
+               -- SkyCentrics' evidence lives in the subject ("cleaning up cap
+               -- table to prepare for a financing") while its body only
+               -- discusses convertible-note bookkeeping. Searching the body
+               -- alone quoted the bookkeeping and buried the event. Prefixing
+               -- the subject lets a strong phrase there win on priority.
                regexp_replace(
                  regexp_replace(
-                   regexp_replace(coalesce(e.body, ''), '<[^>]*>', ' ', 'g'),
+                   regexp_replace(
+                     coalesce(e.subject, '') || '. ' || coalesce(e.body, ''),
+                   '<[^>]*>', ' ', 'g'),
                  '&[a-z]+;|&#[0-9]+;', ' ', 'g'),
                '\\s+', ' ', 'g') AS clean_body,
                row_number() OVER (PARTITION BY cd.customer_id ORDER BY e.received_at DESC) AS rn,
@@ -1781,26 +1790,28 @@ export class CapitalEventsService {
              coalesce(f.subject, '(no subject)') AS subject,
              -- A window around the FIRST phrase that matched, so the row quotes
              -- the reason rather than the subject line.
-             -- Trim the partial words the window inevitably cuts: a quote that
-             -- opens "t have a merchant valuation report" reads as a bug.
+             -- WHICH phrase, then WHERE the sentence starts.
+             --
+             -- Two bugs this replaces, both visible in the rendered panel.
+             -- LEAST() took the EARLIEST phrase in the body, so SkyCentrics
+             -- quoted "2511 to a holder-specific subaccount under 2910
+             -- Convertible Notes" while its subject said "cleaning up cap table
+             -- to prepare for a financing". Priority, not position: a
+             -- declaration outranks a term sheet, which outranks a data room,
+             -- which outranks an artifact word.
+             --
+             -- And a fixed 50-character lookback opened StepSecurity's quote
+             -- with "an escalation on this thread", the tail of the PREVIOUS
+             -- sentence. The window now starts after the last sentence break
+             -- before the match.
              regexp_replace(
                regexp_replace(
                  btrim(substring(
-                   f.clean_body
-                   FROM GREATEST(1, COALESCE(NULLIF(LEAST(
-                          NULLIF(position('data room'  in lower(f.clean_body)), 0),
-                          NULLIF(position('term sheet' in lower(f.clean_body)), 0),
-                          NULLIF(position('fundrais'   in lower(f.clean_body)), 0),
-                          NULLIF(position('we are raising' in lower(f.clean_body)), 0),
-                          NULLIF(position('letter of intent' in lower(f.clean_body)), 0),
-                          NULLIF(position('for a financing' in lower(f.clean_body)), 0),
-                          NULLIF(position('our series'  in lower(f.clean_body)), 0),
-                          NULLIF(position('seed round'  in lower(f.clean_body)), 0),
-                          NULLIF(position('convertible note' in lower(f.clean_body)), 0)
-                        ), 0), 1) - 50)
-                   FOR 140)),
-               '^\\S*\\s+', '', ''),
-             '\\s+\\S*$', '', '') AS quote,
+                 f.clean_body
+                 FROM GREATEST(hit.pos - 45, 1)
+                 FOR 150))
+               , '^\\S*\\s+', '', '')
+             , '\\s+\\S*$', '', '') AS quote,
              extract(day FROM (now() - f.received_at))::int AS days_ago,
              f.messages,
              (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
@@ -1825,6 +1836,27 @@ export class CapitalEventsService {
                         END
                LIMIT 1) AS owner
       FROM flagged f
+      -- The strongest phrase present, in priority order. COALESCE takes the
+      -- first non-null, so a declaration wins over a mention even when the
+      -- mention appears earlier in the body.
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(
+          NULLIF(position('prepare for a financing' in lower(f.clean_body)), 0),
+          NULLIF(position('for a financing'         in lower(f.clean_body)), 0),
+          NULLIF(position('we are raising'          in lower(f.clean_body)), 0),
+          NULLIF(position('our next fundraise'      in lower(f.clean_body)), 0),
+          NULLIF(position('our fundraise'           in lower(f.clean_body)), 0),
+          NULLIF(position('restarting our series'   in lower(f.clean_body)), 0),
+          NULLIF(position('our series a'            in lower(f.clean_body)), 0),
+          NULLIF(position('our series b'            in lower(f.clean_body)), 0),
+          NULLIF(position('seed round'              in lower(f.clean_body)), 0),
+          NULLIF(position('term sheet'              in lower(f.clean_body)), 0),
+          NULLIF(position('letter of intent'        in lower(f.clean_body)), 0),
+          NULLIF(position('data room'               in lower(f.clean_body)), 0),
+          NULLIF(position('fundrais'                in lower(f.clean_body)), 0),
+          NULLIF(position('convertible note'        in lower(f.clean_body)), 0),
+          1) AS pos
+      ) hit
       JOIN customers c ON c.id = f.customer_id
       WHERE f.rn = 1
         ${clientFilter}
