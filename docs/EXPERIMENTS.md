@@ -557,3 +557,59 @@ context that no phrase list reaches. Extending coverage would need the embedding
 to find paraphrases the regex cannot enumerate — but an embedding can only say
 *this resembles that*, and cannot name the device, which is the part that
 teaches. **Untested, and the weaker half of the idea.**
+
+## Fundraising triggers, measured against the corpus (2026-09-09)
+
+Requested by Vignesh (Director, Fin Ops) after a management ask: tag mail that
+signals a client is raising, and notify the sales rep. He supplied sixteen
+keyword categories from prior research.
+
+Measured over **80,089 customer threads**, counted as distinct threads because
+`emails.body` carries the full quoted chain and email-level counts double-count
+a term through every reply.
+
+| term | threads | share | reviewed | genuine capital event |
+|---|---|---|---|---|
+| data room | 30 | 0.04% | all 30 | **29 (97%)** |
+| term sheet | 20 | 0.02% | all 20 | 17 (85%) |
+| due diligence | 141 | 0.18% | 14 sampled | ~7 (50%) |
+| cap table | 627 | 0.78% | 20 sampled | ~1 (5%) |
+
+**Every term clears the 5% label budget.** The prediction that half the list
+would fire constantly, because generic finance vocabulary is an outsourced CFO
+firm's day job, was wrong: `tax return` is the most common at 3.08% and still
+passes. The problem is precision, not volume.
+
+**`data room` is the strongest signal and was ranked fourth in the request.**
+Its 29 hits are Series A/B preparation, acquisitions, and one SBA loan. The one
+false positive is a client discussing literal server farms.
+
+**`cap table` is noise at 627 threads.** Hits are tax filings attaching a cap
+table, ESOP exercise administration, automated Carta notifications, and twice
+Numera's own LMS advertising a "Cap Table Reconciliation Training Session".
+
+**`due diligence` is half self-inflicted.** The largest false-positive class is
+Numera's own retainer and engagement letters, which list "audit / due diligence
+support" as a service line. Our boilerplate would trigger our own alert.
+
+### The signal is a CAPITAL EVENT, not fundraising
+
+Of the 20 term-sheet threads: 8 equity raises, 5 M&A, 3 debt (a credit-line
+restructure, a $2.285m SBA loan, SVB venture debt). A fundraising-only framing
+discards the M&A, which is where the diligence-grade bookkeeping demand is
+largest and where the sales opening is clearest.
+
+### Unrequested signal: the vendor domain
+
+Carta, DFIN Venue and Suralink appear as senders. Those are cap-table and
+virtual-data-room products. An invoice from DFIN Venue means the client has
+bought a data room, which needs no keyword to interpret.
+
+### What cannot be claimed yet
+
+There is no labelled set of clients who actually raised, so no precision figure
+against outcomes exists. The percentages above are hand-review of whether the
+mail is about a capital event, not whether the client went on to close one.
+Asking "of clients who raised, how many mentioned a data room" would measure
+backwards, which at this base rate makes almost anything look strong.
+

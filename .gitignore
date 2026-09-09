@@ -102,3 +102,6 @@ apps/api/scripts/*-testset.jsonl
 # Python bytecode from the labelling scripts in apps/api/scripts
 __pycache__/
 *.pyc
+
+# Working output (exports, conversions). Never committed: may hold client names.
+.scratch/
