@@ -120,6 +120,38 @@ been discarded.
 Same shape as the consent gate above: the check was present, was called, and
 governed nothing.
 
+## The Second Copy Is The One That Is Wrong
+
+Three defects in one evening, all the same shape: a decision implemented twice,
+and the copy nobody was looking at had drifted.
+
+- **The signal filter exists three times.** `options?.signal`, `filters?.signal`,
+  and `getSignalFilterCondition`. The page used the third, which had never heard
+  of `capital-event` and returned every analyzed email for the client.
+- **Phrase matching exists twice.** `capital-event.ts` has used word boundaries
+  from the start, and documents why: `409a` inside a hex GUID, `warrant` inside
+  `warranty`, two published numbers retracted. The panel's SQL re-implemented the
+  same matching with `position()`, a substring match, and ranked an auditor's
+  document request as a declaration because "your series b" contains
+  `our series b`.
+- **Trimming an email before a model call exists twice**, `extractor.ts` and
+  `gmail-api.ts`, which is already recorded above under Two Email-Reduction
+  Paths.
+
+So, before fixing a matching or filtering bug:
+
+- **Count the implementations first.** `grep` for the decision, not the symptom.
+  Fixing one copy and shipping reads as a fix and is not one.
+- **Derive the test from the source on both sides.** `signal-filter-parity.test.ts`
+  reads accepted values out of the Zod enum and handled values out of the `case`
+  labels, so neither side is typed by hand.
+- **The copy without tests is the stale one.** The detector had 25 corpus-derived
+  tests; its SQL twin had none, and that is exactly where the substring bug
+  survived.
+- **A rule proven once must be asserted, not remembered.** Word boundaries were
+  learned, documented, retracted over publicly, and then re-implemented wrongly
+  four weeks later in a different language.
+
 ## Exit Code Is Not HTTP Status
 
 `curl` exits 0 whenever it completes a round trip, whatever the status. So
