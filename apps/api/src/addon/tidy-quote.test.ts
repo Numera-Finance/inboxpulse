@@ -134,7 +134,7 @@ describe('quote extraction ranks phrases by strength', () => {
     // Position-first quoted "2910 Convertible Notes" from a client whose
     // subject line read "cleaning up cap table to prepare for a financing".
     expect(table).toContain('FROM (VALUES');
-    expect(svc).toContain('ORDER BY p.tier, p.seq');
+    expect(code).toMatch(/ORDER BY[\s\S]{0,220}p\.tier, p\.seq/);
     expect(code).not.toContain('LEAST(');
   });
 
@@ -153,8 +153,8 @@ describe('quote extraction ranks phrases by strength', () => {
   });
 
   it('orders rows by evidence strength before recency', () => {
-    const order = svc.slice(svc.indexOf('ORDER BY coalesce(hit.tier'));
-    const tierAt = order.indexOf('hit.tier');
+    const order = code.slice(code.lastIndexOf('ORDER BY f.tier'));
+    const tierAt = order.indexOf('f.tier');
     const dateAt = order.indexOf('received_at');
     expect(tierAt).toBeGreaterThan(-1);
     expect(dateAt).toBeGreaterThan(tierAt);
@@ -191,11 +191,11 @@ describe('quote extraction ranks phrases by strength', () => {
     // with an identical quote, taking two of the five slots.
     expect(code).toContain('candidate AS (');
     expect(code).toContain('PARTITION BY e.id');
-    expect(code).toContain('WHERE dup_rn = 1');
+    expect(code).toMatch(/WHERE f?\.?dup_rn = 1/);
     // The message count must be computed on the deduped set, not the join.
     const flagged = code.slice(code.indexOf('flagged AS ('));
     const countAt = flagged.indexOf('count(*) OVER (PARTITION BY customer_id)');
-    const fromAt = flagged.indexOf('FROM candidate');
+    const fromAt = flagged.indexOf('FROM scored');
     expect(countAt).toBeGreaterThan(-1);
     expect(fromAt).toBeGreaterThan(countAt);
   });
@@ -208,6 +208,30 @@ describe('quote extraction ranks phrases by strength', () => {
     const cte = code.slice(code.indexOf('candidate AS ('), code.indexOf('flagged AS ('));
     expect(cte).not.toMatch(/AND\s+NOT\s+dup\.is_auto_created/);
     expect(cte).not.toMatch(/WHERE[^)]*is_auto_created\s*=\s*false/);
+  });
+
+  it('scores every email, not just the newest one per client', () => {
+    // Ranking on the newest email while ordering by evidence strength is
+    // incoherent: a client whose latest mail only quotes somebody is demoted
+    // while the sentence that earned the row sits weeks back. Topflightflooring
+    // vanished from the panel for exactly this reason.
+    expect(code).toContain('scored AS (');
+    const flagged = code.slice(code.indexOf('flagged AS ('));
+    expect(flagged).toContain('FROM scored');
+    expect(flagged).toContain('PARTITION BY customer_id ORDER BY tier, received_at DESC');
+  });
+
+  it('demotes a phrase found only in the quoted chain, and does not drop it', () => {
+    // emails.body carries the whole reply chain, so a phrase somebody else
+    // wrote counts for whoever quoted it. 26 of 76 analysed capital-event
+    // emails match ONLY in quoted text. Dropping them also deletes genuine
+    // evidence from anyone who bottom-posts, so the penalty is on rank.
+    expect(code).toContain('own_body');
+    expect(code).toMatch(/p\.tier \+ CASE WHEN lower\(f\.own_body\)/);
+    expect(code).toContain('THEN 0 ELSE 4 END');
+    // The row must survive: no WHERE clause may require an own-text match.
+    const cand = code.slice(code.indexOf('candidate AS ('), code.indexOf('scored AS ('));
+    expect(cand).not.toContain('own_body ~');
   });
 
   it('searches the subject as well as the body', () => {

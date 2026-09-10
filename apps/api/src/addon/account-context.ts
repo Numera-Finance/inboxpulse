@@ -1860,6 +1860,28 @@ export class CapitalEventsService {
                    '<[^>]*>', ' ', 'g'),
                  '&[a-z]+;|&#[0-9]+;', ' ', 'g'),
                '\\s+', ' ', 'g') AS clean_body,
+               -- The same text with the quoted reply chain removed.
+               --
+               -- emails.body carries the full chain, so a phrase somebody else
+               -- wrote counts for whoever quoted it back. Measured over the 76
+               -- analysed capital-event emails in the window, 26 match ONLY in
+               -- quoted text: a third of the population is being credited with
+               -- someone else's sentence, and it put one client's CPA firm in
+               -- the panel beside the client, with the same quote.
+               --
+               -- This does NOT drop those rows. A naive strip also deletes
+               -- genuine evidence from anyone who bottom-posts under the
+               -- marker, which is 1 of the 5 clients currently rendered. It
+               -- feeds the ranking instead: see the tier penalty below.
+               regexp_replace(
+                 regexp_replace(
+                   regexp_replace(
+                     regexp_replace(
+                       coalesce(e.subject, '') || '. ' || coalesce(e.body, ''),
+                     '<[^>]*>', ' ', 'g'),
+                   '&[a-z]+;|&#[0-9]+;', ' ', 'g'),
+                 '\\s+', ' ', 'g'),
+               '(On .{0,120}?wrote:|-{2,} ?Original Message|From: .{0,80}?Sent:|_{5,}).*$', '', 'g') AS own_body,
                row_number() OVER (
                  PARTITION BY e.id
                  ORDER BY dup.is_auto_created, dup.name
@@ -1884,14 +1906,70 @@ export class CapitalEventsService {
           AND e.analysis_status = 3
           AND split_part(lower(e.from_email), '@', 2) NOT IN (SELECT dom FROM vendor)
       ),
+      -- Score EVERY email, then let each client be represented by its
+      -- strongest one.
+      --
+      -- Picking the newest email and ranking on that is incoherent: a client
+      -- whose latest mail merely quotes somebody gets demoted while the
+      -- sentence that earned the row sits in a message from three weeks ago.
+      -- Topflightflooring, who wrote "We are raising new equity capital at the
+      -- moment", disappeared from the panel for exactly this reason.
+      scored AS (
+        SELECT f.customer_id, f.subject, f.received_at, f.clean_body,
+               coalesce(hit.tier, 9) AS tier,
+               coalesce(hit.pos, 1) AS pos
+        FROM candidate f
+      LEFT JOIN LATERAL (
+        SELECT p.tier + CASE WHEN lower(f.own_body) ~
+                 ('(^|[^a-z0-9])' || p.phrase || '([^a-z0-9]|$)') THEN 0 ELSE 4 END AS tier,
+               regexp_instr(lower(f.clean_body),
+                 '(^|[^a-z0-9])(' || p.phrase || ')([^a-z0-9]|$)', 1, 1, 0, '', 2) AS pos
+        FROM (VALUES
+          -- tier 1: a declaration. Somebody says outright what is happening.
+          (1,  1, 'prepare for a financing'),
+          (1,  2, 'for a financing'),
+          (1,  3, 'we are raising'),
+          (1,  4, 'our next fundraise'),
+          (1,  5, 'our fundraise'),
+          (1,  6, 'restarting our series'),
+          (1,  7, 'our series a'),
+          (1,  8, 'our series b'),
+          (1,  9, 'seed round'),
+          -- tier 2: a term sheet is in play.
+          (2, 10, 'term sheet'),
+          (2, 11, 'letter of intent'),
+          -- tier 3: a data room exists.
+          (3, 12, 'data room'),
+          -- tier 4: present in the text but weakest evidence of an event.
+          -- Spelled out rather than the stem 'fundrais', which a right-hand
+          -- word boundary rejects.
+          (4, 13, 'fundraise'),
+          (4, 14, 'fundraising'),
+          (4, 15, 'convertible note')
+        ) AS p(tier, seq, phrase)
+        WHERE lower(f.clean_body) ~ ('(^|[^a-z0-9])' || p.phrase || '([^a-z0-9]|$)')
+        ORDER BY
+          -- A phrase the sender actually wrote outranks the same phrase quoted
+          -- back from somebody else's mail. Four bands, so a quoted declaration
+          -- still sorts below a written data-room mention: the question the row
+          -- answers is "did this client say money is moving", and a quote is
+          -- evidence about the person they were replying to.
+          CASE WHEN lower(f.own_body) ~ ('(^|[^a-z0-9])' || p.phrase || '([^a-z0-9]|$)')
+               THEN 0 ELSE 4 END,
+          p.tier, p.seq
+        LIMIT 1
+      ) hit ON true
+        WHERE f.dup_rn = 1
+      ),
       -- Counted AFTER the dedupe, so "3 messages" means three emails this
       -- client owns, not three the join produced.
       flagged AS (
-        SELECT customer_id, subject, received_at, clean_body,
-               row_number() OVER (PARTITION BY customer_id ORDER BY received_at DESC) AS rn,
+        SELECT customer_id, subject, received_at, clean_body, tier, pos,
+               row_number() OVER (
+                 PARTITION BY customer_id ORDER BY tier, received_at DESC
+               ) AS rn,
                count(*) OVER (PARTITION BY customer_id)::int AS messages
-        FROM candidate
-        WHERE dup_rn = 1
+        FROM scored
       )
       SELECT f.customer_id::text AS customer_id,
              c.name AS customer,
@@ -1915,9 +1993,9 @@ export class CapitalEventsService {
              -- WHERE the phrase sits inside it, so tidyQuote can snap the
              -- start forward to a clause end without ever moving past the
              -- evidence. Stripping the half-word moved there too.
-             substring(f.clean_body FROM GREATEST(coalesce(hit.pos, 1) - 45, 1) FOR 150) AS quote,
+             substring(f.clean_body FROM GREATEST(f.pos - 45, 1) FOR 150) AS quote,
              -- The phrase's offset within that window, 0-based for JS.
-             (coalesce(hit.pos, 1) - GREATEST(coalesce(hit.pos, 1) - 45, 1))::int AS quote_offset,
+             (f.pos - GREATEST(f.pos - 45, 1))::int AS quote_offset,
              extract(day FROM (now() - f.received_at))::int AS days_ago,
              f.messages,
              (SELECT COALESCE(u.first_name || ' ' || u.last_name, al.email)
@@ -1964,37 +2042,6 @@ export class CapitalEventsService {
       -- boundaries (capital-event.ts); this path is a second implementation of
       -- the same matching and did not. regexp_instr returns the offset of the
       -- phrase itself, subexpression 2, or 0 when it does not match.
-      LEFT JOIN LATERAL (
-        SELECT p.tier,
-               regexp_instr(lower(f.clean_body),
-                 '(^|[^a-z0-9])(' || p.phrase || ')([^a-z0-9]|$)', 1, 1, 0, '', 2) AS pos
-        FROM (VALUES
-          -- tier 1: a declaration. Somebody says outright what is happening.
-          (1,  1, 'prepare for a financing'),
-          (1,  2, 'for a financing'),
-          (1,  3, 'we are raising'),
-          (1,  4, 'our next fundraise'),
-          (1,  5, 'our fundraise'),
-          (1,  6, 'restarting our series'),
-          (1,  7, 'our series a'),
-          (1,  8, 'our series b'),
-          (1,  9, 'seed round'),
-          -- tier 2: a term sheet is in play.
-          (2, 10, 'term sheet'),
-          (2, 11, 'letter of intent'),
-          -- tier 3: a data room exists.
-          (3, 12, 'data room'),
-          -- tier 4: present in the text but weakest evidence of an event.
-          -- Spelled out rather than the stem 'fundrais', which a right-hand
-          -- word boundary rejects.
-          (4, 13, 'fundraise'),
-          (4, 14, 'fundraising'),
-          (4, 15, 'convertible note')
-        ) AS p(tier, seq, phrase)
-        WHERE lower(f.clean_body) ~ ('(^|[^a-z0-9])' || p.phrase || '([^a-z0-9]|$)')
-        ORDER BY p.tier, p.seq
-        LIMIT 1
-      ) hit ON true
       JOIN customers c ON c.id = f.customer_id
       WHERE f.rn = 1
         ${clientFilter}
@@ -2002,7 +2049,7 @@ export class CapitalEventsService {
       -- so recency still breaks ties, but it no longer outranks the difference
       -- between "we are raising" and a data room named in passing. Rows with no
       -- phrase in the window sort last rather than disappearing.
-      ORDER BY coalesce(hit.tier, 9), f.received_at DESC
+      ORDER BY f.tier, f.received_at DESC
       LIMIT ${limit}
     `);
     return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
