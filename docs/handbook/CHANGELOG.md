@@ -36,6 +36,17 @@ by phrase priority and bounded by the phrase offset. ADR-033.
 tiebreak rather than the sole key. A declaration now outranks a data room named
 in passing. ADR-035.
 
+**Capital events credits a phrase to whoever wrote it.** A match found only in
+the quoted reply chain is demoted four tiers rather than dropped, and every
+email is scored so each client is represented by its strongest rather than its
+newest. ADR-036.
+
+**Capital-event phrase matching uses word boundaries in SQL**, matching the
+detector. `position()` had matched `our series b` inside "your series b".
+
+**One capital-event email belongs to one client.** `customer_domains` is not
+unique on domain, so a client and their CPA firm both rendered the same row.
+
 **`crm-api` given burst capacity**, `minScale=3`.
 
 ## 2026-08

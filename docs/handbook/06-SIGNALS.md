@@ -243,6 +243,26 @@ the tiebreak. Ranking by recency alone let a passing data-room mention sit above
 an outright declaration because it happened to be newer, and the declaration is
 the row a rep should open.
 
+**Whose sentence it is.** `emails.body` carries the whole quoted reply chain,
+so a phrase somebody else wrote is present in every reply that quotes it. Over
+the 76 analysed capital-event emails in a 90-day window, 48 match in the
+sender's own text and **26 match only in quoted text**. Left alone, a client's
+outside CPA firm appears in the panel beside the client, citing the client's
+sentence.
+
+The query therefore carries a second copy of the text with the chain removed,
+and a phrase found only in the quoted part is **demoted four tiers**, far enough
+that a quoted declaration ranks below a written data-room mention. It is not
+dropped: a naive strip also deletes genuine evidence from anyone who bottom-posts
+under the quote marker, which was one of the five clients rendered at the time.
+The question a row answers is whether *this* client said money is moving, and a
+quote is evidence about the person they were replying to.
+
+**Which email.** Every email is scored and each client is represented by its
+strongest, with recency as the tiebreak. Scoring only the newest email while
+ordering by evidence strength is incoherent: a client whose latest mail merely
+quotes gets demoted although the sentence that earned the row sits weeks back.
+
 **Where the sentence starts and ends:** the query returns a fixed 150-character
 window opening 45 characters before the match, **plus the phrase's offset inside
 it**. `tidyQuote` uses that offset to snap the start forward to the last clause

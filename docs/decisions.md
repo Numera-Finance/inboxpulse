@@ -2250,3 +2250,26 @@ such rows sort last. `tidy-quote.test.ts` reads the tier table out of the source
 and asserts the ordering places tier before `received_at`, so a revert to
 recency-only ordering fails the suite.
 
+### ADR-036: A capital event belongs to whoever wrote the sentence (2026-09-09)
+**Status:** Accepted
+**Context:** The panel showed a client and their outside CPA firm side by side
+with an identical quote. `emails.body` carries the whole quoted reply chain, so
+the firm quoting the client matched the client's sentence. Measured over the 76
+analysed capital-event emails in a 90-day window: 48 match in the sender's own
+text, 26 match only in quoted text.
+**Decision:** The query carries a second copy of the text with the chain removed
+and demotes a quoted-only match by four tiers, enough that a quoted declaration
+ranks below a written data-room mention. Rows are not dropped. Every email is
+scored and each client is represented by its strongest, with recency as the
+tiebreak.
+**Consequences:** Stripping and dropping was measured and rejected: it also
+deletes genuine evidence from anyone who bottom-posts under the quote marker,
+one of the five clients rendered at the time. Scoring the newest email while
+ordering by strength was incoherent and had already hidden a client who wrote
+"We are raising new equity capital at the moment". Quote extraction still reads
+the full text, so the row can quote the sentence in context.
+**Open:** a possessive mention of a round is treated as a live event, so
+"following our Series B fundraise" ranks as a declaration although the round has
+closed. Separating forward-looking from retrospective phrasing needs a corpus
+measurement before the declaration tier changes.
+
