@@ -54,7 +54,7 @@ export function IntegrationsSettings() {
           ? {
               label: "Reconnect",
               onClick: () => {
-                window.location.href = gmailAuthorizeUrl({ tenantId, userId: user?.id })
+                window.location.href = gmailAuthorizeUrl({ tenantId })
               },
             }
           : undefined,
@@ -65,7 +65,7 @@ export function IntegrationsSettings() {
 
     // Clear URL params
     navigate('/settings?tab=integrations', { replace: true })
-  }, [searchParams, navigate, queryClient, tenantId, user?.id])
+  }, [searchParams, navigate, queryClient, tenantId])
 
   const handleConnect = () => {
     // This will be handled by the card component redirecting to OAuth
@@ -100,7 +100,6 @@ export function IntegrationsSettings() {
           isLoading={isGmailLoading}
           isDisconnecting={disconnectMutation.isPending}
           tenantId={tenantId}
-          userId={user?.id}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
         />

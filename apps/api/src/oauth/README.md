@@ -15,8 +15,12 @@ caller could aim a victim's consent at a tenant of their choosing.
 
 **Query Parameters:**
 
-- `tenantId` (optional): asserted against the session's tenant; 403 on mismatch
-- `userId` (optional): recorded as `createdBy` on the integration
+- `tenantId` (optional): asserted against the session's tenant; refused on mismatch
+
+Identity is never taken from the URL. `createdBy` is resolved from the session to a
+`users.id` — a different id space from the better-auth id the browser holds, and a
+`uuid` column, so forwarding the client's id both misattributed the connection and
+made Postgres reject the write.
 
 **Example:**
 
@@ -161,7 +165,7 @@ discarded the outcome.
 | `expired` | Sat on the consent screen longer than the TTL | press Connect again |
 | `invalid` | State failed signature checks, or `code`/`state` was missing | start again from Settings; if it repeats, the signing secret differs between instances |
 | `google-error` | Google returned an error other than a decline | try again |
-| `unauthenticated` | No session on `/authorize` | sign in, then connect |
+| `tenant-mismatch` | `tenantId` disagreed with the session's tenant | retry from Settings; a stale client, or a crafted link |
 | `no-tenant` | Session has no tenant | contact support |
 | `setup-failed` | Server is missing OAuth configuration | contact support; the detail is in the logs, never in the response |
 | `exchange-failed` | Google accepted the user but the token exchange or setup failed | read `error`; commonly a missing refresh token needing [access revoked](https://myaccount.google.com/permissions) first |
@@ -169,6 +173,10 @@ discarded the outcome.
 `expired` and `invalid` are reported separately on purpose: only the first is fixed
 by pressing the button again, and the single merged message they replaced could not
 tell a user which situation they were in.
+
+A caller with no session is sent to `/login?next=/settings?tab=integrations` rather
+than to a result page: `/settings` is behind `ProtectedRoute`, so a "please sign in"
+toast there would only ever be read by someone who had just signed in.
 
 **Nothing reflects caller input into markup or into a response body.** The callback
 used to interpolate its `error` query parameter into an HTML page served from the

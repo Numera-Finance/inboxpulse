@@ -2306,7 +2306,14 @@ secret as a query parameter is dropped (it was unused and logged the secret).
   victim authorizes their own mailbox on Google's real consent screen and the
   callback files the refresh token, and the initial 30-day sync, under the
   attacker's tenant. The tenant now comes from the caller's session; a `tenantId`
-  parameter is honoured only as an assertion to check, 403 on mismatch.
+  parameter is honoured only as an assertion to check, refused on mismatch.
+- **Identity comes from the session too, and is resolved across id spaces.**
+  `createdBy` is a `uuid` joined to `users.id`, while the id a browser holds is
+  `better_auth_user.id`, which is TEXT. Forwarding the client's id both let a
+  signed-in user name a colleague as whoever connected the mailbox and made
+  Postgres reject the write — failing the connection after the user had already
+  authorized at Google. `/authorize` resolves `users.id` from the session by
+  email, as tenantResolutionMiddleware does, and the `userId` parameter is gone.
 - **Nothing reflects caller input into markup.** The callback interpolated its
   `error` query parameter into an HTML page on the crm-api origin, which is also
   `BETTER_AUTH_URL`, so a crafted link ran script against the victim's session
