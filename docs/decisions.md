@@ -2273,3 +2273,37 @@ the full text, so the row can quote the sentence in context.
 closed. Separating forward-looking from retrospective phrasing needs a corpus
 measurement before the declaration tier changes.
 
+
+### ADR-037: OAuth state is a signed token, not an in-process Map (2026-09-14)
+**Status:** Accepted
+**Context:** `/oauth/gmail/authorize` stored the CSRF state in a module-level
+`Map` and `/oauth/gmail/callback` read it back. Those are two separate browser
+requests with Google's consent screen between them, so Cloud Run routes them
+independently, and crm-api runs `--min-instances 3` (deploy.yml, load-bearing for the
+morning burst). The callback landed on the instance holding the state
+roughly one time in three; the rest returned
+`Invalid or expired authorization request` — after Google had already authorized
+the user and issued a valid code. Any deploy mid-consent did the same. The comment
+above the Map said "in production, consider using Redis or encrypted session
+tokens", so the limitation was known and the fleet grew past it.
+**Decision:** `state` carries its own contents and its own integrity proof:
+`base64url(payload).base64url(HMAC-SHA256)`, signed with `ENCRYPTION_SECRET`
+(falling back to `BETTER_AUTH_SECRET`), 10-minute TTL, 60s skew tolerance
+(`apps/api/src/oauth/state.ts`). No instance retains anything about an in-flight
+authorization. Verification returns a three-way result — valid / expired /
+invalid — instead of one merged failure. Client credentials are NOT in the token;
+both endpoints call `resolveOAuthCredentials(tenantId)`, so passing a client
+secret as a query parameter is dropped (it was unused and logged the secret).
+**Consequences:**
+- The signing key must be identical fleet-wide and is therefore never defaulted.
+  A per-process random fallback would pass every single-process test and fail
+  across instances exactly as the Map did, so its absence throws.
+- Replay inside the TTL is now possible where a single-use Map entry prevented
+  it. The backstop is Google's authorization code, which is itself single-use.
+  A durable single-use store is the upgrade path if that stops being enough.
+- `state.test.ts` reads `routes.ts` and fails if a `Map`, `Set` or sweeper timer
+  reappears in the module — the rule is asserted, not remembered.
+- The callback now redirects to `/settings?tab=integrations`. It had been
+  redirecting to `/integrations`, a `<Navigate ... replace>` that drops the query
+  string, so the existing success and error toasts had never once fired: every
+  outcome, including success, reached the user as a silent page load.

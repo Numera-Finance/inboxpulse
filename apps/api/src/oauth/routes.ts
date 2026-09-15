@@ -6,34 +6,77 @@ import { IntegrationService } from '../integrations/service';
 import { logger } from '../utils/logger';
 import { internalFetch } from '../utils/internal-fetch';
 import { getEnv } from '../env';
+import { signOAuthState, verifyOAuthState, OAUTH_STATE_TTL_SECONDS } from './state';
 
 const app = new Hono();
 
-/**
- * OAuth state management (in-memory)
- * In production, consider using Redis or encrypted session tokens
- */
-const oauthStates = new Map<string, {
-  tenantId: string;
-  userId?: string;
-  createdAt: Date;
+interface OAuthCredentials {
   clientId: string;
   clientSecret: string;
-}>();
+  source: 'integration' | 'environment';
+}
 
-// Clean up old states every 10 minutes
-setInterval(() => {
-  const now = new Date();
-  for (const [state, data] of oauthStates.entries()) {
-    if (now.getTime() - data.createdAt.getTime() > 10 * 60 * 1000) {
-      oauthStates.delete(state);
-    }
+/**
+ * Resolve the OAuth client credentials for a tenant.
+ *
+ * `/authorize` and `/callback` MUST agree on these — Google validates the
+ * client_id/redirect_uri pair at both ends — and they no longer have a shared
+ * in-process store to pass them through, so they call this instead of each
+ * resolving credentials in its own way.
+ *
+ * The client secret used to be accepted as a query parameter and stashed in the
+ * state store for the callback to pick up. That is gone: a secret in a URL is a
+ * secret in the Cloud Run request log, and nothing calls it — the web app sends
+ * only tenantId and userId (apps/web/components/integrations/gmail-card.tsx).
+ * First-time setup uses GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET, which are
+ * required env vars on every crm-api instance.
+ */
+async function resolveOAuthCredentials(tenantId: string): Promise<OAuthCredentials> {
+  const integrationService = container.resolve(IntegrationService);
+  const credentials = await integrationService.getCredentials(tenantId, 'gmail');
+
+  if (credentials?.clientId && credentials?.clientSecret) {
+    return {
+      clientId: credentials.clientId,
+      clientSecret: credentials.clientSecret,
+      source: 'integration',
+    };
   }
-}, 10 * 60 * 1000);
+
+  const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = getEnv();
+
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    throw new Error(
+      'OAuth credentials not found. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, ' +
+      'or store them on the tenant integration.'
+    );
+  }
+
+  return {
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
+    source: 'environment',
+  };
+}
+
+/** Both endpoints must build the same redirect_uri or Google rejects the exchange. */
+function getRedirectUri(): string {
+  return `${getEnv().SERVICE_API_URL}/oauth/gmail/callback`;
+}
+
+/**
+ * Where the user lands when the flow ends. `/integrations` is a `<Navigate replace>`
+ * to the settings page that drops the query string, so link the real route directly
+ * or the outcome is silently discarded.
+ */
+function webResultUrl(params: Record<string, string>): string {
+  const query = new URLSearchParams({ tab: 'integrations', ...params });
+  return `${getEnv().WEB_URL}/settings?${query.toString()}`;
+}
 
 /**
  * Initiate OAuth flow
- * GET /oauth/gmail/authorize?tenantId=xxx
+ * GET /oauth/gmail/authorize?tenantId=xxx&userId=xxx
  *
  * This generates an authorization URL and redirects the user to Google's consent screen.
  * After authorization, Google will redirect back to /oauth/gmail/callback
@@ -41,68 +84,21 @@ setInterval(() => {
 app.get('/gmail/authorize', async (c) => {
   const tenantId = c.req.query('tenantId');
   const userId = c.req.query('userId');
-  const clientIdParam = c.req.query('clientId');
-  const clientSecretParam = c.req.query('clientSecret');
 
   if (!tenantId) {
     return c.json({ error: 'tenantId query parameter is required' }, 400);
   }
 
   try {
-    const integrationService = container.resolve(IntegrationService);
+    const { clientId, clientSecret, source } = await resolveOAuthCredentials(tenantId);
+    const redirectUri = getRedirectUri();
 
-    let clientId: string;
-    let clientSecret: string;
+    const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 
-    // Try to get credentials from existing integration first
-    const credentials = await integrationService.getCredentials(tenantId, 'gmail');
+    // Signed, self-contained CSRF token. Nothing about this request is retained
+    // in the process — see ./state.ts for why.
+    const state = signOAuthState({ tenantId, userId });
 
-    if (credentials?.clientId && credentials?.clientSecret) {
-      // Use existing credentials
-      clientId = credentials.clientId;
-      clientSecret = credentials.clientSecret;
-      logger.info({ tenantId }, 'Using existing OAuth credentials from integration');
-    } else if (clientIdParam && clientSecretParam) {
-      // Use credentials from query parameters (for initial setup)
-      clientId = clientIdParam;
-      clientSecret = clientSecretParam;
-      logger.info({ tenantId }, 'Using OAuth credentials from query parameters');
-    } else {
-      // Check environment variables as fallback
-      clientId = getEnv().GOOGLE_CLIENT_ID;
-      clientSecret = getEnv().GOOGLE_CLIENT_SECRET;
-
-      if (!clientId || !clientSecret) {
-        return c.json({
-          error: 'OAuth credentials not found. Please provide clientId and clientSecret query parameters, or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.'
-        }, 400);
-      }
-
-      logger.info({ tenantId }, 'Using OAuth credentials from environment variables');
-    }
-
-    // Determine redirect URI based on environment
-    const baseUrl = getEnv().SERVICE_API_URL;
-    const redirectUri = `${baseUrl}/oauth/gmail/callback`;
-
-    // Create OAuth2 client
-    const oAuth2Client = new google.auth.OAuth2(
-      clientId,
-      clientSecret,
-      redirectUri
-    );
-
-    // Generate state token to prevent CSRF
-    const state = crypto.randomUUID();
-    oauthStates.set(state, {
-      tenantId,
-      userId,
-      createdAt: new Date(),
-      clientId,
-      clientSecret
-    });
-
-    // Generate authorization URL
     const authUrl = oAuth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: GMAIL_SCOPE_URLS,
@@ -110,7 +106,7 @@ app.get('/gmail/authorize', async (c) => {
       state,
     });
 
-    logger.info({ tenantId, redirectUri }, 'OAuth authorization initiated');
+    logger.info({ tenantId, redirectUri, credentialSource: source }, 'OAuth authorization initiated');
 
     // Redirect user to Google's consent screen
     return c.redirect(authUrl);
@@ -151,24 +147,42 @@ app.get('/gmail/callback', async (c) => {
     return c.json({ error: 'Missing code or state parameter' }, 400);
   }
 
-  // Verify state to prevent CSRF
-  const stateData = oauthStates.get(state);
-  if (!stateData) {
-    logger.error({ state }, 'Invalid or expired OAuth state');
-    return c.json({ error: 'Invalid or expired authorization request' }, 400);
+  // Verify state to prevent CSRF. A stale consent screen and a forged request are
+  // reported separately: only the first is fixed by pressing the button again, and
+  // rendering them identically is what made this failure unreadable.
+  const verified = verifyOAuthState(state);
+
+  if (verified.status === 'expired') {
+    logger.warn(
+      { ageSeconds: verified.ageSeconds, ttlSeconds: OAUTH_STATE_TTL_SECONDS },
+      'OAuth state expired before the callback'
+    );
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: 'expired',
+      error: `This connection request expired after ${Math.round(OAUTH_STATE_TTL_SECONDS / 60)} minutes. Please connect Gmail again.`,
+    }));
   }
 
-  const { tenantId, userId, clientId, clientSecret } = stateData;
-  oauthStates.delete(state); // Clean up state
+  if (verified.status === 'invalid') {
+    logger.error({ reason: verified.reason }, 'Rejected OAuth state');
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: 'invalid',
+      error: 'This connection request could not be verified. Please start again from Settings.',
+    }));
+  }
+
+  const { tenantId, userId } = verified.state;
 
   try {
     const integrationService = container.resolve(IntegrationService);
 
-    // Determine redirect URI (must match the one used in authorize)
-    const baseUrl = getEnv().SERVICE_API_URL;
-    const redirectUri = `${baseUrl}/oauth/gmail/callback`;
+    // Same credentials and same redirect_uri as /authorize built, or Google
+    // rejects the exchange.
+    const { clientId, clientSecret } = await resolveOAuthCredentials(tenantId);
+    const redirectUri = getRedirectUri();
 
-    // Create OAuth2 client using credentials from state
     const oAuth2Client = new google.auth.OAuth2(
       clientId,
       clientSecret,
@@ -280,15 +294,17 @@ app.get('/gmail/callback', async (c) => {
       // Don't fail the OAuth flow if sync fails - user can manually trigger
     }
 
-    // Redirect to web app integrations page
-    return c.redirect(`${getEnv().WEB_URL}/integrations?oauth=success`);
+    // Redirect to web app integrations settings
+    return c.redirect(webResultUrl({ oauth: 'success' }));
   } catch (error: any) {
     logger.error({ error, tenantId }, 'Failed to complete OAuth flow');
 
     // Redirect to web app with error
-    const webUrl = getEnv().WEB_URL;
-    const errorMessage = encodeURIComponent(error.message || 'Unknown error');
-    return c.redirect(`${webUrl}/integrations?oauth=error&error=${errorMessage}`);
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: 'exchange-failed',
+      error: error.message || 'Unknown error',
+    }));
   }
 });
 
