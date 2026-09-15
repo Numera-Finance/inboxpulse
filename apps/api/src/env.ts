@@ -24,6 +24,12 @@ const envSchema = z.object({
   BETTER_AUTH_URL: z.string().default('http://localhost:4001'),
   BETTER_AUTH_SECRET: z.string().optional(),
 
+  // Fleet-wide signing key. Read directly from process.env by oauth/state.ts —
+  // declared here so it is discoverable, not defaulted anywhere and with no
+  // fallback to a second variable. Without it the Gmail OAuth flow cannot sign
+  // its state parameter.
+  ENCRYPTION_SECRET: z.string().optional(),
+
   // Legacy session auth
   SESSION_SECRET: z.string().optional(),
   SESSION_DURATION_MS: z.coerce.number().default(1800000),

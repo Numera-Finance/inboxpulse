@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Loader2, CheckCircle2, ExternalLink, Unplug, Pencil } from "lucide-react"
 import { GMAIL_SCOPE_DESCRIPTIONS } from "@crm/shared"
 import type { Integration } from "@/lib/api"
-import { API_BASE_URL } from "@/lib/api"
+import { gmailAuthorizeUrl } from "@/lib/api"
 import { GmailSettingsDrawer } from "./gmail-settings-drawer"
 
 // Gmail logo SVG - official Google colors
@@ -28,7 +28,6 @@ interface GmailIntegrationCardProps {
   isLoading: boolean
   isDisconnecting?: boolean
   tenantId: string
-  userId?: string
   onConnect: () => void
   onDisconnect: () => void
 }
@@ -38,7 +37,6 @@ export function GmailIntegrationCard({
   isLoading,
   isDisconnecting = false,
   tenantId,
-  userId,
   onConnect,
   onDisconnect
 }: GmailIntegrationCardProps) {
@@ -50,12 +48,8 @@ export function GmailIntegrationCard({
       console.error('Cannot connect: tenantId is missing')
       return
     }
-    // Redirect to OAuth flow with userId for tracking who connected
-    const params = new URLSearchParams({ tenantId })
-    if (userId) {
-      params.set('userId', userId)
-    }
-    window.location.href = `${API_BASE_URL}/oauth/gmail/authorize?${params.toString()}`
+    // Who connected is resolved from the session by the API, not sent from here.
+    window.location.href = gmailAuthorizeUrl({ tenantId })
   }
 
   const formatDate = (date: Date | null | undefined) => {
