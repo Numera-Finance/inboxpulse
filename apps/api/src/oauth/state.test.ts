@@ -44,17 +44,9 @@ describe('a state survives the trip through Google', () => {
    * usually not the one that signed. Nothing may be carried between them except
    * the token itself and the shared secret.
    */
-  it('verifies against a key the signing call never shared', () => {
+  it('verifies a token the verifying call was handed nothing else about', () => {
     const signedElsewhere = signOAuthState(state, ISSUED);
-
-    delete process.env.ENCRYPTION_SECRET;
-    process.env.BETTER_AUTH_SECRET = SECRET;
-    try {
-      expect(verifyOAuthState(signedElsewhere, at(30))).toEqual({ status: 'valid', state });
-    } finally {
-      process.env.ENCRYPTION_SECRET = SECRET;
-      delete process.env.BETTER_AUTH_SECRET;
-    }
+    expect(verifyOAuthState(signedElsewhere, at(30))).toEqual({ status: 'valid', state });
   });
 
   it('two authorize calls for the same tenant produce different states', () => {
@@ -130,12 +122,32 @@ describe('expired and invalid are different answers', () => {
 describe('the signing key is never invented', () => {
   it('throws instead of defaulting when no shared secret is configured', () => {
     delete process.env.ENCRYPTION_SECRET;
-    delete process.env.BETTER_AUTH_SECRET;
     try {
       expect(() => signOAuthState(state, ISSUED)).toThrow(/ENCRYPTION_SECRET/);
     } finally {
       process.env.ENCRYPTION_SECRET = SECRET;
     }
+  });
+
+  /**
+   * A fallback to a second variable is the same bug in a different hat: on an
+   * instance where the first is absent and the second present, `A || B` derives a
+   * key nobody else derives, and states cross-reject as `invalid`.
+   */
+  it('reads exactly one named variable, with no fallback to another', () => {
+    process.env.BETTER_AUTH_SECRET = 'a-different-secret-that-must-not-be-used';
+    delete process.env.ENCRYPTION_SECRET;
+    try {
+      expect(() => signOAuthState(state, ISSUED)).toThrow();
+    } finally {
+      delete process.env.BETTER_AUTH_SECRET;
+      process.env.ENCRYPTION_SECRET = SECRET;
+    }
+  });
+
+  it('names the variable it wants without prescribing configuration in the message', () => {
+    const src = readFileSync(join(__dirname, 'state.ts'), 'utf8');
+    expect(src).not.toMatch(/process\.env\.\w+\s*\|\|\s*process\.env\./);
   });
 
   it('does not fall back to a random or hard-coded key', () => {

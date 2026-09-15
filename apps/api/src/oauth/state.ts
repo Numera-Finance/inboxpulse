@@ -65,17 +65,20 @@ interface StatePayload {
  * cross-instance failure this module replaces, while looking like it worked in
  * single-instance local dev. So: no default, and a loud throw when it is absent.
  *
- * ENCRYPTION_SECRET and BETTER_AUTH_SECRET are both mounted on crm-api from Secret
- * Manager (see .github/workflows/deploy.yml), so either is shared fleet-wide.
+ * It also rules out a FALLBACK to a second variable. `A || B` derives a different
+ * key on an instance where A is absent and B is present, so a deploy that adds or
+ * removes A splits the fleet for as long as two revisions serve traffic — the same
+ * cross-instance failure again, wearing a different hat. One named variable:
+ * ENCRYPTION_SECRET, mounted on crm-api from Secret Manager (see
+ * .github/workflows/deploy.yml).
  */
+export const OAUTH_STATE_SECRET_ENV = 'ENCRYPTION_SECRET';
+
 function getSigningKey(): Buffer {
-  const secret = process.env.ENCRYPTION_SECRET || process.env.BETTER_AUTH_SECRET;
+  const secret = process.env[OAUTH_STATE_SECRET_ENV];
 
   if (!secret) {
-    throw new Error(
-      'Cannot sign OAuth state: set ENCRYPTION_SECRET (or BETTER_AUTH_SECRET). ' +
-      'It must be the same value on every crm-api instance.'
-    );
+    throw new Error(`OAuth state signing key is not configured (${OAUTH_STATE_SECRET_ENV})`);
   }
 
   return crypto.createHash('sha256').update(secret).digest();

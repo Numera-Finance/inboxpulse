@@ -39,6 +39,12 @@ export function IntegrationsSettings() {
       toast.success("Gmail Connected", { description: "Your Gmail account has been connected successfully." })
       // Refresh integration data
       queryClient.invalidateQueries({ queryKey: integrationKeys.byTenantAndSource(tenantId, 'gmail') })
+    } else if (reason === 'denied') {
+      // Declining consent is a decision, not a fault. It reaches here instead of
+      // the raw HTML page the API used to serve on its own origin.
+      toast("Gmail Not Connected", {
+        description: error || "Gmail was not connected because access was declined.",
+      })
     } else if (reason === 'expired') {
       // A stale consent screen is the one failure the user can fix by trying
       // again, so it gets the button rather than the same dead end as the rest.
@@ -94,6 +100,7 @@ export function IntegrationsSettings() {
           isLoading={isGmailLoading}
           isDisconnecting={disconnectMutation.isPending}
           tenantId={tenantId}
+          userId={user?.id}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
         />

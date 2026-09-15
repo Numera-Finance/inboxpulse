@@ -8,9 +8,15 @@ This module provides OAuth 2.0 authorization endpoints for integrating with Gmai
 
 Initiates the OAuth authorization flow. Redirects the user to Google's consent screen.
 
+**Requires a signed-in session.** The tenant is taken from that session, not from
+the URL. `tenantId` may still be passed and is then checked against the session —
+a mismatch is refused with 403 — but it cannot select the tenant. Before that, any
+caller could aim a victim's consent at a tenant of their choosing.
+
 **Query Parameters:**
 
-- `tenantId` (required): The tenant ID to authorize Gmail for
+- `tenantId` (optional): asserted against the session's tenant; 403 on mismatch
+- `userId` (optional): recorded as `createdBy` on the integration
 
 **Example:**
 
@@ -92,10 +98,10 @@ user. Any deploy mid-flow did the same. Nothing about an in-flight authorization
 retained in a process now — `state.test.ts` reads `routes.ts` and fails if a `Map`,
 `Set` or sweeper timer reappears.
 
-- **Signing key**: `ENCRYPTION_SECRET`, falling back to `BETTER_AUTH_SECRET`. Both
-  come from Secret Manager, so every instance derives the same key. There is
-  deliberately **no default** — a per-process fallback would pass every test in one
-  process and fail across the fleet exactly the way the `Map` did. Absent both, the
+- **Signing key**: `ENCRYPTION_SECRET`, from Secret Manager, so every instance
+  derives the same key. There is deliberately **no default and no fallback to a
+  second variable** — either would let one instance derive a key no other instance
+  derives, which is the same cross-instance failure the `Map` had. Absent it, the
   flow throws rather than signing something unverifiable.
 - **Expiration**: 10 minutes (`OAUTH_STATE_TTL_SECONDS`), plus 60s of tolerated
   clock skew.
@@ -151,15 +157,25 @@ discarded the outcome.
 | `reason` | Meaning | What the user should do |
 |---|---|---|
 | — (`oauth=success`) | Connected | nothing |
+| `denied` | Declined consent at Google | nothing; reconnect when ready |
 | `expired` | Sat on the consent screen longer than the TTL | press Connect again |
-| `invalid` | State failed signature checks — forged, corrupted, or signed under a different secret | start again from Settings; if it repeats, the signing secret differs between instances |
+| `invalid` | State failed signature checks, or `code`/`state` was missing | start again from Settings; if it repeats, the signing secret differs between instances |
+| `google-error` | Google returned an error other than a decline | try again |
+| `unauthenticated` | No session on `/authorize` | sign in, then connect |
+| `no-tenant` | Session has no tenant | contact support |
+| `setup-failed` | Server is missing OAuth configuration | contact support; the detail is in the logs, never in the response |
 | `exchange-failed` | Google accepted the user but the token exchange or setup failed | read `error`; commonly a missing refresh token needing [access revoked](https://myaccount.google.com/permissions) first |
 
 `expired` and `invalid` are reported separately on purpose: only the first is fixed
 by pressing the button again, and the single merged message they replaced could not
 tell a user which situation they were in.
 
-Two cases still render as HTML from the callback itself: Google returning `error=`
-(user denied access), and a missing `code`/`state`.
+**Nothing reflects caller input into markup or into a response body.** The callback
+used to interpolate its `error` query parameter into an HTML page served from the
+crm-api origin, which is also `BETTER_AUTH_URL` — so a crafted link ran script
+against the victim's session cookies. Every outcome is now a redirect carrying one
+of the `reason` values above and a message chosen here. `/authorize` likewise
+returns a fixed message on failure: its internal errors name environment variables
+and the route is reachable without a session, so the detail stays in the logs.
 
 All errors are logged to the application logs with structured logging for debugging.

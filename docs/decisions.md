@@ -2287,17 +2287,35 @@ the user and issued a valid code. Any deploy mid-consent did the same. The comme
 above the Map said "in production, consider using Redis or encrypted session
 tokens", so the limitation was known and the fleet grew past it.
 **Decision:** `state` carries its own contents and its own integrity proof:
-`base64url(payload).base64url(HMAC-SHA256)`, signed with `ENCRYPTION_SECRET`
-(falling back to `BETTER_AUTH_SECRET`), 10-minute TTL, 60s skew tolerance
+`base64url(payload).base64url(HMAC-SHA256)`, signed with `ENCRYPTION_SECRET`,
+10-minute TTL, 60s skew tolerance
 (`apps/api/src/oauth/state.ts`). No instance retains anything about an in-flight
 authorization. Verification returns a three-way result — valid / expired /
 invalid — instead of one merged failure. Client credentials are NOT in the token;
 both endpoints call `resolveOAuthCredentials(tenantId)`, so passing a client
 secret as a query parameter is dropped (it was unused and logged the secret).
 **Consequences:**
-- The signing key must be identical fleet-wide and is therefore never defaulted.
-  A per-process random fallback would pass every single-process test and fail
-  across instances exactly as the Map did, so its absence throws.
+- The signing key must be identical fleet-wide and is therefore never defaulted
+  AND never falls back to a second variable. Both would let one instance derive a
+  key no other instance derives — a per-process random default obviously, and
+  `A || B` on the deploy that adds or removes `A`. One named variable; its
+  absence throws.
+- **Signing the state fixed who minted it, not who may act for the tenant inside
+  it.** `/authorize` took `tenantId` from an unauthenticated query parameter, so a
+  link could aim a victim's consent at a tenant of the sender's choosing: the
+  victim authorizes their own mailbox on Google's real consent screen and the
+  callback files the refresh token, and the initial 30-day sync, under the
+  attacker's tenant. The tenant now comes from the caller's session; a `tenantId`
+  parameter is honoured only as an assertion to check, 403 on mismatch.
+- **Nothing reflects caller input into markup.** The callback interpolated its
+  `error` query parameter into an HTML page on the crm-api origin, which is also
+  `BETTER_AUTH_URL`, so a crafted link ran script against the victim's session
+  cookies. Every outcome is now a redirect with a `reason` we choose. That also
+  gave declining consent — the failure users reach most often — a way back into
+  the app instead of an unstyled dead end.
+- `/authorize` returns a fixed message on failure. Its internal errors name
+  environment variables and the route is reachable without a session, so the
+  detail stays in the logs (CLAUDE.md: never return internal details).
 - Replay inside the TTL is now possible where a single-use Map entry prevented
   it. The backstop is Google's authorization code, which is itself single-use.
   A durable single-use store is the upgrade path if that stops being enough.

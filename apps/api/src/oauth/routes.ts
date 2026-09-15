@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { google } from 'googleapis';
 import { container } from 'tsyringe';
 import { GMAIL_SCOPE_URLS } from '@crm/shared';
+import { auth } from '../auth/better-auth';
 import { IntegrationService } from '../integrations/service';
 import { logger } from '../utils/logger';
 import { internalFetch } from '../utils/internal-fetch';
@@ -59,6 +60,17 @@ async function resolveOAuthCredentials(tenantId: string): Promise<OAuthCredentia
   };
 }
 
+/**
+ * `customSession` puts tenantId on the session at run time, but better-auth's
+ * inferred type does not carry it (better-auth#3888, noted in auth/better-auth.ts).
+ * One narrow accessor, rather than casting the whole session and losing the rest of
+ * its typing.
+ */
+function sessionTenantId(session: { user: { id: string; tenantId?: unknown } }): string | null {
+  const value = session.user.tenantId;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 /** Both endpoints must build the same redirect_uri or Google rejects the exchange. */
 function getRedirectUri(): string {
   return `${getEnv().SERVICE_API_URL}/oauth/gmail/callback`;
@@ -82,12 +94,50 @@ function webResultUrl(params: Record<string, string>): string {
  * After authorization, Google will redirect back to /oauth/gmail/callback
  */
 app.get('/gmail/authorize', async (c) => {
-  const tenantId = c.req.query('tenantId');
-  const userId = c.req.query('userId');
+  // The tenant comes from the caller's own session, never from the URL.
+  //
+  // It used to be a query parameter on an unauthenticated route (this router is
+  // mounted above every auth middleware), which meant a link could aim somebody
+  // else's consent at a tenant of the sender's choosing: the victim sees Google's
+  // real consent screen on Google's real domain, authorizes their own mailbox, and
+  // the callback files the refresh token — and the initial 30-day sync — under the
+  // attacker's tenant. Signing the state fixed who minted it, not who may act for
+  // the tenant inside it.
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+  if (!session) {
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: 'unauthenticated',
+      error: 'Please sign in before connecting Gmail.',
+    }));
+  }
+
+  const tenantId = sessionTenantId(session);
 
   if (!tenantId) {
-    return c.json({ error: 'tenantId query parameter is required' }, 400);
+    logger.error({ userId: session.user.id }, 'Session has no tenant; cannot start OAuth');
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: 'no-tenant',
+      error: 'Your account is not linked to a workspace yet. Please contact support.',
+    }));
   }
+
+  // The web app still sends tenantId. Honour it only as an assertion to check, so a
+  // crafted link disagreeing with the session is refused rather than silently
+  // resolved to the session's tenant.
+  const requestedTenantId = c.req.query('tenantId');
+
+  if (requestedTenantId && requestedTenantId !== tenantId) {
+    logger.warn(
+      { sessionTenantId: tenantId, requestedTenantId, userId: session.user.id },
+      'Refused OAuth authorize for a tenant the session does not own'
+    );
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const userId = c.req.query('userId');
 
   try {
     const { clientId, clientSecret, source } = await resolveOAuthCredentials(tenantId);
@@ -111,8 +161,14 @@ app.get('/gmail/authorize', async (c) => {
     // Redirect user to Google's consent screen
     return c.redirect(authUrl);
   } catch (error: any) {
+    // The detail stays in the logs. These messages name environment variables, and
+    // this route is reachable without a session — see the middleware note above.
     logger.error({ error, tenantId }, 'Failed to initiate OAuth flow');
-    return c.json({ error: error.message }, 500);
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: 'setup-failed',
+      error: 'Gmail is not configured on this server. Please contact support.',
+    }));
   }
 });
 
@@ -128,23 +184,36 @@ app.get('/gmail/callback', async (c) => {
   const state = c.req.query('state');
   const error = c.req.query('error');
 
-  // Handle authorization errors
+  // Handle authorization errors.
+  //
+  // This used to interpolate `error` into an HTML page. The value is whatever the
+  // caller puts in the query string, `c.html` escapes nothing, and the page was
+  // served from the crm-api origin — which is BETTER_AUTH_URL, so the session
+  // cookies live there too. Anyone could hand a victim a link that ran script
+  // against their session. Nothing reflects that value into markup now; the user
+  // goes back to the app with a reason we chose.
   if (error) {
-    logger.error({ error }, 'OAuth authorization failed');
-    return c.html(`
-      <html>
-        <head><title>Authorization Failed</title></head>
-        <body>
-          <h1>Authorization Failed</h1>
-          <p>Error: ${error}</p>
-          <p>Please try again or contact support.</p>
-        </body>
-      </html>
-    `, 400);
+    logger.warn({ error }, 'OAuth authorization failed at Google');
+
+    // Declining consent is a decision, not a fault, and it is the failure users
+    // reach most often. It used to dead-end on an unstyled page with no way back.
+    const declined = error === 'access_denied';
+
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: declined ? 'denied' : 'google-error',
+      error: declined
+        ? 'Gmail was not connected because access was declined.'
+        : 'Google could not complete the connection. Please try again.',
+    }));
   }
 
   if (!code || !state) {
-    return c.json({ error: 'Missing code or state parameter' }, 400);
+    return c.redirect(webResultUrl({
+      oauth: 'error',
+      reason: 'invalid',
+      error: 'This connection request was incomplete. Please start again from Settings.',
+    }));
   }
 
   // Verify state to prevent CSRF. A stale consent screen and a forged request are
