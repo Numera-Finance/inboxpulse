@@ -21,6 +21,9 @@ import { z } from 'zod';
 // script cannot drift off the model it claims to be measuring — it was pinned to
 // gemini-2.5-pro while the pipeline ran gemini-2.5-flash.
 import { DEFAULT_LLM_MODEL } from '../../packages/shared/src/constants/models';
+// Same reason: the pipeline sends a thinking level and omits temperature on
+// Gemini 3, and a request without them bills different tokens and latency.
+import { providerOptionsFor, temperatureFor } from '../../apps/analysis/src/services/model-options';
 
 // Mirror the prompt structure of executeBatchCall: long combined instructions,
 // then per-email content. Keep instructions chunky (>1024 tokens) so the
@@ -91,7 +94,8 @@ async function call(label: string, body: string) {
     model: google(DEFAULT_LLM_MODEL),
     schema: SCHEMA,
     prompt,
-    temperature: 0.1,
+    ...temperatureFor('google', DEFAULT_LLM_MODEL, 0.1),
+    ...providerOptionsFor('google', DEFAULT_LLM_MODEL),
   });
   const ms = Date.now() - before;
 

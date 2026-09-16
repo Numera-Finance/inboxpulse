@@ -2,47 +2,16 @@ import { injectable } from 'tsyringe';
 import { generateText, generateObject } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
-import { google, type GoogleGenerativeAIProviderOptions } from '@ai-sdk/google';
+import { google } from '@ai-sdk/google';
 import { xai } from '@ai-sdk/xai';
 import { Langfuse } from 'langfuse';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
-import { DEFAULT_THINKING_LEVEL } from '@crm/shared';
+import { providerOptionsFor, temperatureFor, type AIProvider } from './model-options';
 import type { PromptMessage } from './ai-types';
 
-/**
- * Supported AI providers
- */
-export type AIProvider = 'openai' | 'anthropic' | 'google' | 'xai';
-
-/**
- * Request options that belong to one provider rather than to the AI SDK core.
- *
- * Gemini 3.x thinks by default and bills it as output tokens, so the budget is
- * set explicitly rather than inherited. Defined once and spread into BOTH
- * `generateText` and `generateObject` — the same decision written twice is the
- * one that drifts.
- *
- * Returns an empty object for every other provider: OpenAI and Anthropic express
- * reasoning budgets differently. Note that an unrecognised `providerOptions` key
- * is silently IGNORED by the SDK rather than rejected, so a typo here would cost
- * nothing at compile time and everything at run time. That is why
- * `thinking-config.test.ts` asserts against the outgoing HTTP body and not
- * against this return value alone.
- *
- * Exported for that test: a private method could only be reached through a cast.
- */
-export function providerOptionsFor(
-  provider: AIProvider
-): { providerOptions?: { google: GoogleGenerativeAIProviderOptions } } {
-  if (provider !== 'google') return {};
-  return {
-    providerOptions: {
-      google: { thinkingConfig: { thinkingLevel: DEFAULT_THINKING_LEVEL } },
-    },
-  };
-}
+export type { AIProvider } from './model-options';
 
 /**
  * Model configuration
@@ -189,9 +158,9 @@ export class AIService {
         // Generate text with Langfuse integration via Vercel AI SDK
         const generateTextOptions: any = {
           model: this.getModel(model.provider, model.model),
-          temperature: model.temperature,
+          ...temperatureFor(model.provider, model.model, model.temperature),
           maxTokens: model.maxTokens,
-          ...providerOptionsFor(model.provider),
+          ...providerOptionsFor(model.provider, model.model),
         };
 
         // Handle prompt type (string or PromptMessage[])
@@ -334,9 +303,9 @@ export class AIService {
         const generateObjectOptions: any = {
           model: this.getModel(model.provider, model.model),
           schema,
-          temperature: model.temperature,
+          ...temperatureFor(model.provider, model.model, model.temperature),
           maxTokens: model.maxTokens,
-          ...providerOptionsFor(model.provider),
+          ...providerOptionsFor(model.provider, model.model),
         };
 
         // Handle prompt type (string or PromptMessage[])

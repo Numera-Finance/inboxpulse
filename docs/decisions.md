@@ -2378,6 +2378,16 @@ sentiment, churn and upsell are judgement calls, not extraction.
   options object builds a model without spreading `providerOptionsFor`, so a
   third call site added later is policed without anyone remembering the test
   exists.
+- **Both settings are gated on the MODEL, not the provider** (`isGemini3OrLater`
+  in `apps/analysis/src/services/model-options.ts`). Unknown model strings route
+  to Google and callers can name the model, so "provider is google" also covers
+  `gemini-2.5-*` (which takes `thinkingBudget`, not `thinkingLevel`) and Gemma.
+- **Temperature is omitted on Gemini 3.** Google's guidance is to leave it at the
+  default 1.0, since lower values can make the model loop. The executor's 0.7 and
+  the 0.3 in summarisation and the email filter were chosen for 2.x; they still
+  apply to any non-Gemini-3 model. Also unmeasured on our mail.
+- The cache diagnostic script imports the same helpers, so it sends exactly what
+  the pipeline sends.
 - Thought-signature circulation, the third item in Google's notice, does not
   apply: `AIService` makes single-shot `generateText` / `generateObject` calls
   with no tools and no multi-turn state.
