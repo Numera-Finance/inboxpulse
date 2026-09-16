@@ -196,7 +196,8 @@ logs, expand the usage mapping in `executor.ts`. To enable explicit caching:
 switch `executeBatchCall` to use `PromptBuilder.buildPromptMessages` and pass
 cache hints through `AIService` to the provider.
 
-Implicit Gemini-2.5-pro caching requires ≥4,096 input tokens. Production
+Implicit Gemini caching required ≥4,096 input tokens on 2.5-pro; the
+threshold has not been re-checked since the move to `gemini-3.5-flash`. Production
 prompts (~7 analyses + body + thread context) are likely above this — but
 since we don't log `cachedInputTokens` we can't tell.
 

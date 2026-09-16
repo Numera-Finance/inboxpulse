@@ -215,10 +215,11 @@ const envSchema = z.object({
     .default('https://generativelanguage.googleapis.com/v1beta/openai'),
 
   /**
-   * Thinking budget for Gemini 2.5 models, as OpenAI-compat reasoning_effort.
+   * Thinking budget, as OpenAI-compat reasoning_effort.
    *
-   * 'none' by default and that is a deliberate default, not a shrug: 2.5 Flash
-   * thinks by default, and thinking is billed as output tokens on top of the
+   * 'none' by default and that is a deliberate default, not a shrug: the flash
+   * tier thinks by default (measured on 2.5 Flash, and the 3.x models this
+   * migrated to are reasoning models), and thinking is billed as output tokens on top of the
    * latency. Locally the same setting was worth 7.6x on a reasoning model, and
    * turning it ON for structured extraction was catastrophic -- three runs of
    * the deep read all ran past 120s and returned nothing, because a reasoning

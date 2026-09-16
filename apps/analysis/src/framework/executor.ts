@@ -586,7 +586,7 @@ export class AnalysisExecutor {
   }
 
   /**
-   * Helper: Parse model string (e.g., 'gemini-2.5-pro') to provider and model
+   * Helper: Parse model string (e.g., 'gemini-3.5-flash') to provider and model
    */
   private parseModelString(modelString: string): AIServiceModelConfig {
     // Simple heuristic: check model name prefix

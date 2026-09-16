@@ -230,7 +230,7 @@ export const analysisTypeSchema = z.enum(ANALYSIS_TYPES);
  * Model configuration with primary and optional fallback
  */
 export interface ModelConfig {
-  primary: string;    // e.g., 'gemini-2.5-pro'
+  primary: string;    // e.g., 'gemini-3.5-flash'
   fallback?: string;  // e.g., 'gpt-4o-mini' (optional)
 }
 

@@ -16,6 +16,11 @@
 import { generateObject } from 'ai';
 import { google } from '@ai-sdk/google';
 import { z } from 'zod';
+// Relative, not '@crm/shared': this file sits outside the workspace packages and
+// the alias does not resolve from here. Imported rather than re-typed so the
+// script cannot drift off the model it claims to be measuring — it was pinned to
+// gemini-2.5-pro while the pipeline ran gemini-2.5-flash.
+import { DEFAULT_LLM_MODEL } from '../../packages/shared/src/constants/models';
 
 // Mirror the prompt structure of executeBatchCall: long combined instructions,
 // then per-email content. Keep instructions chunky (>1024 tokens) so the
@@ -83,7 +88,7 @@ async function call(label: string, body: string) {
   const prompt = `${STATIC_INSTRUCTIONS}\n\nEmail Subject: Quarterly check-in\n\nEmail Body:\n${body}`;
   const before = Date.now();
   const result = await generateObject({
-    model: google('gemini-2.5-pro'),
+    model: google(DEFAULT_LLM_MODEL),
     schema: SCHEMA,
     prompt,
     temperature: 0.1,

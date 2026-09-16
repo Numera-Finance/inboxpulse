@@ -2332,3 +2332,52 @@ secret as a query parameter is dropped (it was unused and logged the secret).
   redirecting to `/integrations`, a `<Navigate ... replace>` that drops the query
   string, so the existing success and error toasts had never once fired: every
   outcome, including success, reached the user as a silent page load.
+
+### ADR-038: Off the retired 2.5 preview models, onto the flash tier with an explicit thinking budget (2026-09-15)
+
+**Status:** Accepted
+
+**Context:** Google's preview-model shutdown retires `gemini-2.5-flash` and
+`gemini-2.5-pro`. Two places used them: `DEFAULT_LLM_MODEL` /
+`DEFAULT_LLM_FALLBACK_MODEL` in `packages/shared/src/constants/models.ts`, which
+drives every analysis type plus thread summarisation and the email filter, and
+`scripts/diagnostic/check-gemini-cache.ts`. `apps/addon` was already clean — it
+runs `gemini-3.1-flash-lite`, itself one of the recommended GA targets.
+
+The notice offers five targets for 2.5 Flash, spanning two tiers. That is a
+product decision, not a rename: `docs/EXPERIMENTS.md` measured 2.5-flash at 95%
+recall / 66% precision on the complaint set and `gemini-3.1-flash-lite` at
+85% / 71% on the same set.
+
+**Decision:** `gemini-3.5-flash` for both primary and fallback — the
+like-for-like tier, not a lite variant. The 10 points of recall a lite model
+gives up are roughly one complaint in seven, and catching complaints is what the
+pipeline is for. The diagnostic script now imports `DEFAULT_LLM_MODEL` by
+relative path instead of naming a model: it had been pinned to `2.5-pro` while
+the pipeline it claimed to measure ran `2.5-flash`.
+
+Thinking is set explicitly to `'low'` via `DEFAULT_THINKING_LEVEL`, applied in
+`AIService` through `providerOptionsFor`. Gemini 3.x models think by default and
+bill it as output tokens; `apps/addon/src/env.ts` records the failure mode on a
+local reasoning model (nemotron via Ollama, not Gemini) — with thinking on, three
+runs of the deep read ran past 120s and returned nothing. That is evidence of the
+risk, not a Gemini measurement. `'low'` rather than `'minimal'` because
+sentiment, churn and upsell are judgement calls, not extraction.
+
+**Consequences:**
+- **The 95% recall figure does not transfer.** It describes a model that no
+  longer exists. It must be re-measured on the same 49-email set before it is
+  quoted anywhere (CLAUDE.md: never quote a number you did not derive).
+- `'low'` is a starting point, not a measured optimum. Both the added cost and
+  the recall it buys are unmeasured.
+- `providerOptions` keys the SDK does not recognise are **ignored, not
+  rejected** — a typo would cost nothing at compile time and everything at run
+  time. `thinking-config.test.ts` therefore asserts against the outgoing HTTP
+  request body, with a negative control proving Gemini does not send
+  `thinkingConfig` on its own. It also reads `ai-service.ts` and fails if an
+  options object builds a model without spreading `providerOptionsFor`, so a
+  third call site added later is policed without anyone remembering the test
+  exists.
+- Thought-signature circulation, the third item in Google's notice, does not
+  apply: `AIService` makes single-shot `generateText` / `generateObject` calls
+  with no tools and no multi-turn state.
