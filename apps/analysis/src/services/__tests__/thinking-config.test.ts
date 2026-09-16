@@ -92,10 +92,12 @@ describe('providerOptionsFor', () => {
       .thinkingConfig?.thinkingLevel;
 
     expect(level).toBe(DEFAULT_THINKING_LEVEL);
-    // Pinned, not just "some level": unset is what this change exists to stop.
+    // Pinned, not just "some level": unset lets Google change it under us, and
+    // 'low' left the analysis calls with no reasoning at all (ADR-039). A change
+    // here should come with eval numbers, not just an edited constant.
     // (The add-on is not evidence for any level — it deploys reasoning_effort
     // 'none' through the OpenAI-compatible endpoint, a different field.)
-    expect(level).toBe('low');
+    expect(level).toBe('medium');
   });
 
   it('sends nothing to Google models that do not take thinkingLevel', () => {

@@ -29,12 +29,16 @@ export const DEFAULT_LLM_FALLBACK_MODEL = 'gemini-3.5-flash';
  * Gemini): with thinking on, three runs of the deep read ran past 120s and
  * returned nothing. Evidence of the risk, not a Gemini measurement.
  *
- * 'low' rather than 'minimal' because sentiment, churn and upsell are judgement
- * calls, not extraction — the thing the add-on turned thinking off for. This is a
- * starting point, not a measured optimum: the cost and the recall it buys both
- * need checking against the 49-email complaint set.
+ * 'medium', raised from 'low' after the first production calls (ADR-039). On
+ * 'low', the long analysis calls — sentiment, churn, upsell, ~6,500 input tokens —
+ * reported NO reasoning tokens, where gemini-2.5-flash had used a median of
+ * 1,568 on the same calls. Those are the calls that decide whether something is
+ * a complaint, and the 95% recall baseline was measured with thinking on.
+ *
+ * Still not a measured optimum. Run the 49-email complaint set at low / medium /
+ * high and keep the cheapest level whose recall matches the old baseline.
  *
  * Google-only. OpenAI and Anthropic express reasoning budgets differently and are
  * left alone by `AIService`.
  */
-export const DEFAULT_THINKING_LEVEL = 'low';
+export const DEFAULT_THINKING_LEVEL = 'medium';

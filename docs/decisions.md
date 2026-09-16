@@ -2335,7 +2335,7 @@ secret as a query parameter is dropped (it was unused and logged the secret).
 
 ### ADR-038: Off the retired 2.5 preview models, onto the flash tier with an explicit thinking budget (2026-09-15)
 
-**Status:** Accepted
+**Status:** Accepted. The thinking level (`'low'`) is superseded by ADR-039.
 
 **Context:** Google's preview-model shutdown retires `gemini-2.5-flash` and
 `gemini-2.5-pro`. Two places used them: `DEFAULT_LLM_MODEL` /
@@ -2391,3 +2391,37 @@ sentiment, churn and upsell are judgement calls, not extraction.
 - Thought-signature circulation, the third item in Google's notice, does not
   apply: `AIService` makes single-shot `generateText` / `generateObject` calls
   with no tools and no multi-turn state.
+
+### ADR-039: Thinking level raised from low to medium for the analysis pipeline (2026-09-16)
+
+**Status:** Accepted
+
+**Context:** ADR-038 shipped `gemini-3.5-flash` with `thinkingLevel: 'low'`.
+The first 20 production calls (revision `crm-analysis-00073-wbv`, 2026-09-16
+16:03–16:07 UTC) all succeeded, but the token usage split by call type:
+
+| Call | `gemini-2.5-flash` median (30d before) | `gemini-3.5-flash` on `'low'` |
+|---|---|---|
+| Classification (~230–1,300 input) | 410 reasoning tokens | ~95 |
+| Analysis batch (~6,500 input) | 1,568 reasoning tokens | none reported |
+
+The analysis batch is sentiment, churn and upsell: the judgement calls that
+decide whether something is a complaint. The 95% recall baseline in
+`docs/EXPERIMENTS.md` was measured with thinking on. `'low'` therefore put
+production on the configuration furthest from anything measured. The evidence
+that motivated a low level was a local nemotron run, not Gemini; production
+ran 2.5-flash with thinking on for months without timeouts.
+
+**Decision:** `DEFAULT_THINKING_LEVEL = 'medium'`. Explicit rather than unset,
+so a change in Google's default cannot move it silently.
+
+**Consequences:**
+- Output-token cost on analysis calls rises from ~0 reasoning tokens toward the
+  old baseline; how far is not known until production logs show it.
+- `'medium'` is still a hedge, not a result. Thinking levels are relative, not
+  token budgets. The decision is settled by running the 49-email set at low,
+  medium and high and taking the cheapest level whose recall matches.
+- The absent `reasoningTokens` field on `'low'` most likely means no thinking,
+  but could be a reporting gap; the sample was 20 calls.
+- `thinking-config.test.ts` pins `'medium'` and asserts it on the outgoing
+  request body.
