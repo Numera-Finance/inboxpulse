@@ -36,7 +36,7 @@
   "config": {  // Optional: override model configs, settings, etc.
     "modelConfigs": {
       "sentiment": {
-        "primary": "gemini-2.5-pro",
+        "primary": "gemini-3.5-flash",
         "fallback": "gpt-4o-mini"
       }
     }

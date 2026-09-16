@@ -147,10 +147,11 @@ thread a user opens and per-call cost is the economics of the feature.
    deliberate decision that it lives in a shared branch. The README documents
    residual leaks — a customer name survived redaction during development
    because both its words are in the dictionary.
-4. **`packages/shared/DEFAULT_LLM_MODEL` is still `gemini-2.5-flash`** and
-   drives the analysis service. If flash is too expensive for the add-on it is
-   likely too expensive there; that is a platform-wide change, deliberately not
-   made here.
+4. **`packages/shared/DEFAULT_LLM_MODEL` is `gemini-3.5-flash`** and drives the
+   analysis service. If flash is too expensive for the add-on it is likely too
+   expensive there; that is a platform-wide change, deliberately not made here.
+   (Was `gemini-2.5-flash` when this was written; moved to the 3.x flash tier by
+   Google's preview-model shutdown, same tier, not the same measurements.)
 5. **Compose is URL-based**, so a reply opens a *new* message — a URL cannot set
    `References` headers, so it will not thread into the conversation.
 

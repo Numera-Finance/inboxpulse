@@ -8,12 +8,10 @@ import { Langfuse } from 'langfuse';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { getEnv } from '../env';
+import { providerOptionsFor, temperatureFor, type AIProvider } from './model-options';
 import type { PromptMessage } from './ai-types';
 
-/**
- * Supported AI providers
- */
-export type AIProvider = 'openai' | 'anthropic' | 'google' | 'xai';
+export type { AIProvider } from './model-options';
 
 /**
  * Model configuration
@@ -160,8 +158,9 @@ export class AIService {
         // Generate text with Langfuse integration via Vercel AI SDK
         const generateTextOptions: any = {
           model: this.getModel(model.provider, model.model),
-          temperature: model.temperature,
+          ...temperatureFor(model.provider, model.model, model.temperature),
           maxTokens: model.maxTokens,
+          ...providerOptionsFor(model.provider, model.model),
         };
 
         // Handle prompt type (string or PromptMessage[])
@@ -304,8 +303,9 @@ export class AIService {
         const generateObjectOptions: any = {
           model: this.getModel(model.provider, model.model),
           schema,
-          temperature: model.temperature,
+          ...temperatureFor(model.provider, model.model, model.temperature),
           maxTokens: model.maxTokens,
+          ...providerOptionsFor(model.provider, model.model),
         };
 
         // Handle prompt type (string or PromptMessage[])
